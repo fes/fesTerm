@@ -12,7 +12,9 @@
 //! along that path leaves the previous file exactly as it was, and never
 //! reports success.
 
-use std::fs::{self, File, Metadata, OpenOptions};
+#[cfg(not(windows))]
+use std::fs::Metadata;
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -48,14 +50,34 @@ struct FileIdentity {
 }
 
 impl Generation {
+    #[cfg(not(windows))]
+    fn from_metadata(metadata: &Metadata) -> Self {
+        Self {
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+            identity: file_identity(metadata),
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn at(path: &Path) -> Result<Self, std::io::Error> {
+        fs::metadata(path).map(|metadata| Self::from_metadata(&metadata))
+    }
+
     /// Reads metadata and identity from the same open file.
+    #[cfg(windows)]
     fn at(path: &Path) -> Result<Self, std::io::Error> {
         let file = File::open(path)?;
         let metadata = file.metadata()?;
+        // Creation times can collide or survive replacement through NTFS tunneling.
+        let information = winapi_util::file::information(&file)?;
         Ok(Self {
             size: metadata.len(),
             modified: metadata.modified().ok(),
-            identity: file_identity(&file, &metadata)?,
+            identity: Some(FileIdentity {
+                volume: information.volume_serial_number(),
+                file: information.file_index(),
+            }),
         })
     }
 
@@ -67,27 +89,17 @@ impl Generation {
 }
 
 #[cfg(unix)]
-fn file_identity(_file: &File, metadata: &Metadata) -> std::io::Result<Option<FileIdentity>> {
+fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
     use std::os::unix::fs::MetadataExt;
-    Ok(Some(FileIdentity {
+    Some(FileIdentity {
         volume: metadata.dev(),
         file: metadata.ino(),
-    }))
-}
-
-#[cfg(windows)]
-fn file_identity(file: &File, _metadata: &Metadata) -> std::io::Result<Option<FileIdentity>> {
-    // Creation times can collide or survive replacement through NTFS tunneling.
-    let information = winapi_util::file::information(file)?;
-    Ok(Some(FileIdentity {
-        volume: information.volume_serial_number(),
-        file: information.file_index(),
-    }))
+    })
 }
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity(_file: &File, _metadata: &Metadata) -> std::io::Result<Option<FileIdentity>> {
-    Ok(None)
+fn file_identity(_metadata: &Metadata) -> Option<FileIdentity> {
+    None
 }
 
 /// A document as it was on disk, with the generation that reading it observed.
@@ -189,9 +201,7 @@ impl SaveFailure {
             Self::PermissionDenied => {
                 "Your account does not have permission to replace it. Use Save As… to write it somewhere else."
             }
-            Self::NoDirectory => {
-                "Nothing was written. Use Save As… to write it somewhere else."
-            }
+            Self::NoDirectory => "Nothing was written. Use Save As… to write it somewhere else.",
             Self::Interrupted => {
                 "The previous contents are unchanged. Try saving again, or use Save As…."
             }
@@ -227,7 +237,10 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
 pub fn freshness(path: &Path, known: Generation) -> Freshness {
     match fs::metadata(path) {
         Ok(metadata) if !metadata.is_file() => Freshness::Gone(LoadFailure::NotAFile),
-        Ok(_) => {
+        Ok(_metadata) => {
+            #[cfg(not(windows))]
+            let current = Generation::from_metadata(&_metadata);
+            #[cfg(windows)]
             let current = match Generation::at(path) {
                 Ok(current) => current,
                 Err(error) => return Freshness::Gone(classify_read_error(error)),

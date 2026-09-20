@@ -62,8 +62,9 @@ pub(crate) struct OpenDocument {
     save: SaveProgress,
     auto_save_requested: bool,
     last_error: Option<SaveError>,
-    /// When this document's source was last checked, so a poll costs one stat
-    /// per document per interval rather than one per frame.
+    /// When this document's source was last checked, so metadata queries run
+    /// once per interval, not per frame. Windows also opens a file handle to
+    /// retrieve its stable identity; Unix obtains identity from the stat.
     checked: Instant,
     /// When an outside change was last taken up, so the notice can fade
     /// instead of sitting there claiming news that is minutes old.
