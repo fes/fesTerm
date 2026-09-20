@@ -3,6 +3,19 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Windows file identity during PR #179 review
+
+Windows CI exposed an existing editor conflict-detection defect: creation time
+was being used as file identity, so an atomic replacement with the same size
+and timestamps could appear unchanged. Generation checks now read the actual
+volume and file index through the already-locked safe `winapi-util` wrapper,
+with metadata and identity taken from one handle. Identity lookup failures
+surface as unreadable-source errors rather than falling back to timestamps.
+Regressions deliberately equalize timestamps and prove both Refresh detection
+and refusal to overwrite the replacement. This fixes the merge-blocking
+failure without weakening the test or claiming the remaining CP-15 native
+editor acceptance.
+
 ## Running Sessions discovery under churn (#155, September 2026)
 
 The refreshed Launcher exposed two correctness gaps behind apparently simple

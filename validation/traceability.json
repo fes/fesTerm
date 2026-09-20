@@ -1139,6 +1139,8 @@
         "a_document_survives_until_its_last_view_closes",
         "saving_writes_the_file_and_clears_the_unsaved_marker",
         "saving_into_a_file_that_changed_first_conflicts_and_writes_nothing",
+        "a_file_replaced_by_an_atomic_save_elsewhere_does_not_look_unchanged",
+        "saving_refuses_an_atomic_replacement_with_matching_timestamps_and_size",
         "a_clean_document_follows_the_file_when_it_changes_elsewhere",
         "a_dirty_document_conflicts_rather_than_losing_what_was_typed",
         "a_file_too_large_to_edit_is_refused_with_its_limit",

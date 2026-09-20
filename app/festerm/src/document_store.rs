@@ -41,28 +41,22 @@ pub struct Generation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileIdentity {
-    /// Which storage the file lives on: `st_dev` on Unix. Windows reports
-    /// this only through an API that is still unstable, so it stays zero
-    /// there and the file component carries the whole signal.
+    /// The device on Unix, or the volume serial number on Windows.
     volume: u64,
-    /// Which file this is: the inode on Unix. On Windows the file index is
-    /// unstable too, so this is the creation time — which a file replaced by
-    /// an atomic save does not keep, and a file edited in place does.
+    /// The inode on Unix, or the file index on Windows.
     file: u64,
 }
 
 impl Generation {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        Self {
+    /// Reads metadata and identity from the same open file.
+    fn at(path: &Path) -> Result<Self, std::io::Error> {
+        let file = File::open(path)?;
+        let metadata = file.metadata()?;
+        Ok(Self {
             size: metadata.len(),
             modified: metadata.modified().ok(),
-            identity: file_identity(metadata),
-        }
-    }
-
-    /// Reads the current generation of a path without opening the file.
-    fn at(path: &Path) -> Result<Self, std::io::Error> {
-        fs::metadata(path).map(|metadata| Self::from_metadata(&metadata))
+            identity: file_identity(&file, &metadata)?,
+        })
     }
 
     /// The size the filesystem last reported, for the status bar's fallback
@@ -73,32 +67,27 @@ impl Generation {
 }
 
 #[cfg(unix)]
-fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
+fn file_identity(_file: &File, metadata: &Metadata) -> std::io::Result<Option<FileIdentity>> {
     use std::os::unix::fs::MetadataExt;
-    Some(FileIdentity {
+    Ok(Some(FileIdentity {
         volume: metadata.dev(),
         file: metadata.ino(),
-    })
+    }))
 }
 
 #[cfg(windows)]
-fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
-    use std::os::windows::fs::MetadataExt;
-    // `volume_serial_number`/`file_index` are the exact answer, but both are
-    // behind the unstable `windows_by_handle` feature and so cannot be used
-    // on a released compiler. Creation time is stable, is recorded per file,
-    // and changes when a file is replaced rather than written through, which
-    // is the distinction this identity exists to draw. It can only ever add
-    // detection: a generation also carries the size and modification time.
-    Some(FileIdentity {
-        volume: 0,
-        file: metadata.creation_time(),
-    })
+fn file_identity(file: &File, _metadata: &Metadata) -> std::io::Result<Option<FileIdentity>> {
+    // Creation times can collide or survive replacement through NTFS tunneling.
+    let information = winapi_util::file::information(file)?;
+    Ok(Some(FileIdentity {
+        volume: information.volume_serial_number(),
+        file: information.file_index(),
+    }))
 }
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity(_metadata: &Metadata) -> Option<FileIdentity> {
-    None
+fn file_identity(_file: &File, _metadata: &Metadata) -> std::io::Result<Option<FileIdentity>> {
+    Ok(None)
 }
 
 /// A document as it was on disk, with the generation that reading it observed.
@@ -238,8 +227,11 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
 pub fn freshness(path: &Path, known: Generation) -> Freshness {
     match fs::metadata(path) {
         Ok(metadata) if !metadata.is_file() => Freshness::Gone(LoadFailure::NotAFile),
-        Ok(metadata) => {
-            let current = Generation::from_metadata(&metadata);
+        Ok(_) => {
+            let current = match Generation::at(path) {
+                Ok(current) => current,
+                Err(error) => return Freshness::Gone(classify_read_error(error)),
+            };
             if current == known {
                 Freshness::Unchanged
             } else {
@@ -575,17 +567,56 @@ mod tests {
     fn a_file_replaced_by_an_atomic_save_elsewhere_does_not_look_unchanged() {
         let directory = TemporaryDirectory::new("replaced");
         let path = directory.file("notes.md", "aaaaa\n");
+        set_fixed_timestamps(&path);
         let loaded = load(&path, bounds()).unwrap();
 
         // What another editor's own atomic save looks like from here: the same
         // name, written somewhere else and renamed into place.
         let elsewhere = directory.file("notes.md.new", "bbbbb\n");
+        set_fixed_timestamps(&elsewhere);
         fs::rename(&elsewhere, &path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().modified().ok(),
+            loaded.generation.modified
+        );
 
         match freshness(&path, loaded.generation) {
             Freshness::Changed(_) => {}
             other => panic!("a replaced file must not look unchanged: {other:?}"),
         }
+    }
+
+    fn set_fixed_timestamps(path: &Path) {
+        let timestamp = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let times = fs::FileTimes::new().set_modified(timestamp);
+        #[cfg(windows)]
+        let times = {
+            use std::os::windows::fs::FileTimesExt;
+            times.set_created(timestamp)
+        };
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(times)
+            .unwrap();
+    }
+
+    #[test]
+    fn saving_refuses_an_atomic_replacement_with_matching_timestamps_and_size() {
+        let directory = TemporaryDirectory::new("replaced-save");
+        let path = directory.file("notes.md", "aaaaa\n");
+        set_fixed_timestamps(&path);
+        let loaded = load(&path, bounds()).unwrap();
+        let elsewhere = directory.file("notes.md.new", "bbbbb\n");
+        set_fixed_timestamps(&elsewhere);
+        fs::rename(&elsewhere, &path).unwrap();
+
+        assert!(matches!(
+            save(&path, b"my edits\n", Some(loaded.generation)),
+            Err(SaveFailure::Conflict(_))
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "bbbbb\n");
     }
 
     #[test]
