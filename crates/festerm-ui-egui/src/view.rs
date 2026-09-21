@@ -233,14 +233,14 @@ struct ScrollbarGeometry {
 /// would be indistinguishable from `Normal` on devices that emit many small
 /// wheel events per swipe (e.g. a trackpad), since each individual event's
 /// scaled row count would otherwise get floored back up to `1`.
-fn scaled_scroll_rows(raw_rows: f32, multiplier: f32, carry: &mut f32) -> usize {
+pub(crate) fn scaled_scroll_rows(raw_rows: f32, multiplier: f32, carry: &mut f32) -> usize {
     let scaled = raw_rows.max(0.0) * multiplier.max(0.0) + *carry;
     let rows = scaled.floor().max(0.0) as usize;
     *carry = scaled - scaled.floor();
     rows
 }
 
-fn wheel_delta_rows(
+pub(crate) fn wheel_delta_rows(
     unit: egui::MouseWheelUnit,
     delta_y: f32,
     cell_height: f32,
@@ -1104,6 +1104,7 @@ impl TerminalView {
                 keyboard: &mut self.keyboard,
                 pointer: &mut self.pointer,
                 viewport_offset_rows: self.history.offset_rows,
+                scroll_speed_multiplier: options.scroll_speed_multiplier,
             },
             sink,
             InputSuppression {
@@ -1920,6 +1921,85 @@ mod tests {
             (ratio_before - ratio_after).abs() < 0.15,
             "expected proportional offset, before={offset_before}/{history_before} \
              after={offset_after}/{history_after}"
+        );
+    }
+
+    #[test]
+    fn a_reporting_application_is_scrolled_by_rows_and_obeys_the_speed_preference() {
+        // Bug report: scrolling a full-screen TUI was far too fast even at
+        // "Very slow". A mouse-reporting application used to get exactly one
+        // wheel report per egui event regardless of how far the event moved
+        // and regardless of the scroll-speed preference, so a trackpad's
+        // stream of pixel-sized events counted as a full notch each. Reports
+        // now follow the same rows-then-multiplier math local scrollback
+        // uses.
+        fn reports_for(
+            multiplier: f32,
+            unit: egui::MouseWheelUnit,
+            delta_y: f32,
+            events: usize,
+        ) -> usize {
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(420.0, 240.0))
+                .build_ui_state(
+                    |ui, state: &mut HeadlessViewState| {
+                        state.view.show_with_options(
+                            ui,
+                            &mut state.terminal,
+                            &mut state.sink,
+                            TerminalViewOptions {
+                                scroll_speed_multiplier: multiplier,
+                                ..TerminalViewOptions::default()
+                            },
+                        );
+                    },
+                    HeadlessViewState::new(),
+                );
+            harness.run();
+            // Normal mouse tracking: the application owns the wheel.
+            harness.state_mut().terminal.ingest(b"\x1b[?1000h");
+            let center = harness
+                .state()
+                .view
+                .diagnostics()
+                .grid_rect
+                .unwrap()
+                .center();
+            harness.event(egui::Event::PointerMoved(center));
+            harness.run();
+            let before = harness.state().sink.0.len();
+            for _ in 0..events {
+                harness.event(egui::Event::MouseWheel {
+                    unit,
+                    delta: egui::vec2(0.0, delta_y),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run();
+            }
+            harness.state().sink.0.len() - before
+        }
+
+        // One three-line wheel notch still reports three lines at Normal.
+        assert_eq!(
+            reports_for(1.0, egui::MouseWheelUnit::Line, 3.0, 1),
+            3,
+            "a normal-speed wheel notch reports one line per row it would have scrolled"
+        );
+
+        // "Very slow" is 0.1x: ten of those notches report three lines in
+        // total rather than thirty.
+        let very_slow = reports_for(0.1, egui::MouseWheelUnit::Line, 3.0, 10);
+        assert_eq!(
+            very_slow, 3,
+            "the slowest clickstop must reach the application, too: {very_slow}"
+        );
+
+        // A trackpad's small pixel deltas no longer each count as a notch.
+        let pixels = reports_for(1.0, egui::MouseWheelUnit::Point, 2.0, 4);
+        assert!(
+            pixels <= 1,
+            "four sub-row pixel events must not report four notches: {pixels}"
         );
     }
 

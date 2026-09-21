@@ -1547,7 +1547,12 @@ control (`Disabled`, `16 MiB`, `64 MiB`, or `256 MiB`) and a five-step
 **Scroll speed** clickstop (`Very slow` through `Very fast`). The limit is a
 retained-history payload budget for sessions created after the setting changes;
 existing sessions keep their current budget. Scroll speed scales wheel/trackpad
-history motion relative to the original fixed mapping.
+history motion relative to the original fixed mapping. It governs a
+mouse-reporting application's scrolling the same way: a full-screen program
+that captures the wheel is sent one wheel report per row the same gesture
+would have moved fesTerm's own scrollback, so a trackpad's stream of
+pixel-sized events is not reported as a full notch each, and the preference
+is not silently bypassed by the programs a user is most likely to scroll.
 
 The **Terminal typography** card exposes the bundled terminal-family selector
 plus the default-off ligature toggle. The **Quick switch** card currently
