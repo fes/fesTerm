@@ -325,6 +325,13 @@ generation references their recorded helper identity; a locked but
 not-yet-registered startup remains preserved rather than blocking a new
 session.
 
+A release identity is not a content identity: a rebuilt or re-signed package
+can carry the same version with different bytes. When the staged copy differs
+from the packaged source, it is replaced whenever no live registry generation
+records that helper identity, and the start is refused only while a live
+generation still executes that image — the one case where replacing it would
+be both impossible and wrong.
+
 Registry records now also carry a protocol compatibility epoch independent of
 the application/helper release. Missing protocol metadata means epoch 1 for
 records created before this field existed, matching their `FSD1` framing.
@@ -334,6 +341,14 @@ introduces a new epoch must retain client adapters for every daemon version
 allowed to survive the supported upgrade window; it must not merely increment
 the constant and strand live sessions. Ordinary compatible releases keep the
 epoch unchanged.
+
+The epoch only helps if the record carrying it can still be read, so the
+registry file itself is parsed per record rather than as one typed document.
+A record this build cannot interpret costs its own session and nothing else:
+the client reports the version gap instead of "not registered", the helper
+refuses to start, attach or kill under that name rather than overwriting it,
+and any registry write preserves the foreign record verbatim. A future schema
+change therefore cannot strand the sessions of the release that is running.
 
 The first release with this layout deliberately omits the legacy stable helper
 from its payload. It can therefore install beside a locked helper used by
@@ -479,6 +494,19 @@ installer/application cleanup.
   `incompatible_registry_record_is_rejected_before_connecting` proves protocol
   incompatibility fails before IPC attachment with actionable version guidance;
   legacy registry parsing defaults to the compatible `FSD1` epoch.
+  `an_unreadable_record_costs_only_its_own_session`,
+  `an_unreadable_record_without_an_epoch_still_explains_itself` and
+  `a_record_this_helper_cannot_read_survives_an_update_of_another_session`
+  prove a record from a future schema neither hides the sessions beside it nor
+  disappears when one of them is updated;
+  `killing_a_session_this_helper_cannot_read_reports_the_version_gap` proves
+  the helper refuses that name instead of reporting it missing.
+  `a_rebuilt_helper_replaces_an_unreferenced_staged_copy` and
+  `a_rebuilt_helper_is_refused_while_a_live_session_still_runs_the_staged_copy`
+  prove that same-version bytes are republished when safe and retained when a
+  live generation still needs them, and
+  `byte_identical_helpers_match_across_read_chunk_boundaries` proves the
+  comparison does not depend on how a read is chunked.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

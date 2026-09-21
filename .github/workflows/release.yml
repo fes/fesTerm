@@ -328,8 +328,7 @@ jobs:
       - name: Stage immutable Windows session daemon
         shell: pwsh
         run: |
-          ./scripts/stage-windows-sessiond.ps1 -Configuration Release
-          $versionedHelper = "target/release/festerm-sessiond-$env:VERSION.exe"
+          $versionedHelper = ./scripts/stage-windows-sessiond.ps1 -Configuration Release
           if ((Get-AuthenticodeSignature $versionedHelper).Status -ne 'Valid') {
             throw "Staged session daemon is not Authenticode-valid: $versionedHelper"
           }

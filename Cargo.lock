@@ -2165,6 +2165,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 

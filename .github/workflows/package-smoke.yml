@@ -158,7 +158,24 @@ jobs:
           $legacyInstaller = Join-Path $env:RUNNER_TEMP 'festerm-0.2.0-setup.exe'
           $legacyUri = 'https://github.com/fes/fesTerm/releases/download/v0.2.0/' +
             'fesTerm-0.2.0-windows-${{ matrix.package_arch }}-setup.exe'
-          Invoke-WebRequest -Uri $legacyUri -OutFile $legacyInstaller
+          # v0.2.0 is the oldest release whose daemon must survive an upgrade.
+          # Move this baseline when MIN_SUPPORTED_PROTOCOL_VERSION rises above
+          # the epoch it wrote.
+          $download = $null
+          foreach ($attempt in 1..3) {
+            try {
+              Invoke-WebRequest -Uri $legacyUri -OutFile $legacyInstaller
+              $download = $true
+              break
+            } catch {
+              $download = $_
+              Write-Warning "Attempt ${attempt} to download the v0.2.0 installer failed: $_"
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+          if ($download -ne $true) {
+            throw "Could not download the v0.2.0 installer: $download"
+          }
           if ((Get-AuthenticodeSignature $legacyInstaller).Status -ne 'Valid') {
             throw 'Downloaded v0.2.0 installer is not Authenticode-valid'
           }

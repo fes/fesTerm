@@ -86,6 +86,12 @@ Production publication is triggered only by a `vMAJOR.MINOR.PATCH` tag whose
 version matches the workspace. Manual dispatch builds the same signed
 artifacts but does not publish.
 
+Preparing a release bumps `Cargo.toml`, `Cargo.lock`, the three
+`packaging/*.toml` manifests, and — because the Windows helper resource is
+named for its release — the `festerm-sessiond-<release>.exe` `src`/`target`
+pair inside `packaging/windows.toml`. `scripts/check_packaging.py` fails the
+build when any of them disagrees with the workspace version.
+
 Before an in-app install begins, fesTerm obtains aggregate restart consent if
 live sessions would be closed. Cancelling leaves the verified download ready
 to install. After a consented install completes, fesTerm requests one normal
