@@ -2177,9 +2177,14 @@ mod tests {
     }
 
     fn wait_for_suggestion(harness: &mut Harness<'static, ProfilesHarnessState>, label: &str) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        // Steps one frame at a time rather than calling `Harness::run`: a
+        // background completion job that finishes mid-run requests another
+        // repaint, and on a loaded CI runner that can outlast `run`'s
+        // four-step budget and abort the test for a reason that has nothing
+        // to do with what it is asserting.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
-            harness.run();
+            harness.step();
             if harness.query_by_label(label).is_some() {
                 return;
             }
@@ -2201,20 +2206,20 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         let expected_path =
             super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
-        harness.run();
+        harness.run_ok();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
-        harness.run();
+        harness.run_ok();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.get_by_label("Executable").type_text("cargo");
-        harness.run();
+        harness.run_ok();
 
         let expected_label = expected_path.display().to_string();
         wait_for_suggestion(&mut harness, &expected_label);
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
             .click();
-        harness.run();
+        harness.run_ok();
 
         assert_eq!(
             harness.get_by_label("Executable").value().as_deref(),
@@ -2228,13 +2233,13 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         let expected_path =
             super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
-        harness.run();
+        harness.run_ok();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
-        harness.run();
+        harness.run_ok();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.get_by_label("Executable").type_text("cargo");
-        harness.run();
+        harness.run_ok();
 
         let expected_label = expected_path.display().to_string();
         wait_for_suggestion(&mut harness, &expected_label);
@@ -2244,7 +2249,7 @@ mod tests {
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
             .click_accesskit();
-        harness.run();
+        harness.run_ok();
 
         assert_eq!(
             harness.get_by_label("Executable").value().as_deref(),
@@ -2271,7 +2276,7 @@ mod tests {
         std::fs::create_dir_all(&expected_path).expect("test directory can be created");
 
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Working directory (optional)").focus();
         harness
@@ -2283,7 +2288,7 @@ mod tests {
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
             .click_accesskit();
-        harness.run();
+        harness.run_ok();
 
         assert_eq!(
             harness
@@ -2310,13 +2315,13 @@ mod tests {
         std::fs::create_dir_all(&expected_path).expect("test directory can be created");
 
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
-        harness.run();
+        harness.run_ok();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness.get_by_label("Executable").type_text("cargo");
-        harness.run();
+        harness.run_ok();
 
         harness.get_by_label("Working directory (optional)").focus();
         harness
@@ -2345,13 +2350,13 @@ mod tests {
         std::fs::create_dir_all(&root).expect("test directory can be created");
 
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Working directory (optional)").focus();
         harness
             .get_by_label("Working directory (optional)")
             .type_text(&query);
-        harness.run();
+        harness.run_ok();
         assert!(
             harness
                 .query_by_label(&expected_path.display().to_string())
@@ -2361,7 +2366,7 @@ mod tests {
 
         std::fs::create_dir_all(&expected_path).expect("test directory can be created");
         harness.get_by_label("Executable").focus();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Working directory (optional)").focus();
 
         let expected_label = expected_path.display().to_string();
