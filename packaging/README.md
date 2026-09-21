@@ -13,6 +13,17 @@ They must be built from
 the same workspace revision and installed beside each other so the application
 can resolve the helper without searching `PATH`.
 
+On Windows, the sibling `festerm-sessiond.exe` is an installer-owned source,
+not the long-lived daemon image. Before starting a session, fesTerm copies that
+signed executable to the current user's private sessiond runtime directory as
+`helpers/festerm-sessiond-<release>-<architecture>.exe` and launches the copy. Existing
+protocol-compatible daemons therefore keep their sessions and locked runtime
+images while NSIS replaces the unlocked package-owned source during an update.
+The registry records the helper identity and protocol epoch. Unreferenced old
+runtime copies are pruned opportunistically; live generations are never
+deleted. The first update from a release predating this staging contract can
+still require terminating daemons that already execute the installed sibling.
+
 The macOS packager builds its ICNS container from supported PNG sizes. Windows
 uses the checked-in `assets/app-icon/festerm.ico`, reproducibly generated with:
 

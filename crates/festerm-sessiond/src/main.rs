@@ -114,6 +114,14 @@ struct SessionRecord {
     created_at_unix_ms: u128,
     #[serde(default)]
     attached: bool,
+    #[serde(default = "legacy_protocol_version")]
+    protocol_version: u16,
+    #[serde(default)]
+    helper_identity: Option<String>,
+}
+
+const fn legacy_protocol_version() -> u16 {
+    1
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -427,6 +435,14 @@ fn run_start(
     with_registry_lock(|registry| {
         if let Some(record) = registry.sessions.get(&name) {
             if record_is_live(record)? {
+                if record.protocol_version != festerm_sessiond::PROTOCOL_VERSION {
+                    return Err(format!(
+                        "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
+                        record.protocol_version,
+                        festerm_sessiond::PROTOCOL_VERSION
+                    )
+                    .into());
+                }
                 return Err(format!("session '{name}' is already running").into());
             }
             cleanup_dead_generation(&runtime_root, record, true)?;
@@ -435,7 +451,11 @@ fn run_start(
         Ok(())
     })?;
 
-    let exe = env::current_exe()?;
+    let packaged_exe = env::current_exe()?;
+    #[cfg(windows)]
+    let exe = festerm_sessiond::stage_windows_daemon(&packaged_exe, &runtime_root)?;
+    #[cfg(not(windows))]
+    let exe = packaged_exe;
     // The parent must know the generation even if the child fails before
     // publishing its registry record.
     let generation = now_ms();
@@ -684,6 +704,11 @@ fn generation_record(
         rows,
         created_at_unix_ms: generation,
         attached: false,
+        protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+        helper_identity: env::current_exe().ok().and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }),
     })
 }
 
@@ -2009,6 +2034,14 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         .sessions
         .get(&name)
         .ok_or_else(|| format!("session '{name}' is not registered"))?;
+    if record.protocol_version != festerm_sessiond::PROTOCOL_VERSION {
+        return Err(format!(
+            "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
+            record.protocol_version,
+            festerm_sessiond::PROTOCOL_VERSION
+        )
+        .into());
+    }
 
     #[cfg(unix)]
     let outcome = {
@@ -3467,6 +3500,8 @@ mod tests {
                     rows: 24,
                     created_at_unix_ms: 2,
                     attached: false,
+                    protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+                    helper_identity: None,
                 },
             )]),
         };
@@ -4000,6 +4035,8 @@ mod tests {
             rows: 24,
             created_at_unix_ms: 1_700_000_000_000,
             attached: true,
+            protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+            helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
         };
         let registry = SessionRegistry {
             sessions: BTreeMap::from([(record.name.clone(), record.clone())]),

@@ -304,6 +304,39 @@ backoff rather than permanently remembering a detach that was never saved.
 This is internal lifecycle/discovery hardening of the existing daemon contract,
 not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
 
+## Windows update continuity (2026-09-20)
+
+Windows prevents an installer from replacing an executable image used by a
+running process. Packaged releases historically launched the one
+installer-owned sibling `festerm-sessiond.exe` directly, so a detached session
+could block NSIS even though the session was otherwise compatible with the new
+fesTerm client.
+
+The sibling remains the signed package source, but it is no longer the
+long-lived Windows image. Before `start`, both fesTerm and the helper CLI copy
+it into the private sessiond runtime directory under the immutable release
+and target identity
+`helpers/festerm-sessiond-<release>-<architecture>.exe`; the detached daemon
+executes that copy. A later installer can replace the unlocked sibling while
+old daemon generations continue from their prior copies. New sessions use the
+current release copy. Old copies are deleted only when no live registry
+generation references their recorded helper identity; a locked but
+not-yet-registered startup remains preserved rather than blocking a new
+session.
+
+Registry records now also carry a protocol compatibility epoch independent of
+the application/helper release. Missing protocol metadata means epoch 1 for
+records created before this field existed, matching their `FSD1` framing.
+Clients and the helper CLI reject an explicitly different epoch before
+attachment and preserve the daemon/session for a compatible fesTerm version.
+Changing this epoch is required whenever an existing client can no longer
+attach safely; ordinary compatible releases keep it unchanged.
+
+This contract avoids update interruption after the staged-helper release is
+installed. It cannot retroactively unlock a daemon already executing the
+sibling from an older release, so that first transition may require ending
+pre-contract sessions once.
+
 ## Alternatives considered
 
 - **Do nothing; local persistence remains Unix-only via `tmux`/`screen`.**
@@ -340,6 +373,10 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
 - A new crate and shipped artifact (`festerm-sessiond`) must be built,
   signed/packaged, and distributed alongside the main `festerm` binary for
   every supported platform, adding to `cargo-packager` scope (ADR 0021).
+- Windows additionally retains one runtime helper copy per release that still
+  owns a live daemon generation. These copies are current-user state, not
+  installer-owned payloads, and are reclaimed after their final generation
+  exits.
 - fesTerm gains an operational surface it did not previously have: orphaned
   background processes are now possible (e.g., if a user's machine restarts
   uncleanly). The registry-and-prune design above is required, not optional,
@@ -416,10 +453,18 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
   after timeout without following the selected server symlink. Controlled local
   clients test graceful hangup and bounded escalation, preserving process-group
   ownership and default shell behavior.
+  `windows_helper_staging_is_versioned_and_prunes_only_unreferenced_builds`
+  proves that Windows launches an immutable release copy, retains a live
+  generation's older copy, and removes an unreferenced copy.
+  `incompatible_registry_record_is_rejected_before_connecting` proves protocol
+  incompatibility fails before IPC attachment with actionable version guidance;
+  legacy registry parsing defaults to the compatible `FSD1` epoch.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows
-  named-pipe current-user isolation and Job Object breakaway.
+  named-pipe current-user isolation, Job Object breakaway, compatible signed
+  update continuity, new-session helper selection, and post-exit old-copy
+  cleanup.
 - **Coverage superseded:** None.
 
 The ADR remains Proposed while this implementation is evaluated.

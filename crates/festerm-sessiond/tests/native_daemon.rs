@@ -731,7 +731,15 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     eprintln!("sessiond-native phase=launched");
 
     let registry = runtime_root.join("festerm").join("sessiond");
-    let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
+    let registry_path = registry.join("registry.json");
+    let endpoint = registry_endpoint(&registry_path, &name);
+    let registry_document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let record = &registry_document["sessions"][&name];
+    assert_eq!(
+        record["protocol_version"].as_u64(),
+        Some(u64::from(festerm_sessiond::PROTOCOL_VERSION))
+    );
     assert_native_permissions(&registry, &endpoint);
 
     let mut first = connect(&endpoint);
@@ -848,6 +856,21 @@ fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_al
         .expect("the start command's watcher thread must not panic")
         .expect("spawning festerm-sessiond start must succeed");
     assert_success("start", &output);
+
+    let registry = runtime_root.join("fesTerm").join("sessiond");
+    let registry_document: serde_json::Value =
+        serde_json::from_slice(&fs::read(registry.join("registry.json")).unwrap()).unwrap();
+    let record = &registry_document["sessions"][&name];
+    let helper_identity = record["helper_identity"].as_str().unwrap();
+    assert_eq!(
+        helper_identity,
+        format!(
+            "festerm-sessiond-{}-{}.exe",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::ARCH
+        )
+    );
+    assert!(registry.join("helpers").join(helper_identity).is_file());
 }
 
 /// Regression test for the Windows zombie daemon reported in September 2026.

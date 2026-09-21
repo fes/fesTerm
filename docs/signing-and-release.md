@@ -91,6 +91,12 @@ live sessions would be closed. Cancelling leaves the verified download ready
 to install. After a consented install completes, fesTerm requests one normal
 application close and marks that updater-owned close as already authorized so
 ordinary live-session quit interception cannot strand replacement/relaunch.
+Persistent Windows `festerm-sessiond` sessions are independent of that GUI
+restart: new sessions execute a release-versioned copy from the private runtime
+directory, leaving the installer-owned sibling unlocked. Protocol-compatible
+daemon generations can remain alive and reattach after relaunch. The one-time
+transition from a release that executed the sibling directly may still require
+ending those older daemons before installation.
 
 The workflow:
 

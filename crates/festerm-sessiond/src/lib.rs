@@ -16,6 +16,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(any(windows, test))]
+use std::{
+    fs::{self, File},
+    path::Path,
+};
+
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
@@ -38,6 +44,10 @@ const FRAME_MAGIC: &[u8; 4] = b"FSD1";
 const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// Compatibility epoch for registry records and the `FSD1` client protocol.
+///
+/// This changes only when an existing client can no longer attach safely.
+pub const PROTOCOL_VERSION: u16 = 1;
 const STOLEN_NOTICE_BYTES: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
@@ -64,6 +74,14 @@ struct SessionRecord {
     created_at_unix_ms: u128,
     #[serde(default)]
     attached: bool,
+    #[serde(default = "legacy_protocol_version")]
+    protocol_version: u16,
+    #[serde(default)]
+    helper_identity: Option<String>,
+}
+
+const fn legacy_protocol_version() -> u16 {
+    1
 }
 
 #[derive(Default, Deserialize)]
@@ -665,6 +683,7 @@ fn connect_existing_in_registry_with_cancel(
             "no locally running session named '{name}' is registered"
         ))
     })?;
+    ensure_protocol_compatible(record)?;
     connect_record_with_cancel(record, cancelled).map_err(|error| {
         PersistentSessionError::new(format!(
             "session '{name}' is registered to process {} but is not accepting connections \
@@ -1113,6 +1132,7 @@ fn connect_or_start(
     size: TerminalSize,
 ) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
     if let Some(record) = load_registry()?.sessions.get(name) {
+        ensure_protocol_compatible(record)?;
         if let Ok(stream) = connect_record(record) {
             return Ok(stream);
         }
@@ -1194,6 +1214,7 @@ fn connect_record_with_cancel(
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
+    ensure_protocol_compatible(record)?;
     let _pid = record.pid;
     #[cfg(unix)]
     {
@@ -1233,6 +1254,17 @@ fn connect_record_with_cancel(
     }
 }
 
+fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSessionError> {
+    if record.protocol_version == PROTOCOL_VERSION {
+        return Ok(());
+    }
+    Err(PersistentSessionError::new(format!(
+        "session '{}' uses persistent-session protocol {}, but this fesTerm supports protocol {}; \
+         keep using a compatible fesTerm version or terminate that session before replacing it",
+        record.name, record.protocol_version, PROTOCOL_VERSION
+    )))
+}
+
 fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
     let current = std::env::current_exe().map_err(|error| {
         PersistentSessionError::new(format!("could not locate fesTerm executable: {error}"))
@@ -1240,19 +1272,164 @@ fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
     let directory = current.parent().ok_or_else(|| {
         PersistentSessionError::new("fesTerm executable has no containing directory")
     })?;
-    let daemon = directory.join(if cfg!(windows) {
+    let packaged = directory.join(if cfg!(windows) {
         "festerm-sessiond.exe"
     } else {
         "festerm-sessiond"
     });
-    if daemon.is_file() {
-        Ok(daemon)
-    } else {
-        Err(PersistentSessionError::new(format!(
+    if !packaged.is_file() {
+        return Err(PersistentSessionError::new(format!(
             "persistent-session helper is not installed beside fesTerm: {}",
-            daemon.display()
-        )))
+            packaged.display()
+        )));
     }
+
+    #[cfg(windows)]
+    {
+        stage_windows_daemon(&packaged, &runtime_root()?)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(packaged)
+    }
+}
+
+#[cfg(any(windows, test))]
+/// Copies the packaged Windows helper to its immutable per-release runtime path.
+///
+/// Long-lived daemons execute this copy so an installer can replace the
+/// package-owned source executable while compatible sessions remain alive.
+pub fn stage_windows_daemon(
+    packaged: &Path,
+    runtime_root: &Path,
+) -> Result<PathBuf, PersistentSessionError> {
+    let helpers = runtime_root.join("helpers");
+    fs::create_dir_all(&helpers).map_err(|error| {
+        PersistentSessionError::new(format!(
+            "could not create persistent-session helper directory '{}': {error}",
+            helpers.display()
+        ))
+    })?;
+    let identity = format!(
+        "festerm-sessiond-{}-{}.exe",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::ARCH
+    );
+    let staged = helpers.join(&identity);
+    if staged.is_file() {
+        if files_match(packaged, &staged)? {
+            prune_windows_daemons(&helpers, &identity)?;
+            return Ok(staged);
+        }
+        return Err(PersistentSessionError::new(format!(
+            "persistent-session helper '{}' differs from the packaged {} build; \
+             terminate sessions using that development build and remove the stale helper",
+            staged.display(),
+            env!("CARGO_PKG_VERSION")
+        )));
+    }
+
+    let temporary = helpers.join(format!(".{identity}.{}.tmp", std::process::id()));
+    match fs::copy(packaged, &temporary) {
+        Ok(_) => {}
+        Err(error) => {
+            return Err(PersistentSessionError::new(format!(
+                "could not stage persistent-session helper '{}': {error}",
+                staged.display()
+            )))
+        }
+    }
+    if let Err(error) = fs::rename(&temporary, &staged) {
+        let _ = fs::remove_file(&temporary);
+        if !(staged.is_file() && files_match(packaged, &staged)?) {
+            return Err(PersistentSessionError::new(format!(
+                "could not publish persistent-session helper '{}': {error}",
+                staged.display()
+            )));
+        }
+    }
+    prune_windows_daemons(&helpers, &identity)?;
+    Ok(staged)
+}
+
+#[cfg(any(windows, test))]
+fn files_match(left: &Path, right: &Path) -> Result<bool, PersistentSessionError> {
+    let left_metadata = fs::metadata(left).map_err(|error| {
+        PersistentSessionError::new(format!("could not inspect '{}': {error}", left.display()))
+    })?;
+    let right_metadata = fs::metadata(right).map_err(|error| {
+        PersistentSessionError::new(format!("could not inspect '{}': {error}", right.display()))
+    })?;
+    if left_metadata.len() != right_metadata.len() {
+        return Ok(false);
+    }
+    let mut left =
+        File::open(left).map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    let mut right =
+        File::open(right).map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    let mut left_buffer = [0_u8; 64 * 1024];
+    let mut right_buffer = [0_u8; 64 * 1024];
+    loop {
+        let left_read = left
+            .read(&mut left_buffer)
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        let right_read = right
+            .read(&mut right_buffer)
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn prune_windows_daemons(
+    helpers: &Path,
+    current_identity: &str,
+) -> Result<(), PersistentSessionError> {
+    let registry = load_registry_in(helpers.parent().ok_or_else(|| {
+        PersistentSessionError::new("persistent-session helper directory has no runtime root")
+    })?)?;
+    let root = helpers.parent().expect("helper directory parent checked");
+    let mut retained = std::collections::BTreeSet::new();
+    for record in registry.sessions.values() {
+        if record_is_live(root, record)? {
+            if let Some(identity) = record.helper_identity.as_deref() {
+                retained.insert(identity);
+            }
+        }
+    }
+    for entry in
+        fs::read_dir(helpers).map_err(|error| PersistentSessionError::new(error.to_string()))?
+    {
+        let entry = entry.map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == current_identity
+            || retained.contains(name.as_ref())
+            || !name.starts_with("festerm-sessiond-")
+            || !name.ends_with(".exe")
+        {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => {}
+            // A start helper may be executing before its daemon publishes the
+            // registry record. Preserve that locked image and retry pruning
+            // on the next launch rather than making the concurrent start fail.
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {}
+            Err(error) => {
+                return Err(PersistentSessionError::new(format!(
+                    "could not remove stale persistent-session helper '{}': {error}",
+                    entry.path().display()
+                )))
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_registry() -> Result<SessionRegistry, PersistentSessionError> {
@@ -2431,6 +2608,8 @@ mod registry_filtering_tests {
         assert_eq!(record.socket, "demo.sock");
         assert_eq!(record.name, "");
         assert!(!record.attached);
+        assert_eq!(record.protocol_version, PROTOCOL_VERSION);
+        assert!(record.helper_identity.is_none());
     }
 
     #[test]
@@ -2444,6 +2623,8 @@ mod registry_filtering_tests {
             working_directory: Some("/tmp".to_owned()),
             created_at_unix_ms: 123,
             attached: false,
+            protocol_version: PROTOCOL_VERSION,
+            helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
         };
         let mut registry = SessionRegistry::default();
         registry.sessions.insert(record.name.clone(), record);
@@ -2483,6 +2664,8 @@ mod registry_filtering_tests {
                 working_directory: None,
                 created_at_unix_ms: 0,
                 attached: true,
+                protocol_version: PROTOCOL_VERSION,
+                helper_identity: None,
             },
         );
 
@@ -2492,5 +2675,72 @@ mod registry_filtering_tests {
             .filter(|record| !record.attached)
             .collect();
         assert!(unattached.is_empty());
+    }
+
+    #[test]
+    fn incompatible_registry_record_is_rejected_before_connecting() {
+        let record = SessionRecord {
+            name: "future".to_owned(),
+            pid: 1,
+            socket: "future.sock".to_owned(),
+            shell: String::new(),
+            arguments: Vec::new(),
+            working_directory: None,
+            created_at_unix_ms: 0,
+            attached: false,
+            protocol_version: PROTOCOL_VERSION + 1,
+            helper_identity: None,
+        };
+        let registry = SessionRegistry {
+            sessions: BTreeMap::from([(record.name.clone(), record)]),
+        };
+        let error = connect_existing_in_registry(&registry, "future")
+            .err()
+            .expect("incompatible protocol must fail before connecting")
+            .to_string();
+        assert!(error.contains("protocol 2"));
+        assert!(error.contains("supports protocol 1"));
+        assert!(error.contains("compatible fesTerm version"));
+    }
+
+    #[test]
+    fn windows_helper_staging_is_versioned_and_prunes_only_unreferenced_builds() {
+        let fixture = RegistryFixture::new();
+        let packaged = fixture.0.join("festerm-sessiond.exe");
+        std::fs::write(&packaged, b"signed helper bytes").unwrap();
+        let helpers = fixture.0.join("helpers");
+        std::fs::create_dir(&helpers).unwrap();
+        let retained = helpers.join("festerm-sessiond-retained.exe");
+        let stale = helpers.join("festerm-sessiond-stale.exe");
+        std::fs::write(&retained, b"retained").unwrap();
+        std::fs::write(&stale, b"stale").unwrap();
+        let registry = serde_json::json!({
+            "sessions": {
+                "legacy-live": {
+                    "name": "legacy-live",
+                    "pid": std::process::id(),
+                    "socket": "legacy-endpoint",
+                    "helper_identity": "festerm-sessiond-retained.exe"
+                }
+            }
+        });
+        std::fs::write(
+            fixture.0.join("registry.json"),
+            serde_json::to_vec(&registry).unwrap(),
+        )
+        .unwrap();
+
+        let staged = stage_windows_daemon(&packaged, &fixture.0).unwrap();
+        assert_eq!(
+            staged.file_name().unwrap().to_string_lossy(),
+            format!(
+                "festerm-sessiond-{}-{}.exe",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::ARCH
+            )
+        );
+        assert_eq!(std::fs::read(staged).unwrap(), b"signed helper bytes");
+        assert!(retained.is_file());
+        assert!(!stale.exists());
     }
 }
