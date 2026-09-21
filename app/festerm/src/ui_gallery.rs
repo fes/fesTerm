@@ -470,6 +470,15 @@ fn scenarios() -> Vec<Scenario> {
                       shrink to a single line, fitting more of them in the same row.",
             capture: capture_chips_compact,
         },
+        Scenario {
+            id: "chips-update-badge",
+            section: "chips",
+            title: "Update-available badge on the overflow control",
+            caption: "After a background check finds a newer release, the 'More actions' \
+                      control carries a single accent dot until the user opens About; its \
+                      menu gains an 'Update to fesTerm 0.3.0…' entry above the usual items.",
+            capture: capture_chips_update_badge,
+        },
     ]
 }
 
@@ -922,6 +931,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         pulse_new_output_dot: true,
         show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
+        automatic_update_checks: true,
         default_sftp_local_directory: Some("/home/devuser/sftp/example-drop".to_owned()),
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
     }
@@ -1979,7 +1989,10 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
     ]
 }
 
-fn render_chips(show_session_details: bool) -> image::RgbaImage {
+fn render_chips(
+    show_session_details: bool,
+    available_update: Option<&'static str>,
+) -> image::RgbaImage {
     let chips = synthetic_chip_view_models();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1000.0, 160.0))
@@ -1993,6 +2006,7 @@ fn render_chips(show_session_details: bool) -> image::RgbaImage {
                 ChipLayout::Wrap,
                 show_session_details,
                 false,
+                available_update,
             );
         });
     // One chip deliberately demonstrates the "new output" pulse cue
@@ -2007,11 +2021,15 @@ fn render_chips(show_session_details: bool) -> image::RgbaImage {
 }
 
 fn capture_chips_verbose() -> image::RgbaImage {
-    render_chips(true)
+    render_chips(true, None)
 }
 
 fn capture_chips_compact() -> image::RgbaImage {
-    render_chips(false)
+    render_chips(false, None)
+}
+
+fn capture_chips_update_badge() -> image::RgbaImage {
+    render_chips(true, Some("0.3.0"))
 }
 
 // --------------------------------------------------------------------

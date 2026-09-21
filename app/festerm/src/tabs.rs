@@ -1851,6 +1851,8 @@ pub enum AppCommand {
     /// Toggles whether the status bar names the durable session the active
     /// terminal is attached to (feature request #168).
     ToggleDurableSessionInStatusBar,
+    /// Toggles the occasional background check for a newer fesTerm release.
+    ToggleAutomaticUpdateChecks,
     /// Sets or clears the default starting local directory for new SFTP sessions.
     SetDefaultSftpLocalDirectory(Option<PathBuf>),
     /// Sets the visual left/right order for GUI SFTP panes.
@@ -2108,6 +2110,8 @@ pub struct AppState {
     /// Whether the status bar names the durable session the active terminal
     /// is attached to (feature request #168).
     show_durable_session_in_status_bar: bool,
+    /// Whether fesTerm occasionally checks GitHub for a newer release.
+    automatic_update_checks: bool,
     /// Visual left/right order for GUI SFTP panes.
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
@@ -2189,6 +2193,7 @@ impl AppState {
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
             show_durable_session_in_status_bar: settings.show_durable_session_in_status_bar(),
+            automatic_update_checks: settings.automatic_update_checks(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
             sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
@@ -2439,6 +2444,7 @@ impl AppState {
         self.pulse_new_output_dot = settings.pulse_new_output_dot();
         self.show_resumable_sessions = settings.show_resumable_sessions();
         self.show_durable_session_in_status_bar = settings.show_durable_session_in_status_bar();
+        self.automatic_update_checks = settings.automatic_update_checks();
         self.keyboard_bindings = settings.keyboard_bindings().clone();
         self.sftp_pane_order = settings.sftp_pane_order();
         self.default_sftp_local_directory = settings
@@ -2627,6 +2633,10 @@ impl AppState {
         self.show_durable_session_in_status_bar
     }
 
+    pub const fn automatic_update_checks(&self) -> bool {
+        self.automatic_update_checks
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -2661,6 +2671,7 @@ impl AppState {
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
         .with_show_resumable_sessions(self.show_resumable_sessions)
         .with_show_durable_session_in_status_bar(self.show_durable_session_in_status_bar)
+        .with_automatic_update_checks(self.automatic_update_checks)
         .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
@@ -3075,6 +3086,9 @@ impl AppState {
             AppCommand::ToggleDurableSessionInStatusBar => {
                 self.show_durable_session_in_status_bar = !self.show_durable_session_in_status_bar;
             }
+            AppCommand::ToggleAutomaticUpdateChecks => {
+                self.automatic_update_checks = !self.automatic_update_checks;
+            }
             AppCommand::SetDefaultSftpLocalDirectory(path) => {
                 self.default_sftp_local_directory = path;
             }
@@ -3169,6 +3183,7 @@ impl AppState {
                 self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
                 self.show_durable_session_in_status_bar =
                     InterfaceSettings::DEFAULT.show_durable_session_in_status_bar();
+                self.automatic_update_checks = InterfaceSettings::DEFAULT.automatic_update_checks();
                 self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;

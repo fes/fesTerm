@@ -104,6 +104,15 @@ pub struct InterfaceSettings {
     /// never start with a broken `lpwd` baseline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default_sftp_local_directory: Option<String>,
+    /// Whether fesTerm occasionally asks GitHub Releases whether a newer
+    /// version exists and shows a quiet badge when one does. On by default so
+    /// a user learns about a security fix without going looking for it;
+    /// turning it off stops the poll itself, not merely the badge.
+    #[serde(
+        default = "default_automatic_update_checks",
+        skip_serializing_if = "is_true"
+    )]
+    automatic_update_checks: bool,
     /// How a text editor view starts out. These are per-view settings while
     /// the view is open (ADR 0034 §9), but the way a reader likes to work does
     /// not change between one file and the next, so the last answer is the
@@ -135,6 +144,7 @@ impl InterfaceSettings {
         show_durable_session_in_status_bar: false,
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         default_sftp_local_directory: None,
+        automatic_update_checks: true,
         editor: EditorSettings::DEFAULT,
     };
 
@@ -309,6 +319,15 @@ impl InterfaceSettings {
 
     pub const fn show_durable_session_in_status_bar(&self) -> bool {
         self.show_durable_session_in_status_bar
+    }
+
+    pub const fn automatic_update_checks(&self) -> bool {
+        self.automatic_update_checks
+    }
+
+    pub const fn with_automatic_update_checks(mut self, automatic_update_checks: bool) -> Self {
+        self.automatic_update_checks = automatic_update_checks;
+        self
     }
 
     pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
@@ -534,6 +553,10 @@ fn default_status_bar_visible() -> bool {
 
 fn default_show_session_details() -> bool {
     InterfaceSettings::DEFAULT.show_session_details
+}
+
+fn default_automatic_update_checks() -> bool {
+    InterfaceSettings::DEFAULT.automatic_update_checks
 }
 
 fn default_confirm_session_close() -> bool {

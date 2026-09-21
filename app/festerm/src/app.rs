@@ -16,6 +16,7 @@ use festerm_config::{
     Configuration, EmojiPresentationPreference, InterfaceSettings, PersistenceProviderKind,
     Profile, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits,
     SshPortForwardDirection as ConfigPortForwardDirection, TerminalFontPreference,
+    UpdateCheckRecord,
 };
 use festerm_pty::LocalProfile;
 #[cfg(test)]
@@ -758,6 +759,18 @@ impl FesTermApp {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
         });
         let mut pending_restored_windows = Vec::new();
+        // Read before `configuration` moves into the state: restarting
+        // fesTerm must not restart the poll interval.
+        let mut updates = UpdateController::from_build();
+        updates.restore_schedule(
+            configuration.interface_settings().automatic_update_checks(),
+            configuration
+                .update_check()
+                .map(UpdateCheckRecord::last_checked_unix_seconds),
+            configuration
+                .update_check()
+                .and_then(|record| record.acknowledged_version().map(str::to_owned)),
+        );
         let (state, primary_tab) = if let Some(workspace) = configuration.workspace().cloned() {
             // The saved workspace's own tabs are this, the primary, window;
             // its additional windows are opened by the composition root once
@@ -797,7 +810,7 @@ impl FesTermApp {
             terminal_fonts_installed: true,
             terminal_font_generation,
             about_icon: Some(about_icon),
-            updates: UpdateController::from_build(),
+            updates,
             update_exit_requested: false,
             update_restart_authorized: false,
             quit_confirmed: false,
@@ -1441,6 +1454,40 @@ impl FesTermApp {
             .configuration()
             .with_profile_last_used(profile_id, now)
         else {
+            return;
+        };
+        if self
+            .configuration_reloader
+            .save_configuration(&replacement)
+            .is_ok()
+        {
+            self.state.replace_configuration(replacement);
+        }
+    }
+
+    /// Starts the occasional background update check when one is due
+    /// (`docs/gui-design.md` "Automatic update checks").
+    fn poll_automatic_update_check(&mut self) {
+        let Some(now) = crate::screens::unix_now_seconds() else {
+            return;
+        };
+        self.updates.poll_schedule(now);
+    }
+
+    /// Writes the update-check bookkeeping through to disk.
+    ///
+    /// Silent in both directions for the same reason as
+    /// [`Self::record_profile_launch`]: the user did not ask for the check,
+    /// so neither its success nor a failed write belongs in the status line.
+    /// A lost write costs at most one extra check after the next restart.
+    fn persist_update_check(&mut self) {
+        let Some(outcome) = self.updates.take_unsaved_outcome() else {
+            return;
+        };
+        let Ok(replacement) = self.state.configuration().with_update_check(
+            outcome.last_checked_unix_seconds,
+            outcome.acknowledged_version,
+        ) else {
             return;
         };
         if self
@@ -2100,6 +2147,10 @@ impl FesTermApp {
                 }
                 ChromeAction::ToggleInspector => self.toggle_inspector_from_current_focus(context),
                 ChromeAction::OpenAbout => {
+                    // Opening About is the user seeing the news; the badge
+                    // has done its job and must not nag about this version
+                    // again.
+                    self.updates.acknowledge_available_version();
                     self.overlays.about_open = true;
                     self.overlays.about_licenses_open = false;
                     context.request_repaint();
@@ -3292,6 +3343,8 @@ impl FesTermApp {
         let mut update_action = None;
         let update_status = self.updates.status().clone();
         let installation_kind = self.updates.installation_kind();
+        let automatic_update_checks =
+            self.state.automatic_update_checks() && installation_kind.can_install();
         let width = (context.content_rect().width() - 32.0).clamp(280.0, 420.0);
         egui::Modal::new(egui::Id::new("fesTerm about dialog"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
@@ -3413,12 +3466,18 @@ impl FesTermApp {
                     }
                 }
                 if !matches!(update_status, UpdateStatus::Unavailable(_)) {
+                    // The automatic poll contacts a third party without being
+                    // asked each time, so the disclosure has to say so here
+                    // rather than only in Settings.
+                    let disclosure = if automatic_update_checks {
+                        "Checks fesTerm’s public GitHub Releases when you ask and about once a day; turn automatic checks off in Settings. No profile, session, terminal, device, or configuration data is sent."
+                    } else {
+                        "Checks fesTerm’s public GitHub Releases only when requested. No profile, session, terminal, device, or configuration data is sent."
+                    };
                     ui.label(
-                        egui::RichText::new(
-                            "Checks fesTerm’s public GitHub Releases only when requested. No profile, session, terminal, or device data is sent.",
-                        )
-                        .small()
-                        .color(theme::TEXT_MUTED),
+                        egui::RichText::new(disclosure)
+                            .small()
+                            .color(theme::TEXT_MUTED),
                     );
                     ui.hyperlink_to("Update endpoint", UpdateController::endpoint());
                 }
@@ -4906,7 +4965,9 @@ impl FesTermApp {
             return;
         }
         self.process_pending_password_store(ui.ctx());
+        self.poll_automatic_update_check();
         self.updates.poll();
+        self.persist_update_check();
         if matches!(self.updates.status(), UpdateStatus::Failed { .. }) {
             self.update_restart_authorized = false;
         }
@@ -4985,6 +5046,7 @@ impl FesTermApp {
                 self.state.chip_layout(),
                 self.state.show_session_details(),
                 quick_switch_overlay_active,
+                self.updates.unacknowledged_version(),
             );
             self.dispatch_chrome_actions(actions, &ui.ctx().clone());
         }
@@ -5129,6 +5191,7 @@ impl FesTermApp {
                             show_durable_session_in_status_bar: self
                                 .state
                                 .show_durable_session_in_status_bar(),
+                            automatic_update_checks: self.state.automatic_update_checks(),
                             default_sftp_local_directory: self
                                 .state
                                 .default_sftp_local_directory()
@@ -5456,6 +5519,16 @@ impl FesTermApp {
                     if !self.state.restore_workspace() {
                         self.clear_saved_workspace();
                     }
+                }
+                AppCommand::ToggleAutomaticUpdateChecks => {
+                    let context = ui.ctx().clone();
+                    self.state
+                        .dispatch(AppCommand::ToggleAutomaticUpdateChecks, &context);
+                    self.persist_interface_settings();
+                    // The controller keeps its own copy so the per-frame
+                    // schedule check never has to reach into `AppState`.
+                    self.updates
+                        .set_automatic_checks_enabled(self.state.automatic_update_checks());
                 }
                 AppCommand::ResetInterfaceSettings => {
                     self.request_reset_interface_settings(&ui.ctx().clone());
@@ -9603,8 +9676,9 @@ mod tests {
         harness.state_mut().updates = UpdateController::configured_for_test();
         harness.step();
         harness.get_by_label("Check for Updates");
-        harness
-            .get_by_label_contains("Checks fesTerm’s public GitHub Releases only when requested");
+        harness.get_by_label_contains(
+            "Checks fesTerm’s public GitHub Releases when you ask and about once a day",
+        );
     }
 
     #[test]
@@ -10428,6 +10502,116 @@ mod tests {
         assert!(!saved.workspace_enabled());
         assert!(saved.workspace().is_none());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn turning_off_automatic_update_checks_persists_and_silences_the_poll() {
+        // Feature request: the background release poll is on by default but
+        // must be fully reversible, and the choice has to survive a restart.
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "sh",
+            Vec::new(),
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        app.updates = UpdateController::inert_for_test();
+        app.updates.restore_schedule(true, None, None);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-automatic-update-checks-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        assert!(app.state.automatic_update_checks());
+
+        let context = egui::Context::default();
+        app.state.dispatch(AppCommand::OpenSettings, &context);
+        let mut harness = Harness::builder()
+            // Windows adds a PowerShell row to this card, so the harness has
+            // to be tall enough for the toggle to be clickable there too.
+            .with_size(egui::vec2(900.0, 2000.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Check for fesTerm updates automatically",
+            )
+            .click();
+        harness.run();
+
+        assert!(!harness.state().state.automatic_update_checks());
+        assert!(!harness.state().updates.automatic_checks_enabled());
+        let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
+        assert!(!saved.interface_settings().automatic_update_checks());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_completed_automatic_check_records_itself_in_the_configuration() {
+        // Restarting fesTerm must not restart the interval, so the moment a
+        // check ran is written through the same silent path a profile launch
+        // uses.
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "sh",
+            Vec::new(),
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-update-check-record-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        app.updates = UpdateController::inert_for_test();
+        app.updates.restore_schedule(true, Some(1_000), None);
+        assert!(app.updates.poll_schedule(9_999_999));
+
+        app.persist_update_check();
+
+        let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
+        assert_eq!(
+            saved
+                .update_check()
+                .map(UpdateCheckRecord::last_checked_unix_seconds),
+            Some(9_999_999)
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn opening_about_acknowledges_the_update_the_badge_announced() {
+        // The badge is a one-time notice: once the user has been taken to
+        // the place that can install the release, it stops nagging.
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.updates = UpdateController::ready_to_install_for_test();
+        app.updates.restore_schedule(true, Some(1_000), None);
+        let announced = app
+            .updates
+            .unacknowledged_version()
+            .expect("a waiting update is news until it has been seen")
+            .to_owned();
+
+        let context = egui::Context::default();
+        app.dispatch_chrome_actions(vec![ChromeAction::OpenAbout], &context);
+
+        assert!(app.overlays.about_open);
+        assert!(app.updates.unacknowledged_version().is_none());
+        assert_eq!(
+            app.updates
+                .take_unsaved_outcome()
+                .and_then(|outcome| outcome.acknowledged_version),
+            Some(announced)
+        );
     }
 
     #[test]

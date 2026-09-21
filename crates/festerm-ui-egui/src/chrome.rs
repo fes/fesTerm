@@ -376,6 +376,7 @@ pub fn show(
     layout: ChipLayout,
     show_session_details: bool,
     quick_switch_overlay_active: bool,
+    available_update: Option<&str>,
 ) -> Vec<ChromeAction> {
     // Compact chips (`docs/gui-design.md` "Show session details in chips"):
     // when the preference is off, every chip is a single-line chip - the
@@ -633,7 +634,13 @@ pub fn show(
                     controls::paint_maximize_icon(ui, maximized);
                     controls::paint_minimize_icon(ui);
                 }
-                controls::paint_overflow_menu(ui, !show_search, inspector_available, &mut actions);
+                controls::paint_overflow_menu(
+                    ui,
+                    !show_search,
+                    inspector_available,
+                    available_update,
+                    &mut actions,
+                );
                 if show_search && controls::paint_search_icon(ui) {
                     actions.push(ChromeAction::TogglePalette);
                 }
@@ -1182,6 +1189,7 @@ mod tests {
         active: ChipId,
         layout: ChipLayout,
         observed: Vec<ChromeAction>,
+        available_update: Option<&'static str>,
     }
 
     fn harness(state: ChromeHarnessState) -> Harness<'static, ChromeHarnessState> {
@@ -1204,6 +1212,7 @@ mod tests {
                         state.layout,
                         true,
                         false,
+                        state.available_update,
                     );
                     state.observed.extend(actions);
                 },
@@ -1218,6 +1227,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
 
         harness.get_by_label("two").click();
@@ -1236,6 +1246,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -1269,6 +1280,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -1285,6 +1297,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
         harness.get_by_label("two chip").click_secondary();
@@ -1305,6 +1318,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
         harness.get_by_label("two chip").click_secondary();
@@ -1352,6 +1366,7 @@ mod tests {
                         state.layout,
                         true,
                         false,
+                        None,
                     );
                     state.observed.extend(actions);
                     // Mirrors `app.rs`'s `ui_content`, which adds
@@ -1363,6 +1378,7 @@ mod tests {
                     active: ChipId(1),
                     layout: ChipLayout::Wrap,
                     observed: Vec::new(),
+                    available_update: None,
                 },
             );
         harness.run();
@@ -1407,6 +1423,7 @@ mod tests {
                         state.layout,
                         true,
                         false,
+                        None,
                     );
                     state.observed.extend(actions);
                 },
@@ -1420,6 +1437,7 @@ mod tests {
                     active: ChipId(1),
                     layout: ChipLayout::Wrap,
                     observed: Vec::new(),
+                    available_update: None,
                 },
             );
         harness.run();
@@ -1459,6 +1477,7 @@ mod tests {
                         state.layout,
                         true,
                         false,
+                        None,
                     );
                     state.observed.extend(actions);
                 },
@@ -1467,6 +1486,7 @@ mod tests {
                     active: ChipId(1),
                     layout: ChipLayout::SingleRowScroll,
                     observed: Vec::new(),
+                    available_update: None,
                 },
             );
         harness.run();
@@ -1513,6 +1533,7 @@ mod tests {
                     ChipLayout::SingleRowScroll,
                     true,
                     false,
+                    None,
                 );
             });
         harness.run();
@@ -1543,6 +1564,7 @@ mod tests {
                         state.layout,
                         true,
                         false,
+                        None,
                     );
                     state.observed.extend(actions);
                 },
@@ -1551,6 +1573,7 @@ mod tests {
                     active: ChipId(1),
                     layout: ChipLayout::SingleRowScroll,
                     observed: Vec::new(),
+                    available_update: None,
                 },
             );
         harness.run();
@@ -1628,6 +1651,7 @@ mod tests {
                         state.layout,
                         false,
                         false,
+                        None,
                     );
                     state.observed.extend(actions);
                 },
@@ -1636,6 +1660,7 @@ mod tests {
                     active: ChipId(1),
                     layout: ChipLayout::SingleRowScroll,
                     observed: Vec::new(),
+                    available_update: None,
                 },
             );
         harness.run();
@@ -1657,6 +1682,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::SingleRowScroll,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -1685,6 +1711,7 @@ mod tests {
                         state.layout,
                         true,
                         false,
+                        None,
                     );
                     state.observed.extend(actions);
                 },
@@ -1693,6 +1720,7 @@ mod tests {
                     active: ChipId(1),
                     layout: ChipLayout::SingleRowScroll,
                     observed: Vec::new(),
+                    available_update: None,
                 },
             );
         harness.run();
@@ -1724,6 +1752,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -1778,6 +1807,7 @@ mod tests {
                         ChipLayout::SingleRowScroll,
                         show_session_details,
                         false,
+                        None,
                     );
                 });
             harness.run();
@@ -1868,6 +1898,7 @@ mod tests {
             active: ChipId(2),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -1925,6 +1956,7 @@ mod tests {
                     ChipLayout::Wrap,
                     false,
                     false,
+                    None,
                 );
             });
         harness.run();
@@ -1955,6 +1987,7 @@ mod tests {
                     ChipLayout::Wrap,
                     true,
                     false,
+                    None,
                 );
             });
         harness.run();
@@ -1981,6 +2014,7 @@ mod tests {
                         ChipLayout::Wrap,
                         show_session_details,
                         false,
+                        None,
                     );
                 });
             harness.run();
@@ -2017,6 +2051,7 @@ mod tests {
                     ChipLayout::SingleRowScroll,
                     false,
                     false,
+                    None,
                 );
             });
         harness.run();
@@ -2050,6 +2085,7 @@ mod tests {
                         ChipLayout::Wrap,
                         show_session_details,
                         false,
+                        None,
                     );
                 });
             harness.run();
@@ -2087,6 +2123,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -2108,6 +2145,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
 
         harness.get_by_label("New tab").click();
@@ -2123,6 +2161,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
 
         harness.get_by_label_contains("Command palette").click();
@@ -2141,6 +2180,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
 
         harness.get_by_label("More actions").click();
@@ -2155,12 +2195,52 @@ mod tests {
     }
 
     #[test]
+    fn an_available_update_names_itself_on_the_overflow_control() {
+        // The badge dot is the eye-catcher, but the news also has to reach a
+        // screen reader, so the control's own label carries it.
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+            available_update: Some("0.3.0"),
+        });
+        harness.run();
+
+        let label = "More actions (fesTerm 0.3.0 available)";
+        assert!(harness.query_by_label("More actions").is_none());
+        harness.get_by_label(label).click();
+        harness.run();
+        harness.get_by_label("Update to fesTerm 0.3.0…").click();
+        harness.run();
+
+        assert!(harness.state().observed.contains(&ChromeAction::OpenAbout));
+    }
+
+    #[test]
+    fn without_an_available_update_the_overflow_menu_offers_no_update_entry() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+            available_update: None,
+        });
+
+        harness.get_by_label("More actions").click();
+        harness.run();
+
+        assert!(harness.query_by_label("Update to fesTerm 0.3.0…").is_none());
+    }
+
+    #[test]
     fn inspector_toggle_emits_a_toggle_inspector_action() {
         let mut harness = harness(ChromeHarnessState {
             chips: vec![chip(1, "one")],
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
 
         harness.get_by_label("More actions").click();
@@ -2181,6 +2261,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -2304,6 +2385,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
         with_sibling_window(&mut harness);
@@ -2333,6 +2415,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
         with_sibling_window(&mut harness);
@@ -2362,6 +2445,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
         with_sibling_window(&mut harness);
@@ -2404,6 +2488,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -2456,6 +2541,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -2529,6 +2615,7 @@ mod tests {
             active: ChipId(1),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
+            available_update: None,
         });
         harness.run();
 
@@ -2569,6 +2656,7 @@ mod tests {
                     ChipLayout::SingleRowScroll,
                     false,
                     false,
+                    None,
                 );
             });
         inactive_harness.run();
@@ -2587,6 +2675,7 @@ mod tests {
                     ChipLayout::SingleRowScroll,
                     false,
                     true,
+                    None,
                 );
             });
         active_harness.run();
@@ -2632,6 +2721,7 @@ mod tests {
                     ChipLayout::SingleRowScroll,
                     false,
                     true,
+                    None,
                 );
             });
         harness.run();
@@ -2663,6 +2753,7 @@ mod tests {
                     ChipLayout::SingleRowScroll,
                     false,
                     false,
+                    None,
                 );
             });
         harness.run_steps(2);
