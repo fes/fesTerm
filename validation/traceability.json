@@ -1272,7 +1272,8 @@
         "settings_automatic_update_check_control_returns_the_toggle_command",
         "turning_off_automatic_update_checks_persists_and_silences_the_poll",
         "automatic_update_checks_are_on_until_the_user_says_otherwise",
-        "an_update_check_remembers_when_it_ran_and_what_was_already_seen"
+        "an_update_check_remembers_when_it_ran_and_what_was_already_seen",
+        "every_interface_toggle_survives_a_restart"
       ],
       "manual_scenarios": [
         "AS-02",

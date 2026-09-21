@@ -5472,6 +5472,11 @@ impl FesTermApp {
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
+                | AppCommand::ToggleQuickSwitchOverlay
+                | AppCommand::ToggleCompactLauncherGrid
+                | AppCommand::TogglePulseNewOutputDot
+                | AppCommand::ToggleShowResumableSessions
+                | AppCommand::ToggleDurableSessionInStatusBar
                 | AppCommand::SetScrollSpeed(_)
                 | AppCommand::SetEditorSettings(_)
                 | AppCommand::SetScrollbackLimit(_)
@@ -10501,6 +10506,60 @@ mod tests {
         let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
         assert!(!saved.workspace_enabled());
         assert!(saved.workspace().is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn every_interface_toggle_survives_a_restart() {
+        // Five Interface toggles used to fall through the generic dispatch
+        // arm, which changes the running app but never writes the choice out,
+        // so the setting quietly came back on the next launch. Each one is
+        // clicked here through the real control and read back from disk.
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "sh",
+            Vec::new(),
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-interface-toggle-persistence-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+
+        let context = egui::Context::default();
+        app.state.dispatch(AppCommand::OpenSettings, &context);
+        let mut harness = Harness::builder()
+            // Tall enough that every row of the Interface card is clickable,
+            // including the extra PowerShell row Windows adds.
+            .with_size(egui::vec2(900.0, 2400.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        for label in [
+            "Show quick-switch numbers",
+            "Compact New Session layout",
+            "Pulse status dot on new background output",
+            "Resume unattached local sessions from New Session",
+            "Show durable session name in status bar",
+        ] {
+            harness
+                .get_by_role_and_label(accesskit::Role::CheckBox, label)
+                .click();
+            harness.run();
+        }
+
+        let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
+        let settings = saved.interface_settings();
+        assert!(settings.quick_switch_overlay());
+        assert!(settings.compact_launcher_grid());
+        assert!(settings.pulse_new_output_dot());
+        assert!(settings.show_resumable_sessions());
+        assert!(settings.show_durable_session_in_status_bar());
         fs::remove_dir_all(directory).unwrap();
     }
 
