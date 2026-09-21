@@ -3,6 +3,33 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Noticing an update, and the settings that stayed put (v0.3.0)
+
+Three changes in this release share one theme: fesTerm asking less of the
+user's attention and remembering more of their intent.
+
+fesTerm now checks for a new release on its own, about once a day, and says so
+with a single accent dot on the **More actions** control plus an **Update to
+fesTerm _version_…** menu entry. Nothing downloads, nothing installs, nothing
+opens a dialog, and a failed automatic check is silent - the user did not ask,
+so an offline laptop must not be handed an error. Package-managed and
+developer builds never check, because the version is not fesTerm's to change
+there. The whole behaviour is one Settings toggle, on by default, disclosed in
+About while it is on. Before this, an install could sit arbitrarily far behind
+while its owner had no reason to suspect it.
+
+Five Interface toggles turned out to change the running application without
+ever being written to disk, so a user could turn something off, watch it turn
+off, and find it back on the next morning. They now persist like every other
+preference.
+
+Finally, the **Scroll speed** preference only ever governed fesTerm's own
+scrollback. A mouse-reporting full-screen program captured the wheel and
+received one report per input event regardless of distance or preference,
+which on a trackpad meant every pixel-sized event counted as a full notch.
+Forwarded reports now use the same rows-then-multiplier arithmetic, so the
+setting finally applies inside the programs people actually scroll.
+
 ## Windows updates with persistent native sessions
 
 Detached Windows session daemons originally executed the package-owned
