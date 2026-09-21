@@ -37,7 +37,7 @@ use festerm_pty::default_local_profile;
 use festerm_ssh::PersistentSessionName;
 use fs2::FileExt;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use std::sync::{Mutex, OnceLock};
 
 /// Opt-in diagnostic tracing for debugging the Windows native-smoke daemon
@@ -114,12 +114,67 @@ struct SessionRecord {
     created_at_unix_ms: u128,
     #[serde(default)]
     attached: bool,
+    #[serde(default = "legacy_protocol_version")]
+    protocol_version: u16,
+    #[serde(default)]
+    helper_identity: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+const fn legacy_protocol_version() -> u16 {
+    1
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct SessionRegistry {
-    #[serde(default)]
     sessions: BTreeMap<String, SessionRecord>,
+    /// Records written by a helper this build cannot interpret.
+    ///
+    /// They are kept verbatim so updating one session never deletes another
+    /// release's session, and so their names stay reserved.
+    foreign: BTreeMap<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for SessionRegistry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Default, Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            sessions: BTreeMap<String, serde_json::Value>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        let mut registry = SessionRegistry::default();
+        for (name, value) in raw.sessions {
+            match serde_json::from_value::<SessionRecord>(value.clone()) {
+                Ok(record) => {
+                    registry.sessions.insert(name, record);
+                }
+                Err(_) => {
+                    registry.foreign.insert(name, value);
+                }
+            }
+        }
+        Ok(registry)
+    }
+}
+
+impl Serialize for SessionRegistry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut sessions = self.foreign.clone();
+        for (name, record) in &self.sessions {
+            let value = serde_json::to_value(record).map_err(serde::ser::Error::custom)?;
+            sessions.insert(name.clone(), value);
+        }
+        let mut registry = serializer.serialize_struct("SessionRegistry", 1)?;
+        registry.serialize_field("sessions", &sessions)?;
+        registry.end()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -219,6 +274,9 @@ fn resize_master(
 }
 
 fn main() {
+    if let Err(error) = festerm_sessiond::cleanup_superseded_package_helpers() {
+        eprintln!("festerm-sessiond: could not clean up superseded helpers: {error}");
+    }
     if let Err(error) = run() {
         eprintln!("festerm-sessiond: {error}");
         process::exit(1);
@@ -425,8 +483,23 @@ fn run_start(
     start_lock.lock_exclusive()?;
 
     with_registry_lock(|registry| {
+        if registry.foreign.contains_key(&name) {
+            return Err(format!(
+                "session '{name}' was registered by a newer festerm-sessiond; \
+                 this helper cannot read or replace that record"
+            )
+            .into());
+        }
         if let Some(record) = registry.sessions.get(&name) {
             if record_is_live(record)? {
+                if !festerm_sessiond::protocol_is_supported(record.protocol_version) {
+                    return Err(format!(
+                        "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
+                        record.protocol_version,
+                        festerm_sessiond::PROTOCOL_VERSION
+                    )
+                    .into());
+                }
                 return Err(format!("session '{name}' is already running").into());
             }
             cleanup_dead_generation(&runtime_root, record, true)?;
@@ -435,7 +508,11 @@ fn run_start(
         Ok(())
     })?;
 
-    let exe = env::current_exe()?;
+    let packaged_exe = env::current_exe()?;
+    #[cfg(windows)]
+    let exe = festerm_sessiond::stage_windows_daemon(&packaged_exe, &runtime_root)?;
+    #[cfg(not(windows))]
+    let exe = packaged_exe;
     // The parent must know the generation even if the child fails before
     // publishing its registry record.
     let generation = now_ms();
@@ -684,6 +761,11 @@ fn generation_record(
         rows,
         created_at_unix_ms: generation,
         attached: false,
+        protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+        helper_identity: env::current_exe().ok().and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }),
     })
 }
 
@@ -1888,6 +1970,13 @@ fn kill_registered_session(
     timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(record) = registry.sessions.get(name).cloned() else {
+        if registry.foreign.contains_key(name) {
+            return Err(format!(
+                "session '{name}' was registered by a newer festerm-sessiond; \
+                 terminate it with that version"
+            )
+            .into());
+        }
         return Err(format!("session '{name}' is not registered").into());
     };
     if !generation_has_exited(root, &record)?
@@ -2005,10 +2094,25 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let registry = load_registry()?;
-    let record = registry
-        .sessions
-        .get(&name)
-        .ok_or_else(|| format!("session '{name}' is not registered"))?;
+    let record = match registry.sessions.get(&name) {
+        Some(record) => record,
+        None if registry.foreign.contains_key(&name) => {
+            return Err(format!(
+                "session '{name}' was registered by a newer festerm-sessiond; \
+                 attach with that version"
+            )
+            .into())
+        }
+        None => return Err(format!("session '{name}' is not registered").into()),
+    };
+    if !festerm_sessiond::protocol_is_supported(record.protocol_version) {
+        return Err(format!(
+            "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
+            record.protocol_version,
+            festerm_sessiond::PROTOCOL_VERSION
+        )
+        .into());
+    }
 
     #[cfg(unix)]
     let outcome = {
@@ -3467,8 +3571,11 @@ mod tests {
                     rows: 24,
                     created_at_unix_ms: 2,
                     attached: false,
+                    protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+                    helper_identity: None,
                 },
             )]),
+            ..Default::default()
         };
 
         let replacement = registry.sessions["demo"].clone();
@@ -3944,6 +4051,7 @@ mod tests {
                 ("dead".into(), dead.clone()),
                 ("live".into(), live.clone()),
             ]),
+            ..Default::default()
         };
         prune_dead_records_in(&fixture.0, &mut registry).unwrap();
         fixture.assert_removed(&dead);
@@ -3959,6 +4067,7 @@ mod tests {
         let _lease = fixture.artifacts(&record, true);
         let mut registry = SessionRegistry {
             sessions: BTreeMap::from([("held".into(), record.clone())]),
+            ..Default::default()
         };
         let error = kill_registered_session(
             &fixture.0,
@@ -4000,13 +4109,78 @@ mod tests {
             rows: 24,
             created_at_unix_ms: 1_700_000_000_000,
             attached: true,
+            protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+            helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
         };
         let registry = SessionRegistry {
             sessions: BTreeMap::from([(record.name.clone(), record.clone())]),
+            ..Default::default()
         };
         let serialized = serde_json::to_string(&registry).unwrap();
         let parsed: SessionRegistry = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.sessions.get("demo"), Some(&record));
+    }
+
+    #[test]
+    fn a_record_this_helper_cannot_read_survives_an_update_of_another_session() {
+        let document = serde_json::json!({
+            "sessions": {
+                "future": {
+                    "name": "future",
+                    "socket": { "transport": "quic" },
+                    "protocol_version": 9
+                }
+            }
+        });
+        let mut registry: SessionRegistry = serde_json::from_value(document.clone()).unwrap();
+        assert!(registry.sessions.is_empty());
+        assert_eq!(registry.foreign.len(), 1);
+
+        registry.sessions.insert(
+            "mine".to_owned(),
+            SessionRecord {
+                name: "mine".to_owned(),
+                pid: 7,
+                socket: "mine.sock".to_owned(),
+                shell: "/bin/sh".to_owned(),
+                arguments: Vec::new(),
+                working_directory: None,
+                cols: 80,
+                rows: 24,
+                created_at_unix_ms: 1,
+                attached: false,
+                protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+                helper_identity: None,
+            },
+        );
+
+        let written: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+        assert_eq!(
+            written["sessions"]["future"],
+            document["sessions"]["future"]
+        );
+        assert_eq!(written["sessions"]["mine"]["pid"], 7);
+    }
+
+    #[test]
+    fn killing_a_session_this_helper_cannot_read_reports_the_version_gap() {
+        let fixture = GenerationFixture::new();
+        let mut registry: SessionRegistry = serde_json::from_value(serde_json::json!({
+            "sessions": { "future": { "socket": { "transport": "quic" } } }
+        }))
+        .unwrap();
+        let error = kill_registered_session(
+            &fixture.0,
+            &mut registry,
+            "future",
+            |_| Ok(()),
+            Duration::from_millis(10),
+        )
+        .expect_err("an unreadable record must not be silently missing")
+        .to_string();
+        assert!(error.contains("newer festerm-sessiond"));
+        assert_eq!(registry.foreign.len(), 1);
     }
 
     #[cfg(unix)]

@@ -13,6 +13,7 @@ on:
       - 'packaging/**'
       - 'scripts/check_packaging.py'
       - 'scripts/stage-conpty.ps1'
+      - 'scripts/stage-windows-sessiond.ps1'
       - 'third_party/conpty/**'
 
 permissions:
@@ -33,10 +34,12 @@ jobs:
             platform: windows
             runner: windows-latest
             conpty_runtime: win-x64
+            package_arch: x86_64
           - name: windows-aarch64
             platform: windows
             runner: windows-11-vs2026-arm
             conpty_runtime: win-arm64
+            package_arch: aarch64
           - name: linux-x86_64
             platform: linux
             runner: ubuntu-latest
@@ -106,6 +109,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/stage-conpty.ps1 -Configuration Release
+          ./scripts/stage-windows-sessiond.ps1 -Configuration Release
           cargo packager --config packaging/windows.toml --formats nsis
           $installer = Get-ChildItem target/release -Filter '*-setup.exe' | Select-Object -First 1
           if (-not $installer) {
@@ -117,14 +121,22 @@ jobs:
             throw "NSIS clean install failed with exit code $($process.ExitCode)"
           }
           $installedBinary = Join-Path $installDirectory 'festerm.exe'
-          $installedSessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
+          $legacySessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
+          $metadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          $sessiondVersion = @(
+            $metadata.packages | Where-Object { $_.name -eq 'festerm-sessiond' }
+          )[0].version
+          $installedSessionDaemon = Join-Path $installDirectory "festerm-sessiond-$sessiondVersion.exe"
           $installedConpty = Join-Path $installDirectory 'runtime/conpty/${{ matrix.conpty_runtime }}/conpty.dll'
           $uninstaller = Join-Path $installDirectory 'uninstall.exe'
           if (-not (Test-Path $installedBinary -PathType Leaf)) {
             throw 'NSIS install did not place festerm.exe'
           }
           if (-not (Test-Path $installedSessionDaemon -PathType Leaf)) {
-            throw 'NSIS install did not place festerm-sessiond.exe'
+            throw 'NSIS install did not place the release-versioned session daemon'
+          }
+          if (Test-Path $legacySessionDaemon) {
+            throw 'NSIS clean install unexpectedly placed the legacy stable session daemon'
           }
           if (-not (Test-Path $installedConpty -PathType Leaf)) {
             throw 'NSIS install did not place the ConPTY runtime'
@@ -141,6 +153,104 @@ jobs:
           }
           if (Test-Path $installedSessionDaemon) {
             throw 'NSIS uninstall left the session daemon installed'
+          }
+
+          $legacyInstaller = Join-Path $env:RUNNER_TEMP 'festerm-0.2.0-setup.exe'
+          $legacyUri = 'https://github.com/fes/fesTerm/releases/download/v0.2.0/' +
+            'fesTerm-0.2.0-windows-${{ matrix.package_arch }}-setup.exe'
+          # v0.2.0 is the oldest release whose daemon must survive an upgrade.
+          # Move this baseline when MIN_SUPPORTED_PROTOCOL_VERSION rises above
+          # the epoch it wrote.
+          $download = $null
+          foreach ($attempt in 1..3) {
+            try {
+              Invoke-WebRequest -Uri $legacyUri -OutFile $legacyInstaller
+              $download = $true
+              break
+            } catch {
+              $download = $_
+              Write-Warning "Attempt ${attempt} to download the v0.2.0 installer failed: $_"
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+          if ($download -ne $true) {
+            throw "Could not download the v0.2.0 installer: $download"
+          }
+          if ((Get-AuthenticodeSignature $legacyInstaller).Status -ne 'Valid') {
+            throw 'Downloaded v0.2.0 installer is not Authenticode-valid'
+          }
+          $daemonPid = $null
+          try {
+            $process = Start-Process -FilePath $legacyInstaller -ArgumentList '/S' -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+              throw "NSIS v0.2.0 install failed with exit code $($process.ExitCode)"
+            }
+
+            $legacySessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
+            $sessionName = "package-upgrade-$PID"
+            & $legacySessionDaemon start --name $sessionName --shell $env:ComSpec
+            if ($LASTEXITCODE -ne 0) {
+              throw "v0.2.0 session daemon failed to start with exit code $LASTEXITCODE"
+            }
+            $registryPath = Join-Path $env:LOCALAPPDATA 'fesTerm/sessiond/registry.json'
+            $registry = Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json
+            $daemonPid = [int]$registry.sessions.$sessionName.pid
+
+            $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+              throw "NSIS upgrade from v0.2.0 failed with exit code $($process.ExitCode)"
+            }
+            if (-not (Test-Path $installedSessionDaemon -PathType Leaf)) {
+              throw 'NSIS upgrade did not place the release-versioned session daemon'
+            }
+            if (-not (Get-Process -Id $daemonPid -ErrorAction SilentlyContinue)) {
+              throw 'The v0.2.0 session daemon did not survive the side-by-side upgrade'
+            }
+            $sessions = (& $installedSessionDaemon list | Out-String)
+            if ($LASTEXITCODE -ne 0 -or $sessions -notmatch [regex]::Escape($sessionName)) {
+              throw 'The new helper could not discover the live v0.2.0 session'
+            }
+
+            & $installedSessionDaemon kill --name $sessionName
+            if ($LASTEXITCODE -ne 0) {
+              throw 'The new helper could not terminate the migrated v0.2.0 session'
+            }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ((Get-Process -Id $daemonPid -ErrorAction SilentlyContinue) -and
+                   [DateTime]::UtcNow -lt $deadline) {
+              Start-Sleep -Milliseconds 100
+            }
+            if (Get-Process -Id $daemonPid -ErrorAction SilentlyContinue) {
+              throw 'The migrated v0.2.0 session daemon did not exit after kill'
+            }
+            & $installedSessionDaemon list | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw 'The new helper failed while pruning the exited legacy daemon image'
+            }
+            if (Test-Path $legacySessionDaemon) {
+              throw 'The legacy daemon image was not pruned after its final process exited'
+            }
+
+            $uninstaller = Join-Path $installDirectory 'uninstall.exe'
+            $process = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+              throw "NSIS upgraded uninstall failed with exit code $($process.ExitCode)"
+            }
+          } finally {
+            if ($null -ne $daemonPid) {
+              $daemon = Get-Process -Id $daemonPid -ErrorAction SilentlyContinue
+              if ($daemon) {
+                Stop-Process -Id $daemonPid -Force
+                $daemon.WaitForExit(10000)
+              }
+            }
+            $uninstaller = Join-Path $installDirectory 'uninstall.exe'
+            if (Test-Path $uninstaller -PathType Leaf) {
+              $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+              if ($cleanup.ExitCode -ne 0) {
+                Write-Warning "NSIS cleanup failed with exit code $($cleanup.ExitCode)"
+              }
+            }
           }
       - name: Build unsigned Linux AppImage
         if: matrix.platform == 'linux'

@@ -304,6 +304,60 @@ backoff rather than permanently remembering a detach that was never saved.
 This is internal lifecycle/discovery hardening of the existing daemon contract,
 not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
 
+## Windows update continuity (2026-09-20)
+
+Windows prevents an installer from replacing an executable image used by a
+running process. Packaged releases historically launched the one
+installer-owned sibling `festerm-sessiond.exe` directly, so a detached session
+could block NSIS even though the session was otherwise compatible with the new
+fesTerm client.
+
+Each Windows package now installs its signed helper source under the immutable
+release identity `festerm-sessiond-<release>.exe`; the stable Cargo output name
+is not an installer payload. Before `start`, both fesTerm and the helper CLI
+copy that source into the private sessiond runtime directory under the release
+and target identity
+`helpers/festerm-sessiond-<release>-<architecture>.exe`; the detached daemon
+executes that copy. A later installer adds a different source name while old
+daemon generations continue from their prior images. New sessions use the
+current release copy. Old copies are deleted only when no live registry
+generation references their recorded helper identity; a locked but
+not-yet-registered startup remains preserved rather than blocking a new
+session.
+
+A release identity is not a content identity: a rebuilt or re-signed package
+can carry the same version with different bytes. When the staged copy differs
+from the packaged source, it is replaced whenever no live registry generation
+records that helper identity, and the start is refused only while a live
+generation still executes that image — the one case where replacing it would
+be both impossible and wrong.
+
+Registry records now also carry a protocol compatibility epoch independent of
+the application/helper release. Missing protocol metadata means epoch 1 for
+records created before this field existed, matching their `FSD1` framing.
+Clients and the helper CLI reject an unsupported epoch before attachment and
+preserve the daemon/session for a compatible fesTerm version. A release that
+introduces a new epoch must retain client adapters for every daemon version
+allowed to survive the supported upgrade window; it must not merely increment
+the constant and strand live sessions. Ordinary compatible releases keep the
+epoch unchanged.
+
+The epoch only helps if the record carrying it can still be read, so the
+registry file itself is parsed per record rather than as one typed document.
+A record this build cannot interpret costs its own session and nothing else:
+the client reports the version gap instead of "not registered", the helper
+refuses to start, attach or kill under that name rather than overwriting it,
+and any registry write preserves the foreign record verbatim. A future schema
+change therefore cannot strand the sessions of the release that is running.
+
+The first release with this layout deliberately omits the legacy stable helper
+from its payload. It can therefore install beside a locked helper used by
+0.2.0 through 0.2.2, whose `FSD1` protocol remains epoch 1 and whose registry
+records default to that epoch. The new client reattaches directly to those
+existing endpoints. Once the final legacy daemon exits, a later fesTerm launch
+removes its unreferenced stable image; reboot also releases the lock for normal
+installer/application cleanup.
+
 ## Alternatives considered
 
 - **Do nothing; local persistence remains Unix-only via `tmux`/`screen`.**
@@ -340,6 +394,10 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
 - A new crate and shipped artifact (`festerm-sessiond`) must be built,
   signed/packaged, and distributed alongside the main `festerm` binary for
   every supported platform, adding to `cargo-packager` scope (ADR 0021).
+- Windows additionally retains one runtime helper copy per release that still
+  owns a live daemon generation. These copies are current-user state, not
+  installer-owned payloads, and are reclaimed after their final generation
+  exits.
 - fesTerm gains an operational surface it did not previously have: orphaned
   background processes are now possible (e.g., if a user's machine restarts
   uncleanly). The registry-and-prune design above is required, not optional,
@@ -416,10 +474,45 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
   after timeout without following the selected server symlink. Controlled local
   clients test graceful hangup and bounded escalation, preserving process-group
   ownership and default shell behavior.
+  `windows_helper_staging_is_versioned_and_prunes_only_unreferenced_builds`
+  proves that Windows launches an immutable release copy, retains a live
+  generation's older copy, and removes an unreferenced copy.
+  `native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable`
+  launches through a package-shaped helper path, deletes and replaces that
+  source while the daemon remains alive, then verifies fresh input reaches the
+  same session.
+  `native_windows_versioned_helper_installs_beside_a_live_legacy_daemon`
+  reproduces the 0.2.0 layout and proves the new immutable package source can
+  be added while the legacy image is running and its session remains usable.
+  `windows_packaged_helper_cleanup_waits_for_legacy_daemon_exit` proves cleanup
+  retains the stable image while a legacy generation is live and removes it
+  after that generation disappears.
+  Windows package smoke upgrades an installed signed 0.2.0 package while its
+  stable-name daemon is live, verifies the process and registry survive, and
+  controls that session through the candidate's versioned helper before
+  uninstalling.
+  `incompatible_registry_record_is_rejected_before_connecting` proves protocol
+  incompatibility fails before IPC attachment with actionable version guidance;
+  legacy registry parsing defaults to the compatible `FSD1` epoch.
+  `an_unreadable_record_costs_only_its_own_session`,
+  `an_unreadable_record_without_an_epoch_still_explains_itself` and
+  `a_record_this_helper_cannot_read_survives_an_update_of_another_session`
+  prove a record from a future schema neither hides the sessions beside it nor
+  disappears when one of them is updated;
+  `killing_a_session_this_helper_cannot_read_reports_the_version_gap` proves
+  the helper refuses that name instead of reporting it missing.
+  `a_rebuilt_helper_replaces_an_unreferenced_staged_copy` and
+  `a_rebuilt_helper_is_refused_while_a_live_session_still_runs_the_staged_copy`
+  prove that same-version bytes are republished when safe and retained when a
+  live generation still needs them, and
+  `byte_identical_helpers_match_across_read_chunk_boundaries` proves the
+  comparison does not depend on how a read is chunked.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows
-  named-pipe current-user isolation and Job Object breakaway.
+  named-pipe current-user isolation, Job Object breakaway, compatible signed
+  update continuity, new-session helper selection, and post-exit old-copy
+  cleanup.
 - **Coverage superseded:** None.
 
 The ADR remains Proposed while this implementation is evaluated.

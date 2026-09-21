@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Windows updates with persistent native sessions
+
+Detached Windows session daemons originally executed the package-owned
+`festerm-sessiond.exe`. Windows locks a running executable image, so one
+compatible background session could prevent NSIS from replacing the helper.
+New sessions now execute an immutable release-versioned copy from the private
+sessiond runtime directory instead. The registry records that helper identity
+and an independent protocol epoch: compatible fesTerm releases reattach to old
+generations, while an incompatible client refuses before attachment and leaves
+the session available to an older client. Runtime copies remain while a live
+generation references them and are pruned afterward. Windows packaging also
+uses a unique helper source name per release, so the first transition can place
+the new helper beside the locked stable executable used by 0.2.0 through 0.2.2
+without replacing it. That legacy image becomes removable after its daemon
+exits and is pruned on a later fesTerm/helper launch, including the first
+launch after reboot.
+
 ## Windows file identity during PR #179 review
 
 Windows CI exposed an existing editor conflict-detection defect: creation time

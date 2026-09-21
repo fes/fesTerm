@@ -68,9 +68,14 @@ def verify() -> None:
         if config.get("formats") != EXPECTED_FORMATS[platform]:
             errors.append(f"{path.relative_to(ROOT)} has unexpected package formats")
         binaries = config.get("binaries")
-        if binaries != EXPECTED_BINARIES:
+        expected_binaries = (
+            [{"path": "festerm", "main": True}]
+            if platform == "windows"
+            else EXPECTED_BINARIES
+        )
+        if binaries != expected_binaries:
             errors.append(
-                f"{path.relative_to(ROOT)} must package fesTerm and festerm-sessiond"
+                f"{path.relative_to(ROOT)} has unexpected packaged binaries"
             )
 
     macos = load_toml(CONFIGS["macos"])
@@ -86,12 +91,40 @@ def verify() -> None:
     if windows.get("nsis", {}).get("installMode") != "currentUser":
         errors.append("NSIS packaging must use cargo-packager's current-user install mode")
     resources = windows.get("resources", [])
+    expected_sessiond = {
+        "src": f"../target/release/festerm-sessiond-{version}.exe",
+        "target": f"festerm-sessiond-{version}.exe",
+    }
+    if expected_sessiond not in resources:
+        errors.append(
+            "Windows packaging must own an immutable release-versioned session daemon"
+        )
+    if any(
+        resource.get("target") == "festerm-sessiond.exe"
+        for resource in resources
+        if isinstance(resource, dict)
+    ):
+        errors.append(
+            "Windows packaging must not own the legacy stable session daemon resource"
+        )
     expected_runtime = {
         "src": "../target/release/runtime/conpty",
         "target": "runtime/conpty",
     }
     if expected_runtime not in resources:
         errors.append("Windows packaging does not own the required ConPTY sidecar")
+
+    package_smoke = (ROOT / ".github/workflows/package-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+    release_workflow = (ROOT / ".github/workflows/release.yml").read_text(
+        encoding="utf-8"
+    )
+    staging_command = "./scripts/stage-windows-sessiond.ps1 -Configuration Release"
+    if staging_command not in package_smoke:
+        errors.append("Windows package smoke does not stage the immutable session daemon")
+    if staging_command not in release_workflow:
+        errors.append("Windows release packaging does not stage the immutable session daemon")
 
     if errors:
         raise PackagingError("\n".join(errors))

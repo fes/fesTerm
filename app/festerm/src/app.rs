@@ -701,6 +701,13 @@ impl FesTermApp {
         configuration: Configuration,
         configuration_status: ConfigurationStartupStatus,
     ) -> Self {
+        // Pruning is opportunistic housekeeping over a user-writable
+        // directory, so it must never delay the first frame.
+        std::thread::spawn(|| {
+            if let Err(error) = festerm_sessiond::cleanup_superseded_package_helpers() {
+                tracing::warn!(%error, "could not clean up superseded session daemon helpers");
+            }
+        });
         Self::with_configuration_status_and_secret_store(
             context,
             configuration,
