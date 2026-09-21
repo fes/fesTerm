@@ -2821,12 +2821,14 @@ mod registry_filtering_tests {
         let stale = helpers.join("festerm-sessiond-stale.exe");
         std::fs::write(&retained, b"retained").unwrap();
         std::fs::write(&stale, b"stale").unwrap();
+        let endpoint = fixture.0.join("legacy-endpoint");
+        std::fs::write(&endpoint, b"live endpoint").unwrap();
         let registry = serde_json::json!({
             "sessions": {
                 "legacy-live": {
                     "name": "legacy-live",
                     "pid": std::process::id(),
-                    "socket": "legacy-endpoint",
+                    "socket": endpoint.to_string_lossy(),
                     "helper_identity": "festerm-sessiond-retained.exe"
                 }
             }
