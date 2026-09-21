@@ -888,6 +888,57 @@ fn native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_us
     assert_contains(&mut *client, b"after-package-replacement");
 }
 
+#[cfg(windows)]
+#[test]
+#[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
+fn native_windows_versioned_helper_installs_beside_a_live_legacy_daemon() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let name = format!("legacy-upgrade-{suffix}");
+    let runtime_root = short_runtime_root(&suffix);
+    fs::create_dir_all(&runtime_root).unwrap();
+    let package_directory = runtime_root.join("package");
+    fs::create_dir(&package_directory).unwrap();
+    let legacy_helper = package_directory.join("festerm-sessiond.exe");
+    fs::copy(&executable, &legacy_helper).unwrap();
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime_root.clone(),
+        name: name.clone(),
+    };
+
+    let mut legacy_daemon = launch_session_with(
+        &legacy_helper,
+        &runtime_root,
+        &name,
+        &test_shell(&executable),
+        &test_shell_arguments(),
+    );
+    assert!(legacy_daemon.try_wait().unwrap().is_none());
+
+    let versioned_helper = package_directory.join(format!(
+        "festerm-sessiond-{}.exe",
+        env!("CARGO_PKG_VERSION")
+    ));
+    fs::copy(&executable, &versioned_helper)
+        .expect("a versioned helper must install without replacing the live legacy image");
+    assert!(versioned_helper.is_file());
+
+    let registry = runtime_root.join("fesTerm").join("sessiond");
+    let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
+    let mut client = connect(&endpoint);
+    assert_windows_ready(&mut *client);
+    send_input(&mut *client, &test_input("after-side-by-side-install")).unwrap();
+    assert_contains(&mut *client, b"after-side-by-side-install");
+}
+
 /// Regression test for the Windows zombie daemon reported in September 2026.
 ///
 /// A ConPTY keeps its pseudoconsole (and the `conhost` process behind it) open

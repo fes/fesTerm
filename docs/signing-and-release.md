@@ -92,11 +92,13 @@ to install. After a consented install completes, fesTerm requests one normal
 application close and marks that updater-owned close as already authorized so
 ordinary live-session quit interception cannot strand replacement/relaunch.
 Persistent Windows `festerm-sessiond` sessions are independent of that GUI
-restart: new sessions execute a release-versioned copy from the private runtime
-directory, leaving the installer-owned sibling unlocked. Protocol-compatible
-daemon generations can remain alive and reattach after relaunch. The one-time
-transition from a release that executed the sibling directly may still require
-ending those older daemons before installation.
+restart: the package installs a release-versioned helper source and new sessions
+execute an architecture-qualified copy from the private runtime directory.
+Protocol-compatible daemon generations from 0.2.0 onward can remain alive and
+reattach after relaunch because the installer never replaces their executable
+image. Superseded package/runtime copies are removed after their last daemon
+exits; a still-locked legacy image is left for a later fesTerm/helper launch
+after process exit, including the first launch after reboot.
 
 The workflow:
 
@@ -105,6 +107,8 @@ The workflow:
 - fails before packaging if protected credentials are missing or the updater
   public key differs from `packaging/updater.pub`;
 - signs and verifies native packages on native runners;
+- stages the signed Windows helper under the workspace release version before
+  packaging and never ships the stable Cargo output name;
 - uploads only immutable, versioned artifact URLs into update metadata;
 - creates the GitHub Release as a draft, uploads the signed artifacts, uploads
   `festerm-update.json` last, and only then publishes the release.

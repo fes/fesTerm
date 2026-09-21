@@ -312,13 +312,14 @@ installer-owned sibling `festerm-sessiond.exe` directly, so a detached session
 could block NSIS even though the session was otherwise compatible with the new
 fesTerm client.
 
-The sibling remains the signed package source, but it is no longer the
-long-lived Windows image. Before `start`, both fesTerm and the helper CLI copy
-it into the private sessiond runtime directory under the immutable release
+Each Windows package now installs its signed helper source under the immutable
+release identity `festerm-sessiond-<release>.exe`; the stable Cargo output name
+is not an installer payload. Before `start`, both fesTerm and the helper CLI
+copy that source into the private sessiond runtime directory under the release
 and target identity
 `helpers/festerm-sessiond-<release>-<architecture>.exe`; the detached daemon
-executes that copy. A later installer can replace the unlocked sibling while
-old daemon generations continue from their prior copies. New sessions use the
+executes that copy. A later installer adds a different source name while old
+daemon generations continue from their prior images. New sessions use the
 current release copy. Old copies are deleted only when no live registry
 generation references their recorded helper identity; a locked but
 not-yet-registered startup remains preserved rather than blocking a new
@@ -327,15 +328,20 @@ session.
 Registry records now also carry a protocol compatibility epoch independent of
 the application/helper release. Missing protocol metadata means epoch 1 for
 records created before this field existed, matching their `FSD1` framing.
-Clients and the helper CLI reject an explicitly different epoch before
-attachment and preserve the daemon/session for a compatible fesTerm version.
-Changing this epoch is required whenever an existing client can no longer
-attach safely; ordinary compatible releases keep it unchanged.
+Clients and the helper CLI reject an unsupported epoch before attachment and
+preserve the daemon/session for a compatible fesTerm version. A release that
+introduces a new epoch must retain client adapters for every daemon version
+allowed to survive the supported upgrade window; it must not merely increment
+the constant and strand live sessions. Ordinary compatible releases keep the
+epoch unchanged.
 
-This contract avoids update interruption after the staged-helper release is
-installed. It cannot retroactively unlock a daemon already executing the
-sibling from an older release, so that first transition may require ending
-pre-contract sessions once.
+The first release with this layout deliberately omits the legacy stable helper
+from its payload. It can therefore install beside a locked helper used by
+0.2.0 through 0.2.2, whose `FSD1` protocol remains epoch 1 and whose registry
+records default to that epoch. The new client reattaches directly to those
+existing endpoints. Once the final legacy daemon exits, a later fesTerm launch
+removes its unreferenced stable image; reboot also releases the lock for normal
+installer/application cleanup.
 
 ## Alternatives considered
 
@@ -460,6 +466,16 @@ pre-contract sessions once.
   launches through a package-shaped helper path, deletes and replaces that
   source while the daemon remains alive, then verifies fresh input reaches the
   same session.
+  `native_windows_versioned_helper_installs_beside_a_live_legacy_daemon`
+  reproduces the 0.2.0 layout and proves the new immutable package source can
+  be added while the legacy image is running and its session remains usable.
+  `windows_packaged_helper_cleanup_waits_for_legacy_daemon_exit` proves cleanup
+  retains the stable image while a legacy generation is live and removes it
+  after that generation disappears.
+  Windows package smoke upgrades an installed signed 0.2.0 package while its
+  stable-name daemon is live, verifies the process and registry survive, and
+  controls that session through the candidate's versioned helper before
+  uninstalling.
   `incompatible_registry_record_is_rejected_before_connecting` proves protocol
   incompatibility fails before IPC attachment with actionable version guidance;
   legacy registry parsing defaults to the compatible `FSD1` epoch.

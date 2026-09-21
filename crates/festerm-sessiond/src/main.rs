@@ -227,6 +227,9 @@ fn resize_master(
 }
 
 fn main() {
+    if let Err(error) = festerm_sessiond::cleanup_superseded_package_helpers() {
+        eprintln!("festerm-sessiond: could not clean up superseded helpers: {error}");
+    }
     if let Err(error) = run() {
         eprintln!("festerm-sessiond: {error}");
         process::exit(1);
@@ -435,7 +438,7 @@ fn run_start(
     with_registry_lock(|registry| {
         if let Some(record) = registry.sessions.get(&name) {
             if record_is_live(record)? {
-                if record.protocol_version != festerm_sessiond::PROTOCOL_VERSION {
+                if !festerm_sessiond::protocol_is_supported(record.protocol_version) {
                     return Err(format!(
                         "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
                         record.protocol_version,
@@ -2034,7 +2037,7 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         .sessions
         .get(&name)
         .ok_or_else(|| format!("session '{name}' is not registered"))?;
-    if record.protocol_version != festerm_sessiond::PROTOCOL_VERSION {
+    if !festerm_sessiond::protocol_is_supported(record.protocol_version) {
         return Err(format!(
             "session '{name}' uses persistent-session protocol {}, but this helper supports {}",
             record.protocol_version,

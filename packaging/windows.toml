@@ -10,9 +10,9 @@ formats = ["nsis"]
 icons = ["../assets/app-icon/festerm.ico"]
 binaries = [
   { path = "festerm", main = true },
-  { path = "festerm-sessiond", main = false },
 ]
 resources = [
+  { src = "../target/release/festerm-sessiond-0.2.2.exe", target = "festerm-sessiond-0.2.2.exe" },
   { src = "../target/release/runtime/conpty", target = "runtime/conpty" },
 ]
 

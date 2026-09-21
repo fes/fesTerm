@@ -65,9 +65,9 @@ failure tracked in [#71](https://github.com/fes/fesTerm/issues/71) is fixed,
 but native local session persistence is still not a validated supported
 capability until those broader checks complete and the ADR is formally
 accepted. On Windows, new daemons execute release-versioned private runtime
-copies so protocol-compatible sessions no longer lock the installer-owned
-helper during later updates; the first transition from an older release may
-still require ending its directly installed daemons once.
+copies and the package itself uses an immutable helper name, so
+protocol-compatible sessions from 0.2.0 onward do not lock a file a later
+installer must replace.
 
 With **Resume unattached local sessions from New Session** enabled, Running
 Sessions refreshes native sessiond, tmux and GNU screen inventories in bounded

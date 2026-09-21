@@ -46,8 +46,13 @@ const FRAME_RESIZE: u8 = 2;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// Compatibility epoch for registry records and the `FSD1` client protocol.
 ///
-/// This changes only when an existing client can no longer attach safely.
+/// This changes only when the daemon introduces an incompatible wire format.
 pub const PROTOCOL_VERSION: u16 = 1;
+/// Oldest daemon protocol this client can attach to safely.
+///
+/// A release that increments [`PROTOCOL_VERSION`] must retain adapters down to
+/// this version for every daemon expected to survive a supported upgrade.
+pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
 const STOLEN_NOTICE_BYTES: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
@@ -1256,7 +1261,7 @@ fn connect_record_with_cancel(
 }
 
 fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSessionError> {
-    if record.protocol_version == PROTOCOL_VERSION {
+    if protocol_is_supported(record.protocol_version) {
         return Ok(());
     }
     Err(PersistentSessionError::new(format!(
@@ -1266,6 +1271,11 @@ fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSe
     )))
 }
 
+/// Returns whether this client can attach to a daemon protocol epoch.
+pub const fn protocol_is_supported(version: u16) -> bool {
+    version >= MIN_SUPPORTED_PROTOCOL_VERSION && version <= PROTOCOL_VERSION
+}
+
 fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
     let current = std::env::current_exe().map_err(|error| {
         PersistentSessionError::new(format!("could not locate fesTerm executable: {error}"))
@@ -1273,11 +1283,10 @@ fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
     let directory = current.parent().ok_or_else(|| {
         PersistentSessionError::new("fesTerm executable has no containing directory")
     })?;
-    let packaged = directory.join(if cfg!(windows) {
-        "festerm-sessiond.exe"
-    } else {
-        "festerm-sessiond"
-    });
+    #[cfg(windows)]
+    let packaged = resolve_windows_packaged_daemon(directory);
+    #[cfg(not(windows))]
+    let packaged = directory.join("festerm-sessiond");
     if !packaged.is_file() {
         return Err(PersistentSessionError::new(format!(
             "persistent-session helper is not installed beside fesTerm: {}",
@@ -1287,11 +1296,51 @@ fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
 
     #[cfg(windows)]
     {
-        stage_windows_daemon(&packaged, &runtime_root()?)
+        let root = runtime_root()?;
+        let staged = stage_windows_daemon(&packaged, &root)?;
+        prune_packaged_windows_daemons(directory, &packaged, &root)?;
+        Ok(staged)
     }
     #[cfg(not(windows))]
     {
         Ok(packaged)
+    }
+}
+
+/// Removes superseded Windows package helper sources when no legacy daemon
+/// still owns the stable executable.
+///
+/// Development and non-Windows builds have no versioned package source and
+/// therefore have nothing to clean.
+pub fn cleanup_superseded_package_helpers() -> Result<(), PersistentSessionError> {
+    #[cfg(windows)]
+    {
+        let executable = std::env::current_exe().map_err(|error| {
+            PersistentSessionError::new(format!("could not locate fesTerm executable: {error}"))
+        })?;
+        let directory = executable.parent().ok_or_else(|| {
+            PersistentSessionError::new("fesTerm executable has no containing directory")
+        })?;
+        let current = directory.join(windows_packaged_daemon_name());
+        if current.is_file() {
+            prune_packaged_windows_daemons(directory, &current, &runtime_root()?)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn windows_packaged_daemon_name() -> String {
+    format!("festerm-sessiond-{}.exe", env!("CARGO_PKG_VERSION"))
+}
+
+#[cfg(any(windows, test))]
+fn resolve_windows_packaged_daemon(directory: &Path) -> PathBuf {
+    let versioned = directory.join(windows_packaged_daemon_name());
+    if versioned.is_file() {
+        versioned
+    } else {
+        directory.join("festerm-sessiond.exe")
     }
 }
 
@@ -1426,6 +1475,63 @@ fn prune_windows_daemons(
                 return Err(PersistentSessionError::new(format!(
                     "could not remove stale persistent-session helper '{}': {error}",
                     entry.path().display()
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn prune_packaged_windows_daemons(
+    directory: &Path,
+    current: &Path,
+    runtime_root: &Path,
+) -> Result<(), PersistentSessionError> {
+    let registry = load_registry_in(runtime_root)?;
+    let mut live_legacy_daemon = false;
+    for record in registry.sessions.values() {
+        let legacy = record
+            .helper_identity
+            .as_deref()
+            .is_none_or(|identity| identity.eq_ignore_ascii_case("festerm-sessiond.exe"));
+        if legacy && record_is_live(runtime_root, record)? {
+            live_legacy_daemon = true;
+            break;
+        }
+    }
+
+    for entry in
+        fs::read_dir(directory).map_err(|error| PersistentSessionError::new(error.to_string()))?
+    {
+        let entry = entry.map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        if path == current || !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let legacy = name.eq_ignore_ascii_case("festerm-sessiond.exe");
+        let versioned = name.starts_with("festerm-sessiond-") && name.ends_with(".exe");
+        if !versioned && !legacy {
+            continue;
+        }
+        if legacy && live_legacy_daemon {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            // A process can appear between the registry snapshot and deletion.
+            // A reboot or later launch releases/retries this obsolete image.
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {}
+            Err(error) => {
+                return Err(PersistentSessionError::new(format!(
+                    "could not remove superseded packaged session helper '{}': {error}",
+                    path.display()
                 )))
             }
         }
@@ -2743,5 +2849,55 @@ mod registry_filtering_tests {
         assert_eq!(std::fs::read(staged).unwrap(), b"signed helper bytes");
         assert!(retained.is_file());
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn windows_packaged_helper_prefers_the_immutable_release_name() {
+        let fixture = RegistryFixture::new();
+        let legacy = fixture.0.join("festerm-sessiond.exe");
+        let versioned = fixture.0.join(windows_packaged_daemon_name());
+        std::fs::write(&legacy, b"legacy").unwrap();
+        assert_eq!(resolve_windows_packaged_daemon(&fixture.0), legacy);
+
+        std::fs::write(&versioned, b"current").unwrap();
+        assert_eq!(resolve_windows_packaged_daemon(&fixture.0), versioned);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_packaged_helper_cleanup_waits_for_legacy_daemon_exit() {
+        let fixture = RegistryFixture::new();
+        let package_directory = fixture.0.join("package");
+        std::fs::create_dir(&package_directory).unwrap();
+        let current = package_directory.join(windows_packaged_daemon_name());
+        let superseded = package_directory.join("festerm-sessiond-0.2.0.exe");
+        let legacy = package_directory.join("festerm-sessiond.exe");
+        std::fs::write(&current, b"current").unwrap();
+        std::fs::write(&superseded, b"superseded").unwrap();
+        std::fs::write(&legacy, b"legacy").unwrap();
+        let live_registry = serde_json::json!({
+            "sessions": {
+                "legacy-live": {
+                    "name": "legacy-live",
+                    "pid": std::process::id(),
+                    "socket": "legacy-endpoint"
+                }
+            }
+        });
+        std::fs::write(
+            fixture.0.join("registry.json"),
+            serde_json::to_vec(&live_registry).unwrap(),
+        )
+        .unwrap();
+
+        prune_packaged_windows_daemons(&package_directory, &current, &fixture.0).unwrap();
+        assert!(current.is_file());
+        assert!(legacy.is_file());
+        assert!(!superseded.exists());
+
+        std::fs::write(fixture.0.join("registry.json"), br#"{"sessions":{}}"#).unwrap();
+        prune_packaged_windows_daemons(&package_directory, &current, &fixture.0).unwrap();
+        assert!(current.is_file());
+        assert!(!legacy.exists());
     }
 }
