@@ -10524,7 +10524,9 @@ mod tests {
         let context = egui::Context::default();
         app.state.dispatch(AppCommand::OpenSettings, &context);
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(900.0, 900.0))
+            // Windows adds a PowerShell row to this card, so the harness has
+            // to be tall enough for the toggle to be clickable there too.
+            .with_size(egui::vec2(900.0, 2000.0))
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         harness
