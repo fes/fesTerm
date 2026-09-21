@@ -370,11 +370,24 @@ Note what compact mode does *not* do — it does not abbreviate names, and it
 does not drop the status dot. Reconnecting and healthy sessions stay
 distinguishable at both densities.
 
+The third capture shows the one piece of news this band ever volunteers: when
+a background check finds a newer release, the trailing **More actions**
+control grows a single accent dot. It is deliberately the quietest possible
+notice — no dialog, no toast, no count — and it points at About, which is
+where the download and install controls already live. Once the user has been
+there, the dot is gone for that version.
+
 ### Session chips in compact mode
 
 The identical five sessions with session details turned off: chips shrink to a single line, fitting more of them in the same row.
 
 ![Session chips in compact mode](images/ui-state/chips-compact.png)
+
+### Update-available badge on the overflow control
+
+After a background check finds a newer release, the 'More actions' control carries a single accent dot until the user opens About; its menu gains an 'Update to fesTerm 0.3.0…' entry above the usual items.
+
+![Update-available badge on the overflow control](images/ui-state/chips-update-badge.png)
 
 ### Session chips with details shown
 

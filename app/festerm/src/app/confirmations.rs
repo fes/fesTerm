@@ -854,6 +854,8 @@ impl FesTermApp {
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
             self.reinstall_terminal_font(context);
             self.persist_interface_settings();
+            self.updates
+                .set_automatic_checks_enabled(self.state.automatic_update_checks());
         }
     }
 

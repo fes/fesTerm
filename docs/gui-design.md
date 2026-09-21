@@ -633,6 +633,38 @@ to their package manager. Release notes never interrupt startup. Update state
 is quiet, factual, dismissible, and cannot block the Launcher or a terminal
 session. Developer and incompletely signed builds expose no network action.
 
+#### Automatic update checks
+
+fesTerm may also check on its own, so a user who never opens About is not left
+on an old build indefinitely. The check is deliberately rare and deliberately
+quiet:
+
+- **About once a day.** The first check of a run waits several minutes after
+  launch so it never competes with opening a session, and the interval is
+  measured from the last completed check, recorded in the configuration file -
+  restarting fesTerm does not restart the clock, so an install opened and
+  closed all day still checks once.
+- **Same endpoint, same data.** It contacts the same fixed
+  `latest/download/festerm-update.json` endpoint the manual button uses and
+  sends no profile, session, terminal, device, or configuration data.
+- **Only where it can act.** Package-managed and developer builds never check
+  automatically: the version is not fesTerm's to change there, so an
+  unsolicited announcement could only be noise.
+- **Nothing happens by itself.** An automatic check never downloads, never
+  installs, and never opens a dialog. A failed automatic check is silent -
+  the user did not ask, so an offline laptop must not produce an error
+  surface. Only a user-initiated check reports failure.
+- **One quiet notice.** When a newer release is found, the **More actions**
+  control in the chrome carries a single accent dot, and its menu gains an
+  **Update to fesTerm _version_…** entry that opens About, where the existing
+  download and install controls live. The control's accessible label names
+  the version too, so the notice is not colour-only. Opening About clears the
+  notice for that version; it is never shown twice.
+- **Reversible.** The **Check for fesTerm updates automatically** preference
+  in Settings › Interface controls this. It is on by default; turning it off
+  leaves the manual **Check for Updates** button as the only network action.
+  About discloses the automatic check while it is on.
+
 ### Approved native Markdown viewing
 
 The post-transport product review accepts a bounded native Markdown viewer for

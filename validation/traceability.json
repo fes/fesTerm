@@ -612,7 +612,20 @@
         "package_managers_can_check_but_cannot_install",
         "successful_update_install_requests_one_normal_application_close",
         "update_install_waits_for_live_session_restart_consent",
-        "window_close_during_update_consent_preserves_live_sessions"
+        "window_close_during_update_consent_preserves_live_sessions",
+        "an_automatic_check_waits_for_the_interval_to_elapse",
+        "a_first_ever_check_waits_out_the_startup_delay",
+        "a_clock_that_moved_backwards_makes_a_check_due_rather_than_unreachable",
+        "a_package_managed_install_never_checks_on_its_own",
+        "a_failed_automatic_check_says_nothing",
+        "a_user_requested_check_still_reports_its_failure",
+        "an_automatic_check_records_when_it_ran_for_the_next_launch",
+        "a_version_the_user_has_already_seen_is_not_announced_again",
+        "an_update_already_waiting_is_not_re_checked",
+        "a_completed_automatic_check_records_itself_in_the_configuration",
+        "opening_about_acknowledges_the_update_the_badge_announced",
+        "an_available_update_names_itself_on_the_overflow_control",
+        "without_an_available_update_the_overflow_menu_offers_no_update_entry"
       ],
       "manual_scenarios": [
         "NP-01",
@@ -1227,7 +1240,8 @@
     {
       "id": "settings",
       "edges": [
-        "SET-0[1-8]"
+        "SET-0[1-8]",
+        "SET-11"
       ],
       "requirements": [
         "docs/gui-design.md#settings"
@@ -1254,7 +1268,11 @@
         "scroll_speed_preference_round_trips_through_toml_and_defaults_to_normal",
         "scroll_speed_multiplier_scales_rows_moved_per_wheel_step",
         "settings_controls_stay_inside_their_card_at_the_default_window_width",
-        "a_settings_slider_rail_is_visible_against_the_card_it_sits_in"
+        "a_settings_slider_rail_is_visible_against_the_card_it_sits_in",
+        "settings_automatic_update_check_control_returns_the_toggle_command",
+        "turning_off_automatic_update_checks_persists_and_silences_the_poll",
+        "automatic_update_checks_are_on_until_the_user_says_otherwise",
+        "an_update_check_remembers_when_it_ran_and_what_was_already_seen"
       ],
       "manual_scenarios": [
         "AS-02",

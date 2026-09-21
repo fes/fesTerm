@@ -39,6 +39,7 @@ pub(crate) struct SettingsViewModel {
     pub pulse_new_output_dot: bool,
     pub show_resumable_sessions: bool,
     pub show_durable_session_in_status_bar: bool,
+    pub automatic_update_checks: bool,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
 }
@@ -74,6 +75,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         pulse_new_output_dot,
         show_resumable_sessions,
         show_durable_session_in_status_bar,
+        automatic_update_checks,
         default_sftp_local_directory,
         sftp_pane_order,
     } = settings;
@@ -289,6 +291,23 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 show_durable_session_in_status_bar,
                             ) {
                                 command = Some(AppCommand::ToggleDurableSessionInStatusBar);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Check for fesTerm updates automatically",
+                                "Contact GitHub about once a day to see whether a newer \
+                                 fesTerm has been released, and mark the \"More actions\" \
+                                 control when one has. Nothing is downloaded or installed \
+                                 without your say-so, and no profile, session, terminal, \
+                                 device, or configuration data is sent. On by default; turn \
+                                 it off to make fesTerm check only when you ask it to from \
+                                 About fesTerm.",
+                                automatic_update_checks,
+                            ) {
+                                command = Some(AppCommand::ToggleAutomaticUpdateChecks);
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
@@ -940,6 +959,7 @@ mod tests {
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
+                            automatic_update_checks: false,
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
@@ -1385,6 +1405,29 @@ mod tests {
     }
 
     #[test]
+    fn settings_automatic_update_check_control_returns_the_toggle_command() {
+        // The background release poll is a preference, not a hidden
+        // behaviour: it is reachable and reversible from Settings.
+        let mut harness = settings_harness();
+        harness.run();
+
+        let label = "Check for fesTerm updates automatically";
+        assert!(harness
+            .query_by_role_and_label(accesskit::Role::CheckBox, label)
+            .is_some());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, label)
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleAutomaticUpdateChecks)
+        ));
+    }
+
+    #[test]
     fn settings_toggle_durable_session_status_bar_control_returns_the_toggle_command() {
         // Feature request #168: the durable-session status-bar item has its
         // own preference, deliberately not folded into "Show session details
@@ -1544,6 +1587,7 @@ mod tests {
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
+                            automatic_update_checks: false,
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },

@@ -4,12 +4,25 @@ use std::{
         Arc,
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use cargo_packager_updater::{semver::Version, url::Url, Config, Update};
 
 const UPDATE_ENDPOINT: &str =
     "https://github.com/fes/fesTerm/releases/latest/download/festerm-update.json";
+
+/// How long an automatic check waits before asking again.
+///
+/// A day is deliberately coarse: the point is that a user hears about a fix
+/// within a day of starting fesTerm, not that they hear about it first.
+const AUTOMATIC_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long after launch the first automatic check may run.
+///
+/// Startup already contends for the network and the disk, and nobody opened
+/// fesTerm to find out about fesTerm.
+const FIRST_AUTOMATIC_CHECK_DELAY: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InstallationKind {
@@ -169,6 +182,29 @@ pub(crate) struct UpdateController {
     downloaded_update: Option<Box<dyn DownloadedUpdate>>,
     receiver: Option<Receiver<WorkerResult>>,
     worker_spawner: WorkerSpawner,
+    schedule: AutomaticSchedule,
+}
+
+/// The state behind the occasional background check.
+///
+/// An automatic check is not a user request: it must never raise an error
+/// surface, and it must never re-announce a version the user has already been
+/// shown.
+#[derive(Default)]
+struct AutomaticSchedule {
+    enabled: bool,
+    launched_at: Option<Instant>,
+    last_checked_unix_seconds: Option<u64>,
+    acknowledged_version: Option<String>,
+    in_flight: bool,
+    unsaved: Option<UpdateCheckOutcome>,
+}
+
+/// A schedule change the application should persist.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateCheckOutcome {
+    pub(crate) last_checked_unix_seconds: u64,
+    pub(crate) acknowledged_version: Option<String>,
 }
 
 impl UpdateController {
@@ -203,6 +239,7 @@ impl UpdateController {
             downloaded_update: None,
             receiver: None,
             worker_spawner: spawn_worker,
+            schedule: AutomaticSchedule::default(),
         }
     }
 
@@ -261,6 +298,13 @@ impl UpdateController {
         controller
     }
 
+    /// A self-updating controller whose checks never leave the process, for
+    /// tests that exercise scheduling rather than the network.
+    #[cfg(test)]
+    pub(crate) fn inert_for_test() -> Self {
+        Self::with_test_backend(Arc::new(NoUpdateBackend))
+    }
+
     #[cfg(test)]
     fn with_test_backend(backend: Arc<dyn UpdateBackend>) -> Self {
         Self {
@@ -271,6 +315,7 @@ impl UpdateController {
             downloaded_update: None,
             receiver: None,
             worker_spawner: run_worker_inline,
+            schedule: AutomaticSchedule::default(),
         }
     }
 
@@ -284,6 +329,115 @@ impl UpdateController {
 
     pub(crate) const fn endpoint() -> &'static str {
         UPDATE_ENDPOINT
+    }
+
+    /// Restores the poll clock and the badge the user has already seen.
+    ///
+    /// Restarting fesTerm must not restart the interval; otherwise a user who
+    /// opens and closes it all day would be checking all day.
+    pub(crate) fn restore_schedule(
+        &mut self,
+        enabled: bool,
+        last_checked_unix_seconds: Option<u64>,
+        acknowledged_version: Option<String>,
+    ) {
+        self.schedule.enabled = enabled;
+        self.schedule.last_checked_unix_seconds = last_checked_unix_seconds;
+        self.schedule.acknowledged_version = acknowledged_version;
+        self.schedule.launched_at.get_or_insert_with(Instant::now);
+    }
+
+    /// Applies a change to the preference without disturbing the clock.
+    pub(crate) fn set_automatic_checks_enabled(&mut self, enabled: bool) {
+        self.schedule.enabled = enabled;
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn automatic_checks_enabled(&self) -> bool {
+        self.schedule.enabled
+    }
+
+    /// Returns whether an automatic check is due, without asking the clock.
+    fn automatic_check_is_due(&self, since_launch: Duration, now_unix_seconds: u64) -> bool {
+        if !self.schedule.enabled || self.schedule.in_flight {
+            return false;
+        }
+        // Package-managed installs are updated by the package manager, and a
+        // developer build has nothing to update to.
+        if !self.installation_kind.can_install() {
+            return false;
+        }
+        if self.status.is_busy() || matches!(self.status, UpdateStatus::Unavailable(_)) {
+            return false;
+        }
+        // An update already found and not yet acted on needs no re-asking.
+        if matches!(
+            self.status,
+            UpdateStatus::Available(_)
+                | UpdateStatus::ReadyToInstall(_)
+                | UpdateStatus::Installed(_)
+        ) {
+            return false;
+        }
+        match self.schedule.last_checked_unix_seconds {
+            None => since_launch >= FIRST_AUTOMATIC_CHECK_DELAY,
+            Some(last) => {
+                // A clock that moved backwards (timezone edit, NTP step) must
+                // not park the next check somewhere in the future.
+                let elapsed = now_unix_seconds.saturating_sub(last);
+                elapsed >= AUTOMATIC_CHECK_INTERVAL.as_secs() || now_unix_seconds < last
+            }
+        }
+    }
+
+    /// Starts a background check when one is due. Returns whether it started.
+    pub(crate) fn poll_schedule(&mut self, now_unix_seconds: u64) -> bool {
+        let launched_at = *self.schedule.launched_at.get_or_insert_with(Instant::now);
+        let since_launch = launched_at.elapsed();
+        if !self.automatic_check_is_due(since_launch, now_unix_seconds) {
+            return false;
+        }
+        self.schedule.in_flight = true;
+        self.schedule.last_checked_unix_seconds = Some(now_unix_seconds);
+        self.schedule.unsaved = Some(UpdateCheckOutcome {
+            last_checked_unix_seconds: now_unix_seconds,
+            acknowledged_version: self.schedule.acknowledged_version.clone(),
+        });
+        self.begin_check();
+        true
+    }
+
+    /// Returns the version a badge should announce, if any.
+    ///
+    /// A version the user has already been shown is not news.
+    pub(crate) fn unacknowledged_version(&self) -> Option<&str> {
+        let version = match &self.status {
+            UpdateStatus::Available(summary)
+            | UpdateStatus::Downloading(summary)
+            | UpdateStatus::ReadyToInstall(summary) => summary.version.as_str(),
+            _ => return None,
+        };
+        match self.schedule.acknowledged_version.as_deref() {
+            Some(acknowledged) if acknowledged == version => None,
+            _ => Some(version),
+        }
+    }
+
+    /// Records that the user has now seen whatever the badge was announcing.
+    pub(crate) fn acknowledge_available_version(&mut self) {
+        let Some(version) = self.unacknowledged_version().map(str::to_owned) else {
+            return;
+        };
+        self.schedule.acknowledged_version = Some(version.clone());
+        self.schedule.unsaved = Some(UpdateCheckOutcome {
+            last_checked_unix_seconds: self.schedule.last_checked_unix_seconds.unwrap_or_default(),
+            acknowledged_version: Some(version),
+        });
+    }
+
+    /// Takes the schedule change the application still has to persist.
+    pub(crate) fn take_unsaved_outcome(&mut self) -> Option<UpdateCheckOutcome> {
+        self.schedule.unsaved.take()
     }
 
     pub(crate) fn begin_check(&mut self) {
@@ -341,10 +495,15 @@ impl UpdateController {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.receiver = None;
+                let automatic = std::mem::take(&mut self.schedule.in_flight);
                 if self.status.is_busy() {
-                    self.status = UpdateStatus::Failed {
-                        message: "The update worker stopped unexpectedly.",
-                        retry_check: true,
+                    self.status = if automatic {
+                        UpdateStatus::Idle
+                    } else {
+                        UpdateStatus::Failed {
+                            message: "The update worker stopped unexpectedly.",
+                            retry_check: true,
+                        }
                     };
                 }
                 return;
@@ -358,6 +517,10 @@ impl UpdateController {
             };
             return;
         }
+        let automatic = matches!(result, WorkerResult::Checked(_)) && self.schedule.in_flight;
+        if matches!(result, WorkerResult::Checked(_)) {
+            self.schedule.in_flight = false;
+        }
         match result {
             WorkerResult::Checked(Ok(Some(update))) => {
                 self.status = UpdateStatus::Available(update.summary());
@@ -365,10 +528,18 @@ impl UpdateController {
             }
             WorkerResult::Checked(Ok(None)) => self.status = UpdateStatus::Current,
             WorkerResult::Checked(Err(())) => {
-                self.status = UpdateStatus::Failed {
-                    message:
-                        "Could not check for updates. Check your network connection and try again.",
-                    retry_check: true,
+                // Nobody asked, so nobody is told: an automatic check that
+                // cannot reach the network leaves the interface as it was and
+                // tries again at the next interval.
+                self.status = if automatic {
+                    UpdateStatus::Idle
+                } else {
+                    UpdateStatus::Failed {
+                        message:
+                            "Could not check for updates. Check your network connection and try \
+                             again.",
+                        retry_check: true,
+                    }
                 };
             }
             WorkerResult::Downloaded(Ok(update)) => {
@@ -404,6 +575,17 @@ fn spawn_worker(work: WorkerTask) -> Receiver<WorkerResult> {
         let _ = sender.send(work());
     });
     receiver
+}
+
+#[cfg(test)]
+#[cfg(test)]
+struct NoUpdateBackend;
+
+#[cfg(test)]
+impl UpdateBackend for NoUpdateBackend {
+    fn check(&self) -> Result<Option<Box<dyn PendingUpdate>>, ()> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -565,6 +747,178 @@ mod tests {
             controller.status(),
             &UpdateStatus::ReadyToInstall(update_summary())
         );
+    }
+
+    const DAY: u64 = 24 * 60 * 60;
+
+    fn scheduled_controller(
+        backend: Arc<dyn UpdateBackend>,
+        last_checked: u64,
+    ) -> UpdateController {
+        let mut controller = UpdateController::with_test_backend(backend);
+        controller.restore_schedule(true, Some(last_checked), None);
+        controller
+    }
+
+    #[test]
+    fn an_automatic_check_waits_for_the_interval_to_elapse() {
+        // The poll is deliberately rare: a user who leaves fesTerm open for a
+        // week should see one check a day, not one a frame.
+        let backend = FakeBackend::new([CheckOutcome::Current]);
+        let mut controller = scheduled_controller(backend.clone(), 1_000 * DAY);
+
+        assert!(!controller.poll_schedule(1_000 * DAY + DAY - 1));
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 0);
+
+        assert!(controller.poll_schedule(1_000 * DAY + DAY));
+        controller.poll();
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 1);
+        assert_eq!(controller.status(), &UpdateStatus::Current);
+    }
+
+    #[test]
+    fn a_first_ever_check_waits_out_the_startup_delay() {
+        // Nothing may compete with the first frames of a launch, so an
+        // install that has never checked still waits before it does.
+        let backend = FakeBackend::new([CheckOutcome::Current]);
+        let mut controller = UpdateController::with_test_backend(backend.clone());
+        controller.restore_schedule(true, None, None);
+
+        assert!(!controller.poll_schedule(1_000 * DAY));
+        assert!(!controller.automatic_check_is_due(Duration::from_secs(60), 1_000 * DAY));
+        assert!(controller.automatic_check_is_due(FIRST_AUTOMATIC_CHECK_DELAY, 1_000 * DAY));
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_clock_that_moved_backwards_makes_a_check_due_rather_than_unreachable() {
+        // A timezone edit or an NTP step must not park the next check weeks
+        // in the future.
+        let backend = FakeBackend::new([CheckOutcome::Current]);
+        let mut controller = scheduled_controller(backend.clone(), 2_000 * DAY);
+
+        assert!(controller.poll_schedule(1_000 * DAY));
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn turning_the_preference_off_stops_automatic_checks() {
+        let backend = FakeBackend::new([CheckOutcome::Current]);
+        let mut controller = scheduled_controller(backend.clone(), 1_000 * DAY);
+        controller.set_automatic_checks_enabled(false);
+
+        assert!(!controller.automatic_checks_enabled());
+        assert!(!controller.poll_schedule(2_000 * DAY));
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 0);
+
+        controller.set_automatic_checks_enabled(true);
+        assert!(controller.poll_schedule(2_000 * DAY));
+    }
+
+    #[test]
+    fn a_package_managed_install_never_checks_on_its_own() {
+        // The package manager owns the version; an unsolicited check could
+        // only ever announce something fesTerm must not act on.
+        let backend = FakeBackend::new([]);
+        let mut controller = UpdateController::with_test_backend(backend.clone());
+        controller.installation_kind = InstallationKind::PackageManaged;
+        controller.restore_schedule(true, Some(1_000 * DAY), None);
+
+        assert!(!controller.poll_schedule(2_000 * DAY));
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_failed_automatic_check_says_nothing() {
+        // The user did not ask, so a flaky network or an offline laptop must
+        // not raise an error surface.
+        let backend = FakeBackend::new([CheckOutcome::Failure]);
+        let mut controller = scheduled_controller(backend.clone(), 1_000 * DAY);
+
+        assert!(controller.poll_schedule(2_000 * DAY));
+        controller.poll();
+
+        assert_eq!(controller.status(), &UpdateStatus::Idle);
+        assert!(controller.unacknowledged_version().is_none());
+    }
+
+    #[test]
+    fn a_user_requested_check_still_reports_its_failure() {
+        let backend = FakeBackend::new([CheckOutcome::Failure]);
+        let mut controller = scheduled_controller(backend, 1_000 * DAY);
+
+        controller.begin_check();
+        controller.poll();
+
+        assert!(matches!(controller.status(), UpdateStatus::Failed { .. }));
+    }
+
+    #[test]
+    fn an_automatic_check_records_when_it_ran_for_the_next_launch() {
+        let backend = FakeBackend::new([CheckOutcome::Current]);
+        let mut controller = scheduled_controller(backend, 1_000 * DAY);
+
+        assert!(controller.poll_schedule(2_000 * DAY));
+
+        assert_eq!(
+            controller.take_unsaved_outcome(),
+            Some(UpdateCheckOutcome {
+                last_checked_unix_seconds: 2_000 * DAY,
+                acknowledged_version: None,
+            })
+        );
+        assert_eq!(controller.take_unsaved_outcome(), None);
+    }
+
+    #[test]
+    fn a_version_the_user_has_already_seen_is_not_announced_again() {
+        let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
+            Err(()),
+            Arc::new(AtomicUsize::new(0)),
+        ))]);
+        let mut controller = scheduled_controller(backend, 1_000 * DAY);
+
+        assert!(controller.poll_schedule(2_000 * DAY));
+        controller.poll();
+        assert_eq!(controller.unacknowledged_version(), Some("0.2.0"));
+
+        controller.acknowledge_available_version();
+
+        assert_eq!(controller.unacknowledged_version(), None);
+        assert_eq!(
+            controller.take_unsaved_outcome(),
+            Some(UpdateCheckOutcome {
+                last_checked_unix_seconds: 2_000 * DAY,
+                acknowledged_version: Some("0.2.0".to_owned()),
+            })
+        );
+        // A restart restores the acknowledgement, so the badge stays quiet.
+        let restored_backend = FakeBackend::new([CheckOutcome::Available(update_plan(
+            Err(()),
+            Arc::new(AtomicUsize::new(0)),
+        ))]);
+        let mut restored = UpdateController::with_test_backend(restored_backend);
+        restored.restore_schedule(true, Some(2_000 * DAY), Some("0.2.0".to_owned()));
+        restored.begin_check();
+        restored.poll();
+
+        assert_eq!(restored.unacknowledged_version(), None);
+    }
+
+    #[test]
+    fn an_update_already_waiting_is_not_re_checked() {
+        let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
+            Err(()),
+            Arc::new(AtomicUsize::new(0)),
+        ))]);
+        let mut controller = scheduled_controller(backend.clone(), 1_000 * DAY);
+
+        assert!(controller.poll_schedule(2_000 * DAY));
+        controller.poll();
+        assert!(matches!(controller.status(), UpdateStatus::Available(_)));
+
+        assert!(!controller.poll_schedule(3_000 * DAY));
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 1);
     }
 
     #[test]

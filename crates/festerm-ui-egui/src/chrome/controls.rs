@@ -198,16 +198,28 @@ pub(super) fn paint_overflow_menu(
     ui: &mut Ui,
     include_palette: bool,
     include_inspector: bool,
+    available_update: Option<&str>,
     actions: &mut Vec<ChromeAction>,
 ) {
-    let response = paint_toolbar_icon_button(
-        ui,
-        "More actions",
-        Icon::Overflow,
-        CHROME_ICON_COLOR_HOVERED,
-    );
+    // A newer release is the only news this control carries, so it says so in
+    // its own label rather than relying on a dot a screen reader cannot see.
+    let label = match available_update {
+        Some(version) => format!("More actions (fesTerm {version} available)"),
+        None => "More actions".to_owned(),
+    };
+    let response = paint_toolbar_icon_button(ui, label, Icon::Overflow, CHROME_ICON_COLOR_HOVERED);
+    if available_update.is_some() {
+        paint_update_badge(ui, response.rect);
+    }
 
     Popup::menu(&response).show(|ui| {
+        if let Some(version) = available_update {
+            if ui.button(format!("Update to fesTerm {version}…")).clicked() {
+                actions.push(ChromeAction::OpenAbout);
+                ui.close();
+            }
+            ui.separator();
+        }
         if ui.button("Open File…").clicked() {
             actions.push(ChromeAction::OpenMarkdownFile);
             ui.close();
@@ -237,6 +249,17 @@ pub(super) fn paint_overflow_menu(
         }
     });
 }
+/// Small accent dot in the icon's top-right corner, outlined in the chrome
+/// background so it stays legible over the icon's own strokes. Deliberately
+/// not a count or a colour ramp: there is only ever one thing to say here.
+fn paint_update_badge(ui: &Ui, rect: egui::Rect) {
+    let center = egui::pos2(rect.right() - 3.5, rect.top() + 3.5);
+    ui.painter()
+        .circle_filled(center, 3.5, crate::theme::SURFACE_CHROME);
+    ui.painter()
+        .circle_filled(center, 2.5, crate::theme::ACCENT_ACTION);
+}
+
 pub(super) fn style_context_menu(ui: &mut Ui) {
     ui.set_min_width(176.0);
     ui.spacing_mut().interact_size.y = 30.0;

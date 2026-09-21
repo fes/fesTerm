@@ -73,6 +73,35 @@ pub struct Configuration {
     known_hosts: Vec<KnownHostEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     profile_usage: Vec<ProfileUsageEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    update_check: Option<UpdateCheckRecord>,
+}
+
+/// What the last automatic update check learned.
+///
+/// This is bookkeeping, not a preference: it exists so a restart does not
+/// restart the poll clock, and so a badge that has already been seen does not
+/// come back for the same release. Only a coarse whole-second timestamp and a
+/// version string are kept; nothing here describes what the user did.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateCheckRecord {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) last_checked_unix_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) acknowledged_version: Option<String>,
+}
+
+impl UpdateCheckRecord {
+    /// Returns when a check last completed, in whole seconds since the epoch.
+    pub const fn last_checked_unix_seconds(&self) -> u64 {
+        self.last_checked_unix_seconds
+    }
+
+    /// Returns the newest version the user has already been shown.
+    pub fn acknowledged_version(&self) -> Option<&str> {
+        self.acknowledged_version.as_deref()
+    }
 }
 
 impl Configuration {
@@ -86,6 +115,7 @@ impl Configuration {
             settings: InterfaceSettings::DEFAULT,
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
+            update_check: None,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -104,6 +134,7 @@ impl Configuration {
             settings: InterfaceSettings::DEFAULT,
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
+            update_check: None,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -347,6 +378,7 @@ impl Configuration {
             settings: InterfaceSettings::DEFAULT,
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
+            update_check: None,
         }
     }
 
@@ -362,6 +394,7 @@ impl Configuration {
             settings: raw.settings,
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
+            update_check: raw.update_check,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -477,6 +510,34 @@ impl Configuration {
         Ok(replacement)
     }
 
+    /// Returns what the last automatic update check recorded.
+    pub fn update_check(&self) -> Option<&UpdateCheckRecord> {
+        self.update_check.as_ref()
+    }
+
+    /// Returns a copy that remembers when a check ran and what it found.
+    ///
+    /// `acknowledged_version` carries forward unless this call supersedes it,
+    /// so a completed check never silently re-badges a version the user has
+    /// already been shown.
+    pub fn with_update_check(
+        &self,
+        last_checked_unix_seconds: u64,
+        acknowledged_version: Option<String>,
+    ) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        let previous = replacement
+            .update_check
+            .as_ref()
+            .and_then(|record| record.acknowledged_version.clone());
+        replacement.update_check = Some(UpdateCheckRecord {
+            last_checked_unix_seconds,
+            acknowledged_version: acknowledged_version.or(previous),
+        });
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(ConfigErrorKind::UnsupportedSchemaVersion));
@@ -540,6 +601,8 @@ struct RawConfiguration {
     known_hosts: Vec<KnownHostEntry>,
     #[serde(default)]
     profile_usage: Vec<ProfileUsageEntry>,
+    #[serde(default)]
+    update_check: Option<UpdateCheckRecord>,
 }
 
 impl<'de> Deserialize<'de> for Configuration {
@@ -556,10 +619,15 @@ impl<'de> Deserialize<'de> for Configuration {
             settings: raw.settings,
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
+            update_check: raw.update_check,
         };
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)
     }
+}
+
+pub(crate) const fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 pub(crate) const fn is_false(value: &bool) -> bool {
@@ -726,6 +794,51 @@ mod tests {
     use std::{path::PathBuf, process, sync::atomic::Ordering};
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    #[test]
+    fn automatic_update_checks_are_on_until_the_user_says_otherwise() {
+        assert!(InterfaceSettings::DEFAULT.automatic_update_checks());
+        let document = Configuration::empty();
+        assert!(document.interface_settings().automatic_update_checks());
+
+        let declined = InterfaceSettings::DEFAULT.with_automatic_update_checks(false);
+        let serialized = toml::to_string(&declined).unwrap();
+        assert!(serialized.contains("automatic_update_checks = false"));
+        let restored: InterfaceSettings = toml::from_str(&serialized).unwrap();
+        assert!(!restored.automatic_update_checks());
+
+        // The default stays out of the file, and a document written before
+        // this preference existed still starts with checking on.
+        let legacy: InterfaceSettings = toml::from_str("status_bar_visible = true").unwrap();
+        assert!(legacy.automatic_update_checks());
+        assert!(!toml::to_string(&InterfaceSettings::DEFAULT)
+            .unwrap()
+            .contains("automatic_update_checks"));
+    }
+
+    #[test]
+    fn an_update_check_remembers_when_it_ran_and_what_was_already_seen() {
+        let document = Configuration::empty();
+        assert!(document.update_check().is_none());
+
+        let checked = document
+            .with_update_check(1_700_000_000, Some("0.3.0".to_owned()))
+            .unwrap();
+        let record = checked.update_check().unwrap();
+        assert_eq!(record.last_checked_unix_seconds(), 1_700_000_000);
+        assert_eq!(record.acknowledged_version(), Some("0.3.0"));
+
+        // A later check that finds nothing new must not forget that the user
+        // has already been shown 0.3.0.
+        let rechecked = checked.with_update_check(1_700_086_400, None).unwrap();
+        let record = rechecked.update_check().unwrap();
+        assert_eq!(record.last_checked_unix_seconds(), 1_700_086_400);
+        assert_eq!(record.acknowledged_version(), Some("0.3.0"));
+
+        let serialized = toml::to_string(&rechecked).unwrap();
+        let restored: Configuration = toml::from_str(&serialized).unwrap();
+        assert_eq!(restored.update_check(), rechecked.update_check());
+    }
 
     #[test]
     fn duplicate_ssh_port_forward_bindings_are_rejected_within_one_profile() {
