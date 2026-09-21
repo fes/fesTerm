@@ -307,6 +307,16 @@ pub(crate) struct TerminalPointerState {
     local_selection: [bool; 3],
     pub(crate) last_position: Option<Pos2>,
     pub(crate) modifiers: Modifiers,
+    /// The fraction of a row a forwarded wheel event did not earn, carried
+    /// into the next event in the same direction. Mouse-reporting
+    /// applications receive one wheel report per row, so without this a
+    /// trackpad's stream of small pixel deltas would report a full notch
+    /// each, scrolling far faster than the same gesture moves fesTerm's own
+    /// scrollback - and ignoring the scroll-speed preference entirely.
+    wheel_carry: f32,
+    /// The direction `wheel_carry` was accumulated in, so reversing drops a
+    /// stale carry instead of spending it the wrong way.
+    wheel_carry_sign: f32,
 }
 
 impl TerminalPointerState {
@@ -369,6 +379,30 @@ impl TerminalPointerState {
             .into_iter()
             .find(|button| self.pressed[Self::button_index(*button)])
     }
+
+    /// How many wheel reports a forwarded wheel event has earned, scaling
+    /// the event the same way fesTerm's own scrollback scales it: by rows,
+    /// then by the user's scroll-speed preference, keeping the leftover
+    /// fraction for the next event in the same direction.
+    fn wheel_reports(
+        &mut self,
+        unit: egui::MouseWheelUnit,
+        delta_y: f32,
+        cell_height: f32,
+        page_rows: usize,
+        multiplier: f32,
+    ) -> usize {
+        let sign = delta_y.signum();
+        if sign != self.wheel_carry_sign {
+            self.wheel_carry = 0.0;
+            self.wheel_carry_sign = sign;
+        }
+        let raw_rows = crate::view::wheel_delta_rows(unit, delta_y, cell_height, page_rows);
+        let rows = crate::view::scaled_scroll_rows(raw_rows, multiplier, &mut self.wheel_carry);
+        // One gesture must never flood an application with a page of
+        // reports it will spend frames answering.
+        rows.min(page_rows)
+    }
 }
 
 pub(crate) struct InputAdapterState<'a> {
@@ -376,6 +410,9 @@ pub(crate) struct InputAdapterState<'a> {
     pub(crate) keyboard: &'a mut KeyboardOwnership,
     pub(crate) pointer: &'a mut TerminalPointerState,
     pub(crate) viewport_offset_rows: usize,
+    /// The user's scroll-speed preference, applied to wheel reports sent to
+    /// a mouse-reporting application exactly as it is to local scrollback.
+    pub(crate) scroll_speed_multiplier: f32,
 }
 
 /// Which parts of terminal input `route_egui_events` should suppress this
@@ -406,6 +443,7 @@ pub(crate) fn route_egui_events(
         keyboard,
         pointer,
         viewport_offset_rows,
+        scroll_speed_multiplier,
     } = input;
     // Whether the terminal should currently accept keyboard input.
     //
@@ -594,22 +632,40 @@ pub(crate) fn route_egui_events(
                 }
             }
             egui::Event::MouseWheel {
-                delta, modifiers, ..
+                unit,
+                delta,
+                modifiers,
+                ..
             } => {
                 let observed = Instant::now();
-                if let Some(route) = route_pointer_event(
-                    PointerInputEvent::Wheel {
-                        delta_y: delta.y,
-                        modifiers: translate_modifiers(modifiers),
-                    },
-                    layout,
-                    terminal,
-                    selection,
-                    pointer,
-                    sink,
-                    viewport_offset_rows,
-                ) {
-                    reports.record(observed, route);
+                // A mouse-reporting application is told about rows, not
+                // events: one report per row the same gesture would have
+                // moved fesTerm's own scrollback, so the scroll-speed
+                // preference governs both and a trackpad's pixel-sized
+                // events no longer count as a full notch each.
+                let page_rows = layout.dimensions.rows().saturating_sub(1).max(1);
+                let wheel_reports = pointer.wheel_reports(
+                    unit,
+                    delta.y,
+                    layout.metrics.height,
+                    page_rows,
+                    scroll_speed_multiplier,
+                );
+                for _ in 0..wheel_reports {
+                    if let Some(route) = route_pointer_event(
+                        PointerInputEvent::Wheel {
+                            delta_y: delta.y,
+                            modifiers: translate_modifiers(modifiers),
+                        },
+                        layout,
+                        terminal,
+                        selection,
+                        pointer,
+                        sink,
+                        viewport_offset_rows,
+                    ) {
+                        reports.record(observed, route);
+                    }
                 }
             }
             egui::Event::PointerGone => pointer.last_position = None,
