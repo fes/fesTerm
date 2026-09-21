@@ -1435,6 +1435,7 @@
         "native_persistence_is_local_only_and_preserves_the_shell_profile",
         "session_backend_forwards_input_resize_output_and_takeover",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
+        "native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable",
         "windows_helper_staging_is_versioned_and_prunes_only_unreferenced_builds",
         "incompatible_registry_record_is_rejected_before_connecting",
         "client_input_burst_waits_in_order_while_output_keeps_flowing",

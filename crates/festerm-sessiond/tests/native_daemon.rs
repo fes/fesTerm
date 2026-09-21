@@ -801,7 +801,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
 #[cfg(windows)]
 #[test]
 #[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
-fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_alive() {
+fn native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable() {
     use std::{process::Stdio, thread};
 
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
@@ -816,6 +816,10 @@ fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_al
     let name = format!("native-start-{suffix}");
     let runtime_root = short_runtime_root(&suffix);
     fs::create_dir_all(&runtime_root).unwrap();
+    let package_directory = runtime_root.join("package");
+    fs::create_dir(&package_directory).unwrap();
+    let packaged_helper = package_directory.join("festerm-sessiond.exe");
+    fs::copy(&executable, &packaged_helper).unwrap();
     let _cleanup = SessionCleanup {
         executable: executable.clone(),
         runtime_root: runtime_root.clone(),
@@ -825,7 +829,7 @@ fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_al
     // Mirrors `connect_or_start`'s exact stdio configuration: stdin
     // discarded, stdout discarded, stderr piped and read to completion via
     // `output()` (which also waits for the child to exit).
-    let mut command = daemon_command(&executable, &runtime_root);
+    let mut command = daemon_command(&packaged_helper, &runtime_root);
     command
         .args(["start", "--name", &name, "--shell"])
         .arg(test_shell(&executable));
@@ -871,6 +875,17 @@ fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_al
         )
     );
     assert!(registry.join("helpers").join(helper_identity).is_file());
+
+    fs::remove_file(&packaged_helper)
+        .expect("the package-owned helper must not be locked by the staged daemon");
+    fs::copy(&executable, &packaged_helper)
+        .expect("an installer must be able to replace the package-owned helper");
+
+    let endpoint = record["socket"].as_str().unwrap();
+    let mut client = connect(endpoint);
+    assert_windows_ready(&mut *client);
+    send_input(&mut *client, &test_input("after-package-replacement")).unwrap();
+    assert_contains(&mut *client, b"after-package-replacement");
 }
 
 /// Regression test for the Windows zombie daemon reported in September 2026.

@@ -76,6 +76,7 @@ struct SessionRecord {
     attached: bool,
     #[serde(default = "legacy_protocol_version")]
     protocol_version: u16,
+    #[cfg(any(windows, test))]
     #[serde(default)]
     helper_identity: Option<String>,
 }

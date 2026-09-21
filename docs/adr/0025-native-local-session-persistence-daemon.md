@@ -456,6 +456,10 @@ pre-contract sessions once.
   `windows_helper_staging_is_versioned_and_prunes_only_unreferenced_builds`
   proves that Windows launches an immutable release copy, retains a live
   generation's older copy, and removes an unreferenced copy.
+  `native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable`
+  launches through a package-shaped helper path, deletes and replaces that
+  source while the daemon remains alive, then verifies fresh input reaches the
+  same session.
   `incompatible_registry_record_is_rejected_before_connecting` proves protocol
   incompatibility fails before IPC attachment with actionable version guidance;
   legacy registry parsing defaults to the compatible `FSD1` epoch.
