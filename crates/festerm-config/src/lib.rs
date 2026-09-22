@@ -1878,6 +1878,75 @@ profile_id = "remote"
     /// A workspace covering several windows (ADR 0033) keeps the primary
     /// window's tabs where they have always been, so the file still restores
     /// correctly, and lists only the additional windows separately.
+    /// The primary window's own size and position have to survive a round
+    /// trip, or a restored workspace reopens its first window at the default
+    /// size no matter how the user left it.
+    #[test]
+    fn a_workspace_round_trips_the_primary_windows_geometry() {
+        let configuration = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+focused_tab_id = "primary-launcher"
+
+[workspace.geometry]
+x = 40.0
+y = 24.0
+width = 1440.0
+height = 900.0
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "primary-launcher"
+"#,
+        )
+        .expect("a workspace with primary-window geometry is valid");
+
+        let geometry = configuration
+            .workspace()
+            .expect("a saved workspace")
+            .geometry()
+            .copied()
+            .expect("the primary window's geometry is read back");
+        assert_eq!(geometry.position(), (40.0, 24.0));
+        assert_eq!(geometry.size(), (1440.0, 900.0));
+
+        let serialized = configuration.to_toml().expect("serializes");
+        let reloaded = Configuration::parse(&serialized).expect("re-parses");
+        assert_eq!(
+            reloaded
+                .workspace()
+                .and_then(WorkspaceConfiguration::geometry),
+            Some(&geometry)
+        );
+
+        assert!(
+            Configuration::parse(
+                r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+focused_tab_id = "primary-launcher"
+
+[workspace.geometry]
+x = 0.0
+y = 0.0
+width = 0.0
+height = 900.0
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "primary-launcher"
+"#,
+            )
+            .is_err(),
+            "a window with no width is not a window"
+        );
+    }
+
     #[test]
     fn restores_additional_windows_with_their_own_tabs_and_geometry() {
         let configuration = Configuration::parse(

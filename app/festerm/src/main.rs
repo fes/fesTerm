@@ -89,6 +89,24 @@ pub(crate) fn window_viewport_builder(
         .with_min_inner_size([360.0, 240.0])
 }
 
+/// Builds the first window's viewport, at its restored geometry when a saved
+/// workspace has one and at `default_size` otherwise.
+fn primary_viewport_builder(
+    restored: Option<festerm_config::WorkspaceWindowGeometry>,
+    default_size: eframe::egui::Vec2,
+) -> eframe::egui::ViewportBuilder {
+    let size = restored.map_or(default_size, |geometry| {
+        let (width, height) = geometry.size();
+        eframe::egui::vec2(width, height)
+    });
+    let mut builder = window_viewport_builder(APPLICATION_TITLE, size);
+    if let Some(geometry) = restored {
+        let (x, y) = geometry.position();
+        builder = builder.with_position(eframe::egui::pos2(x, y));
+    }
+    builder
+}
+
 fn main() -> eframe::Result<()> {
     diagnostics::init();
     tracing::info!(target: "festerm::app", "starting fesTerm");
@@ -106,8 +124,12 @@ fn main() -> eframe::Result<()> {
     let default_width = DEFAULT_WINDOW_WIDTH;
     let default_height = DEFAULT_WINDOW_HEIGHT;
 
-    let viewport = window_viewport_builder(
-        APPLICATION_TITLE,
+    // A restored workspace reopens the first window where and how the user
+    // left it; without one (or with workspace restore off) fesTerm opens at
+    // the default size the platform places wherever it likes.
+    let restored_geometry = startup_configuration.restored_window_geometry();
+    let viewport = primary_viewport_builder(
+        restored_geometry,
         eframe::egui::vec2(default_width, default_height),
     );
     let options = eframe::NativeOptions {
@@ -202,6 +224,36 @@ fn log_wgpu_adapter(creation_context: &eframe::CreationContext<'_>) {
 
 #[cfg(test)]
 mod tests {
+    /// A restored workspace reopens the first window at the size and position
+    /// it was left at, rather than at the default size the platform places
+    /// wherever it likes.
+    #[test]
+    fn a_restored_workspace_reopens_the_first_window_where_it_was_left() {
+        let restored = festerm_config::WorkspaceWindowGeometry::new(120.0, 80.0, 1440.0, 900.0);
+
+        let builder = super::primary_viewport_builder(
+            Some(restored),
+            eframe::egui::vec2(super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT),
+        );
+
+        assert_eq!(builder.inner_size, Some(eframe::egui::vec2(1440.0, 900.0)));
+        assert_eq!(builder.position, Some(eframe::egui::pos2(120.0, 80.0)));
+    }
+
+    /// Without saved geometry - no workspace, workspace restore off, or a
+    /// platform that will not report a window's own position - the first
+    /// window opens at fesTerm's default size and is not placed at all.
+    #[test]
+    fn without_saved_geometry_the_first_window_opens_at_the_default_size() {
+        let default_size =
+            eframe::egui::vec2(super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT);
+
+        let builder = super::primary_viewport_builder(None, default_size);
+
+        assert_eq!(builder.inner_size, Some(default_size));
+        assert_eq!(builder.position, None);
+    }
+
     #[test]
     fn native_window_uses_the_committed_festerm_application_icon() {
         let icon = super::application_icon_data();

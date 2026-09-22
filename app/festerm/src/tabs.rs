@@ -2567,6 +2567,7 @@ impl AppState {
         &self,
         additional_windows: Vec<festerm_config::WorkspaceWindow>,
         next_identifier: &mut usize,
+        geometry: Option<festerm_config::WorkspaceWindowGeometry>,
     ) -> Result<Configuration, ConfigError> {
         let (mut tabs, mut focused_tab_id) = self.capture_window_workspace_tabs(next_identifier)?;
         if tabs.is_empty() {
@@ -2575,8 +2576,12 @@ impl AppState {
             tabs.push(WorkspaceTab::launcher(identifier.clone())?);
             focused_tab_id = Some(identifier);
         }
-        let workspace =
-            WorkspaceConfiguration::with_windows(tabs, focused_tab_id, additional_windows)?;
+        let workspace = WorkspaceConfiguration::with_windows_and_geometry(
+            tabs,
+            focused_tab_id,
+            additional_windows,
+            geometry,
+        )?;
         self.configuration.with_workspace(workspace)
     }
 
@@ -5180,7 +5185,7 @@ mod tests {
         state.active = settings;
 
         let captured = state
-            .capture_workspace_configuration(Vec::new(), &mut 1)
+            .capture_workspace_configuration(Vec::new(), &mut 1, None)
             .unwrap();
         let workspace = captured.workspace().unwrap();
 
@@ -5207,7 +5212,7 @@ mod tests {
         state.dispatch(AppCommand::StartLocalSession, &context);
 
         let captured = state
-            .capture_workspace_configuration(Vec::new(), &mut 1)
+            .capture_workspace_configuration(Vec::new(), &mut 1, None)
             .unwrap();
         let workspace = captured.workspace().unwrap();
 
@@ -5296,7 +5301,7 @@ mod tests {
         state.active = state.tabs[1].id;
 
         let captured = state
-            .capture_workspace_configuration(Vec::new(), &mut 1)
+            .capture_workspace_configuration(Vec::new(), &mut 1, None)
             .unwrap();
         let workspace = captured.workspace().unwrap();
 

@@ -1536,8 +1536,8 @@ quiet rows with subtle dividers:
   arguments, and working-directory form before launch.
 - **Workspace restore** is an on/off switch, off by default (see
   "Configuration" below): unlike the four controls above, which always apply
-  and save immediately, resurrecting a previous run's open tabs is an
-  explicit opt-in.
+  and save immediately, resurrecting a previous run's open tabs - and the
+  size and position of the windows holding them - is an explicit opt-in.
 - **Compact New Session layout** is an off-by-default switch that shrinks the
   Launcher's top launch cards' mark and padding while keeping their
   descriptions, since a card that only says "SSH" does not tell a new user
@@ -1593,10 +1593,17 @@ older fesTerm build that always persisted it) is dropped rather than silently
 resurfacing. Turning the toggle off also scrubs any already-saved workspace
 from disk immediately, so re-enabling it later starts clean instead of
 resurrecting a forgotten snapshot. Once turned on, workspace state (the open
-tab list, its order, and the active tab) saves and restores automatically:
-every tab-list mutation (opening, closing, reordering, or activating a tab)
-triggers a write-through save on the next frame, mirroring how interface
-settings and profile CRUD already save immediately on every change. There is
+tab list, its order, the active tab, and each window's size and position)
+saves and restores automatically: every tab-list mutation (opening, closing,
+reordering, or activating a tab) triggers a write-through save on the next
+frame, and moving or resizing a window saves the new geometry once the window
+has settled - a window closing writes a resize that the settling delay is
+still holding. A restored window reopens at its saved size and position, and
+a platform that refuses to report a window's own geometry simply opens at the
+default size wherever it puts it. This is all part of the same opt-in: with
+Workspace restore off, no window geometry is written or read either. These
+write-through saves mirror how interface settings and profile CRUD already
+save immediately on every change. There is
 no manual **Reload configuration** or **Save workspace** action for the user
 to remember to invoke, and Settings does not describe persistence with
 reload/save language; ADR 0015 owns the startup contract that this automatic

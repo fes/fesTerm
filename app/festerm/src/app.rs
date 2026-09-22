@@ -67,6 +67,10 @@ const LARGE_PASTE_LINE_THRESHOLD: usize = 100;
 const PASTE_PREVIEW_CHARACTER_LIMIT: usize = 800;
 const PASTE_PREVIEW_LINE_LIMIT: usize = 8;
 
+/// How still a window has to be before a move or resize is written to the
+/// workspace, so one drag produces one write rather than one per frame.
+const GEOMETRY_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
+
 #[derive(Clone, Copy)]
 enum ApplicationShortcut {
     CommandPalette,
@@ -439,6 +443,10 @@ pub struct FesTermApp {
     /// save itself spans every window, so the composition root performs it
     /// (ADR 0033).
     workspace_save_requested: bool,
+    /// When a geometry change that has not been saved yet becomes due,
+    /// debouncing the stream of sizes a live drag-resize produces into one
+    /// workspace write.
+    pending_geometry_save: Option<std::time::Instant>,
     /// Where the platform last reported this window, saved with the
     /// workspace so restore can reopen it in place (ADR 0033).
     window_geometry: Option<festerm_config::WorkspaceWindowGeometry>,
@@ -759,6 +767,7 @@ impl FesTermApp {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
         });
         let mut pending_restored_windows = Vec::new();
+        let mut restored_geometry = None;
         // Read before `configuration` moves into the state: restarting
         // fesTerm must not restart the poll interval.
         let mut updates = UpdateController::from_build();
@@ -776,6 +785,9 @@ impl FesTermApp {
             // its additional windows are opened by the composition root once
             // this one exists (ADR 0033).
             pending_restored_windows = workspace.windows().to_vec();
+            // Carried forward so a run that never resizes the window still
+            // saves the geometry it was restored at.
+            restored_geometry = workspace.geometry().copied();
             (
                 AppState::with_restored_workspace(context, configuration, &workspace),
                 None,
@@ -818,7 +830,8 @@ impl FesTermApp {
             pending_configuration_broadcast: None,
             window_close_accepted: false,
             workspace_save_requested: false,
-            window_geometry: None,
+            window_geometry: restored_geometry,
+            pending_geometry_save: None,
             pending_restored_windows,
         }
     }
@@ -1335,8 +1348,11 @@ impl FesTermApp {
             return;
         }
         self.apply_configuration_save(
-            self.state
-                .capture_workspace_configuration(additional_windows, next_identifier),
+            self.state.capture_workspace_configuration(
+                additional_windows,
+                next_identifier,
+                self.window_geometry,
+            ),
             ConfigurationStartupStatus::WorkspaceSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_workspace,
         );
@@ -1374,10 +1390,11 @@ impl FesTermApp {
         self.state.restore_workspace()
     }
 
-    /// Records where the platform says this window currently is, so a saved
-    /// workspace can reopen it there (ADR 0033). Platforms that refuse to
-    /// report a window's own position (Wayland) leave this `None`, and the
-    /// window restores at the default size wherever the platform puts it.
+    /// Records where the platform says this window currently is and how large
+    /// it is, so a saved workspace can reopen it that way (ADR 0033).
+    /// Platforms that refuse to report a window's own position (Wayland)
+    /// leave this `None`, and the window restores at the default size
+    /// wherever the platform puts it.
     fn record_window_geometry(&mut self, context: &egui::Context) {
         let (position, size) = context.input(|input| {
             let viewport = input.viewport();
@@ -1393,9 +1410,31 @@ impl FesTermApp {
             festerm_config::WorkspaceWindowGeometry::new(position.x, position.y, size.x, size.y);
         if self.window_geometry != Some(geometry) {
             self.window_geometry = Some(geometry);
-            // Geometry is saved with the workspace rather than on its own, so
-            // a move or resize alone does not write the file; the next tab
-            // change carries the new position with it.
+            // Geometry is saved with the workspace rather than on its own,
+            // and a live drag-resize reports a new size on nearly every
+            // frame, so the write waits until the window has been still for
+            // a moment instead of rewriting the file throughout the drag.
+            self.pending_geometry_save = Some(std::time::Instant::now() + GEOMETRY_SAVE_DEBOUNCE);
+            // Nothing else is animating once the drag ends, so the deadline
+            // needs a frame of its own to be noticed.
+            context.request_repaint_after(GEOMETRY_SAVE_DEBOUNCE);
+        }
+        if self
+            .pending_geometry_save
+            .is_some_and(|due| std::time::Instant::now() >= due)
+        {
+            self.save_pending_geometry();
+        }
+    }
+
+    /// Folds an outstanding geometry change into the next workspace write.
+    ///
+    /// The composition root performs the single write covering every window
+    /// and ignores the request when workspace restore is off, exactly as it
+    /// does for a tab change.
+    fn save_pending_geometry(&mut self) {
+        if self.pending_geometry_save.take().is_some() {
+            self.workspace_save_requested = true;
         }
     }
 
@@ -4894,6 +4933,11 @@ impl FesTermApp {
         self.state.reprompt_rejected_ssh_passwords(context);
         self.update_window_title(context);
         self.record_window_geometry(context);
+        if self.window_close_accepted {
+            // The window is going away this frame, so a resize the debounce
+            // is still holding has to reach the workspace now or never.
+            self.save_pending_geometry();
+        }
         self.check_open_documents(context);
     }
 
@@ -5685,8 +5729,17 @@ impl FesTermApp {
             .expect("a configuration with a saved workspace");
         let mut window = Self::for_test_with_configuration(configuration.clone());
         window.pending_restored_windows = workspace.windows().to_vec();
+        window.window_geometry = workspace.geometry().copied();
         window.state = AppState::with_restored_workspace(context, configuration, &workspace);
         window
+    }
+
+    /// Stands in for waiting out the geometry debounce, so a test can reach
+    /// the save a resize schedules without sleeping for half a second.
+    pub(crate) fn expire_geometry_debounce_for_test(&mut self) {
+        if self.pending_geometry_save.is_some() {
+            self.pending_geometry_save = Some(std::time::Instant::now());
+        }
     }
 
     /// Stands in for the frame that notices a changed tab list, so a test
@@ -5819,6 +5872,7 @@ impl FesTermApp {
             window_close_accepted: false,
             workspace_save_requested: false,
             window_geometry: None,
+            pending_geometry_save: None,
             pending_restored_windows: Vec::new(),
         }
     }
@@ -10563,6 +10617,145 @@ mod tests {
         assert!(settings.show_resumable_sessions());
         assert!(settings.show_durable_session_in_status_bar());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Reported bug: with workspace restore on, fesTerm reopened at its
+    /// default size no matter how the window had been resized. Geometry was
+    /// only ever written when something *else* asked for a workspace save,
+    /// so resizing and quitting lost the size - and the primary window's
+    /// geometry had no place in the saved workspace to begin with.
+    #[test]
+    fn resizing_the_window_is_saved_for_the_next_start() {
+        let configuration = Configuration::empty()
+            .with_interface_settings(festerm_config::InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                true,
+                true,
+                true,
+            ))
+            .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-window-geometry-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        let context = egui::Context::default();
+
+        report_window_rect(
+            &context,
+            egui::Rect::from_min_size(egui::pos2(120.0, 80.0), egui::vec2(1440.0, 900.0)),
+        );
+        app.record_window_geometry(&context);
+        assert!(
+            !app.take_workspace_save_request(),
+            "a live drag-resize must not rewrite the configuration every frame"
+        );
+
+        app.expire_geometry_debounce_for_test();
+        app.record_window_geometry(&context);
+        assert!(
+            app.take_workspace_save_request(),
+            "a window that has settled at a new size has to reach the workspace"
+        );
+        app.save_workspace(Vec::new(), &mut 1);
+
+        let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
+        let geometry = saved
+            .workspace()
+            .expect("the saved configuration carries a workspace")
+            .geometry()
+            .copied()
+            .expect("the primary window's geometry is saved with it");
+        assert_eq!(geometry.size(), (1440.0, 900.0));
+        assert_eq!(geometry.position(), (120.0, 80.0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Closing the window is the one moment a pending resize cannot wait for
+    /// the debounce: nothing later will carry it.
+    #[test]
+    fn a_resize_immediately_before_quitting_still_reaches_the_workspace() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let context = egui::Context::default();
+        report_window_rect(
+            &context,
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1024.0, 768.0)),
+        );
+
+        app.record_window_geometry(&context);
+        app.window_close_accepted = true;
+        app.save_pending_geometry();
+
+        assert!(app.take_workspace_save_request());
+    }
+
+    /// Restoring a workspace has to carry its geometry forward, or the next
+    /// save - a tab change, say - would write the window's size away again
+    /// and the run after that would open at the default size.
+    #[test]
+    fn a_restored_window_keeps_the_geometry_it_was_restored_at() {
+        let geometry = festerm_config::WorkspaceWindowGeometry::new(10.0, 20.0, 1280.0, 720.0);
+        let workspace = festerm_config::WorkspaceConfiguration::with_windows_and_geometry(
+            vec![festerm_config::WorkspaceTab::launcher("tab-1".to_owned()).unwrap()],
+            Some("tab-1".to_owned()),
+            Vec::new(),
+            Some(geometry),
+        )
+        .unwrap();
+        let configuration = Configuration::empty()
+            .with_interface_settings(festerm_config::InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                true,
+                true,
+                true,
+            ))
+            .unwrap()
+            .with_workspace(workspace)
+            .unwrap();
+
+        let context = egui::Context::default();
+        let mut app = FesTermApp::with_restored_workspace_for_test(&context, configuration);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-restored-window-geometry-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+
+        // Something other than a resize saves the workspace, exactly as a tab
+        // change would, without the window ever being resized this run.
+        app.save_workspace(Vec::new(), &mut 1);
+
+        let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
+        assert_eq!(
+            saved
+                .workspace()
+                .expect("the saved configuration carries a workspace")
+                .geometry()
+                .copied(),
+            Some(geometry)
+        );
+        assert_eq!(app.window_size(), Some(egui::vec2(1280.0, 720.0)));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Hands the application the viewport rectangle a platform would report,
+    /// so geometry recording can be driven without a native window.
+    fn report_window_rect(context: &egui::Context, rect: egui::Rect) {
+        let mut input = egui::RawInput::default();
+        let viewport = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        viewport.inner_rect = Some(rect);
+        viewport.outer_rect = Some(rect);
+        // The texture deltas a frame produces have to be consumed, or epaint
+        // panics when the output is dropped.
+        let mut output = context.run_ui(input, |_| {});
+        output.textures_delta.clear();
     }
 
     #[test]

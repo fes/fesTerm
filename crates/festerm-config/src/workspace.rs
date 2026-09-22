@@ -28,6 +28,11 @@ pub struct WorkspaceConfiguration {
     focused_tab_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     windows: Vec<WorkspaceWindow>,
+    /// The primary window's own geometry, kept beside its tabs so restoring a
+    /// workspace reopens the first window where and how the user left it
+    /// rather than at the default size (ADR 0033).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    geometry: Option<WorkspaceWindowGeometry>,
 }
 
 impl WorkspaceConfiguration {
@@ -50,10 +55,22 @@ impl WorkspaceConfiguration {
         focused_tab_id: Option<String>,
         windows: Vec<WorkspaceWindow>,
     ) -> Result<Self, ConfigError> {
+        Self::with_windows_and_geometry(tabs, focused_tab_id, windows, None)
+    }
+
+    /// Creates a validated workspace that also remembers where and how large
+    /// the primary window was when the snapshot was taken.
+    pub fn with_windows_and_geometry(
+        tabs: Vec<WorkspaceTab>,
+        focused_tab_id: Option<String>,
+        windows: Vec<WorkspaceWindow>,
+        geometry: Option<WorkspaceWindowGeometry>,
+    ) -> Result<Self, ConfigError> {
         let workspace = Self {
             tabs,
             focused_tab_id,
             windows,
+            geometry,
         };
         workspace.validate_structure()?;
         Ok(workspace)
@@ -76,6 +93,12 @@ impl WorkspaceConfiguration {
     /// their saved order.
     pub fn windows(&self) -> &[WorkspaceWindow] {
         &self.windows
+    }
+
+    /// Returns the primary window's saved geometry, if the platform reported
+    /// it when the snapshot was taken.
+    pub const fn geometry(&self) -> Option<&WorkspaceWindowGeometry> {
+        self.geometry.as_ref()
     }
 
     pub(crate) fn validate(&self, profiles: &[Profile]) -> Result<(), ConfigError> {
@@ -128,6 +151,9 @@ impl WorkspaceConfiguration {
             if let Some(geometry) = &window.geometry {
                 geometry.validate()?;
             }
+        }
+        if let Some(geometry) = &self.geometry {
+            geometry.validate()?;
         }
         Ok(())
     }
