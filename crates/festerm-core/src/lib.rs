@@ -526,6 +526,66 @@ mod tests {
     }
 
     #[test]
+    fn checksums_a_rectangle_by_its_characters_and_nothing_else() {
+        // DECRQCRA is the only way a program can read the screen back out of
+        // the terminal, so what it reports is deliberately narrow: the sum of
+        // the character codes, with an unwritten cell counting as a space.
+        // Attributes deliberately do not contribute - a caller could not tell
+        // a bold `a` from a different character if they did.
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"ab");
+
+        terminal.ingest(b"\x1b[1;0;1;1;1;2*y");
+        assert_eq!(
+            terminal.drain_replies(),
+            format!("\x1bP1!~{:04X}\x1b\\", u16::from(b'a') + u16::from(b'b')).as_bytes()
+        );
+
+        // The two cells the text did not reach read as spaces, as does the
+        // whole of the second row.
+        terminal.ingest(b"\x1b[7;0;1;1;2;4*y");
+        let expected = u16::from(b'a') + u16::from(b'b') + 6 * u16::from(b' ');
+        assert_eq!(
+            terminal.drain_replies(),
+            format!("\x1bP7!~{expected:04X}\x1b\\").as_bytes()
+        );
+
+        // An omitted rectangle is the whole screen, and so is one whose edges
+        // are all zero.
+        terminal.ingest(b"\x1b[7*y\x1b[7;0;0;0;0;0*y");
+        let whole = format!("\x1bP7!~{expected:04X}\x1b\\");
+        assert_eq!(
+            terminal.drain_replies(),
+            format!("{whole}{whole}").as_bytes()
+        );
+
+        // The same characters with a pen set still check out the same.
+        let mut attributed = crate::tests::terminal(4, 2);
+        attributed.ingest(b"\x1b[1;4;7;31;42mab\x1b[m");
+        attributed.ingest(b"\x1b[7*y");
+        assert_eq!(attributed.drain_replies(), whole.as_bytes());
+    }
+
+    #[test]
+    fn a_checksum_request_is_answered_even_when_it_asks_for_nothing() {
+        // A request that names an inverted or off-screen rectangle is still a
+        // request. Leaving it unanswered strands the caller until its read
+        // times out, which is a worse failure than a zero.
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"ab");
+        terminal.ingest(b"\x1b[3;0;2;1;1;4*y");
+        assert_eq!(terminal.drain_replies(), b"\x1bP3!~0000\x1b\\");
+
+        // Edges past the screen are clipped to it rather than refused.
+        terminal.ingest(b"\x1b[4;0;1;1;99;99*y");
+        let expected = u16::from(b'a') + u16::from(b'b') + 6 * u16::from(b' ');
+        assert_eq!(
+            terminal.drain_replies(),
+            format!("\x1bP4!~{expected:04X}\x1b\\").as_bytes()
+        );
+    }
+
+    #[test]
     fn relative_vertical_motion_is_bound_by_the_region_it_starts_in() {
         // A program that reserved rows 2..4 and moves down from row 3 is
         // moving inside the pane it reserved; letting it fall out puts its
