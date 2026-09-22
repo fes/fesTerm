@@ -372,6 +372,46 @@ channel flow control, PTY request, resize, and terminal mode encoding.
    states, focus changes, right-margin behavior, wide-cell mutations, alternate
    screen restoration, and high-output flow control.
 
+### SGR conformance and DECRQSS
+
+Milestone 2's SGR notes above describe what the parser accepts. What was
+missing was a way to *check* it, and the gap shipped a defect: inline code
+backgrounds from GitHub Copilot CLI were lost in a release while every
+synthetic SGR unit test passed, because each test set one colour at a time and
+no test set a foreground and a background in the same sequence.
+
+None of the usual suites close that gap on their own.
+[vttest](https://invisible-island.net/vttest/vttest.html) is menu-driven and
+predates ITU T.416 extended colour entirely.
+[esctest2](https://github.com/ThomasDickey/esctest2) is automatable but asserts
+state a terminal *reports*, not the colour a cell ends up with.
+[termstandard/colors](https://github.com/termstandard/colors) is the authority
+on the delimiter question and defines the one machine-checkable probe: set a
+direct colour, ask the terminal to report the setting back, and compare.
+
+fesTerm therefore owns the coverage, in two parts:
+
+- `crates/festerm-core/tests/sgr_conformance.rs` varies the *shape* of each
+  sequence rather than the colour value — semicolon versus canonical colon
+  (`38:2::r:g:b`) versus compact colon (`38:2:r:g:b`) versus a populated
+  colour-space id, each of those alone, combined with the other colour, and
+  surrounded by attribute codes — plus truncated and nonsensical forms that
+  must be survived without disturbing the parameters after them.
+- `crates/festerm-core/tests/copilot_cli_capture.rs` replays a committed,
+  scrubbed byte-for-byte capture of a real Copilot CLI session (see the file's
+  own provenance comment) and asserts the resulting cell colours. Synthetic
+  cases only cover shapes someone thought of; the capture covers what a program
+  actually emits.
+
+The probe needs DECRQSS, which fesTerm now answers: `DCS $ q m ST` reports the
+current pen as `DCS 1 $ r <parameters> m ST`, always beginning with `0` so the
+report is a complete reconstruction rather than a delta. Direct colours are
+reported in the canonical colon form xterm uses (`38:2::r:g:b`), which is also
+what tells the caller that colons are accepted. Any other selector is answered
+`DCS 0 $ r ST` — "not recognized" — rather than left unanswered, so a caller
+never waits on a reply that will not come. Device-control strings that are not
+DECRQSS stay ignored and bounded exactly as before.
+
 ## Deferred or Deliberate Decisions
 
 These require a focused design decision before implementation:
@@ -397,6 +437,9 @@ These require a focused design decision before implementation:
 - [OpenSSH `sshd_config(5)`](https://man.openbsd.org/sshd_config.5)
 - [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
 - [xterm.js flow control guide](https://xtermjs.org/docs/guides/flowcontrol/)
+- [termstandard/colors](https://github.com/termstandard/colors), the reference
+  for direct-colour delimiters and the DECRQSS detection probe
+- [esctest2](https://github.com/ThomasDickey/esctest2)
 - [WezTerm #4293](https://github.com/wez/wezterm/issues/4293), a representative
   high-output rendering latency report
 
