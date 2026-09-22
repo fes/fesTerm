@@ -1443,8 +1443,13 @@ mod tests {
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn visual_harness(terminal: Terminal) -> Harness<'static, HeadlessViewState> {
+        sized_visual_harness(terminal, Vec2::new(640.0, 360.0))
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn sized_visual_harness(terminal: Terminal, size: Vec2) -> Harness<'static, HeadlessViewState> {
         Harness::builder()
-            .with_size(Vec2::new(640.0, 360.0))
+            .with_size(size)
             .with_pixels_per_point(1.0)
             .with_theme(egui::Theme::Dark)
             .wgpu()
@@ -1894,6 +1899,102 @@ mod tests {
             "terminal-compact-colon-background-padding",
             &mut snapshots,
         );
+        snapshots.unwrap();
+    }
+
+    /// The window the capture corpus needs: every fixture was recorded at
+    /// 120x40, and replaying into anything else reflows it.
+    ///
+    /// The grid sits inside 16px of padding and the cell is neither a round
+    /// number of pixels nor stable across font changes, so this size was
+    /// measured rather than calculated: 120x40 holds for windows from roughly
+    /// 1041x752 to 1049x770, and this sits in the middle of that. The test
+    /// asserts the result rather than trusting the number, because
+    /// `assert_snapshot_invariants` compares the view's computed size against
+    /// the terminal's *own* size - if the window were too small the view would
+    /// quietly resize the terminal and the invariants would still hold, while
+    /// the snapshot captured reflowed rubbish.
+    #[cfg(target_os = "linux")]
+    const CAPTURE_WINDOW: Vec2 = Vec2::new(1045.0, 761.0);
+
+    /// Replays a capture from the corpus and draws its final interesting frame.
+    ///
+    /// These are the same byte streams `festerm-core`'s `tui_capture.rs`
+    /// replays, asked the one question a cell-grid assertion cannot answer: a
+    /// cell can hold the right character, colour and attributes and still be
+    /// drawn wrong. The compact-colon defect in #188 shipped past a green
+    /// suite; background *extent*, glyph substitution and run splitting are
+    /// only visible in pixels.
+    ///
+    /// **Linux only, deliberately.** The other snapshot scenarios are built
+    /// for Windows and Linux both, but a Windows baseline has to be generated
+    /// on Windows and reviewed by eye to be worth anything, and an unreviewed
+    /// baseline just freezes whatever happened to be drawn. The behaviour
+    /// under test is platform-independent; the existing fifteen scenarios
+    /// continue to cover the Windows font stack.
+    ///
+    /// Regenerate with `UPDATE_SNAPSHOTS=1 cargo test -p festerm-ui-egui`, on
+    /// Linux, then *look at the PNGs* before committing them.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn captured_programs_match_reviewed_snapshots() {
+        use festerm_test_support::captures;
+
+        // One capture per rendering risk, rather than the whole corpus:
+        // snapshots cost repo size and human review, and `less` and `nano`
+        // exercise the same classes as `vim` and `fzf` with weaker signal.
+        let scenarios: [(&str, &[u8]); 5] = [
+            // Where #188 was found: inline backgrounds that must stop exactly
+            // where the span does. The only capture that never takes the
+            // alternate screen.
+            ("copilot", captures::COPILOT),
+            // Full-width reverse-video status line, and a line-number gutter
+            // whose alignment a grid assertion cannot see.
+            ("vim", captures::VIM),
+            // DEC special graphics pane dividers - a cell can hold the right
+            // code point and still render as tofu.
+            ("tmux", captures::TMUX),
+            // Dense indexed and truecolour palette: meters and a reverse-video
+            // header painted across the full width.
+            ("htop", captures::HTOP),
+            // A selected row whose background runs past the end of the text,
+            // from the 256-colour palette.
+            ("fzf", captures::FZF),
+        ];
+
+        let mut snapshots = SnapshotResults::new();
+        for (name, capture) in scenarios {
+            let mut replayed = terminal(captures::COLUMNS, captures::ROWS);
+            replayed.ingest(captures::frame_worth_rendering(capture));
+
+            // Structure, not values: these recordings carry one machine's
+            // clock, PIDs and percentages, so the assertions here only
+            // establish that there is something to get wrong - a painted
+            // background or a reverse-video run, the two things the renderer
+            // has to size correctly. The reviewed baseline is what pins down
+            // how it is actually drawn.
+            assert!(
+                (0..captures::ROWS).any(|row| (0..captures::COLUMNS).any(|column| replayed
+                    .cell(column, row)
+                    .is_some_and(|cell| cell.background() != Color::Default
+                        || cell.attributes().contains(Attributes::INVERSE)))),
+                "{name} draws no highlight at all, so it cannot regress one"
+            );
+
+            let mut harness = sized_visual_harness(replayed, CAPTURE_WINDOW);
+            harness.step();
+            assert_eq!(
+                harness.state().terminal.dimensions(),
+                Dimensions::new(captures::COLUMNS, captures::ROWS).expect("corpus geometry"),
+                "the {name} window reflowed the capture instead of drawing it"
+            );
+
+            snapshot_after_structural_assertions(
+                &mut harness,
+                &format!("terminal-capture-{name}"),
+                &mut snapshots,
+            );
+        }
         snapshots.unwrap();
     }
 
