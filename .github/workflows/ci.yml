@@ -43,6 +43,33 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: python scripts/check_validation_traceability.py --base ${{ github.event.pull_request.base.sha }}
 
+  # Third-party conformance. Our own escape-sequence tests only cover what we
+  # thought to write down; esctest2 covers what xterm's maintainer thought to
+  # write down, which is the point. Only the allowlist runs - see
+  # `validation/esctest2-allow.txt` and #193 - so this job is a regression
+  # gate, not a scoreboard.
+  conformance:
+    name: esctest2 conformance
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: conformance
+      - run: scripts/run-esctest2.sh
+      - if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: esctest2-log
+          path: target/esctest2.log
+          if-no-files-found: ignore
+
   quality:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

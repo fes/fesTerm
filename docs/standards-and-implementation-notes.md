@@ -548,6 +548,44 @@ one turns a half-written title or hyperlink into a state change nobody asked
 for. The length bound remains, now as a second line of defence for a string
 that is never interrupted at all rather than as the primary one.
 
+### Third-party conformance: esctest2
+
+Every test above checks a sequence we thought to write down, which means the
+gaps are exactly the sequences we did not think of. That is how the SGR
+compact-colon gap fixed in #188 reached a release.
+[esctest2](https://github.com/ThomasDickey/esctest2) is xterm's maintainer's
+own suite, pinned at `2798f12`, and it checks what he thought to write down
+instead.
+
+It cannot be pointed at a parser. `escio.Init()` puts esctest's own stdin into
+raw mode and drives the terminal it is *running inside*: sequences go to
+stdout, and the terminal's replies come back on stdin. So conformance-testing
+`festerm-core` means being the terminal at the other end of a pty.
+`crates/festerm-core/examples/esctest-host.rs` is that: it spawns
+`python3 esctest.py` on a pty, feeds the child's output into a `Terminal`, and
+writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
+the pinned commit and runs it.
+
+We pass 110 of the suite's 559 test methods today, so running all of it would
+produce a wall of red that everyone learns to ignore. Instead
+`validation/esctest2-allow.txt` names what we are held to - cursor addressing,
+tab stops, and save/restore cursor, 64 tests - and CI fails if any of it
+regresses. `validation/esctest2-skip.txt` carries the exclusions *within* those
+families, one reason per line, so each skip is an admission rather than a
+silence. `scripts/run-esctest2.sh --everything` surveys the whole suite without
+gating, which is how to see what the next phase buys.
+
+The large remaining blocker is DECRQCRA: 316 of the 559 methods assert screen
+contents, and `AssertScreenCharsInRectEqual` can only read the screen by asking
+for a rectangle's checksum. Until that is answered those tests cannot observe
+anything at all - not pass, not fail. #193 tracks the phases.
+
+Two window operations are implemented for this reason and no other: `CSI 18 t`
+and `CSI 19 t` report the screen size, which esctest asks for before every
+single test. They are questions about the grid, which we can answer exactly.
+The rest of `CSI ... t` moves, resizes, raises and iconifies a window, which
+belongs to the embedder, and is ignored.
+
 ## Deferred or Deliberate Decisions
 
 These require a focused design decision before implementation:

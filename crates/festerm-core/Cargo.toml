@@ -29,6 +29,9 @@ criterion = { version = "0.7", default-features = false }
 # permits cycles through dev-dependencies, and it keeps one copy of the
 # capture-corpus slicing that the renderer snapshots also replay.
 festerm-test-support = { path = "../festerm-test-support" }
+# Only the `esctest-host` example needs this: the esctest2 conformance suite
+# drives the terminal it is *running inside*, so hosting it means owning a pty.
+portable-pty = "0.9.0"
 proptest = "1.11.0"
 
 [[bench]]

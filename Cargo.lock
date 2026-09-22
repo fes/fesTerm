@@ -2083,6 +2083,7 @@ dependencies = [
  "compact_str",
  "criterion",
  "festerm-test-support",
+ "portable-pty",
  "proptest",
  "unicode-segmentation",
  "unicode-width",

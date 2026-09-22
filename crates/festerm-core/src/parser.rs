@@ -197,6 +197,10 @@ pub enum TerminalOp {
         secondary: bool,
     },
     ClearTabStops(CsiParameters),
+    /// `CSI ... t`. Only the two size *reports* are answered; every
+    /// manipulation (resize, iconify, raise) needs a window system we do not
+    /// reach from here and is ignored.
+    WindowOperation(CsiParameters),
     Ignored,
 }
 
@@ -693,6 +697,7 @@ impl Parser {
             b'n' => TerminalOp::DeviceStatus(parameters),
             b'c' => TerminalOp::DeviceAttributes { secondary: false },
             b'g' => TerminalOp::ClearTabStops(parameters),
+            b't' => TerminalOp::WindowOperation(parameters),
             b'r' => TerminalOp::SetScrollRegion(parameters),
             b's' if parameters.is_empty() => TerminalOp::SaveAnsi,
             b'u' if parameters.is_empty() => TerminalOp::RestoreAnsi,
