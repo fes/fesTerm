@@ -2,6 +2,23 @@ use std::sync::Arc;
 
 use crate::{MAX_CSI_INTERMEDIATES, MAX_CSI_PARAMETERS, MAX_STRING_BYTES};
 
+/// A device-control string this parser understands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DcsAction {
+    /// `DCS $ q <selector> ST` (DECRQSS): report the setting the selector
+    /// names. The selector is the final control function's own bytes, e.g.
+    /// `m` for SGR.
+    RequestStatusString(Vec<u8>),
+}
+
+fn parse_dcs(payload: Vec<u8>) -> Option<DcsAction> {
+    // Only DECRQSS is understood. Its payload is `$q` followed by the
+    // requested control function; everything else is a string this terminal
+    // has no answer for and ignores, exactly as before.
+    let selector = payload.strip_prefix(b"$q")?;
+    Some(DcsAction::RequestStatusString(selector.to_vec()))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum OscAction {
     SetTitle(String),
@@ -186,6 +203,9 @@ pub enum TerminalOp {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StringKind {
     Osc,
+    /// `ESC P` (DCS). Buffered like an OSC because DECRQSS has to be read,
+    /// not merely skipped.
+    Dcs,
     Other,
 }
 
@@ -241,6 +261,7 @@ pub struct Parser {
     intermediate_length: usize,
     string_payload: Vec<u8>,
     osc_action: Option<OscAction>,
+    dcs_action: Option<DcsAction>,
     /// The charset designated into `G0` (via `ESC (`); active unless
     /// shifted out with `SO` (0x0E).
     g0_charset: Charset,
@@ -316,6 +337,7 @@ impl Parser {
             intermediate_length: 0,
             string_payload: Vec::new(),
             osc_action: None,
+            dcs_action: None,
             g0_charset: Charset::Ascii,
             g1_charset: Charset::Ascii,
             shifted_to_g1: false,
@@ -435,7 +457,8 @@ impl Parser {
                 ParserState::CsiEntry
             }
             b']' => self.start_string(StringKind::Osc),
-            b'P' | b'X' | b'^' | b'_' => self.start_string(StringKind::Other),
+            b'P' => self.start_string(StringKind::Dcs),
+            b'X' | b'^' | b'_' => self.start_string(StringKind::Other),
             b'(' => ParserState::CharsetDesignate(CharsetSlot::G0),
             b')' => ParserState::CharsetDesignate(CharsetSlot::G1),
             0x20..=0x2f => ParserState::EscapeIntermediate,
@@ -532,7 +555,7 @@ impl Parser {
             self.state = ParserState::Ground;
             return;
         };
-        if kind == StringKind::Osc {
+        if matches!(kind, StringKind::Osc | StringKind::Dcs) {
             self.string_payload.extend_from_slice(payload);
         }
         self.state = if bytes >= MAX_STRING_BYTES {
@@ -543,16 +566,24 @@ impl Parser {
     }
 
     fn finish_string(&mut self, kind: StringKind) -> TerminalOp {
-        if kind != StringKind::Osc {
-            self.string_payload.clear();
-            return TerminalOp::Ignored;
+        match kind {
+            StringKind::Osc => {
+                self.osc_action = parse_osc(std::mem::take(&mut self.string_payload));
+            }
+            StringKind::Dcs => {
+                self.dcs_action = parse_dcs(std::mem::take(&mut self.string_payload));
+            }
+            StringKind::Other => self.string_payload.clear(),
         }
-        self.osc_action = parse_osc(std::mem::take(&mut self.string_payload));
         TerminalOp::Ignored
     }
 
     pub(crate) fn take_osc_action(&mut self) -> Option<OscAction> {
         self.osc_action.take()
+    }
+
+    pub(crate) fn take_dcs_action(&mut self) -> Option<DcsAction> {
+        self.dcs_action.take()
     }
 
     fn append_csi_digit(&mut self, byte: u8) -> TerminalOp {
