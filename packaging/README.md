@@ -18,8 +18,14 @@ helper filename. The release workflow copies the already Authenticode-signed
 build into that name, and `check_packaging.py` ties the resource name to the
 workspace version and requires the staging step in both package workflows.
 fesTerm then copies that source to the current user's private sessiond runtime
-directory as `helpers/festerm-sessiond-<release>-<architecture>.exe` and
-launches the runtime copy.
+directory as
+`helpers/festerm-sessiond-<release>-<architecture>/festerm-sessiond-<release>-<architecture>.exe`
+and launches the runtime copy. The pinned ConPTY sidecar
+(`runtime/conpty/**`, ADR-0011) is copied into that same generation directory,
+because the loader resolves the sidecar relative to the running executable: a
+helper staged without one silently falls back to the inbox ConPTY, and a helper
+pointed back at the install directory keeps `conpty.dll` mapped there and
+blocks the installer. Each generation therefore gets a complete, private copy.
 
 The first package with this layout deliberately does not replace or remove the
 legacy `festerm-sessiond.exe` installed by versions 0.2.0 through 0.2.2, so

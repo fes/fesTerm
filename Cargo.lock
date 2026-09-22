@@ -2158,6 +2158,7 @@ dependencies = [
  "festerm-session",
  "festerm-ssh",
  "festerm-windows-job",
+ "festerm-windows-runtime",
  "festerm-windows-security",
  "fs2",
  "nix 0.31.3",
