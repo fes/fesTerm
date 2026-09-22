@@ -115,7 +115,10 @@ disagreeing about the text.
 **Show outline** appears in the options menu only while the file renders as
 Markdown, and draws the Markdown viewer's own rail beside the text: the same
 headings, the same widths, the same current-section accent. Clicking a heading
-puts the caret at the start of that section and scrolls to it.
+puts the caret at the start of that section and scrolls to it. It is on by
+default: a document long enough to be opened in an editor is usually long
+enough to need navigating, and the rail collapses in one click when it is not
+wanted.
 
 In Split, the text and the preview follow each other by section. Scroll the
 text into a section and the preview comes with it; scroll the preview and the

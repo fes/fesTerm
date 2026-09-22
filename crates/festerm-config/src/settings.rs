@@ -38,21 +38,25 @@ pub struct InterfaceSettings {
     #[serde(default, skip_serializing_if = "is_false")]
     customize_local_shell: bool,
     /// Whether the open-tab list and active tab persist across restarts.
-    /// Off by default: unlike the other interface preferences here (which
-    /// apply immediately and always autosave), workspace restoration is an
-    /// explicit opt-in (`docs/gui-design.md` "Workspace restore") - tab
-    /// contents are more sensitive/surprising to silently resurrect than a
-    /// chip-layout or status-bar cosmetic choice.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// On by default: reopening where the last session left off is what a
+    /// terminal that holds long-lived work is expected to do, and the
+    /// alternative - discarding the tab list on every quit - is the more
+    /// surprising of the two once a user keeps more than one session open.
+    /// Turning it off is one click in Settings
+    /// (`docs/gui-design.md` "Workspace restore").
+    #[serde(default = "default_restore_workspace", skip_serializing_if = "is_true")]
     restore_workspace: bool,
     /// The bundled primary face used for terminal cells. Application chrome
     /// typography remains independent.
     #[serde(default, skip_serializing_if = "TerminalFontPreference::is_default")]
     terminal_font: TerminalFontPreference,
     /// Whether eligible adjacent terminal cells may be shaped as a run.
-    /// Disabled by default until the renderer can preserve cell ownership
-    /// across every supported face.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// On by default: the bundled faces are designed around their coding
+    /// ligatures, and the renderer preserves cell ownership across them.
+    #[serde(
+        default = "default_terminal_ligatures",
+        skip_serializing_if = "is_true"
+    )]
     terminal_ligatures: bool,
     /// Whether eligible emoji use the bundled color raster path or the
     /// deterministic monochrome fallback chain.
@@ -71,28 +75,44 @@ pub struct InterfaceSettings {
     /// Whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) temporarily overlays each eligible chip's quick-switch
     /// number in place of its usual status presentation (feature request
-    /// #69). Off by default, matching the other opt-in presentation
-    /// preferences here.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// #69). On by default: the numbers appear only while the modifier is
+    /// held, so they cost nothing until the shortcut is already being used
+    /// and they teach it to a user who does not know it.
+    #[serde(
+        default = "default_quick_switch_overlay",
+        skip_serializing_if = "is_true"
+    )]
     quick_switch_overlay: bool,
     /// Whether the Launcher's New Session list uses a responsive
     /// multi-column layout for saved profiles when the window is wide
-    /// enough (feature request #64). Off by default: the single-column
-    /// list remains the baseline presentation.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// enough (feature request #64). On by default: the shorter launch cards
+    /// let the saved-profile and running-session panels start higher, which
+    /// is what a user opening New Session is usually reaching for.
+    #[serde(
+        default = "default_compact_launcher_grid",
+        skip_serializing_if = "is_true"
+    )]
     compact_launcher_grid: bool,
     /// Whether a background session tab's chip status dot slow-pulses when
     /// that session has emitted output since the tab was last active
-    /// (feature request #68). Off by default: chips render exactly as they
-    /// do today with no behavior change.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// (feature request #68). On by default: a background session that has
+    /// produced something is the one fact a tab strip cannot otherwise
+    /// convey, and the pulse is slow enough not to compete for attention.
+    #[serde(
+        default = "default_pulse_new_output_dot",
+        skip_serializing_if = "is_true"
+    )]
     pulse_new_output_dot: bool,
     /// Whether the New Session/Launcher screen surfaces locally running,
     /// unattached `festerm-sessiond` persistence sessions as one-click
-    /// "Resume" entries (feature request #70). Off by default: the
-    /// Launcher lists only saved profiles and ad-hoc new-session options,
-    /// exactly as it does today.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// "Resume" entries (feature request #70). On by default: a session that
+    /// survived the last quit is exactly what a user opening New Session
+    /// after a restart is looking for, and hiding it invites starting a
+    /// second copy of work that is already running.
+    #[serde(
+        default = "default_show_resumable_sessions",
+        skip_serializing_if = "is_true"
+    )]
     show_resumable_sessions: bool,
     /// Whether the status bar names the durable session the active terminal
     /// is attached to, as `provider · session name` (feature request #168).
@@ -128,26 +148,28 @@ pub struct InterfaceSettings {
 }
 
 impl InterfaceSettings {
-    /// The same defaults fesTerm has always started with; also the target of
-    /// an explicit Settings reset.
+    /// What a fresh installation starts with, and the target of an explicit
+    /// Settings reset. Every one of these is reachable in one click from the
+    /// Settings screen, so the bar for being a default is which answer suits
+    /// more people rather than which is the more conservative.
     pub const DEFAULT: Self = Self {
         keyboard_bindings: KeyboardBindings(Vec::new()),
         chip_layout: ChipLayoutPreference::SingleRowScroll,
         status_bar_visible: true,
-        show_session_details: true,
-        confirm_session_close: true,
+        show_session_details: false,
+        confirm_session_close: false,
         prefer_powershell: true,
         customize_local_shell: false,
-        restore_workspace: false,
+        restore_workspace: true,
         terminal_font: TerminalFontPreference::JetBrainsMono,
-        terminal_ligatures: false,
+        terminal_ligatures: true,
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
-        quick_switch_overlay: false,
-        compact_launcher_grid: false,
-        pulse_new_output_dot: false,
-        show_resumable_sessions: false,
+        quick_switch_overlay: true,
+        compact_launcher_grid: true,
+        pulse_new_output_dot: true,
+        show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         default_sftp_local_directory: None,
@@ -579,6 +601,30 @@ fn default_confirm_session_close() -> bool {
     InterfaceSettings::DEFAULT.confirm_session_close
 }
 
+fn default_restore_workspace() -> bool {
+    InterfaceSettings::DEFAULT.restore_workspace
+}
+
+fn default_terminal_ligatures() -> bool {
+    InterfaceSettings::DEFAULT.terminal_ligatures
+}
+
+fn default_quick_switch_overlay() -> bool {
+    InterfaceSettings::DEFAULT.quick_switch_overlay
+}
+
+fn default_compact_launcher_grid() -> bool {
+    InterfaceSettings::DEFAULT.compact_launcher_grid
+}
+
+fn default_pulse_new_output_dot() -> bool {
+    InterfaceSettings::DEFAULT.pulse_new_output_dot
+}
+
+fn default_show_resumable_sessions() -> bool {
+    InterfaceSettings::DEFAULT.show_resumable_sessions
+}
+
 fn default_prefer_powershell() -> bool {
     InterfaceSettings::DEFAULT.prefer_powershell
 }
@@ -704,7 +750,10 @@ pub struct EditorSettings {
     fixed_columns: Option<u32>,
     #[serde(default, skip_serializing_if = "is_false")]
     vi_keys: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// The outline pane, on by default: a document large enough to need an
+    /// editor is usually large enough to need navigating, and the pane
+    /// collapses in one click when it is not wanted.
+    #[serde(default = "default_outline", skip_serializing_if = "is_true")]
     outline: bool,
     /// Syntax highlighting, on by default: an editor that has grammars and
     /// does not use them is surprising in a way the reverse is not
@@ -721,12 +770,16 @@ const fn default_line_numbers() -> bool {
     true
 }
 
+const fn default_outline() -> bool {
+    EditorSettings::DEFAULT.outline
+}
+
 impl EditorSettings {
     pub const DEFAULT: Self = Self {
         line_numbers: true,
         fixed_columns: None,
         vi_keys: false,
-        outline: false,
+        outline: true,
         syntax: true,
     };
 
@@ -797,8 +850,8 @@ impl EditorSettings {
     const fn is_default(&self) -> bool {
         self.line_numbers == Self::DEFAULT.line_numbers
             && self.fixed_columns.is_none()
-            && !self.vi_keys
-            && !self.outline
+            && self.vi_keys == Self::DEFAULT.vi_keys
+            && self.outline == Self::DEFAULT.outline
             && self.syntax == Self::DEFAULT.syntax
     }
 }

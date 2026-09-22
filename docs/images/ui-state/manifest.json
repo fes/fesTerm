@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "da82a07d53f37536b2ccd806cfb62ffbb23a18f32e161f8744bccb887748f1f8"
+      "sha256": "84ae0bfe9656ed8e9c495482ee6a9d6f18b3850f0d4a788bfdbc04012ead062e"
     },
     {
       "id": "text-editor-dirty-close",
@@ -131,7 +131,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "3b18de719839acb439702277709543621589bca1790b436f09c67284f8431a0d"
+      "sha256": "769e51bb3208a40a30751d2fe8843562a53a74e9b1713718d3b3a4585295a849"
     },
     {
       "id": "text-editor-find",
@@ -186,7 +186,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "af917b17f7afa0f51185c8882e163cee8287bebb127ab231849026a9580f5f52"
+      "sha256": "23c2e611394de7764fb367842f3afe258f5aaeb600dbb4082e6e50f35d3506d3"
     },
     {
       "id": "text-editor-saved",

@@ -159,6 +159,7 @@
         "dropping_a_client_with_pending_terminal_output_retires_its_workers",
         "dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal",
         "duplicate_resume_requests_are_bounded_and_disabled_discovery_does_not_launch",
+        "running_session_discovery_polls_only_while_the_launcher_is_on_screen",
         "large_running_inventory_only_materializes_visible_rows",
         "resuming_a_missing_session_surfaces_a_concise_error",
         "the_running_sessions_refresh_control_dispatches_a_refresh_command",
@@ -1264,11 +1265,11 @@
       "automated_tests": [
         "toggle_chip_layout_flips_between_wrap_and_single_row_scroll",
         "toggle_status_bar_flips_visibility_and_defaults_to_shown",
-        "toggle_show_session_details_flips_visibility_and_defaults_to_shown",
-        "toggle_restore_workspace_flips_state_and_resets_to_off",
-        "toggle_close_confirmation_flips_state_and_resets_to_on",
+        "toggle_show_session_details_flips_visibility_and_defaults_to_hidden",
+        "toggle_restore_workspace_flips_state_and_resets_to_on",
+        "toggle_close_confirmation_flips_state_and_resets_to_off",
         "settings_close_confirmation_control_returns_the_toggle_command",
-        "older_settings_tables_default_close_confirmation_to_on",
+        "a_settings_table_without_these_keys_reads_the_current_defaults",
         "toggle_powershell_preference_flips_state_and_resets_to_on",
         "disabled_powershell_preference_labels_the_comspec_session",
         "settings_powershell_preference_returns_the_toggle_command",
@@ -1707,7 +1708,7 @@
         "ADR-0014"
       ],
       "automated_tests": [
-        "live_close_confirmation_is_safe_by_default_and_confirmed_deliberately",
+        "live_close_confirmation_asks_when_the_preference_is_on",
         "escape_cancels_live_close_without_closing_session",
         "disabled_close_confirmation_closes_live_session_immediately"
       ],

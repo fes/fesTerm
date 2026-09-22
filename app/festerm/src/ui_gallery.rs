@@ -1605,7 +1605,7 @@ fn capture_text_editor_dirty_close() -> image::RgbaImage {
     body.type_text(
         "\n## Known Issues\n\n- The relay drops duplicate webhook deliveries silently.\n",
     );
-    harness.run();
+    settle_markdown_for_gallery(&mut harness);
 
     harness
         .state_mut()
@@ -1674,7 +1674,7 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     body.focus();
     body.type_text("\n## Known Issues\n\n- The relay drops duplicate deliveries.\n");
-    harness.run();
+    settle_markdown_for_gallery(&mut harness);
 
     harness.state_mut().dispatch_for_gallery(
         crate::tabs::AppCommand::ActivateTab(conflicted_tab),
@@ -1685,7 +1685,7 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     body.focus();
     body.type_text("\n- Mine.\n");
-    harness.run();
+    settle_markdown_for_gallery(&mut harness);
 
     fs::write(&conflicted, "Rewritten by somebody else.\n")
         .expect("the gallery can change a fixture underneath the editor");
@@ -2145,6 +2145,20 @@ fn capture_ui_state_gallery() {
 
 /// Markdown opens in Preview (ADR 0034 §4); a capture that needs the body
 /// presses Edit first, the way a reader does.
+/// Lets the Markdown parse behind the outline and preview settle before the
+/// frame is captured. Typing restarts a debounce that is deliberately not
+/// instant, and a capture taken inside it would show a stale outline.
+fn settle_markdown_for_gallery(harness: &mut Harness<'_, crate::app::FesTermApp>) {
+    let slack = crate::markdown_viewer::PREVIEW_DEBOUNCE + std::time::Duration::from_millis(25);
+    // Once past the debounce the parse happens on the next frame, and the
+    // frame after that draws it. `run_ok` rather than `run` because the pane
+    // asks for the repaint it is waiting on, which is not a runaway.
+    for _ in 0..2 {
+        std::thread::sleep(slack);
+        let _ = harness.run_ok();
+    }
+}
+
 fn press_edit_for_gallery(harness: &mut Harness<'_, crate::app::FesTermApp>) {
     if harness
         .query_all_by_role(egui::accesskit::Role::MultilineTextInput)

@@ -7450,10 +7450,25 @@ mod tests {
         );
     }
 
+    /// Puts the close-confirmation preference in a known state rather than
+    /// inheriting whatever the current default happens to be, so a test says
+    /// which behaviour it is exercising.
+    fn set_confirm_session_close(app: &mut FesTermApp, context: &egui::Context, confirm: bool) {
+        if app.state.interface_settings().confirm_session_close() != confirm {
+            app.state
+                .dispatch(AppCommand::ToggleConfirmSessionClose, context);
+        }
+        assert_eq!(
+            app.state.interface_settings().confirm_session_close(),
+            confirm
+        );
+    }
+
     #[test]
-    fn live_close_confirmation_is_safe_by_default_and_confirmed_deliberately() {
+    fn live_close_confirmation_asks_when_the_preference_is_on() {
         let context = egui::Context::default();
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        set_confirm_session_close(&mut app, &context, true);
         app.request_close_tab(tab, &context);
         assert!(app.overlays.pending_close.is_some());
 
@@ -7482,6 +7497,7 @@ mod tests {
     fn escape_cancels_live_close_without_closing_session() {
         let context = egui::Context::default();
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        set_confirm_session_close(&mut app, &context, true);
         app.request_close_tab(tab, &context);
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
@@ -7503,8 +7519,7 @@ mod tests {
     fn disabled_close_confirmation_closes_live_session_immediately() {
         let context = egui::Context::default();
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
-        app.state
-            .dispatch(AppCommand::ToggleConfirmSessionClose, &context);
+        set_confirm_session_close(&mut app, &context, false);
 
         app.request_close_tab(tab, &context);
 
@@ -7547,8 +7562,7 @@ mod tests {
         let context = egui::Context::default();
         let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
         app.role = WindowRole::Secondary;
-        app.state
-            .dispatch(AppCommand::ToggleConfirmSessionClose, &context);
+        set_confirm_session_close(&mut app, &context, false);
 
         app.evaluate_close_request(&context);
 
@@ -7563,6 +7577,7 @@ mod tests {
         let context = egui::Context::default();
         let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
         app.role = WindowRole::Secondary;
+        set_confirm_session_close(&mut app, &context, true);
 
         app.evaluate_close_request(&context);
 
@@ -7688,7 +7703,18 @@ mod tests {
         let path = directory.join("NOTES.md");
         std::fs::write(&path, contents).unwrap();
 
-        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        // These tests are about closing, saving, and chip state. The editor
+        // outline is on by default and debounces its Markdown parse behind a
+        // repaint while typing settles, which the harness cannot tell from a
+        // runaway repaint; the outline has its own tests, and this is not
+        // what these are measuring.
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT
+                    .with_editor(festerm_config::EditorSettings::DEFAULT.with_outline(false)),
+            )
+            .expect("settings are valid");
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
         app.state
             .dispatch(AppCommand::OpenTextEditor { path: path.clone() }, context);
         (app, directory, path)
@@ -8832,8 +8858,10 @@ mod tests {
         app.state.dispatch(AppCommand::StartLocalSession, &context);
         let second = app.state.active();
 
-        // Preference off (default): even a flagged background tab does not
-        // pulse.
+        // Preference off: even a flagged background tab does not pulse.
+        app.state
+            .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
+        assert!(!app.state.interface_settings().pulse_new_output_dot());
         if let Some(session) = app.state.session_tab_mut(first) {
             session.has_new_output_since_active = true;
         }
@@ -8848,6 +8876,7 @@ mod tests {
         // also set.
         app.state
             .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
+        assert!(app.state.interface_settings().pulse_new_output_dot());
         if let Some(session) = app.state.session_tab_mut(second) {
             session.has_new_output_since_active = true;
         }
@@ -8888,8 +8917,10 @@ mod tests {
         // the flag is already set).
         let context = egui::Context::default();
         let (mut app, first) = FesTermApp::for_test_with_live_session(&context);
-        app.state
-            .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
+        assert!(
+            app.state.interface_settings().pulse_new_output_dot(),
+            "this test needs the preference on"
+        );
         // Starting a second local session makes it active, leaving `first`
         // in the background while its real shell process starts up and
         // prints its initial prompt.
@@ -10489,10 +10520,10 @@ mod tests {
 
     #[test]
     fn a_saved_workspace_is_ignored_at_startup_when_restore_workspace_is_off() {
-        // Regression test: "Workspace restore" defaults to off, so a
-        // workspace saved by an earlier run (or an older fesTerm build
-        // that always persisted the tab list) must not silently resurface
-        // just because the file still contains one.
+        // Regression test: a workspace saved by an earlier run (or an older
+        // fesTerm build that always persisted the tab list) must not
+        // resurface once the user has turned "Workspace restore" off, just
+        // because the file still contains one.
         let workspace =
             festerm_config::WorkspaceConfiguration::new(
                 vec![festerm_config::WorkspaceTab::settings("settings")
@@ -10501,7 +10532,15 @@ mod tests {
             )
             .expect("workspace is valid");
         let configuration = Configuration::new_with_workspace(Vec::new(), workspace)
-            .expect("configuration is valid");
+            .expect("configuration is valid")
+            .with_interface_settings(festerm_config::InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                true,
+                true,
+                false,
+            ))
+            .expect("settings are valid");
         assert!(!configuration.interface_settings().restore_workspace());
 
         let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
@@ -10609,12 +10648,14 @@ mod tests {
             harness.run();
         }
 
+        // Each click flips the toggle away from its default, so what must
+        // survive the restart is the opposite of the default in every case.
         let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
         let settings = saved.interface_settings();
-        assert!(settings.quick_switch_overlay());
-        assert!(settings.compact_launcher_grid());
-        assert!(settings.pulse_new_output_dot());
-        assert!(settings.show_resumable_sessions());
+        assert!(!settings.quick_switch_overlay());
+        assert!(!settings.compact_launcher_grid());
+        assert!(!settings.pulse_new_output_dot());
+        assert!(!settings.show_resumable_sessions());
         assert!(settings.show_durable_session_in_status_bar());
         fs::remove_dir_all(directory).unwrap();
     }
