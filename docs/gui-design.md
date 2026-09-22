@@ -319,11 +319,14 @@ group on timeout, rather than leaving an orphaned reader thread.
 The initial launcher shows the usable top-level choices Local Shell, SSH,
 SFTP, Serial, and Markdown. A choice whose transport is not yet implemented
 remains absent from a shipped build rather than appearing as a disabled
-promise. Local Shell, SSH, SFTP, and Serial navigate within the same launcher
-tab to focused connection forms, while Markdown opens the Markdown workspace
-picker. The Local Shell form defaults to the configured platform shell and
-accepts an executable, arguments, and optional initial working directory;
-executable and directory fields offer bounded filesystem-backed completion.
+promise. By default, Local Shell immediately starts the configured platform
+shell in the user's home directory. The off-by-default **Customize local shell
+before launch** setting instead opens a focused form in the same launcher tab;
+the form accepts an executable, arguments, and optional initial working
+directory, and pressing Enter in the working-directory field launches it.
+Executable and directory fields offer bounded filesystem-backed completion.
+SSH, SFTP, and Serial navigate within the same launcher tab to focused
+connection forms, while Markdown opens the Markdown workspace picker.
 Back or Escape returns from a form to the launcher without creating another
 chip. Escape closes a Launcher opened from
 another session and restores that session, but does nothing when Launcher is
@@ -1523,6 +1526,10 @@ quiet rows with subtle dividers:
   It applies to every live-session close route through the central application
   policy. Turning it off closes immediately; it does not alter bounded backend
   shutdown or the separate aggregate window/quit policy.
+- **Customize local shell before launch** is an off-by-default switch. When
+  off, choosing Local Shell immediately starts the configured platform shell
+  in the user's home directory. When on, it opens the focused executable,
+  arguments, and working-directory form before launch.
 - **Workspace restore** is an on/off switch, off by default (see
   "Configuration" below): unlike the four controls above, which always apply
   and save immediately, resurrecting a previous run's open tabs is an

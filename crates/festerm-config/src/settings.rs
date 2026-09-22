@@ -31,6 +31,12 @@ pub struct InterfaceSettings {
     /// `WindowsApps\pwsh.exe` app-execution alias over `%COMSPEC%`.
     #[serde(default = "default_prefer_powershell", skip_serializing_if = "is_true")]
     prefer_powershell: bool,
+    /// Whether choosing Local Shell in New Session opens the executable,
+    /// arguments, and working-directory form before launch. Off by default:
+    /// the ordinary path starts the platform shell in the user's home
+    /// directory immediately.
+    #[serde(default, skip_serializing_if = "is_false")]
+    customize_local_shell: bool,
     /// Whether the open-tab list and active tab persist across restarts.
     /// Off by default: unlike the other interface preferences here (which
     /// apply immediately and always autosave), workspace restoration is an
@@ -131,6 +137,7 @@ impl InterfaceSettings {
         show_session_details: true,
         confirm_session_close: true,
         prefer_powershell: true,
+        customize_local_shell: false,
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,
         terminal_ligatures: false,
@@ -177,6 +184,11 @@ impl InterfaceSettings {
 
     pub const fn with_prefer_powershell(mut self, prefer_powershell: bool) -> Self {
         self.prefer_powershell = prefer_powershell;
+        self
+    }
+
+    pub const fn with_customize_local_shell(mut self, customize_local_shell: bool) -> Self {
+        self.customize_local_shell = customize_local_shell;
         self
     }
 
@@ -275,6 +287,10 @@ impl InterfaceSettings {
 
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
+    }
+
+    pub const fn customize_local_shell(&self) -> bool {
+        self.customize_local_shell
     }
 
     pub const fn restore_workspace(&self) -> bool {

@@ -5178,6 +5178,7 @@ impl FesTermApp {
                             show_session_details: self.state.show_session_details(),
                             confirm_session_close: self.state.confirm_session_close(),
                             prefer_powershell: self.state.prefer_powershell(),
+                            customize_local_shell: self.state.customize_local_shell(),
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
                             terminal_ligatures: self.state.terminal_ligatures(),
@@ -5477,6 +5478,7 @@ impl FesTermApp {
                 | AppCommand::TogglePulseNewOutputDot
                 | AppCommand::ToggleShowResumableSessions
                 | AppCommand::ToggleDurableSessionInStatusBar
+                | AppCommand::ToggleCustomizeLocalShell
                 | AppCommand::SetScrollSpeed(_)
                 | AppCommand::SetEditorSettings(_)
                 | AppCommand::SetScrollbackLimit(_)
@@ -10910,7 +10912,7 @@ mod tests {
     }
 
     #[test]
-    fn pressing_enter_on_the_launcher_opens_and_submits_the_highlighted_local_form_end_to_end() {
+    fn pressing_enter_on_the_launcher_starts_the_default_local_shell_end_to_end() {
         let mut harness = harness();
         harness.run();
         assert!(matches!(
@@ -10919,12 +10921,9 @@ mod tests {
         ));
 
         harness.key_press(egui::Key::Enter);
-        harness.run();
-        assert!(harness.query_by_label("Start").is_some());
-        harness.get_by_label("Start").click();
         // A freshly started local shell session keeps requesting repaints as
         // it pumps live process output, so one step is enough to apply the
-        // submitted command and observe the tab-content change.
+        // launch command and observe the tab-content change.
         harness.step();
 
         assert!(matches!(

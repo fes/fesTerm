@@ -1318,13 +1318,16 @@ fn show_local_form(ui: &mut Ui, tab_id: TabId, form: &mut LocalLauncherForm) -> 
             if std::mem::take(&mut form.focus_working_directory) {
                 working_directory.request_focus();
             }
+            let submit_from_directory = working_directory.lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter));
             ui.add_space(12.0);
             if let Some(feedback) = &form.feedback {
                 ui.colored_label(theme::STATUS_ERROR, feedback);
                 ui.add_space(8.0);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if launcher_text_button(ui, "Start", None, true).clicked() {
+                if launcher_text_button(ui, "Start", None, true).clicked() || submit_from_directory
+                {
                     match form.submit() {
                         Ok(command) => {
                             form.feedback = None;
@@ -3256,6 +3259,7 @@ pub fn show_launcher(
     screen_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
 ) -> Option<AppCommand> {
     let profiles = configuration.profiles();
+    let customize_local_shell = configuration.interface_settings().customize_local_shell();
     let now_unix_seconds = unix_now_seconds();
     // The five launch cards: one per session type fesTerm can start from
     // nothing, in the order a new user meets them.
@@ -3710,6 +3714,7 @@ pub fn show_launcher(
                         ui,
                         content_width,
                         compact_cards,
+                        customize_local_shell,
                         &items[..fixed_end],
                         state,
                         command,
@@ -3816,8 +3821,12 @@ pub fn show_launcher(
 
     if command.is_none() && launch_via_keyboard {
         if matches!(items[state.selected].kind, LauncherItemKind::LocalDefault) {
-            state.local_open = true;
-            state.local.focus_working_directory = true;
+            if customize_local_shell {
+                state.local_open = true;
+                state.local.focus_working_directory = true;
+            } else {
+                command = Some(AppCommand::StartLocalSession);
+            }
         } else if matches!(items[state.selected].kind, LauncherItemKind::NewSsh) {
             state.ssh_open = true;
             state.ssh.focus_username = true;
@@ -3836,8 +3845,12 @@ pub fn show_launcher(
     if let Some(opened) = state.pending_form.take() {
         match opened {
             LauncherForm::Local => {
-                state.local_open = true;
-                state.local.focus_working_directory = true;
+                if customize_local_shell {
+                    state.local_open = true;
+                    state.local.focus_working_directory = true;
+                } else {
+                    command = Some(AppCommand::StartLocalSession);
+                }
             }
             LauncherForm::Ssh => {
                 state.ssh_open = true;
@@ -3870,6 +3883,7 @@ fn show_launch_card_row(
     ui: &mut Ui,
     width: f32,
     compact: bool,
+    customize_local_shell: bool,
     cards: &[LauncherItem<'_>],
     state: &mut LauncherState,
     command: &mut Option<AppCommand>,
@@ -3906,7 +3920,11 @@ fn show_launch_card_row(
                 if response.clicked() {
                     match item.kind {
                         LauncherItemKind::LocalDefault => {
-                            state.pending_form = Some(LauncherForm::Local);
+                            if customize_local_shell {
+                                state.pending_form = Some(LauncherForm::Local);
+                            } else {
+                                *command = Some(AppCommand::StartLocalSession);
+                            }
                         }
                         LauncherItemKind::NewSsh => state.pending_form = Some(LauncherForm::Ssh),
                         LauncherItemKind::NewSftp => state.pending_form = Some(LauncherForm::Sftp),
@@ -4522,6 +4540,36 @@ mod tests {
         harness_with_profiles_and_grid(profiles, false, 1240.0)
     }
 
+    fn harness_with_configuration(
+        configuration: Configuration,
+        width: f32,
+    ) -> Harness<'static, LauncherHarnessState> {
+        Harness::builder()
+            .with_size(egui::vec2(width, 880.0))
+            .build_ui_state(
+                move |ui, state: &mut LauncherHarnessState| {
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        true,
+                        None,
+                        false,
+                        &[],
+                        &[],
+                        &[],
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                LauncherHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration,
+                    command: None,
+                },
+            )
+    }
+
     fn harness_with_profiles_and_grid(
         profiles: Vec<Profile>,
         compact_launcher_grid: bool,
@@ -4626,7 +4674,12 @@ mod tests {
         let expected_path = root.join("workspace-alpha");
         std::fs::create_dir_all(&expected_path).expect("test directory can be created");
 
-        let mut harness = harness();
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT.with_customize_local_shell(true),
+            )
+            .expect("custom local shell setting is valid");
+        let mut harness = harness_with_configuration(configuration, 1240.0);
         harness.run();
         harness
             .get_by_label("Local Shell — Start a local terminal session")
@@ -4656,6 +4709,52 @@ mod tests {
         assert_eq!(profile.working_directory(), Some(expected_path.as_path()));
         drop(harness);
         std::fs::remove_dir_all(root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn local_shell_starts_immediately_by_default() {
+        let mut harness = harness();
+        harness.run();
+
+        harness
+            .get_by_label("Local Shell — Start a local terminal session")
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::StartLocalSession)
+        ));
+        assert!(harness
+            .query_by_label("Working directory (optional)")
+            .is_none());
+    }
+
+    #[test]
+    fn customized_local_shell_form_focuses_a_field_and_enter_submits_the_last_field() {
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                festerm_config::InterfaceSettings::DEFAULT.with_customize_local_shell(true),
+            )
+            .expect("custom local shell setting is valid");
+        let mut harness = harness_with_configuration(configuration, 1240.0);
+        harness.run();
+
+        harness
+            .get_by_label("Local Shell — Start a local terminal session")
+            .click();
+        harness.run();
+        assert!(harness
+            .get_by_label("Working directory (optional)")
+            .is_focused());
+
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::StartLocalSessionWithProfile { .. })
+        ));
     }
 
     fn populated_launcher_harness(
