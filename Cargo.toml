@@ -23,7 +23,7 @@ members = [
     "crates/festerm-syntax",
 ]
 resolver = "2"
-exclude = ["vendor/egui-winit"]
+exclude = ["vendor/egui-winit", "fuzz"]
 
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }

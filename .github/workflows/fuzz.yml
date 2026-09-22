@@ -1,0 +1,65 @@
+name: Fuzz
+
+# Fuzzing is a soak test, not a gate. It runs on a schedule rather than on
+# every pull request because a short run on a PR finds almost nothing while a
+# long one would make the PR unmergeable for an hour. The property tests in
+# `crates/festerm-core/tests/parser_properties.rs` are the per-PR coverage of
+# the same surface; this workflow is what keeps looking after they stop.
+#
+# A crash here is a real bug: the parser consumes bytes chosen by whatever
+# program the user happens to run, so anything that panics is reachable in
+# ordinary use. The reproducer is uploaded as an artifact, and the fix belongs
+# in the property tests as a named regression case.
+
+on:
+  schedule:
+    # 04:00 UTC daily, off the back of the usual working day.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Seconds to run each target for
+        required: false
+        default: '900'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parser, parser_chunked]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # cargo-fuzz needs a nightly toolchain: it builds the target with
+      # `-Z sanitizer=address`, which stable does not accept.
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Seed the corpus from the capture fixtures
+        run: ./scripts/seed-fuzz-corpus.sh
+
+      - name: Fuzz
+        run: |
+          cargo fuzz run ${{ matrix.target }} \
+            -- -max_total_time=${{ github.event.inputs.duration || '900' }} \
+               -max_len=8192 \
+               -print_final_stats=1
+
+      - name: Upload any reproducer
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: fuzz-reproducer-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

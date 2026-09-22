@@ -24,6 +24,7 @@ url = "2.5"
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false }
+proptest = "1.11.0"
 
 [[bench]]
 name = "sustained_output"
