@@ -117,3 +117,24 @@ enough to make a reopened window visible:
 That one covers durable-session takeover, where a client being replaced must
 still receive `SESSION_STOLEN`. It is a qualification aid, not a CI gate: run it
 on each platform after touching `client_io_loop` or the retirement path.
+
+## esctest2 conformance
+
+`esctest2-allow.txt` and `esctest2-skip.txt` decide what
+[esctest2](https://github.com/ThomasDickey/esctest2) run in CI.
+
+The suite is not something we can point at a parser: it drives the terminal it
+is running inside, so `scripts/run-esctest2.sh` hosts it on a pty with
+`festerm-core` on the other end (see `crates/festerm-core/examples/esctest-host.rs`).
+
+```text
+./scripts/run-esctest2.sh               # the gate: the allowlist must pass
+./scripts/run-esctest2.sh --everything  # survey the whole suite, never fails
+```
+
+We pass 110 of 559 test methods today, so the allowlist is the contract rather
+than the whole suite - see the standards notes for why, and #193 for the phases
+that widen it. The two files divide the work: the allowlist says what we are
+held to, and the skip list says which tests inside those families we have
+pulled out and why. Every skip carries its reason on the line above it, so a
+skip is an admission rather than a silence.

@@ -830,6 +830,7 @@ impl Terminal {
             TerminalOp::DeviceStatus(parameters) => self.device_status(parameters),
             TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
             TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
+            TerminalOp::WindowOperation(parameters) => self.window_operation(parameters),
             TerminalOp::Ignored => {}
         }
     }
@@ -1730,6 +1731,33 @@ impl Terminal {
         buffer.cursor.column = 0;
         buffer.cursor.row = if origin_mode { buffer.scroll_top } else { 0 };
         buffer.pending_wrap = false;
+    }
+
+    /// Answers the two `CSI ... t` size *reports*.
+    ///
+    /// Everything else in the xterm window-operation set moves, resizes,
+    /// raises or iconifies a window, which is the embedder's business and not
+    /// something the grid can honour or usefully refuse. Those are ignored.
+    /// The reports are different: a caller asking how large the screen is has
+    /// a question we can answer exactly, and one that cannot be answered any
+    /// other way, so leaving it unanswered strands the caller until its read
+    /// times out.
+    ///
+    /// `18` reports the text area and `19` the display; with no window
+    /// decoration to account for, both are the grid.
+    fn window_operation(&mut self, parameters: CsiParameters) {
+        let dimensions = self.screen().dimensions();
+        let kind = match parameters.value(0) {
+            Some(18) => 8,
+            Some(19) => 9,
+            _ => return,
+        };
+        let reply = format!(
+            "\x1b[{kind};{};{}t",
+            dimensions.rows(),
+            dimensions.columns()
+        );
+        self.queue_reply(reply.as_bytes());
     }
 
     fn device_status(&mut self, parameters: CsiParameters) {

@@ -526,6 +526,31 @@ mod tests {
     }
 
     #[test]
+    fn reports_the_screen_size_but_refuses_to_manipulate_a_window() {
+        // `CSI 18 t` and `CSI 19 t` are questions the grid can answer
+        // exactly, and that nothing else can answer - a caller left
+        // unanswered just blocks until it times out. The rest of the xterm
+        // window-operation set moves and resizes a window, which is the
+        // embedder's business, so those are ignored rather than guessed at.
+        let mut terminal = terminal(5, 3);
+        terminal.ingest(b"\x1b[18t\x1b[19t");
+        assert_eq!(terminal.drain_replies(), b"\x1b[8;3;5t\x1b[9;3;5t");
+
+        for manipulation in [
+            &b"\x1b[1t"[..],
+            &b"\x1b[2t"[..],
+            &b"\x1b[3;1;1t"[..],
+            &b"\x1b[8;10;20t"[..],
+            &b"\x1b[14t"[..],
+        ] {
+            terminal.ingest(manipulation);
+            assert!(terminal.drain_replies().is_empty());
+        }
+        assert_eq!(terminal.screen().dimensions().columns(), 5);
+        assert_eq!(terminal.screen().dimensions().rows(), 3);
+    }
+
+    #[test]
     fn osc_titles_and_allowlisted_hyperlinks_are_passive_and_bounded() {
         let mut terminal = terminal(8, 1);
         terminal.ingest(
