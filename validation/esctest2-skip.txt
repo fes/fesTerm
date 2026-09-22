@@ -48,20 +48,3 @@ SCORCTests\.test_SaveRestoreCursor_WorksInLRM
 # only well defined when the terminal remembers which rows soft-wrapped.
 CUBTests\.test_CUB_AfterNoWrappedInlines
 CUBTests\.test_CUB_AfterOneWrappedInline
-
-# --- Known defects, found by this harness ---
-# CUD and CUU do not clamp to the scroll region when the cursor starts inside
-# it: with DECSTBM 2;4 and the cursor on row 3, CUD 99 lands on row 25 and
-# CUU 99 on row 1, instead of rows 4 and 2. Tracked by #206.
-CUDTests\.test_CUD_StopsAtBottomMarginInScrollRegion
-CUUTests\.test_CUU_StopsAtTopMarginInScrollRegion
-# Resetting DECAWM does not clear the pending-wrap flag, so a restore leaves
-# the cursor one column right of where DEC STD 070 puts it. Tracked by #207.
-DECRCTests\.test_SaveRestoreCursor_Wrap
-DECSETTiteInhibitTests\.test_SaveRestoreCursor_Wrap
-# Restoring with nothing saved should home the cursor; we leave it where it
-# is. DECSTR (`CSI ! p`) is also unimplemented, so the saved cursor survives
-# a soft reset and leaks from one test into the next. Tracked by #208.
-DECRCTests\.test_SaveRestoreCursor_MoveToHomeWhenNotSaved
-DECSETTiteInhibitTests\.test_SaveRestoreCursor_MoveToHomeWhenNotSaved
-SCORCTests\.test_SaveRestoreCursor_MoveToHomeWhenNotSaved
