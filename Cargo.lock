@@ -2067,6 +2067,7 @@ version = "0.3.0"
 dependencies = [
  "compact_str",
  "criterion",
+ "festerm-test-support",
  "unicode-segmentation",
  "unicode-width",
  "url",

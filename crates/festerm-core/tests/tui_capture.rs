@@ -23,25 +23,10 @@
 //! it means re-checking them.
 
 use festerm_core::{Attributes, Color, Dimensions, MouseTrackingMode, Terminal};
-
-const COLUMNS: usize = 120;
-const ROWS: usize = 40;
-
-const VIM: &[u8] = include_bytes!("fixtures/tui/vim.raw");
-const HTOP: &[u8] = include_bytes!("fixtures/tui/htop.raw");
-const LESS: &[u8] = include_bytes!("fixtures/tui/less.raw");
-const NANO: &[u8] = include_bytes!("fixtures/tui/nano.raw");
-const TMUX: &[u8] = include_bytes!("fixtures/tui/tmux.raw");
-const FZF: &[u8] = include_bytes!("fixtures/tui/fzf.raw");
-
-const EVERY_CAPTURE: [(&str, &[u8]); 6] = [
-    ("vim", VIM),
-    ("htop", HTOP),
-    ("less", LESS),
-    ("nano", NANO),
-    ("tmux", TMUX),
-    ("fzf", FZF),
-];
+use festerm_test_support::captures::{
+    prefix_while_on_the_alternate_screen, COLUMNS, EVERY_CAPTURE, FZF, HTOP, LESS, NANO, ROWS,
+    TMUX, VIM,
+};
 
 fn replay(capture: &[u8]) -> Terminal {
     let mut terminal =
@@ -56,47 +41,10 @@ fn replay(capture: &[u8]) -> Terminal {
 /// The interesting state - the status line, the highlighted match, the pane
 /// divider - only exists while the program owns the alternate screen. Once it
 /// leaves, all of that is gone by design, so most assertions need the prefix
-/// rather than the whole stream.
-///
-/// Cutting at the final `ESC[?1049l` is not enough, because a program empties
-/// the screen and turns its modes off *before* it gets there: tmux has already
-/// disabled mouse reporting and cleared by then, so the prefix would be a
-/// blank screen. The teardown is emitted as one short burst, so the cut is the
-/// first of those sequences within the burst at the end of the stream.
+/// rather than the whole stream. The cut itself is shared with the renderer
+/// snapshots; see `festerm_test_support::captures`.
 fn while_still_on_the_alternate_screen(capture: &[u8]) -> Terminal {
-    const LEAVE: &[u8] = b"\x1b[?1049l";
-    // Only sequences near the end count: tmux toggles mouse reporting dozens of
-    // times mid-session as focus moves between panes.
-    const TEARDOWN_BURST: usize = 512;
-    const HANDING_BACK: [&[u8]; 6] = [
-        LEAVE,
-        // The erase comes first in the burst - tmux blanks the screen before
-        // it turns the modes off - so without it the prefix is a clean screen
-        // and there is nothing left to assert about.
-        b"\x1b[2J",
-        b"\x1b[?1000l",
-        b"\x1b[?1002l",
-        b"\x1b[?1006l",
-        b"\x1b[?2004l",
-    ];
-
-    let leave = capture
-        .windows(LEAVE.len())
-        .rposition(|window| window == LEAVE)
-        .expect("the capture never leaves the alternate screen");
-    let burst_begins = leave.saturating_sub(TEARDOWN_BURST);
-    let end = HANDING_BACK
-        .iter()
-        .filter_map(|marker| {
-            capture[burst_begins..leave + LEAVE.len()]
-                .windows(marker.len())
-                .position(|window| window == *marker)
-                .map(|offset| burst_begins + offset)
-        })
-        .min()
-        .expect("the teardown burst contains at least the leave sequence");
-
-    let terminal = replay(&capture[..end]);
+    let terminal = replay(prefix_while_on_the_alternate_screen(capture));
     assert!(
         terminal.modes().alternate_screen(),
         "the prefix should still be on the alternate screen"

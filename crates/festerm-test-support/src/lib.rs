@@ -1,5 +1,7 @@
 //! Repository-owned golden-fixture support for terminal behavior.
 
+pub mod captures;
+
 use std::{
     error::Error,
     fmt, fs,
