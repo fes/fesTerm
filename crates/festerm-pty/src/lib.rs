@@ -928,6 +928,13 @@ impl Shared {
                     backpressure_event_sent = true;
                     continue;
                 }
+                // The notice has to win the first slot that frees. Falling
+                // through to the output send here lets the consumer drain
+                // between the two attempts, which resumes output while the
+                // stall that held it up goes unreported - the consumer then
+                // sees an unexplained gap rather than backpressure.
+                thread::sleep(BACKPRESSURE_RETRY);
+                continue;
             }
 
             let mut metrics = self
@@ -2066,6 +2073,71 @@ mod tests {
         assert!(producer.join().expect("producer joins"));
         assert!(shared.metrics().backpressure_count > 0);
         assert_eq!(notifier.notifications(), 3);
+    }
+
+    #[test]
+    fn output_never_resumes_ahead_of_the_pressure_that_stalled_it() {
+        // The ordering above is only interesting when the consumer drains at
+        // the worst possible moment: while the producer is between failing to
+        // queue the backpressure notice and retrying the output. Freeing the
+        // slot the instant the failure is observable lands in that window
+        // often enough to catch a producer that races output into it.
+        for attempt in 0..256 {
+            let (event_sender, event_receiver) = mpsc::sync_channel(1);
+            let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+            let shared = Arc::new(Shared {
+                id: SessionId::next(),
+                lifecycle: Mutex::new(SessionLifecycle::Running),
+                metrics: Mutex::new(SessionMetrics {
+                    event_queue_capacity: 1,
+                    ..SessionMetrics::default()
+                }),
+                event_sender,
+                event_notifier: Arc::new(CountingNotifier::default()),
+                cancel: AtomicBool::new(false),
+                termination_requested: AtomicBool::new(false),
+                process_tree: None,
+                completion_receiver: Mutex::new(completion_receiver),
+                completion: Mutex::new(None),
+            });
+            assert!(shared.emit_output(b"first".to_vec()));
+
+            let producer_shared = Arc::clone(&shared);
+            let producer = thread::spawn(move || producer_shared.emit_output(b"second".to_vec()));
+
+            // Each retry that cannot place the notice bumps the count, so a
+            // second increment means the producer is inside the retry loop
+            // with a notice still owed.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while shared.metrics().backpressure_count < 2 && Instant::now() < deadline {
+                std::hint::spin_loop();
+            }
+            assert!(
+                shared.metrics().backpressure_count >= 2,
+                "attempt {attempt}: the producer never retried a blocked notice"
+            );
+            // Drain with a bare `try_recv` rather than a blocking receive so
+            // the slot frees as close as possible to the failure that was
+            // just observed, which is where the window is.
+            while event_receiver.try_recv().is_err() {
+                std::hint::spin_loop();
+            }
+
+            let second = event_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the stalled producer makes progress once a slot frees");
+            assert!(
+                matches!(
+                    second,
+                    SessionEvent::Backpressure {
+                        direction: FlowDirection::Output,
+                        ..
+                    }
+                ),
+                "attempt {attempt}: output resumed before the stall was reported: {second:?}"
+            );
+            assert!(producer.join().expect("producer joins"));
+        }
     }
 
     #[derive(Default)]
