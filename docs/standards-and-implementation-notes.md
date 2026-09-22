@@ -462,6 +462,72 @@ Recording is deliberately not part of any test run or CI job. The fixtures are
 the evidence the assertions were written against, so replacing them is a
 decision to be made and reviewed, not a side effect of running the suite.
 
+### Property tests and fuzzing for the parser
+
+Every other test of the parser feeds it sequences a human wrote, which is the
+opposite of the input that finds panics. The parser consumes bytes chosen
+freely by whatever program the user runs, so it is the one place in fesTerm
+where the input is genuinely adversarial.
+
+`crates/festerm-core/tests/parser_properties.rs` states the invariants as
+properties rather than asserting particular renderings: what a terminal *does*
+with `CSI 999999999999 m` is a judgement call, but that it neither panics nor
+leaves the cursor outside the screen is not. The properties cover arbitrary
+input, equivalence across chunk boundaries (bytes arrive from a pseudoterminal
+in whatever sized pieces the kernel hands over, so a parser that only works on
+whole sequences works by luck), resizing part-way through a stream, the
+well-formedness of every reply, and an SGR round trip through `DECRQSS`.
+
+The generators mix random bytes with well-formed sequence shapes on purpose.
+Uniformly random bytes almost never form a valid CSI, so a purely random
+generator spends its whole budget on the printable-text path and never reaches
+the parameter handling that is actually delicate.
+
+This found two reachable panics. `CSI L` and `CSI M` (insert and delete lines)
+and `CSI S` and `CSI T` (scroll) all clamp their count to the scroll region and
+then computed the last row to copy as `bottom - count`, which underflows the
+moment the count covers the whole region. `CSI 6 L` on a six-row screen was
+enough to take the process down, and any program can send it. Both are fixed in
+`screen.rs` and pinned by name as regression cases.
+
+The properties were themselves checked against deliberate mutations rather than
+assumed to be load-bearing: reverting either underflow fix fails two or three
+named properties.
+
+`fuzz/` holds two `cargo-fuzz` targets covering the same surface without a
+grammar: `parser` asserts the invariants on one buffer, and `parser_chunked`
+feeds the same bytes whole and cut at fuzzer-chosen offsets and requires the two
+terminals to agree. `scripts/seed-fuzz-corpus.sh` seeds them from the capture
+fixtures, which hands libFuzzer a population that already reaches alternate
+screen, DEC special graphics, `DECRQSS`, OSC hyperlinks and truecolour SGR
+rather than making it rediscover the shape of a CSI sequence first.
+
+The fuzz package is deliberately outside the workspace. The workspace forbids
+`unsafe_code` and `libfuzzer-sys` generates an `unsafe extern "C"` entry point,
+and keeping it separate also means a stable-toolchain `cargo build --workspace`
+never tries to build a target that requires nightly.
+
+Fuzzing runs on a nightly schedule (`.github/workflows/fuzz.yml`), not on pull
+requests: a short run on a PR finds almost nothing, and a long one would make
+the PR unmergeable for an hour. The property tests are the per-PR coverage; the
+scheduled job is what keeps looking after they stop. A crash there is a real
+bug, and its fix belongs back in the property tests as a named regression case.
+
+### Over-long string sequences
+
+A string control (`OSC`, `DCS`, `APC`, `PM`) whose payload passes
+`MAX_STRING_BYTES` returns to ground immediately rather than waiting for a
+terminator that may never arrive. The cost is that the remainder of an
+over-long payload prints as text. That is the deliberate trade: the alternative
+is to keep consuming until a terminator, which lets any program wedge the
+terminal permanently with an unterminated `OSC`, and because `ESC c` would be
+swallowed along with everything else, not even a reset would recover it. A
+screenful of garbage is recoverable; a silently dead terminal is not.
+
+What the bound must still guarantee, and what is asserted, is that a truncated
+payload is never *acted on* - no half-read title is applied - and that the
+terminal is usable immediately afterwards.
+
 ## Deferred or Deliberate Decisions
 
 These require a focused design decision before implementation:
