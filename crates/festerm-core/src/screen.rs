@@ -409,7 +409,7 @@ impl Screen {
 
     pub(crate) fn insert_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
         let count = count.min(bottom - row + 1);
-        for logical in (row..=bottom - count).rev() {
+        for logical in (row..bottom + 1 - count).rev() {
             self.copy_row(logical, logical + count);
         }
         for logical in row..row + count {
@@ -476,7 +476,7 @@ impl Screen {
 
     pub(crate) fn scroll_down(&mut self, top: usize, bottom: usize, count: usize, cell: Cell) {
         let count = count.min(bottom - top + 1);
-        for logical in (top..=bottom - count).rev() {
+        for logical in (top..bottom + 1 - count).rev() {
             self.copy_row(logical, logical + count);
         }
         for logical in top..top + count {
