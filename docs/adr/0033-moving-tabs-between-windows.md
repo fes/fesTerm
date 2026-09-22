@@ -154,8 +154,10 @@ cross-window drag possible on macOS at all.
 ### 8. The workspace schema grows windows, additively
 
 `WorkspaceConfiguration` keeps `tabs` and `focused_tab_id` as the *primary*
-window, and gains an optional `windows` list describing each **additional**
-window: its own tabs, its own focused tab, and optionally its geometry.
+window, gains an optional `windows` list describing each **additional**
+window - its own tabs, its own focused tab, and optionally its geometry - and
+an optional `geometry` of its own for the primary window, so the first window
+is restored as completely as the ones beside it.
 
 This ordering is deliberate. A fesTerm build that predates this ADR reads the
 `tabs` it already understands and restores the primary window correctly,
@@ -164,7 +166,16 @@ remain unique across the whole workspace, so focus references stay
 unambiguous.
 
 Geometry is optional at every level, and a window whose geometry is missing or
-unusable opens at the default size wherever the platform puts it.
+unusable opens at the default size wherever the platform puts it. The primary
+window's saved geometry is read before its viewport is built, so a restored
+window opens at its own size rather than opening at the default and resizing
+itself afterwards.
+
+A move or resize is a workspace change in its own right, not something that
+has to wait for an unrelated tab change to be written. Because a live drag
+reports a new rectangle nearly every frame, the write is debounced until the
+window has been still briefly, and a window closing flushes whatever the
+debounce is still holding.
 
 Workspace capture becomes Application-scoped: the Application collects a
 snapshot from every window and the primary window performs the single write,

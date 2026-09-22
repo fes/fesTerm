@@ -160,6 +160,22 @@ pub(crate) struct StartupConfiguration {
 }
 
 impl StartupConfiguration {
+    /// The geometry the primary window was last saved at, when the user has
+    /// opted into workspace restore and the platform reported it.
+    ///
+    /// Read before the window exists, so the first window opens at its saved
+    /// size instead of opening at the default and resizing afterwards.
+    pub(crate) fn restored_window_geometry(
+        &self,
+    ) -> Option<festerm_config::WorkspaceWindowGeometry> {
+        if !self.configuration.interface_settings().restore_workspace() {
+            return None;
+        }
+        self.configuration
+            .workspace()
+            .and_then(|workspace| workspace.geometry().copied())
+    }
+
     pub(crate) fn into_parts(
         self,
     ) -> (

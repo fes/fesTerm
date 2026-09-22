@@ -628,7 +628,13 @@
         "a_completed_automatic_check_records_itself_in_the_configuration",
         "opening_about_acknowledges_the_update_the_badge_announced",
         "an_available_update_names_itself_on_the_overflow_control",
-        "without_an_available_update_the_overflow_menu_offers_no_update_entry"
+        "without_an_available_update_the_overflow_menu_offers_no_update_entry",
+        "resizing_the_window_is_saved_for_the_next_start",
+        "a_resize_immediately_before_quitting_still_reaches_the_workspace",
+        "a_restored_window_keeps_the_geometry_it_was_restored_at",
+        "a_restored_workspace_reopens_the_first_window_where_it_was_left",
+        "without_saved_geometry_the_first_window_opens_at_the_default_size",
+        "a_workspace_round_trips_the_primary_windows_geometry"
       ],
       "manual_scenarios": [
         "NP-01",
