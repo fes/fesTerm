@@ -2719,6 +2719,33 @@ schema_version = 99
     }
 
     #[test]
+    fn customize_local_shell_round_trips_and_defaults_to_off() {
+        let settings = InterfaceSettings::DEFAULT.with_customize_local_shell(true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings.clone())
+            .unwrap();
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("customize_local_shell = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            &settings
+        );
+
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert!(!Configuration::parse(older_document)
+            .unwrap()
+            .interface_settings()
+            .customize_local_shell());
+        assert!(!Configuration::empty()
+            .to_toml()
+            .unwrap()
+            .contains("customize_local_shell"));
+    }
+
+    #[test]
     fn terminal_typography_preferences_round_trip_and_reject_unknown_families() {
         let settings = InterfaceSettings::DEFAULT
             .with_terminal_typography(TerminalFontPreference::IosevkaTerm, true);

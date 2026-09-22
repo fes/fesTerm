@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "6af5393668c2c1add8dce0f1c1587718af85782932184d68ea39dfdf5123e543"
+      "sha256": "da82a07d53f37536b2ccd806cfb62ffbb23a18f32e161f8744bccb887748f1f8"
     },
     {
       "id": "text-editor-dirty-close",
@@ -131,7 +131,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "450e62d09bb80f88971be47636c8c82c0b45b4f5abdd4e19fb65c50385e4298c"
+      "sha256": "3b18de719839acb439702277709543621589bca1790b436f09c67284f8431a0d"
     },
     {
       "id": "text-editor-find",
@@ -186,7 +186,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "7c63373bb1cc6513be3669b04f793baee0a07aebefd25af26607867e42ecbd32"
+      "sha256": "af917b17f7afa0f51185c8882e163cee8287bebb127ab231849026a9580f5f52"
     },
     {
       "id": "text-editor-saved",
@@ -437,9 +437,9 @@
       "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
       "image": "settings-interface-scrolling.png",
       "width": 874,
-      "height": 1053,
+      "height": 1131,
       "tier": "headless",
-      "sha256": "242272c9d957cf7deda7b15195f7d5a0fb89054fd99bc11e5934af50c0558add"
+      "sha256": "774e039f6bc4128b30ae7018da44eb9324c73fa350bf5759d6a7b8d578c638b6"
     },
     {
       "id": "settings-quick-switch",

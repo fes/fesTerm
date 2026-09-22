@@ -73,7 +73,7 @@
       ],
       "automated_tests": [
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
-        "pressing_enter_on_the_launcher_opens_and_submits_the_highlighted_local_form_end_to_end",
+        "pressing_enter_on_the_launcher_starts_the_default_local_shell_end_to_end",
         "ssh_form_returns_a_typed_password_command_with_default_port",
         "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell",
         "ssh_form_can_attach_to_a_named_tmux_session",
@@ -108,6 +108,9 @@
         "request_versions_are_bounded_after_cache_eviction_and_abandoned_queries",
         "latest_query_replaces_pending_work_and_stale_results_stay_hidden",
         "local_shell_form_autocompletes_working_directory_and_returns_typed_profile",
+        "local_shell_starts_immediately_by_default",
+        "customized_local_shell_form_focuses_a_field_and_enter_submits_the_last_field",
+        "default_local_session_profile_starts_in_the_users_home_directory",
         "transient_local_profile_command_replaces_launcher_without_saved_profile_identity",
         "saved_profiles_always_stack_one_row_per_profile",
         "saved_ssh_profile_card_dispatches_a_configured_launch_regardless_of_stored_credential",
@@ -1242,7 +1245,8 @@
       "id": "settings",
       "edges": [
         "SET-0[1-8]",
-        "SET-11"
+        "SET-11",
+        "SET-12"
       ],
       "requirements": [
         "docs/gui-design.md#settings"
@@ -1263,6 +1267,9 @@
         "disabled_powershell_preference_labels_the_comspec_session",
         "settings_powershell_preference_returns_the_toggle_command",
         "powershell_preference_defaults_to_on_and_serializes_only_when_disabled",
+        "customize_local_shell_round_trips_and_defaults_to_off",
+        "toggle_customize_local_shell_flips_state_and_resets_to_off",
+        "settings_toggle_customize_local_shell_returns_the_toggle_command",
         "windows_default_shell_prefers_the_user_powershell_alias_when_enabled",
         "windows_default_shell_falls_back_to_comspec_then_windows_powershell",
         "scroll_speed_changes_and_resets_to_normal",
@@ -1558,6 +1565,8 @@
       ],
       "automated_tests": [
         "wide_cells_use_one_two_column_paint_and_selection_span",
+        "applies_compact_colon_true_color_sgr_to_spaces",
+        "compact_colon_background_padding_matches_reviewed_snapshot",
         "bundled_terminal_faces_lead_independent_fallback_chains",
         "terminal_attributes_select_real_bundled_faces",
         "emoji_sequences_use_grapheme_width_across_incremental_input",

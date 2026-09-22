@@ -3,6 +3,15 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Compact true-color backgrounds
+
+Copilot CLI inline code exposed a true-color compatibility gap: its leading
+and trailing padding cells reached fesTerm, but a compact colon-delimited SGR
+background did not. The terminal core now accepts both the canonical
+`48:2::r:g:b` form and the widespread `48:2:r:g:b` form, preserving the
+background on spaces as well as glyph cells. A golden fixture covers both
+colon forms so renderer-facing cell state cannot silently regress.
+
 ## Noticing an update, and the settings that stayed put (v0.3.0)
 
 Three changes in this release share one theme: fesTerm asking less of the

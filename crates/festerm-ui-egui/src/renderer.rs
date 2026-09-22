@@ -1870,6 +1870,33 @@ mod tests {
         snapshots.unwrap();
     }
 
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn compact_colon_background_padding_matches_reviewed_snapshot() {
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"Before \x1b[38:2:110:190:255;48:2:48:48:48m TCPTracking \x1b[0m, after.");
+        for column in 7..20 {
+            assert_eq!(
+                terminal.cell(column, 0).unwrap().background(),
+                Color::Rgb {
+                    red: 48,
+                    green: 48,
+                    blue: 48,
+                }
+            );
+        }
+        assert_eq!(terminal.cell(20, 0).unwrap().background(), Color::Default);
+
+        let mut snapshots = SnapshotResults::new();
+        let mut harness = visual_harness(terminal);
+        snapshot_after_structural_assertions(
+            &mut harness,
+            "terminal-compact-colon-background-padding",
+            &mut snapshots,
+        );
+        snapshots.unwrap();
+    }
+
     #[test]
     fn undersized_viewport_does_not_shrink_the_terminal_or_lose_cached_content() {
         let cell = CellMetrics::new(10.0, 20.0).unwrap();

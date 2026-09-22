@@ -108,6 +108,7 @@ status_bar_visible = true
 show_session_details = true
 confirm_session_close = true
 prefer_powershell = true
+customize_local_shell = false
 restore_workspace = false
 terminal_font = "jetbrains-mono"
 terminal_ligatures = false
@@ -197,8 +198,8 @@ The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `true`), `confirm_session_close` (default
-`true`), `prefer_powershell` (default `true`), `restore_workspace` (default
-`false`), `terminal_font`
+`true`), `prefer_powershell` (default `true`), `customize_local_shell`
+(default `false`), `restore_workspace` (default `false`), `terminal_font`
 (`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
 default `"jetbrains-mono"`), `terminal_ligatures` (default `false`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
@@ -212,7 +213,10 @@ mirror the current Settings controls for chip layout, chip details, the
 status bar, live-session close confirmation, workspace restoration, compact
 Launcher layout, background-output chip pulsing, resumable local-session
 surfacing, terminal-only typography, keyboard quick-switch overlays, and
-scrollback scroll speed. On Windows, `prefer_powershell` makes new default
+scrollback scroll speed. By default, choosing **Local Shell** starts the
+platform shell immediately in the user's home directory.
+`customize_local_shell = true` instead opens the executable, arguments, and
+working-directory form before launch. On Windows, `prefer_powershell` makes new default
 local sessions use `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` when that
 standard per-user app-execution alias exists; it never embeds a username or
 versioned package path, and falls back to the absolute `%COMSPEC%` executable

@@ -489,6 +489,33 @@ mod tests {
     }
 
     #[test]
+    fn applies_compact_colon_true_color_sgr_to_spaces() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b[38:2:80:160:240;48:2:40:50:60m code \x1b[0m.");
+
+        for column in 0..6 {
+            let cell = terminal.cell(column, 0).unwrap();
+            assert_eq!(
+                cell.foreground(),
+                Color::Rgb {
+                    red: 80,
+                    green: 160,
+                    blue: 240
+                }
+            );
+            assert_eq!(
+                cell.background(),
+                Color::Rgb {
+                    red: 40,
+                    green: 50,
+                    blue: 60
+                }
+            );
+        }
+        assert_eq!(terminal.cell(6, 0).unwrap().background(), Color::Default);
+    }
+
+    #[test]
     fn reports_device_status_and_conservative_primary_identity() {
         let mut terminal = terminal(5, 3);
         terminal.ingest(b"\x1b[2;3H\x1b[5n\x1b[6n\x1b[c\x1b[>c");

@@ -156,11 +156,12 @@ tracks DECTCEM (`?25`) visibility but has no renderer.
 
 SGR supports reset, the standard text flags (including double underline for
 21 and bold/faint reset for 22), ANSI 16-color palettes, 256 indexed color,
-and semicolon true color (`38;2;r;g;b` and `48;2;r;g;b`). Canonical colon
-extended-color parameters are structurally retained and accepted with an
-empty color-space subparameter. The only M2 replies are `CSI 5 n` (`CSI 0 n`)
-and `CSI 6 n` (cursor position); device attributes and terminal identity
-remain unsupported.
+and semicolon true color (`38;2;r;g;b` and `48;2;r;g;b`). Colon extended-color
+parameters are structurally retained; true color accepts both canonical
+`38:2::r:g:b` / `48:2::r:g:b` and widespread compact
+`38:2:r:g:b` / `48:2:r:g:b` forms. The only M2 replies are `CSI 5 n`
+(`CSI 0 n`) and `CSI 6 n` (cursor position); device attributes and terminal
+identity remain unsupported.
 
 Resize does not reflow. It preserves the upper-left rectangular intersection
 of both allocated buffers, initializes newly exposed cells to default blank

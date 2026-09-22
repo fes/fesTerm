@@ -1524,8 +1524,6 @@ impl Terminal {
                     _ => None,
                 }
             }
-            // Canonical colon true-color syntax reserves an empty color-space
-            // subparameter: `38:2::red:green:blue`.
             (Some(ParameterSeparator::Colon), 5)
                 if parameters.separator(index + 2) == Some(ParameterSeparator::Colon) =>
             {
@@ -1534,6 +1532,8 @@ impl Terminal {
                     .and_then(|value| u8::try_from(value).ok())
                     .map(Color::Indexed)
             }
+            // Accept both the canonical `38:2::red:green:blue` form and the
+            // widespread compact `38:2:red:green:blue` form.
             (Some(ParameterSeparator::Colon), 2)
                 if parameters.separator(index + 2) == Some(ParameterSeparator::Colon)
                     && parameters.separator(index + 3) == Some(ParameterSeparator::Colon)
@@ -1544,6 +1544,25 @@ impl Terminal {
                     parameters.value(index + 3),
                     parameters.value(index + 4),
                     parameters.value(index + 5),
+                ) {
+                    (Some(red), Some(green), Some(blue)) => {
+                        match (u8::try_from(red), u8::try_from(green), u8::try_from(blue)) {
+                            (Ok(red), Ok(green), Ok(blue)) => Some(Color::Rgb { red, green, blue }),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            (Some(ParameterSeparator::Colon), 2)
+                if parameters.separator(index + 2) == Some(ParameterSeparator::Colon)
+                    && parameters.separator(index + 3) == Some(ParameterSeparator::Colon)
+                    && parameters.separator(index + 4) == Some(ParameterSeparator::Colon) =>
+            {
+                match (
+                    parameters.value(index + 2),
+                    parameters.value(index + 3),
+                    parameters.value(index + 4),
                 ) {
                     (Some(red), Some(green), Some(blue)) => {
                         match (u8::try_from(red), u8::try_from(green), u8::try_from(blue)) {
@@ -1568,7 +1587,12 @@ impl Terminal {
             (Some(ParameterSeparator::Semicolon), 5) => index + 2,
             (Some(ParameterSeparator::Semicolon), 2) => index + 4,
             (Some(ParameterSeparator::Colon), 5) => index + 2,
-            (Some(ParameterSeparator::Colon), 2) => index + 5,
+            (Some(ParameterSeparator::Colon), 2)
+                if parameters.separator(index + 5) == Some(ParameterSeparator::Colon) =>
+            {
+                index + 5
+            }
+            (Some(ParameterSeparator::Colon), 2) => index + 4,
             _ => index,
         }
     }

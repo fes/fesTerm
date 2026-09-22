@@ -661,21 +661,31 @@ impl SessionTab {
         let dimensions = window_dimensions
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
-        let result = LocalPtySession::start_default_with_powershell_preference(
-            size,
-            make_notifier(context),
-            prefer_powershell,
-        );
+        let profile = Self::default_local_profile_for_session(prefer_powershell);
+        let launch_secondary = profile.as_ref().ok().and_then(local_profile_secondary);
+        let result = profile
+            .map_err(|error| error.to_string())
+            .and_then(|profile| {
+                LocalPtySession::start_with_notifier(profile, size, make_notifier(context))
+                    .map(ApplicationSession::Local)
+                    .map_err(|error| error.to_string())
+            });
         Self::from_local_session_result(
-            result.map(ApplicationSession::Local),
+            result,
             dimensions,
             "Local Shell",
-            default_local_profile_with_powershell_preference(prefer_powershell)
-                .ok()
-                .and_then(|profile| local_profile_secondary(&profile)),
+            launch_secondary,
             None,
             None,
         )
+    }
+
+    fn default_local_profile_for_session(
+        prefer_powershell: bool,
+    ) -> Result<LocalProfile, festerm_pty::LocalProfileError> {
+        default_local_profile_with_powershell_preference(prefer_powershell).map(|profile| {
+            profile.with_working_directory(crate::sftp_file_manager::local_home_directory())
+        })
     }
 
     /// Starts the application's first tab, honoring an optional
@@ -1803,6 +1813,9 @@ pub enum AppCommand {
     /// builds would otherwise flag it as dead code.
     #[cfg_attr(not(windows), allow(dead_code))]
     TogglePreferPowershell,
+    /// Toggles whether the default Local Shell launcher card opens its
+    /// executable/arguments/directory form instead of launching immediately.
+    ToggleCustomizeLocalShell,
     /// Toggles whether the open-tab list and active tab persist across
     /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
     /// opt-in, off by default).
@@ -2085,6 +2098,7 @@ pub struct AppState {
     show_session_details: bool,
     confirm_session_close: bool,
     prefer_powershell: bool,
+    customize_local_shell: bool,
     /// Whether the open-tab list and active tab persist across restarts
     /// (`docs/gui-design.md` "Workspace restore"). Off by default and,
     /// unlike the other interface preferences here, deliberately explicit:
@@ -2181,6 +2195,7 @@ impl AppState {
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
             prefer_powershell: settings.prefer_powershell(),
+            customize_local_shell: settings.customize_local_shell(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
@@ -2641,6 +2656,10 @@ impl AppState {
         self.prefer_powershell
     }
 
+    pub const fn customize_local_shell(&self) -> bool {
+        self.customize_local_shell
+    }
+
     pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
         self.sftp_pane_order
     }
@@ -2662,6 +2681,7 @@ impl AppState {
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_prefer_powershell(self.prefer_powershell)
+        .with_customize_local_shell(self.customize_local_shell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
         .with_editor(self.editor)
@@ -3013,6 +3033,9 @@ impl AppState {
             AppCommand::TogglePreferPowershell => {
                 self.prefer_powershell = !self.prefer_powershell;
             }
+            AppCommand::ToggleCustomizeLocalShell => {
+                self.customize_local_shell = !self.customize_local_shell;
+            }
             AppCommand::ToggleRestoreWorkspace => {
                 self.restore_workspace = !self.restore_workspace;
             }
@@ -3170,6 +3193,7 @@ impl AppState {
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
                 self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
                 self.prefer_powershell = InterfaceSettings::DEFAULT.prefer_powershell();
+                self.customize_local_shell = InterfaceSettings::DEFAULT.customize_local_shell();
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
@@ -5912,6 +5936,42 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert!(state.prefer_powershell());
+    }
+
+    #[test]
+    fn toggle_customize_local_shell_flips_state_and_resets_to_off() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.customize_local_shell(), "off by default");
+
+        state.dispatch(AppCommand::ToggleCustomizeLocalShell, &context);
+        assert!(state.customize_local_shell());
+        assert!(state.interface_settings().customize_local_shell());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.customize_local_shell());
+    }
+
+    #[test]
+    fn default_local_session_profile_starts_in_the_users_home_directory() {
+        // Computed independently of the helper the implementation calls, so
+        // the assertion still fails if home resolution degrades to the
+        // process's own directory or the filesystem root.
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from)
+            .expect("a test host provides a home directory");
+
+        let profile = SessionTab::default_local_profile_for_session(true)
+            .expect("this platform provides a default local shell");
+
+        assert_eq!(profile.working_directory(), Some(home.as_path()));
+        assert_ne!(
+            profile.working_directory(),
+            std::env::current_dir().ok().as_deref(),
+            "a shell must start in the user's home directory, not wherever \
+             fesTerm happened to be launched from"
+        );
     }
 
     #[cfg(windows)]

@@ -28,6 +28,7 @@ pub(crate) struct SettingsViewModel {
     pub show_session_details: bool,
     pub confirm_session_close: bool,
     pub prefer_powershell: bool,
+    pub customize_local_shell: bool,
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
     pub terminal_ligatures: bool,
@@ -64,6 +65,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         show_session_details,
         confirm_session_close,
         prefer_powershell,
+        customize_local_shell,
         restore_workspace,
         terminal_font,
         terminal_ligatures,
@@ -218,6 +220,20 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 ) {
                                     command = Some(AppCommand::TogglePreferPowershell);
                                 }
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Customize local shell before launch",
+                                "Show executable, arguments, and working-directory fields, \
+                                 prefilled with the defaults, after choosing Local Shell. \
+                                 When off, start the default shell in your home directory \
+                                 immediately. Off by default.",
+                                customize_local_shell,
+                            ) {
+                                command = Some(AppCommand::ToggleCustomizeLocalShell);
                             }
                             ui.add_space(10.0);
                             ui.separator();
@@ -948,6 +964,7 @@ mod tests {
                             show_session_details: true,
                             confirm_session_close: true,
                             prefer_powershell: true,
+                            customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
@@ -1143,6 +1160,25 @@ mod tests {
         assert!(matches!(
             harness.state().command,
             Some(AppCommand::ToggleCompactLauncherGrid)
+        ));
+    }
+
+    #[test]
+    fn settings_toggle_customize_local_shell_returns_the_toggle_command() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        harness
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Customize local shell before launch",
+            )
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleCustomizeLocalShell)
         ));
     }
 
@@ -1576,6 +1612,7 @@ mod tests {
                             show_session_details: true,
                             confirm_session_close: true,
                             prefer_powershell: true,
+                            customize_local_shell: false,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
