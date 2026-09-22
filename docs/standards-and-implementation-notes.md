@@ -586,6 +586,49 @@ single test. They are questions about the grid, which we can answer exactly.
 The rest of `CSI ... t` moves, resizes, raises and iconifies a window, which
 belongs to the embedder, and is ignored.
 
+### Resets: DECSTR, and what a save actually saves
+
+`CSI ! p` (DECSTR) is a soft reset: it returns the modes, the scroll region
+and the saved cursor to their power-on values and leaves the screen's
+contents, the scrollback, the tab stops and the title alone. It is what a
+program sends to get a predictable terminal without throwing away what the
+user is looking at. Two details are easy to get wrong and are worth stating:
+the cursor itself does not move (only the *saved* cursor is reset, to home),
+and autowrap comes back on. DEC STD 070 says autowrap should be off, but xterm
+restores it to the resource default and records that it deviates to avoid
+breaking applications that rely on wrapping; ours defaults on, so that is where
+a soft reset leaves it. Character sets are RIS's business, not DECSTR's.
+
+Restoring when nothing has been saved is defined as restoring the power-on
+state - home the cursor, drop origin mode, reset the pen - rather than as
+doing nothing. The difference matters because "do nothing" makes a restore's
+effect depend on history the caller cannot see, and because with nothing able
+to clear the saved cursor it outlives whatever wrote it. That was visible in
+the conformance run before DECSTR existed: a saved cursor leaked from one
+esctest2 test into the next, so whether a test passed depended on what ran
+before it.
+
+DECSC saves the cursor, the pen, the character sets and the last-column flag.
+It does **not** save DECAWM, which fesTerm previously did. A program turns
+autowrap off precisely to stop a wrap from happening - drawing a box, filling
+the last column of a status line - so an unrelated save/restore that turns it
+back on hands it exactly the wrap it was avoiding, and the damage shows up as
+a scrolled screen rather than as one misplaced character.
+
+### Relative vertical motion and the scroll region
+
+`CUU` and `CUD` are bound by the scroll region whenever the cursor *starts
+inside* it, whether or not origin mode is set. A cursor that starts outside
+the region is bound by the screen instead: it was never in that pane, so the
+margin is not its boundary.
+
+This is a different rule from the one absolute addressing follows. `CUP` and
+`VPA` are measured from the region only in origin mode, because origin mode is
+exactly what redefines where row 1 is. fesTerm applied the absolute rule to
+both, so a program that reserved rows 2..4 and then moved down from row 3
+landed on row 25 - outside the pane it had reserved, with its next write
+appearing in someone else's.
+
 ## Deferred or Deliberate Decisions
 
 These require a focused design decision before implementation:

@@ -526,6 +526,92 @@ mod tests {
     }
 
     #[test]
+    fn relative_vertical_motion_is_bound_by_the_region_it_starts_in() {
+        // A program that reserved rows 2..4 and moves down from row 3 is
+        // moving inside the pane it reserved; letting it fall out puts its
+        // next write in someone else's pane. A cursor that starts outside
+        // the region was never in that pane, so the screen bounds it. Origin
+        // mode is not part of this rule - esctest2's CUD/CUU margin tests
+        // never set it.
+        let mut terminal = terminal(5, 25);
+        terminal.ingest(b"\x1b[2;4r\x1b[3;1H\x1b[99B");
+        assert_eq!(terminal.cursor().row(), 3);
+
+        terminal.ingest(b"\x1b[3;1H\x1b[99A");
+        assert_eq!(terminal.cursor().row(), 1);
+
+        // Starting below the region, the screen is the bound.
+        terminal.ingest(b"\x1b[10;1H\x1b[99B");
+        assert_eq!(terminal.cursor().row(), 24);
+
+        // And starting above it.
+        terminal.ingest(b"\x1b[1;1H\x1b[99A");
+        assert_eq!(terminal.cursor().row(), 0);
+    }
+
+    #[test]
+    fn restoring_with_nothing_saved_returns_to_the_power_on_state() {
+        // "Nothing saved" is the power-on state, not "do nothing". Returning
+        // early instead makes a restore's effect depend on history the
+        // caller cannot see.
+        for restore in [&b"\x1b8"[..], &b"\x1b[u"[..]] {
+            let mut terminal = terminal(8, 4);
+            terminal.ingest(b"\x1b[3;5H");
+            terminal.ingest(restore);
+            assert_eq!(
+                (terminal.cursor().column(), terminal.cursor().row()),
+                (0, 0)
+            );
+        }
+
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"\x1b[?6h\x1b[3;5H\x1b8");
+        assert!(!terminal.modes().origin_mode());
+    }
+
+    #[test]
+    fn saving_the_cursor_does_not_carry_autowrap_with_it() {
+        // DECSC saves the cursor, the pen, the character sets and the
+        // last-column flag. It does not save DECAWM: a program that turned
+        // wrapping off did so to stop a wrap happening, and having an
+        // unrelated restore turn it back on hands it exactly the wrap it was
+        // avoiding.
+        let mut terminal = terminal(4, 3);
+        terminal.ingest(b"\x1b[?7h\x1b7\x1b[?7l\x1b8");
+        assert!(!terminal.modes().auto_wrap());
+
+        terminal.ingest(b"\x1b[1;3Habcd");
+        assert_eq!(terminal.cursor().row(), 0);
+    }
+
+    #[test]
+    fn a_soft_reset_clears_the_saved_cursor_without_clearing_the_screen() {
+        // DECSTR puts the modes back without throwing away what the user is
+        // looking at. The saved cursor is part of "the modes": with nothing
+        // able to clear it, a saved position outlives whatever wrote it and
+        // reappears at an unrelated restore much later.
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"ab\x1b[3;5H\x1b7\x1b[?6h\x1b[2;3r\x1b[?7l\x1b[31m");
+        terminal.ingest(b"\x1b[!p");
+
+        assert!(!terminal.modes().origin_mode());
+        assert!(terminal.modes().auto_wrap());
+        assert_eq!(terminal.row_text(0).unwrap().trim_end(), "ab");
+
+        // The saved cursor is gone, so restoring now goes home rather than
+        // back to the position saved before the reset.
+        terminal.ingest(b"\x1b[4;7H\x1b8");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 0)
+        );
+
+        // The scroll region went with it: a scroll now uses the whole screen.
+        terminal.ingest(b"\x1b[8;1H");
+        assert_eq!(terminal.cursor().row(), 3);
+    }
+
+    #[test]
     fn reports_the_screen_size_but_refuses_to_manipulate_a_window() {
         // `CSI 18 t` and `CSI 19 t` are questions the grid can answer
         // exactly, and that nothing else can answer - a caller left

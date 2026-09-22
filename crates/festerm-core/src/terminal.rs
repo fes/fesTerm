@@ -333,7 +333,6 @@ struct SavedDecState {
     foreground: Color,
     background: Color,
     origin_mode: bool,
-    auto_wrap: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -830,6 +829,7 @@ impl Terminal {
             TerminalOp::DeviceStatus(parameters) => self.device_status(parameters),
             TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
             TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
+            TerminalOp::SoftReset => self.soft_reset(),
             TerminalOp::WindowOperation(parameters) => self.window_operation(parameters),
             TerminalOp::Ignored => {}
         }
@@ -1155,9 +1155,39 @@ impl Terminal {
         }
     }
 
+    /// The rows `CUU`/`CUD` may move between.
+    ///
+    /// The scroll region binds relative vertical motion whenever the cursor
+    /// *starts inside* it, whether or not origin mode is set: a program that
+    /// reserved rows 2..4 and then moves down from row 3 is moving within the
+    /// pane it reserved, and letting it fall out of the region puts its next
+    /// write in someone else's pane. A cursor that starts outside the region
+    /// is bound by the screen instead - it was never in the pane, so the
+    /// margin is not its boundary.
+    ///
+    /// This is deliberately not `vertical_bounds`, which answers a different
+    /// question: absolute addressing (`CUP`, `VPA`) is measured from the
+    /// region only in origin mode, because origin mode is exactly what
+    /// redefines where row 1 is.
+    fn relative_vertical_bounds(&self) -> (usize, usize) {
+        let buffer = self.active_buffer();
+        let row = buffer.cursor.row;
+        let top = if row >= buffer.scroll_top {
+            buffer.scroll_top
+        } else {
+            0
+        };
+        let bottom = if row <= buffer.scroll_bottom {
+            buffer.scroll_bottom
+        } else {
+            self.dimensions().rows() - 1
+        };
+        (top, bottom)
+    }
+
     fn move_vertical(&mut self, parameters: CsiParameters, down: bool) {
         let count = Self::parameter_or(parameters, 0, 1);
-        let (top, bottom) = self.vertical_bounds();
+        let (top, bottom) = self.relative_vertical_bounds();
         let buffer = self.active_buffer_mut();
         buffer.cursor.row = if down {
             buffer.cursor.row.saturating_add(count).min(bottom)
@@ -1350,7 +1380,6 @@ impl Terminal {
         let foreground = self.current_foreground;
         let background = self.current_background;
         let origin_mode = self.modes.origin_mode;
-        let auto_wrap = self.modes.auto_wrap;
         let buffer = self.active_buffer_mut();
         buffer.dec_saved = Some(SavedDecState {
             cursor: buffer.cursor,
@@ -1359,12 +1388,23 @@ impl Terminal {
             foreground,
             background,
             origin_mode,
-            auto_wrap,
         });
     }
 
     fn restore_dec(&mut self) {
         let Some(saved) = self.active_buffer().dec_saved else {
+            // "Nothing saved" is the power-on state, not "do nothing": DEC
+            // STD 070 and xterm both home the cursor and drop origin mode.
+            // Returning early instead leaves whatever the cursor happened to
+            // be doing, which makes a restore's effect depend on history the
+            // caller cannot see.
+            self.modes.origin_mode = false;
+            self.current_attributes = Attributes::default();
+            self.current_foreground = Color::Default;
+            self.current_background = Color::Default;
+            let buffer = self.active_buffer_mut();
+            buffer.cursor = Cursor { column: 0, row: 0 };
+            buffer.pending_wrap = false;
             return;
         };
         let dimensions = self.dimensions();
@@ -1385,7 +1425,6 @@ impl Terminal {
         self.current_foreground = saved.foreground;
         self.current_background = saved.background;
         self.modes.origin_mode = saved.origin_mode;
-        self.modes.auto_wrap = saved.auto_wrap;
     }
 
     fn save_ansi(&mut self) {
@@ -1395,6 +1434,12 @@ impl Terminal {
 
     fn restore_ansi(&mut self) {
         let Some(saved) = self.active_buffer().ansi_saved else {
+            // Same rule as DECRC: nothing saved means the power-on position.
+            // The SCO form only ever saved a position, so that is all it
+            // restores.
+            let buffer = self.active_buffer_mut();
+            buffer.cursor = Cursor { column: 0, row: 0 };
+            buffer.pending_wrap = false;
             return;
         };
         let dimensions = self.dimensions();
@@ -1731,6 +1776,43 @@ impl Terminal {
         buffer.cursor.column = 0;
         buffer.cursor.row = if origin_mode { buffer.scroll_top } else { 0 };
         buffer.pending_wrap = false;
+    }
+
+    /// `CSI ! p` (DECSTR), a soft reset.
+    ///
+    /// The distinction from RIS is what survives: a soft reset puts the
+    /// *modes* back to their power-on values but leaves the screen's
+    /// contents, the scrollback, the tab stops and the title alone. It is
+    /// what a program sends to get a predictable terminal without throwing
+    /// away what the user is looking at.
+    ///
+    /// Two details worth stating because they are easy to get wrong:
+    ///
+    /// - The cursor does not move. Only the *saved* cursor is reset, to the
+    ///   home position - which here is spelled as "nothing saved", since
+    ///   `restore_dec` already treats that as the power-on state.
+    /// - Autowrap comes back *on*. DEC STD 070 says off, but xterm restores
+    ///   it to the resource default and notes that it does so to avoid
+    ///   breaking applications that rely on it; ours defaults on, so that is
+    ///   where a soft reset leaves it.
+    ///
+    /// Character sets are deliberately not touched here. Resetting those
+    /// belongs to RIS, which is tracked separately.
+    fn soft_reset(&mut self) {
+        self.modes.origin_mode = false;
+        self.modes.auto_wrap = true;
+        self.modes.cursor_visible = true;
+        self.modes.application_cursor = false;
+        self.modes.application_keypad = false;
+        self.reset_graphics_rendition();
+
+        let bottom = self.dimensions().rows() - 1;
+        let buffer = self.active_buffer_mut();
+        buffer.scroll_top = 0;
+        buffer.scroll_bottom = bottom;
+        buffer.pending_wrap = false;
+        buffer.dec_saved = None;
+        buffer.ansi_saved = None;
     }
 
     /// Answers the two `CSI ... t` size *reports*.

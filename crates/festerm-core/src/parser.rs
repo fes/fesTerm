@@ -197,6 +197,10 @@ pub enum TerminalOp {
         secondary: bool,
     },
     ClearTabStops(CsiParameters),
+    /// `CSI ! p` (DECSTR). A soft reset: modes, the scroll region and the
+    /// saved cursor go back to their power-on values, but the screen's
+    /// contents and the tab stops survive.
+    SoftReset,
     /// `CSI ... t`. Only the two size *reports* are answered; every
     /// manipulation (resize, iconify, raise) needs a window system we do not
     /// reach from here and is ignored.
@@ -648,6 +652,7 @@ impl Parser {
                 (false, 1, b' ', b'q') if !parameters.has_colon() => {
                     TerminalOp::SetCursorStyle(parameters)
                 }
+                (false, 1, b'!', b'p') => TerminalOp::SoftReset,
                 _ => TerminalOp::Ignored,
             };
         }
