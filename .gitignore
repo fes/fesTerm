@@ -1,4 +1,8 @@
 /target
+/fuzz/target
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
 __pycache__/
 *.py[cod]
 third_party/conpty/*.nupkg

@@ -29,6 +29,7 @@ criterion = { version = "0.7", default-features = false }
 # permits cycles through dev-dependencies, and it keeps one copy of the
 # capture-corpus slicing that the renderer snapshots also replay.
 festerm-test-support = { path = "../festerm-test-support" }
+proptest = "1.11.0"
 
 [[bench]]
 name = "sustained_output"
