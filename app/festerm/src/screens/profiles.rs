@@ -1972,22 +1972,31 @@ mod tests {
         ));
     }
 
+    /// Every test that opens the Local editor uses `run_ok` rather than `run`.
+    /// The editor's executable and working-directory fields search `PATH` on a
+    /// background thread, and a job that finishes mid-run asks for another
+    /// repaint - which on a loaded runner outlasts `Harness::run`'s four-step
+    /// budget and aborts the test for a reason unrelated to what it asserts.
+    /// #187 fixed this for the autocomplete tests specifically; the same race
+    /// reaches every test that renders those fields, which is what turned CI
+    /// red here. The assertions below are unchanged: a real failure still
+    /// fails.
     #[test]
     fn profiles_new_local_profile_flow_returns_a_save_profile_command() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
 
         open_new_profile(&mut harness, "Local");
 
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("dev-shell");
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Executable").focus();
         harness.get_by_label("Executable").type_text("/bin/zsh");
-        harness.run();
+        harness.run_ok();
 
         harness.get_by_label("Save").click();
-        harness.run();
+        harness.run_ok();
 
         let Some(AppCommand::SaveProfile {
             profile: Profile::Local(local),
@@ -2001,18 +2010,18 @@ mod tests {
     #[test]
     fn saved_local_profile_defaults_to_named_native_persistence() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
 
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("durable-local");
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Use a durable local session").click();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Save").scroll_to_me();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Save").click();
-        harness.run();
+        harness.run_ok();
 
         let Some(AppCommand::SaveProfile {
             profile: Profile::Local(local),
@@ -2053,18 +2062,18 @@ mod tests {
                     command: None,
                 },
             );
-        harness.run();
+        harness.run_ok();
 
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("detected-tmux");
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Use a durable local session").click();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Save").scroll_to_me();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Save").click();
-        harness.run();
+        harness.run_ok();
 
         let Some(AppCommand::SaveProfile {
             profile: Profile::Local(local),
@@ -2131,14 +2140,14 @@ mod tests {
     #[test]
     fn new_local_profile_session_name_tracks_the_profile_name_until_manually_edited() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
 
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Use a durable local session").click();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("Build Box");
-        harness.run();
+        harness.run_ok();
 
         assert_eq!(
             harness.get_by_label("Session name").value().as_deref(),
@@ -2149,10 +2158,10 @@ mod tests {
         // name edits must not clobber their choice.
         harness.get_by_label("Session name").focus();
         harness.get_by_label("Session name").type_text("-pinned");
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text(" Two");
-        harness.run();
+        harness.run_ok();
 
         assert_eq!(
             harness.get_by_label("Session name").value().as_deref(),
@@ -2163,12 +2172,12 @@ mod tests {
     #[test]
     fn profiles_new_local_profile_flow_reports_an_error_for_an_empty_name() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        harness.run();
+        harness.run_ok();
 
         open_new_profile(&mut harness, "Local");
 
         harness.get_by_label("Save").click();
-        harness.run();
+        harness.run_ok();
 
         assert!(harness.state().command.is_none());
         assert!(harness
