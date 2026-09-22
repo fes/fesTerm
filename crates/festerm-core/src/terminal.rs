@@ -830,6 +830,9 @@ impl Terminal {
             TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
             TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
             TerminalOp::SoftReset => self.soft_reset(),
+            TerminalOp::RequestRectangleChecksum(parameters) => {
+                self.request_rectangle_checksum(parameters);
+            }
             TerminalOp::WindowOperation(parameters) => self.window_operation(parameters),
             TerminalOp::Ignored => {}
         }
@@ -1776,6 +1779,75 @@ impl Terminal {
         buffer.cursor.column = 0;
         buffer.cursor.row = if origin_mode { buffer.scroll_top } else { 0 };
         buffer.pending_wrap = false;
+    }
+
+    /// Answers `CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y` (DECRQCRA) with
+    /// `DCS Pid ! ~ <hex> ST` (DECCKSR).
+    ///
+    /// This is the only way a program can read the screen back out of the
+    /// terminal, and it is what every screen assertion in the esctest2
+    /// conformance suite is built on. It is also, unavoidably, a
+    /// screen-reading primitive, so what it reports is deliberately narrow:
+    /// the sum of the character codes in the rectangle, and nothing else. No
+    /// attributes, no colours, no hyperlink targets.
+    ///
+    /// Three choices worth stating, because each is a real fork in the road:
+    ///
+    /// - **Characters only, no attribute contribution.** xterm has variants
+    ///   that fold bold, underline and the protected bit into the sum. A
+    ///   caller cannot tell those apart from a different character, so the
+    ///   extra bits make the answer ambiguous rather than richer, and every
+    ///   conformance expectation is written against the bare character code.
+    /// - **An unwritten cell counts as a space**, matching xterm from patch
+    ///   334 onwards. The older behaviour distinguished "empty" from "holds a
+    ///   space", which is a distinction the rest of our model does not make.
+    /// - **Not negated.** Old xterm returned the two's complement; current
+    ///   xterm returns the sum. A negated checksum is the older convention
+    ///   and there is no reason to carry it forward.
+    ///
+    /// A checksum cannot distinguish `"ab"` from `"ba"`, which is why
+    /// esctest2 asks one cell at a time. That is the caller's problem to know
+    /// about, not something to try to fix here.
+    fn request_rectangle_checksum(&mut self, parameters: CsiParameters) {
+        let identifier = parameters.value(0).unwrap_or(0);
+        let dimensions = self.dimensions();
+        let rows = dimensions.rows();
+        let columns = dimensions.columns();
+
+        // Parameters 1 is the page, which we have exactly one of. The
+        // rectangle is one-based and inclusive, and an omitted or zero edge
+        // means the edge of the screen.
+        let edge = |index: usize, default: usize| -> usize {
+            match parameters.value(index) {
+                Some(0) | None => default,
+                Some(value) => usize::from(value),
+            }
+        };
+        let top = edge(2, 1);
+        let left = edge(3, 1);
+        let bottom = edge(4, rows).min(rows);
+        let right = edge(5, columns).min(columns);
+
+        let mut checksum: u16 = 0;
+        if top <= bottom && left <= right {
+            for row in (top - 1)..bottom {
+                for column in (left - 1)..right {
+                    let Some(cell) = self.cell_ref(column, row) else {
+                        continue;
+                    };
+                    if cell.text().is_empty() {
+                        checksum = checksum.wrapping_add(u16::from(b' '));
+                        continue;
+                    }
+                    for character in cell.text().chars() {
+                        checksum = checksum.wrapping_add(character as u16);
+                    }
+                }
+            }
+        }
+
+        let reply = format!("\x1bP{identifier}!~{checksum:04X}\x1b\\");
+        self.queue_reply(reply.as_bytes());
     }
 
     /// `CSI ! p` (DECSTR), a soft reset.

@@ -201,6 +201,9 @@ pub enum TerminalOp {
     /// saved cursor go back to their power-on values, but the screen's
     /// contents and the tab stops survive.
     SoftReset,
+    /// `CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y` (DECRQCRA). Asks for a
+    /// checksum of a rectangle of the screen, answered with DECCKSR.
+    RequestRectangleChecksum(CsiParameters),
     /// `CSI ... t`. Only the two size *reports* are answered; every
     /// manipulation (resize, iconify, raise) needs a window system we do not
     /// reach from here and is ignored.
@@ -653,6 +656,7 @@ impl Parser {
                     TerminalOp::SetCursorStyle(parameters)
                 }
                 (false, 1, b'!', b'p') => TerminalOp::SoftReset,
+                (false, 1, b'*', b'y') => TerminalOp::RequestRectangleChecksum(parameters),
                 _ => TerminalOp::Ignored,
             };
         }

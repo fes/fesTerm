@@ -29,6 +29,11 @@ set -euo pipefail
 ESCTEST_REPOSITORY="https://github.com/ThomasDickey/esctest2.git"
 ESCTEST_COMMIT="2798f12149a19c3295e9b4853ab2da4b2eff1b2b"
 
+# Which DECRQCRA convention to be held to. xterm's checksum has changed
+# twice: before patch 279 it was negated, and before patch 334 an unwritten
+# cell was distinguished from one holding a space. We implement the current
+# form, so we say so rather than implementing history.
+
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 checkout="${repository}/target/esctest2"
 logfile="${repository}/target/esctest2.log"
@@ -105,6 +110,7 @@ echo "running esctest2 ${ESCTEST_COMMIT:0:7}"
         --no-print-logs \
         --logfile "${logfile}" \
         --expected-terminal xterm \
+        --xterm-checksum 334 \
         --include "${include}"
 )
 

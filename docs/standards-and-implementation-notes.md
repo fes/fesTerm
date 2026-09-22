@@ -566,19 +566,24 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 110 of the suite's 559 test methods today, so running all of it would
+We pass 219 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
-tab stops, and save/restore cursor, 64 tests - and CI fails if any of it
-regresses. `validation/esctest2-skip.txt` carries the exclusions *within* those
-families, one reason per line, so each skip is an admission rather than a
-silence. `scripts/run-esctest2.sh --everything` surveys the whole suite without
-gating, which is how to see what the next phase buys.
+vertical motion, the erase and insert/delete families, tab stops,
+save/restore cursor and the string controls, 157 tests - and CI fails if any
+of it regresses. `validation/esctest2-skip.txt` carries the exclusions
+*within* those families, one reason per line, so each skip is an admission
+rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
+whole suite without gating, which is how to see what the next phase buys.
 
-The large remaining blocker is DECRQCRA: 316 of the 559 methods assert screen
-contents, and `AssertScreenCharsInRectEqual` can only read the screen by asking
-for a rectangle's checksum. Until that is answered those tests cannot observe
-anything at all - not pass, not fail. #193 tracks the phases.
+DECRQCRA was the first phase for exactly this reason: 316 of the 559 methods
+assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
+screen by asking for a rectangle's checksum. Until that was answered those
+tests could not observe anything at all - not pass, not fail. Implementing it
+moved the survey from 110 to 219. The largest remaining blocker is left/right
+margins (`DECSLRM` and `DECSET 69`), which is a change to the screen model
+rather than a missing sequence; then selective erase (`DECSCA`) and reverse
+wraparound. #193 tracks the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -628,6 +633,36 @@ exactly what redefines where row 1 is. fesTerm applied the absolute rule to
 both, so a program that reserved rows 2..4 and then moved down from row 3
 landed on row 25 - outside the pane it had reserved, with its next write
 appearing in someone else's.
+
+### Reading the screen back: DECRQCRA
+
+`CSI Pid ; Ppage ; Ptop ; Pleft ; Pbottom ; Pright * y` answers with
+`DCS Pid ! ~ XXXX ST`, a four hex digit checksum of a rectangle. It is the
+only sequence in fesTerm that lets a program read the screen back, so the
+question is not "what could we report" but "what is the least we can report
+and still be useful". Three choices follow from that.
+
+**Characters only.** The checksum is the sum of the character codes. The pen
+contributes nothing, so a bold red `a` and a plain `a` check out the same.
+Some xterm builds fold attributes in; doing so would let a caller distinguish
+cells we have no interest in helping it distinguish, and it is what esctest2
+assumes when it reads back a *protected* cell and expects the bare `ord('a')`.
+
+**An unwritten cell counts as a space.** This matches xterm from patch 334
+onwards. Earlier builds distinguished "never written" from "written then
+erased"; the distinction is not observable anywhere else in our model, so
+inventing it here would be inventing state.
+
+**The result is not negated.** Builds before xterm 279 reported
+`0x10000 - sum`. We report the sum. `scripts/run-esctest2.sh` passes
+`--xterm-checksum 334` so esctest2 holds us to both of these.
+
+A rectangle is 1-based and inclusive; an absent or zero edge means the
+corresponding edge of the screen, and edges beyond the screen are clipped to
+it. The page parameter is accepted and ignored - we have one page. A request
+naming an empty or inverted rectangle is answered with `0000` rather than
+ignored: an unanswered request strands the caller until its read times out,
+which is a worse failure than a zero.
 
 ## Deferred or Deliberate Decisions
 
