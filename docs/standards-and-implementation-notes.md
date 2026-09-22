@@ -528,6 +528,26 @@ What the bound must still guarantee, and what is asserted, is that a truncated
 payload is never *acted on* - no half-read title is applied - and that the
 terminal is usable immediately afterwards.
 
+### Unterminated string sequences
+
+`ESC` inside a string control leaves the string. Only `ESC \` (ST) ends it
+normally; `ESC` followed by anything else abandons the payload, and that byte
+begins a fresh escape sequence, as in Williams' state machine and in xterm,
+VTE and kitty.
+
+fesTerm previously appended the `ESC` and the byte after it to the payload and
+kept consuming. That made the length bound above the *only* escape from an
+unterminated string, so a truncated title write - or a program that died
+mid-sequence - swallowed every following byte up to `MAX_STRING_BYTES`,
+including the `ESC[...m` or `ESC[H` that would have restored the screen. The
+observable symptom was a terminal that stopped drawing for no visible reason.
+
+The abandoned payload is discarded rather than dispatched: a string that never
+reached its terminator was never a complete request, and acting on a truncated
+one turns a half-written title or hyperlink into a state change nobody asked
+for. The length bound remains, now as a second line of defence for a string
+that is never interrupted at all rather than as the primary one.
+
 ## Deferred or Deliberate Decisions
 
 These require a focused design decision before implementation:
