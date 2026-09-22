@@ -547,6 +547,59 @@ mod tests {
     }
 
     #[test]
+    fn an_unterminated_string_never_swallows_what_follows_it() {
+        // `ESC` inside a string leaves the string; only `ESC \` ends it
+        // normally. A program that writes a truncated title - or dies
+        // mid-sequence - must not take the rest of the session's output with
+        // it, so the next escape sequence has to land.
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]2;before\x07\x1b]2;truncated\x1b[31mred");
+
+        assert_eq!(
+            terminal.title(),
+            "before",
+            "a string abandoned before its terminator is discarded, not applied"
+        );
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), "r");
+        assert_eq!(
+            terminal.cell(0, 0).unwrap().foreground(),
+            Color::Indexed(1),
+            "the sequence that ended the string must still take effect"
+        );
+    }
+
+    #[test]
+    fn a_string_abandoned_by_escape_escape_recovers_on_the_next_sequence() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]0;title\x1b\x1b[32mgo");
+
+        assert!(terminal.title().is_empty());
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), "g");
+        assert_eq!(terminal.cell(0, 0).unwrap().foreground(), Color::Indexed(2));
+    }
+
+    #[test]
+    fn an_abandoned_payload_does_not_leak_into_the_next_string() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]2;discarded\x1b[0m\x1b]2;kept\x1b\\");
+
+        assert_eq!(terminal.title(), "kept");
+    }
+
+    #[test]
+    fn a_truncated_dcs_does_not_swallow_the_following_sequence() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1bP$q\x1b[33mok");
+
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), "o");
+        assert_eq!(terminal.cell(0, 0).unwrap().foreground(), Color::Indexed(3));
+        assert!(
+            terminal.drain_replies().is_empty(),
+            "an abandoned DECRQSS is not answered"
+        );
+    }
+
+    #[test]
     fn hyperlink_targets_are_shared_across_cells() {
         let mut terminal = terminal(8, 1);
         terminal.ingest(b"\x1b]8;;https://example.com/long-target\x1b\\links");

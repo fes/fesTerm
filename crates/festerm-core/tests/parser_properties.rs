@@ -340,6 +340,40 @@ proptest! {
             "a truncated payload was applied as a title"
         );
     }
+
+    /// `ESC` inside a string leaves the string; only `ESC \\` ends it
+    /// normally. Whatever the payload was, the sequence that interrupted it
+    /// has to be obeyed - this is the property that stops one truncated
+    /// title write from silencing the rest of the session.
+    #[test]
+    fn an_interrupted_string_yields_to_the_sequence_that_interrupts_it(
+        introducer in prop_oneof![
+            Just(&b"\x1b]0;"[..]),
+            Just(&b"\x1b]8;;"[..]),
+            Just(&b"\x1bP"[..]),
+            Just(&b"\x1b^"[..]),
+        ],
+        payload in proptest::collection::vec(0x20u8..=0x7e, 0..48),
+    ) {
+        let mut sequence = introducer.to_vec();
+        sequence.extend_from_slice(&payload);
+        // No terminator: the string is still open when this arrives.
+        sequence.extend_from_slice(b"\x1b[2J\x1b[HX");
+
+        let mut terminal = terminal();
+        terminal.ingest(&sequence);
+
+        prop_assert_eq!(
+            terminal.cell(0, 0).map(|cell| cell.character()),
+            Some('X'),
+            "an unterminated string swallowed the sequence that interrupted it"
+        );
+        prop_assert_eq!(
+            terminal.title(),
+            "",
+            "an abandoned payload was applied as a title"
+        );
+    }
 }
 
 /// A round trip through the terminal's own report: set a pen, ask what the pen

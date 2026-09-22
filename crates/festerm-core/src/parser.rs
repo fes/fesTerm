@@ -527,22 +527,38 @@ impl Parser {
                     self.advance_string_payload(kind, bytes, &[byte]);
                 }
             }
-            ParserState::StringEscape { kind, bytes } => {
+            ParserState::StringEscape { kind, .. } => {
                 if byte == b'\\' {
                     self.state = ParserState::Ground;
                     return self.finish_string(kind);
-                } else if byte == 0x1b {
-                    self.advance_string_payload(kind, bytes, &[0x1b]);
-                    if let ParserState::String { bytes, .. } = self.state {
-                        self.state = ParserState::StringEscape { kind, bytes };
-                    }
-                } else {
-                    self.advance_string_payload(kind, bytes, &[0x1b, byte]);
                 }
+                // Anything other than ST abandons the string, and the byte
+                // starts a fresh escape sequence: `ESC` from a string state is
+                // a transition out of it, not payload. Keeping it as payload
+                // means one truncated title write swallows every byte that
+                // follows - including the `ESC[...m` or `ESC[H` that would
+                // have recovered the screen - until an ST finally arrives.
+                self.abandon_string();
+                if byte == 0x1b {
+                    return TerminalOp::Ignored;
+                }
+                return self.advance_escape(byte);
             }
             _ => unreachable!("only string states call advance_string"),
         }
         TerminalOp::Ignored
+    }
+
+    /// Discards an in-flight string and returns to the escape state.
+    ///
+    /// The payload is dropped rather than dispatched: a string that never
+    /// reached its terminator was never a complete request, and acting on a
+    /// truncated one turns a half-written title or hyperlink into a state
+    /// change nobody asked for.
+    fn abandon_string(&mut self) {
+        self.string_payload.clear();
+        self.state = ParserState::Escape;
+        self.clear_csi();
     }
 
     fn start_string(&mut self, kind: StringKind) -> ParserState {
