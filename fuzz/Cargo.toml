@@ -1,0 +1,38 @@
+[package]
+name = "festerm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+# This package is deliberately outside the workspace (see `exclude` in the root
+# manifest). The workspace forbids `unsafe_code`, and `libfuzzer-sys` generates
+# an `unsafe extern "C"` entry point, so a fuzz target cannot satisfy the
+# workspace lint table. Keeping it separate also means `cargo build --workspace`
+# on stable never tries to build a target that needs a nightly toolchain.
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.festerm-core]
+path = "../crates/festerm-core"
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parser_chunked"
+path = "fuzz_targets/parser_chunked.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = true
