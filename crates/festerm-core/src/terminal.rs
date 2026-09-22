@@ -11,7 +11,7 @@ use crate::{
         paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome, MouseEvent,
     },
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
-    parser::{CsiParameters, OscAction, ParameterSeparator, Parser, TerminalOp},
+    parser::{CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser, TerminalOp},
     replies::{queue_transport_bytes, QueuePushResult},
     screen::Screen,
     unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
@@ -585,6 +585,8 @@ impl Terminal {
         self.apply(operation);
         let action = self.parser.take_osc_action();
         self.apply_osc_action(action);
+        let request = self.parser.take_dcs_action();
+        self.apply_dcs_action(request);
     }
 
     /// Resizes the primary buffer by unified logical reflow across its
@@ -1752,6 +1754,59 @@ impl Terminal {
         }
     }
 
+    /// Answers `DCS $ q <selector> ST` (DECRQSS).
+    ///
+    /// Only SGR (`m`) is reportable. This is what a program uses to discover
+    /// what the terminal actually accepted: `termstandard/colors` documents
+    /// setting a truecolor and reading it back as *the* truecolor detection,
+    /// so a terminal that silently drops a colour form it does not parse is
+    /// indistinguishable from one that has no truecolor at all. Anything
+    /// else is answered with the "not recognized" form rather than left
+    /// unanswered, so a caller is never left waiting.
+    fn apply_dcs_action(&mut self, action: Option<DcsAction>) {
+        let Some(DcsAction::RequestStatusString(selector)) = action else {
+            return;
+        };
+        if selector == b"m" {
+            let report = self.graphics_rendition_report();
+            self.queue_reply(format!("\x1bP1$r{report}m\x1b\\").as_bytes());
+        } else {
+            self.queue_reply(b"\x1bP0$r\x1b\\");
+        }
+    }
+
+    /// The current pen as the SGR parameters that would reproduce it.
+    ///
+    /// Colours are reported in the colon-delimited ITU T.416 form xterm
+    /// reports, which is also what tells the caller that this terminal
+    /// accepts colons at all.
+    fn graphics_rendition_report(&self) -> String {
+        let mut parameters = vec!["0".to_owned()];
+        for (attribute, code) in [
+            (Attributes::BOLD, 1),
+            (Attributes::FAINT, 2),
+            (Attributes::ITALIC, 3),
+            (Attributes::UNDERLINE, 4),
+            (Attributes::DOUBLE_UNDERLINE, 21),
+            (Attributes::SLOW_BLINK, 5),
+            (Attributes::RAPID_BLINK, 6),
+            (Attributes::INVERSE, 7),
+            (Attributes::CONCEALED, 8),
+            (Attributes::STRIKETHROUGH, 9),
+        ] {
+            if self.current_attributes.contains(attribute) {
+                parameters.push(code.to_string());
+            }
+        }
+        if let Some(color) = color_report(self.current_foreground, false) {
+            parameters.push(color);
+        }
+        if let Some(color) = color_report(self.current_background, true) {
+            parameters.push(color);
+        }
+        parameters.join(";")
+    }
+
     fn device_attributes(&mut self, secondary: bool) {
         if secondary {
             self.queue_reply(b"\x1b[>0;0;0c");
@@ -1761,6 +1816,25 @@ impl Terminal {
             // xterm extensions through DA feature codes.
             self.queue_reply(b"\x1b[?6c");
         }
+    }
+}
+
+/// One colour as the SGR parameter that would set it again, or `None` for
+/// the default colour, which `0` has already reported.
+fn color_report(color: Color, background: bool) -> Option<String> {
+    let extended = if background { 48 } else { 38 };
+    match color {
+        Color::Default => None,
+        Color::Indexed(index) if index < 8 => {
+            let base = if background { 40 } else { 30 };
+            Some((base + u16::from(index)).to_string())
+        }
+        Color::Indexed(index) if index < 16 => {
+            let base = if background { 100 } else { 90 };
+            Some((base + u16::from(index) - 8).to_string())
+        }
+        Color::Indexed(index) => Some(format!("{extended}:5:{index}")),
+        Color::Rgb { red, green, blue } => Some(format!("{extended}:2::{red}:{green}:{blue}")),
     }
 }
 
