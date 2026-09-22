@@ -8,6 +8,51 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+/// The sidecar layout, which is the one part of this crate that is not
+/// Windows-only.
+///
+/// The persistent-session helper stages its own copy of the sidecar, and that
+/// staging is exercised by tests that run on every platform. Keeping the layout
+/// here rather than restating it in the helper means the loader and the copy
+/// can never disagree about where the files belong.
+pub mod layout {
+    use std::path::{Path, PathBuf};
+
+    /// Fixed install-relative directory containing a validated ConPTY sidecar.
+    pub const BUNDLED_CONPTY_RUNTIME_DIRECTORY: &str = r"runtime\conpty";
+
+    #[cfg(target_arch = "x86")]
+    pub(crate) const fn runtime_architecture() -> (&'static str, &'static str) {
+        ("win-x86", "x86")
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) const fn runtime_architecture() -> (&'static str, &'static str) {
+        ("win-x64", "x64")
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) const fn runtime_architecture() -> (&'static str, &'static str) {
+        ("win-arm64", "arm64")
+    }
+
+    /// The two sidecar files a directory must contain, as paths relative to
+    /// that directory.
+    ///
+    /// Callers that copy the sidecar need the layout without needing the
+    /// manifest or the Windows hashing FFI.
+    pub fn bundled_runtime_relative_paths() -> [PathBuf; 2] {
+        let (runtime_rid, host_architecture) = runtime_architecture();
+        let base = Path::new(BUNDLED_CONPTY_RUNTIME_DIRECTORY).join(runtime_rid);
+        [
+            base.join("conpty.dll"),
+            base.join(host_architecture).join("OpenConsole.exe"),
+        ]
+    }
+}
+
+pub use layout::{bundled_runtime_relative_paths, BUNDLED_CONPTY_RUNTIME_DIRECTORY};
+
 #[cfg(windows)]
 mod imp {
     use std::{
@@ -32,8 +77,7 @@ mod imp {
         },
     };
 
-    /// Fixed install-relative directory containing a validated ConPTY sidecar.
-    pub const BUNDLED_CONPTY_RUNTIME_DIRECTORY: &str = r"runtime\conpty";
+    use crate::layout::{runtime_architecture, BUNDLED_CONPTY_RUNTIME_DIRECTORY};
 
     const MANIFEST: &str = include_str!("../../../third_party/conpty/manifest.json");
     const CONPTY_MODULE_NAME: &[u16] = &[
@@ -182,8 +226,12 @@ mod imp {
     ) -> Result<BundledRuntime, ConptyRuntimeError> {
         let base = executable
             .parent()
-            .ok_or_else(|| ConptyRuntimeError::new("the executable has no parent directory"))?
-            .join(BUNDLED_CONPTY_RUNTIME_DIRECTORY);
+            .ok_or_else(|| ConptyRuntimeError::new("the executable has no parent directory"))?;
+        bundled_runtime_beside(base)
+    }
+
+    fn bundled_runtime_beside(directory: &Path) -> Result<BundledRuntime, ConptyRuntimeError> {
+        let base = directory.join(BUNDLED_CONPTY_RUNTIME_DIRECTORY);
         let (runtime_rid, host_architecture) = runtime_architecture();
         let dll_asset = format!("{runtime_rid}/conpty.dll");
         let host_asset = format!("{host_architecture}/OpenConsole.exe");
@@ -198,19 +246,13 @@ mod imp {
         })
     }
 
-    #[cfg(target_arch = "x86")]
-    const fn runtime_architecture() -> (&'static str, &'static str) {
-        ("win-x86", "x86")
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    const fn runtime_architecture() -> (&'static str, &'static str) {
-        ("win-x64", "x64")
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    const fn runtime_architecture() -> (&'static str, &'static str) {
-        ("win-arm64", "arm64")
+    /// Whether `directory` holds a complete sidecar matching the pinned hashes.
+    ///
+    /// This is the same check [`prepare_conpty_runtime`] applies before loading,
+    /// exposed so a copy can be verified at its destination rather than trusted
+    /// because the copy returned success.
+    pub fn bundled_runtime_is_verified_in(directory: &Path) -> bool {
+        bundled_runtime_beside(directory).is_ok_and(|runtime| bundled_runtime_is_valid(&runtime))
     }
 
     fn manifest_file_sha512(asset: &str) -> Result<String, ConptyRuntimeError> {

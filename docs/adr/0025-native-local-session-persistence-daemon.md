@@ -317,8 +317,15 @@ release identity `festerm-sessiond-<release>.exe`; the stable Cargo output name
 is not an installer payload. Before `start`, both fesTerm and the helper CLI
 copy that source into the private sessiond runtime directory under the release
 and target identity
-`helpers/festerm-sessiond-<release>-<architecture>.exe`; the detached daemon
-executes that copy. A later installer adds a different source name while old
+`helpers/festerm-sessiond-<release>-<architecture>/`; the detached daemon
+executes the copy in that directory. The pinned ConPTY sidecar is staged into
+the same directory so the helper resolves it the way ADR-0011 requires without
+holding the install directory's `conpty.dll` open; per-generation directories
+keep an upgrade from having to overwrite a DLL a live old daemon has mapped.
+The recorded helper identity remains the executable name, unchanged, so
+daemons staged by earlier releases as bare files stay recognisable — and
+therefore stay retained while they are alive. A later installer adds a
+different source name while old
 daemon generations continue from their prior images. New sessions use the
 current release copy. Old copies are deleted only when no live registry
 generation references their recorded helper identity; a locked but

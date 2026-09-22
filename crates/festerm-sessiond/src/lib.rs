@@ -1415,28 +1415,36 @@ fn resolve_windows_packaged_daemon(directory: &Path) -> PathBuf {
 ///
 /// Long-lived daemons execute this copy so an installer can replace the
 /// package-owned source executable while compatible sessions remain alive.
+///
+/// The copy is a *directory* rather than a bare executable because the helper
+/// needs more than its own image. ADR-0011 resolves the ConPTY sidecar at the
+/// fixed path `runtime\conpty` relative to the canonical executable, so a
+/// helper staged on its own finds no sidecar and silently falls back to the
+/// inbox ConPTY - losing the resize fix that ADR-0011 exists for. Pointing the
+/// helper back at the installed sidecar instead would keep `conpty.dll` mapped
+/// out of the install directory for the lifetime of the daemon, which is
+/// exactly the upgrade conflict this staging was introduced to avoid. Each
+/// generation therefore gets its own complete, self-contained copy.
 pub fn stage_windows_daemon(
     packaged: &Path,
     runtime_root: &Path,
 ) -> Result<PathBuf, PersistentSessionError> {
     let helpers = runtime_root.join("helpers");
-    fs::create_dir_all(&helpers).map_err(|error| {
+    let identity = windows_helper_identity();
+    let generation = helpers.join(helper_generation_directory(&identity));
+    fs::create_dir_all(&generation).map_err(|error| {
         PersistentSessionError::new(format!(
             "could not create persistent-session helper directory '{}': {error}",
-            helpers.display()
+            generation.display()
         ))
     })?;
-    let identity = format!(
-        "festerm-sessiond-{}-{}.exe",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::ARCH
-    );
-    let staged = helpers.join(&identity);
+    let staged = generation.join(&identity);
+    if staged.is_file() && files_match(packaged, &staged)? {
+        stage_conpty_sidecar(packaged, &generation)?;
+        prune_windows_daemons(&helpers, &identity)?;
+        return Ok(staged);
+    }
     if staged.is_file() {
-        if files_match(packaged, &staged)? {
-            prune_windows_daemons(&helpers, &identity)?;
-            return Ok(staged);
-        }
         // A rebuild or a re-signed package can change the bytes without
         // changing the release identity. Replacing the copy is safe whenever
         // no live generation is still executing it; when one is, its image is
@@ -1452,7 +1460,7 @@ pub fn stage_windows_daemon(
         }
     }
 
-    let temporary = helpers.join(format!(".{identity}.{}.tmp", std::process::id()));
+    let temporary = generation.join(format!(".{identity}.{}.tmp", std::process::id()));
     match fs::copy(packaged, &temporary) {
         Ok(_) => {}
         Err(error) => {
@@ -1471,8 +1479,113 @@ pub fn stage_windows_daemon(
             )));
         }
     }
+    stage_conpty_sidecar(packaged, &generation)?;
     prune_windows_daemons(&helpers, &identity)?;
     Ok(staged)
+}
+
+#[cfg(any(windows, test))]
+fn windows_helper_identity() -> String {
+    format!(
+        "festerm-sessiond-{}-{}.exe",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::ARCH
+    )
+}
+
+/// The per-generation directory name for a helper identity.
+///
+/// The identity itself is unchanged and is still what the registry records, so
+/// a daemon from a release that staged its helper as a bare file stays
+/// recognisable - and therefore stays retained while it is alive.
+#[cfg(any(windows, test))]
+fn helper_generation_directory(identity: &str) -> &str {
+    identity.strip_suffix(".exe").unwrap_or(identity)
+}
+
+/// Copies the verified ConPTY sidecar next to a staged helper.
+///
+/// The source is the directory holding the executable being staged: the
+/// install directory when fesTerm stages the packaged helper, and the
+/// generation directory itself when the staged helper re-stages on startup,
+/// which makes the second call a no-op.
+///
+/// A missing source sidecar is not an error - an installation may legitimately
+/// have none, and the helper then uses the inbox ConPTY exactly as fesTerm
+/// does. A sidecar that exists but cannot be copied *is* an error: silently
+/// downgrading a durable session to a different ConPTY implementation than the
+/// one fesTerm itself selected is precisely the failure this staging prevents.
+#[cfg(any(windows, test))]
+fn stage_conpty_sidecar(packaged: &Path, generation: &Path) -> Result<(), PersistentSessionError> {
+    let Some(source_root) = packaged.parent() else {
+        return Ok(());
+    };
+    if source_root == generation {
+        return Ok(());
+    }
+
+    for relative in festerm_windows_runtime::bundled_runtime_relative_paths() {
+        let source = source_root.join(&relative);
+        let destination = generation.join(&relative);
+        if !source.is_file() {
+            // An incomplete sidecar is the same as none: ADR-0011 requires the
+            // matched pair, and the loader rejects a partial one anyway.
+            return Ok(());
+        }
+        if destination.is_file() && files_match(&source, &destination)? {
+            continue;
+        }
+        let parent = destination
+            .parent()
+            .expect("sidecar destination has a parent directory");
+        fs::create_dir_all(parent).map_err(|error| {
+            PersistentSessionError::new(format!(
+                "could not create ConPTY sidecar directory '{}': {error}",
+                parent.display()
+            ))
+        })?;
+        let temporary = parent.join(format!(
+            ".{}.{}.tmp",
+            relative
+                .file_name()
+                .expect("sidecar path has a file name")
+                .to_string_lossy(),
+            std::process::id()
+        ));
+        fs::copy(&source, &temporary).map_err(|error| {
+            PersistentSessionError::new(format!(
+                "could not stage the ConPTY sidecar file '{}': {error}",
+                destination.display()
+            ))
+        })?;
+        if let Err(error) = fs::rename(&temporary, &destination) {
+            let _ = fs::remove_file(&temporary);
+            // A concurrent start may have published the same bytes first,
+            // which is the one way this can fail harmlessly.
+            if !(destination.is_file() && files_match(&source, &destination)?) {
+                return Err(PersistentSessionError::new(format!(
+                    "could not publish the ConPTY sidecar file '{}': {error}",
+                    destination.display()
+                )));
+            }
+        }
+    }
+
+    // The bytes were verified when fesTerm loaded them; this confirms the copy
+    // that the daemon will actually load, rather than trusting that `copy`
+    // returning success means the destination is intact.
+    #[cfg(windows)]
+    if festerm_windows_runtime::bundled_runtime_is_verified_in(source_root)
+        && !festerm_windows_runtime::bundled_runtime_is_verified_in(generation)
+    {
+        return Err(PersistentSessionError::new(format!(
+            "the ConPTY sidecar staged in '{}' does not match the pinned hashes; refusing to \
+             start a durable session on a different ConPTY runtime than fesTerm selected",
+            generation.display()
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(any(windows, test))]
@@ -1562,16 +1675,33 @@ fn prune_windows_daemons(
         let entry = entry.map_err(|error| PersistentSessionError::new(error.to_string()))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
+        if !name.starts_with("festerm-sessiond-") {
+            continue;
+        }
+        // A generation directory is named for its identity without the
+        // extension; releases before the sidecar was staged alongside the
+        // helper left bare executables here instead.
+        let is_generation_directory = entry.path().is_dir();
+        let identity = if is_generation_directory {
+            format!("{name}.exe")
+        } else if name.ends_with(".exe") {
+            name.to_string()
+        } else {
+            continue;
+        };
         // Windows compares file names case-insensitively, so retention must
         // too or a live generation's image becomes a deletion candidate.
-        if name.eq_ignore_ascii_case(current_identity)
-            || retained.contains(&name.to_ascii_lowercase())
-            || !name.starts_with("festerm-sessiond-")
-            || !name.ends_with(".exe")
+        if identity.eq_ignore_ascii_case(current_identity)
+            || retained.contains(&identity.to_ascii_lowercase())
         {
             continue;
         }
-        match fs::remove_file(entry.path()) {
+        let removed = if is_generation_directory {
+            fs::remove_dir_all(entry.path())
+        } else {
+            fs::remove_file(entry.path())
+        };
+        match removed {
             Ok(()) => {}
             // A start helper may be executing before its daemon publishes the
             // registry record. Preserve that locked image and retry pruning
@@ -2957,17 +3087,130 @@ mod registry_filtering_tests {
         .unwrap();
 
         let staged = stage_windows_daemon(&packaged, &fixture.0).unwrap();
+        let identity = windows_helper_identity();
+        assert_eq!(staged.file_name().unwrap().to_string_lossy(), identity);
+        // The helper lives in its own generation directory so that the ConPTY
+        // sidecar it loads cannot be shared with, or replaced by, another
+        // generation's.
         assert_eq!(
-            staged.file_name().unwrap().to_string_lossy(),
-            format!(
-                "festerm-sessiond-{}-{}.exe",
-                env!("CARGO_PKG_VERSION"),
-                std::env::consts::ARCH
-            )
+            staged.parent().unwrap().file_name().unwrap(),
+            helper_generation_directory(&identity)
         );
         assert_eq!(std::fs::read(staged).unwrap(), b"signed helper bytes");
         assert!(retained.is_file());
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn the_conpty_sidecar_is_staged_beside_the_helper_that_loads_it() {
+        let fixture = RegistryFixture::new();
+        let packaged = fixture.0.join("festerm-sessiond.exe");
+        std::fs::write(&packaged, b"signed helper bytes").unwrap();
+        let sidecar = festerm_windows_runtime::bundled_runtime_relative_paths();
+        assert!(
+            !sidecar.is_empty(),
+            "ADR-0011 pins at least one sidecar file"
+        );
+        for (index, relative) in sidecar.iter().enumerate() {
+            let source = fixture.0.join(relative);
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(&source, format!("sidecar {index}")).unwrap();
+        }
+
+        let staged = stage_windows_daemon(&packaged, &fixture.0).unwrap();
+
+        // ADR-0011 resolves the sidecar relative to the running executable, so
+        // these paths are exactly what the staged helper will load.
+        let generation = staged.parent().unwrap();
+        for (index, relative) in sidecar.iter().enumerate() {
+            assert_eq!(
+                std::fs::read(generation.join(relative)).unwrap(),
+                format!("sidecar {index}").into_bytes(),
+                "{} must be staged with the helper",
+                relative.display()
+            );
+        }
+    }
+
+    #[test]
+    fn an_installation_without_a_sidecar_stages_the_helper_anyway() {
+        // Development builds and installations that predate the sidecar have
+        // none; the helper then uses the inbox ConPTY exactly as fesTerm does,
+        // which ADR-0011 defines as a safe fallback.
+        let fixture = RegistryFixture::new();
+        let packaged = fixture.0.join("festerm-sessiond.exe");
+        std::fs::write(&packaged, b"signed helper bytes").unwrap();
+
+        let staged = stage_windows_daemon(&packaged, &fixture.0).unwrap();
+
+        assert!(staged.is_file());
+        let generation = staged.parent().unwrap();
+        for relative in festerm_windows_runtime::bundled_runtime_relative_paths() {
+            assert!(!generation.join(relative).exists());
+        }
+    }
+
+    #[test]
+    fn re_staging_an_already_staged_helper_is_a_no_op() {
+        // The daemon re-stages from its own `current_exe` on startup, so the
+        // source and destination directories are the same file set.
+        let fixture = RegistryFixture::new();
+        let packaged = fixture.0.join("festerm-sessiond.exe");
+        std::fs::write(&packaged, b"signed helper bytes").unwrap();
+        for relative in festerm_windows_runtime::bundled_runtime_relative_paths() {
+            let source = fixture.0.join(&relative);
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(&source, b"sidecar").unwrap();
+        }
+        let staged = stage_windows_daemon(&packaged, &fixture.0).unwrap();
+
+        let restaged = stage_windows_daemon(&staged, &fixture.0).unwrap();
+
+        assert_eq!(restaged, staged);
+        for relative in festerm_windows_runtime::bundled_runtime_relative_paths() {
+            assert_eq!(
+                std::fs::read(staged.parent().unwrap().join(relative)).unwrap(),
+                b"sidecar"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stale_generation_directory_is_pruned_while_a_live_one_is_kept() {
+        let fixture = RegistryFixture::new();
+        let packaged = fixture.0.join("festerm-sessiond.exe");
+        std::fs::write(&packaged, b"signed helper bytes").unwrap();
+        let helpers = fixture.0.join("helpers");
+        let live = helpers.join("festerm-sessiond-0.2.0-x86_64");
+        let stale = helpers.join("festerm-sessiond-0.1.0-x86_64");
+        for generation in [&live, &stale] {
+            std::fs::create_dir_all(generation.join("runtime/conpty")).unwrap();
+            std::fs::write(generation.join("runtime/conpty/conpty.dll"), b"dll").unwrap();
+        }
+        let endpoint = fixture.0.join("live-endpoint");
+        std::fs::write(&endpoint, b"live endpoint").unwrap();
+        let registry = serde_json::json!({
+            "sessions": {
+                "live": {
+                    "name": "live",
+                    "pid": std::process::id(),
+                    "socket": endpoint.to_string_lossy(),
+                    // Recorded identities keep the executable name, so an
+                    // older daemon stays recognisable to a newer pruner.
+                    "helper_identity": "festerm-sessiond-0.2.0-x86_64.exe"
+                }
+            }
+        });
+        std::fs::write(
+            fixture.0.join("registry.json"),
+            serde_json::to_vec(&registry).unwrap(),
+        )
+        .unwrap();
+
+        stage_windows_daemon(&packaged, &fixture.0).unwrap();
+
+        assert!(live.is_dir(), "a live generation keeps its whole directory");
+        assert!(!stale.exists(), "an unreferenced generation is removed");
     }
 
     #[test]
@@ -3026,13 +3269,10 @@ mod registry_filtering_tests {
         let packaged = fixture.0.join("festerm-sessiond.exe");
         std::fs::write(&packaged, b"second build").unwrap();
         let helpers = fixture.0.join("helpers");
-        std::fs::create_dir(&helpers).unwrap();
-        let identity = format!(
-            "festerm-sessiond-{}-{}.exe",
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::ARCH
-        );
-        std::fs::write(helpers.join(&identity), b"first build").unwrap();
+        let identity = windows_helper_identity();
+        let generation = helpers.join(helper_generation_directory(&identity));
+        std::fs::create_dir_all(&generation).unwrap();
+        std::fs::write(generation.join(&identity), b"first build").unwrap();
 
         let staged = stage_windows_daemon(&packaged, &fixture.0).unwrap();
         assert_eq!(std::fs::read(staged).unwrap(), b"second build");
@@ -3044,13 +3284,10 @@ mod registry_filtering_tests {
         let packaged = fixture.0.join("festerm-sessiond.exe");
         std::fs::write(&packaged, b"second build").unwrap();
         let helpers = fixture.0.join("helpers");
-        std::fs::create_dir(&helpers).unwrap();
-        let identity = format!(
-            "festerm-sessiond-{}-{}.exe",
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::ARCH
-        );
-        std::fs::write(helpers.join(&identity), b"first build").unwrap();
+        let identity = windows_helper_identity();
+        let generation = helpers.join(helper_generation_directory(&identity));
+        std::fs::create_dir_all(&generation).unwrap();
+        std::fs::write(generation.join(&identity), b"first build").unwrap();
         let endpoint = fixture.0.join("live-endpoint");
         std::fs::write(&endpoint, b"live endpoint").unwrap();
         let registry = serde_json::json!({
@@ -3074,7 +3311,7 @@ mod registry_filtering_tests {
             .to_string();
         assert!(error.contains("a live session is still running it"));
         assert_eq!(
-            std::fs::read(helpers.join(&identity)).unwrap(),
+            std::fs::read(generation.join(&identity)).unwrap(),
             b"first build"
         );
     }
