@@ -246,3 +246,81 @@ fn an_unrelated_device_control_string_is_ignored() {
     assert!(terminal.drain_replies().is_empty());
     assert_eq!(terminal.cell(0, 0).expect("printed cell").character(), 'X');
 }
+
+/// Erasing fills with the pen, not with blanks.
+///
+/// `ESC[K` and friends replace the character with a space but keep the
+/// rendition that is in force, which is how every full-width status bar in a
+/// real program is drawn: set the colour once, write the short text, then
+/// clear to the margin. A terminal that fills with defaults instead leaves the
+/// bar ragged - the same defect class as the inline-code backgrounds lost in
+/// #188, and the reason `tui_capture.rs` checks tmux's prompt line.
+///
+/// This is asserted here rather than only against a capture because no program
+/// in the corpus sets an *attribute* before erasing, so a mutation that
+/// dropped the attributes went unnoticed by the whole crate.
+#[test]
+fn erasing_to_the_end_of_the_line_fills_with_the_pen() {
+    use festerm_core::Attributes;
+
+    let terminal = screen(b"\x1b[7;4;44mstatus\x1b[K");
+
+    for column in 0..40 {
+        let cell = terminal.cell(column, 0).expect("cell within the screen");
+        assert_eq!(
+            cell.background(),
+            Color::Indexed(4),
+            "column {column} lost the pen background"
+        );
+        assert!(
+            cell.attributes().contains(Attributes::INVERSE),
+            "column {column} lost the pen's reverse video"
+        );
+        assert!(
+            cell.attributes().contains(Attributes::UNDERLINE),
+            "column {column} lost the pen's underline"
+        );
+    }
+    assert_eq!(
+        terminal
+            .cell(6, 0)
+            .expect("the first erased cell")
+            .character(),
+        ' ',
+        "the erase should leave spaces behind the text"
+    );
+}
+
+/// The mirror image: a reset before the erase has to reach the fill too, or a
+/// program that tidies up after itself leaves a coloured band behind.
+#[test]
+fn erasing_after_a_reset_fills_with_defaults() {
+    use festerm_core::Attributes;
+
+    let terminal = screen(b"\x1b[7;44mstatus\x1b[0m\x1b[K");
+
+    let cell = terminal.cell(20, 0).expect("cell within the screen");
+    assert_eq!(cell.background(), Color::Default);
+    assert_eq!(cell.foreground(), Color::Default);
+    assert_eq!(cell.attributes(), Attributes::default());
+}
+
+/// Erasing the whole display works the same way, which is what a program does
+/// on the way in when it paints a background across the window.
+#[test]
+fn erasing_the_display_fills_every_row_with_the_pen_background() {
+    let terminal = screen(b"\x1b[41m\x1b[2J");
+
+    for row in 0..4 {
+        for column in 0..40 {
+            assert_eq!(
+                terminal
+                    .cell(column, row)
+                    .expect("cell within the screen")
+                    .background(),
+                Color::Indexed(1),
+                "row {row} column {column} lost the pen background"
+            );
+        }
+    }
+}

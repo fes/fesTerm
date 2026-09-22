@@ -16,3 +16,10 @@ assets/fonts/**/*.ttf binary
 assets/fonts/noto-emoji/OFL.txt whitespace=-blank-at-eol
 tests/fixtures/unicode/**/*.txt text eol=lf whitespace=-blank-at-eol
 crates/*/tests/fixtures/unicode/**/*.txt text eol=lf whitespace=-blank-at-eol
+
+# Pseudoterminal captures are byte-for-byte evidence: the replay tests assert
+# on exact cell contents, and the recordings contain bare CR and LF bytes as
+# part of the escape sequences themselves. Line-ending normalization on a
+# Windows checkout would silently rewrite them into something no program ever
+# emitted, so they are binary regardless of what git's heuristics decide.
+crates/*/tests/fixtures/**/*.raw binary

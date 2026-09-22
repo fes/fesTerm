@@ -1,0 +1,255 @@
+[?1049h[40;1H[?1h=0001  relay-1  queue drained cleanly
+0002  relay-2  queue drained cleanly
+0003  relay-3  queue drained cleanly
+0004  relay-4  queue drained cleanly
+0005  relay-5  queue drained cleanly
+0006  relay-6  queue drained cleanly
+0007  relay-0  queue drained cleanly
+0008  relay-1  queue drained cleanly
+0009  relay-2  queue drained cleanly
+0010  relay-3  queue drained cleanly
+0011  relay-4  BACKPRESSURE observed
+0012  relay-5  queue drained cleanly
+0013  relay-6  queue drained cleanly
+0014  relay-0  queue drained cleanly
+0015  relay-1  queue drained cleanly
+0016  relay-2  queue drained cleanly
+0017  relay-3  queue drained cleanly
+0018  relay-4  queue drained cleanly
+0019  relay-5  queue drained cleanly
+0020  relay-6  queue drained cleanly
+0021  relay-0  queue drained cleanly
+0022  relay-1  BACKPRESSURE observed
+0023  relay-2  queue drained cleanly
+0024  relay-3  queue drained cleanly
+0025  relay-4  queue drained cleanly
+0026  relay-5  queue drained cleanly
+0027  relay-6  queue drained cleanly
+0028  relay-0  queue drained cleanly
+0029  relay-1  queue drained cleanly
+0030  relay-2  queue drained cleanly
+0031  relay-3  queue drained cleanly
+0032  relay-4  queue drained cleanly
+0033  relay-5  BACKPRESSURE observed
+0034  relay-6  queue drained cleanly
+0035  relay-0  queue drained cleanly
+0036  relay-1  queue drained cleanly
+0037  relay-2  queue drained cleanly
+0038  relay-3  queue drained cleanly
+0039  relay-4  queue drained cleanly
+[7m/tmp/festerm-capture/work/ledger.txt lines 1-39/399 10%[27m[K[K0040  relay-5  queue drained cleanly
+0041  relay-6  queue drained cleanly
+0042  relay-0  queue drained cleanly
+0043  relay-1  queue drained cleanly
+0044  relay-2  BACKPRESSURE observed
+0045  relay-3  queue drained cleanly
+0046  relay-4  queue drained cleanly
+0047  relay-5  queue drained cleanly
+0048  relay-6  queue drained cleanly
+0049  relay-0  queue drained cleanly
+0050  relay-1  queue drained cleanly
+0051  relay-2  queue drained cleanly
+0052  relay-3  queue drained cleanly
+0053  relay-4  queue drained cleanly
+0054  relay-5  queue drained cleanly
+0055  relay-6  BACKPRESSURE observed
+0056  relay-0  queue drained cleanly
+0057  relay-1  queue drained cleanly
+0058  relay-2  queue drained cleanly
+0059  relay-3  queue drained cleanly
+0060  relay-4  queue drained cleanly
+0061  relay-5  queue drained cleanly
+0062  relay-6  queue drained cleanly
+0063  relay-0  queue drained cleanly
+0064  relay-1  queue drained cleanly
+0065  relay-2  queue drained cleanly
+0066  relay-3  BACKPRESSURE observed
+0067  relay-4  queue drained cleanly
+0068  relay-5  queue drained cleanly
+0069  relay-6  queue drained cleanly
+0070  relay-0  queue drained cleanly
+0071  relay-1  queue drained cleanly
+0072  relay-2  queue drained cleanly
+0073  relay-3  queue drained cleanly
+0074  relay-4  queue drained cleanly
+0075  relay-5  queue drained cleanly
+0076  relay-6  queue drained cleanly
+0077  relay-0  BACKPRESSURE observed
+0078  relay-1  queue drained cleanly
+[7m/tmp/festerm-capture/work/ledger.txt lines 40-78/399 20%[27m[K[K0079  relay-2  queue drained cleanly
+0080  relay-3  queue drained cleanly
+0081  relay-4  queue drained cleanly
+0082  relay-5  queue drained cleanly
+0083  relay-6  queue drained cleanly
+0084  relay-0  queue drained cleanly
+0085  relay-1  queue drained cleanly
+0086  relay-2  queue drained cleanly
+0087  relay-3  queue drained cleanly
+0088  relay-4  BACKPRESSURE observed
+0089  relay-5  queue drained cleanly
+0090  relay-6  queue drained cleanly
+0091  relay-0  queue drained cleanly
+0092  relay-1  queue drained cleanly
+0093  relay-2  queue drained cleanly
+0094  relay-3  queue drained cleanly
+0095  relay-4  queue drained cleanly
+0096  relay-5  queue drained cleanly
+0097  relay-6  queue drained cleanly
+0098  relay-0  queue drained cleanly
+0099  relay-1  BACKPRESSURE observed
+0100  relay-2  queue drained cleanly
+0101  relay-3  queue drained cleanly
+0102  relay-4  queue drained cleanly
+0103  relay-5  queue drained cleanly
+0104  relay-6  queue drained cleanly
+0105  relay-0  queue drained cleanly
+0106  relay-1  queue drained cleanly
+0107  relay-2  queue drained cleanly
+0108  relay-3  queue drained cleanly
+0109  relay-4  queue drained cleanly
+0110  relay-5  BACKPRESSURE observed
+0111  relay-6  queue drained cleanly
+0112  relay-0  queue drained cleanly
+0113  relay-1  queue drained cleanly
+0114  relay-2  queue drained cleanly
+0115  relay-3  queue drained cleanly
+0116  relay-4  queue drained cleanly
+0117  relay-5  queue drained cleanly
+[7m/tmp/festerm-capture/work/ledger.txt lines 79-117/399 29%[27m[K[K/[KBB[KAA[KCC[KKK[KPP[KRR[KEE[KSS[KSS[KUU[KRR[KEE[K[1;1H[K0079  relay-2  queue drained cleanly
+[2;1H[K0080  relay-3  queue drained cleanly
+[3;1H[K0081  relay-4  queue drained cleanly
+[4;1H[K0082  relay-5  queue drained cleanly
+[5;1H[K0083  relay-6  queue drained cleanly
+[6;1H[K0084  relay-0  queue drained cleanly
+[7;1H[K0085  relay-1  queue drained cleanly
+[8;1H[K0086  relay-2  queue drained cleanly
+[9;1H[K0087  relay-3  queue drained cleanly
+[10;1H[K0088  relay-4  BACKPRESSURE observed
+[11;1H[K0089  relay-5  queue drained cleanly
+[12;1H[K0090  relay-6  queue drained cleanly
+[13;1H[K0091  relay-0  queue drained cleanly
+[14;1H[K0092  relay-1  queue drained cleanly
+[15;1H[K0093  relay-2  queue drained cleanly
+[16;1H[K0094  relay-3  queue drained cleanly
+[17;1H[K0095  relay-4  queue drained cleanly
+[18;1H[K0096  relay-5  queue drained cleanly
+[19;1H[K0097  relay-6  queue drained cleanly
+[20;1H[K0098  relay-0  queue drained cleanly
+[21;1H[K0099  relay-1  BACKPRESSURE observed
+[22;1H[K0100  relay-2  queue drained cleanly
+[23;1H[K0101  relay-3  queue drained cleanly
+[24;1H[K0102  relay-4  queue drained cleanly
+[25;1H[K0103  relay-5  queue drained cleanly
+[26;1H[K0104  relay-6  queue drained cleanly
+[27;1H[K0105  relay-0  queue drained cleanly
+[28;1H[K0106  relay-1  queue drained cleanly
+[29;1H[K0107  relay-2  queue drained cleanly
+[30;1H[K0108  relay-3  queue drained cleanly
+[31;1H[K0109  relay-4  queue drained cleanly
+[32;1H[K0110  relay-5  BACKPRESSURE observed
+[33;1H[K0111  relay-6  queue drained cleanly
+[34;1H[K0112  relay-0  queue drained cleanly
+[35;1H[K0113  relay-1  queue drained cleanly
+[36;1H[K0114  relay-2  queue drained cleanly
+[37;1H[K0115  relay-3  queue drained cleanly
+[38;1H[K0116  relay-4  queue drained cleanly
+[39;1H[K0117  relay-5  queue drained cleanly
+[40;1H[1;1H[K0079  relay-2  queue drained cleanly
+[2;1H[K0080  relay-3  queue drained cleanly
+[3;1H[K0081  relay-4  queue drained cleanly
+[4;1H[K0082  relay-5  queue drained cleanly
+[5;1H[K0083  relay-6  queue drained cleanly
+[6;1H[K0084  relay-0  queue drained cleanly
+[7;1H[K0085  relay-1  queue drained cleanly
+[8;1H[K0086  relay-2  queue drained cleanly
+[9;1H[K0087  relay-3  queue drained cleanly
+[10;1H[K0088  relay-4  [7mBACKPRESSURE[27m observed
+[11;1H[K0089  relay-5  queue drained cleanly
+[12;1H[K0090  relay-6  queue drained cleanly
+[13;1H[K0091  relay-0  queue drained cleanly
+[14;1H[K0092  relay-1  queue drained cleanly
+[15;1H[K0093  relay-2  queue drained cleanly
+[16;1H[K0094  relay-3  queue drained cleanly
+[17;1H[K0095  relay-4  queue drained cleanly
+[18;1H[K0096  relay-5  queue drained cleanly
+[19;1H[K0097  relay-6  queue drained cleanly
+[20;1H[K0098  relay-0  queue drained cleanly
+[21;1H[K0099  relay-1  [7mBACKPRESSURE[27m observed
+[22;1H[K0100  relay-2  queue drained cleanly
+[23;1H[K0101  relay-3  queue drained cleanly
+[24;1H[K0102  relay-4  queue drained cleanly
+[25;1H[K0103  relay-5  queue drained cleanly
+[26;1H[K0104  relay-6  queue drained cleanly
+[27;1H[K0105  relay-0  queue drained cleanly
+[28;1H[K0106  relay-1  queue drained cleanly
+[29;1H[K0107  relay-2  queue drained cleanly
+[30;1H[K0108  relay-3  queue drained cleanly
+[31;1H[K0109  relay-4  queue drained cleanly
+[32;1H[K0110  relay-5  [7mBACKPRESSURE[27m observed
+[33;1H[K0111  relay-6  queue drained cleanly
+[34;1H[K0112  relay-0  queue drained cleanly
+[35;1H[K0113  relay-1  queue drained cleanly
+[36;1H[K0114  relay-2  queue drained cleanly
+[37;1H[K0115  relay-3  queue drained cleanly
+[38;1H[K0116  relay-4  queue drained cleanly
+[39;1H[K0117  relay-5  queue drained cleanly
+[40;1H0118  relay-6  queue drained cleanly
+0119  relay-0  queue drained cleanly
+0120  relay-1  queue drained cleanly
+0121  relay-2  [7mBACKPRESSURE[27m observed
+0122  relay-3  queue drained cleanly
+0123  relay-4  queue drained cleanly
+0124  relay-5  queue drained cleanly
+0125  relay-6  queue drained cleanly
+0126  relay-0  queue drained cleanly
+[7m/tmp/festerm-capture/work/ledger.txt lines 88-126/399 32%[27m[K[K/[K0127  relay-1  queue drained cleanly
+0128  relay-2  queue drained cleanly
+0129  relay-3  queue drained cleanly
+0130  relay-4  queue drained cleanly
+0131  relay-5  queue drained cleanly
+0132  relay-6  [7mBACKPRESSURE[27m observed
+0133  relay-0  queue drained cleanly
+0134  relay-1  queue drained cleanly
+0135  relay-2  queue drained cleanly
+0136  relay-3  queue drained cleanly
+0137  relay-4  queue drained cleanly
+[7m/tmp/festerm-capture/work/ledger.txt lines 99-137/399 34%[27m[K[K[HM0098  relay-0  queue drained cleanly
+[HM0097  relay-6  queue drained cleanly
+[HM0096  relay-5  queue drained cleanly
+[HM0095  relay-4  queue drained cleanly
+[HM0094  relay-3  queue drained cleanly
+[HM0093  relay-2  queue drained cleanly
+[HM0092  relay-1  queue drained cleanly
+[HM0091  relay-0  queue drained cleanly
+[HM0090  relay-6  queue drained cleanly
+[HM0089  relay-5  queue drained cleanly
+[HM0088  relay-4  [7mBACKPRESSURE[27m observed
+[HM0087  relay-3  queue drained cleanly
+[HM0086  relay-2  queue drained cleanly
+[HM0085  relay-1  queue drained cleanly
+[HM0084  relay-0  queue drained cleanly
+[HM0083  relay-6  queue drained cleanly
+[HM0082  relay-5  queue drained cleanly
+[HM0081  relay-4  queue drained cleanly
+[HM0080  relay-3  queue drained cleanly
+[HM0079  relay-2  queue drained cleanly
+[HM0078  relay-1  queue drained cleanly
+[HM0077  relay-0  [7mBACKPRESSURE[27m observed
+[HM0076  relay-6  queue drained cleanly
+[HM0075  relay-5  queue drained cleanly
+[HM0074  relay-4  queue drained cleanly
+[HM0073  relay-3  queue drained cleanly
+[HM0072  relay-2  queue drained cleanly
+[HM0071  relay-1  queue drained cleanly
+[HM0070  relay-0  queue drained cleanly
+[HM0069  relay-6  queue drained cleanly
+[HM0068  relay-5  queue drained cleanly
+[HM0067  relay-4  queue drained cleanly
+[HM0066  relay-3  [7mBACKPRESSURE[27m observed
+[HM0065  relay-2  queue drained cleanly
+[HM0064  relay-1  queue drained cleanly
+[HM0063  relay-0  queue drained cleanly
+[HM0062  relay-6  queue drained cleanly
+[HM0061  relay-5  queue drained cleanly
+[HM0060  relay-4  queue drained cleanly
+[40;1H[K[7m/tmp/festerm-capture/work/ledger.txt lines 60-98/399 25%[27m[K[K[?1l>[?1049l

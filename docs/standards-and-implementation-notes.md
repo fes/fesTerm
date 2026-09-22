@@ -412,6 +412,56 @@ what tells the caller that colons are accepted. Any other selector is answered
 never waits on a reply that will not come. Device-control strings that are not
 DECRQSS stay ignored and bounded exactly as before.
 
+### The captured-program corpus
+
+One capture is not a corpus. `scripts/capture-tui.py` records the verbatim byte
+stream a real program writes to a 120x40 pseudoterminal, and
+`crates/festerm-core/tests/tui_capture.rs` replays the results. Six programs are
+committed, chosen because each one is the shortest path to a different
+escape-sequence class rather than because it is popular:
+
+| Fixture | What only this one covers |
+| --- | --- |
+| `vim` | alternate screen save and restore, a status line cleared to the margin, indexed-palette end-of-buffer markers |
+| `htop` | a full-width highlighted header, bracketed meter bars, periodic whole-screen repaint |
+| `less` | a search highlight that has to cover the match and nothing either side of it |
+| `nano` | a modal prompt drawn over text that must survive underneath it |
+| `tmux` | SGR mouse reporting, bracketed paste, DEC special graphics pane dividers, and putting every mode back on exit |
+| `fzf` | incremental full-list redraw, the extended palette, and `ESC[;38;5;108m` — a leading *empty* parameter |
+
+That last one is the argument for the whole approach: fzf spells its colours
+with an implicit leading zero several hundred times in one short session, and no
+hand-written test in this repository had ever produced the form.
+
+Two rules keep the corpus honest.
+
+**Assertions key off structure, not values.** A recording is one moment on one
+machine: every percentage, PID, load average and clock reading differs on the
+next one. Asserting that a meter is drawn as a bracketed bar is durable;
+asserting that it reads 42.7% is a trap for whoever re-records.
+
+**Identity never reaches the fixture.** Programs are run inside a throwaway
+`HOME` at a fixed path with a fixed user name and no user configuration, and
+tmux and htop are additionally configured to keep the host name and the
+machine's process list off the screen. The harness then greps the capture for
+the real user name, host name and home directory and refuses to write the file
+if it finds them. Scrubbing afterwards is not an option, because changing byte
+lengths corrupts the column alignment the replay depends on.
+
+The corpus was checked against deliberate mutations rather than assumed to
+work. Breaking the DEC graphics translation, the alternate-screen mode flag, or
+the pen used to fill erased cells each fails the tests that claim to cover it.
+That exercise found a real hole: *no* test in `festerm-core` noticed when erased
+cells stopped carrying the pen's attributes, because no program in the corpus
+sets an attribute before clearing. That case is now asserted directly in
+`sgr_conformance.rs`, which is where standards-derived cases belong - the corpus
+covers what programs do, the conformance file covers what the standard
+requires.
+
+Recording is deliberately not part of any test run or CI job. The fixtures are
+the evidence the assertions were written against, so replacing them is a
+decision to be made and reviewed, not a side effect of running the suite.
+
 ## Deferred or Deliberate Decisions
 
 These require a focused design decision before implementation:
