@@ -3750,7 +3750,14 @@ impl AppState {
     }
 
     pub fn update_running_sessions(&mut self, context: &egui::Context) {
-        self.discovery.update(self.show_resumable_sessions, context);
+        // Only the Launcher shows Running Sessions, and discovery costs a
+        // `tmux`/`screen`/daemon probe every couple of seconds. Now that the
+        // preference is on by default, polling while the user is looking at a
+        // terminal would spend that on nobody's behalf; switching back to the
+        // Launcher clears the stale inventory and rediscovers at once.
+        let launcher_visible = matches!(self.active_tab().content, TabContent::Launcher);
+        self.discovery
+            .update(self.show_resumable_sessions && launcher_visible, context);
         if self.pending_resume.as_ref().is_some_and(|pending| {
             pending
                 .handle
@@ -5880,16 +5887,16 @@ mod tests {
     }
 
     #[test]
-    fn toggle_show_session_details_flips_visibility_and_defaults_to_shown() {
+    fn toggle_show_session_details_flips_visibility_and_defaults_to_hidden() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert!(state.show_session_details());
-
-        state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
         assert!(!state.show_session_details());
 
         state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
         assert!(state.show_session_details());
+
+        state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
+        assert!(!state.show_session_details());
     }
 
     #[test]
@@ -5897,36 +5904,36 @@ mod tests {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
-        assert!(!state.show_session_details());
+        assert!(state.show_session_details());
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
-        assert!(state.show_session_details());
+        assert!(!state.show_session_details());
     }
 
     #[test]
-    fn toggle_restore_workspace_flips_state_and_resets_to_off() {
+    fn toggle_restore_workspace_flips_state_and_resets_to_on() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert!(!state.restore_workspace(), "off by default");
+        assert!(state.restore_workspace(), "on by default");
 
         state.dispatch(AppCommand::ToggleRestoreWorkspace, &context);
-        assert!(state.restore_workspace());
+        assert!(!state.restore_workspace());
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
-        assert!(!state.restore_workspace());
+        assert!(state.restore_workspace());
     }
 
     #[test]
-    fn toggle_close_confirmation_flips_state_and_resets_to_on() {
+    fn toggle_close_confirmation_flips_state_and_resets_to_off() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert!(state.confirm_session_close(), "on by default");
+        assert!(!state.confirm_session_close(), "off by default");
 
         state.dispatch(AppCommand::ToggleConfirmSessionClose, &context);
-        assert!(!state.confirm_session_close());
+        assert!(state.confirm_session_close());
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
-        assert!(state.confirm_session_close());
+        assert!(!state.confirm_session_close());
     }
 
     #[test]
@@ -5996,7 +6003,7 @@ mod tests {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
-        assert!(!state.terminal_ligatures());
+        assert!(state.terminal_ligatures());
         assert_eq!(
             state.emoji_presentation(),
             EmojiPresentationPreference::Color
@@ -6013,12 +6020,12 @@ mod tests {
         );
 
         assert_eq!(state.terminal_font(), TerminalFontPreference::JuliaMono);
-        assert!(state.terminal_ligatures());
+        assert!(!state.terminal_ligatures());
         assert_eq!(
             state.interface_settings().terminal_font(),
             TerminalFontPreference::JuliaMono
         );
-        assert!(state.interface_settings().terminal_ligatures());
+        assert!(!state.interface_settings().terminal_ligatures());
         assert_eq!(
             state.interface_settings().emoji_presentation(),
             EmojiPresentationPreference::Monochrome
@@ -6026,7 +6033,7 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
-        assert!(!state.terminal_ligatures());
+        assert!(state.terminal_ligatures());
         assert_eq!(
             state.emoji_presentation(),
             EmojiPresentationPreference::Color
@@ -6118,18 +6125,18 @@ mod tests {
     }
 
     #[test]
-    fn toggle_pulse_new_output_dot_flips_state_and_resets_to_off() {
+    fn toggle_pulse_new_output_dot_flips_state_and_resets_to_on() {
         // Feature request #68.
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert!(!state.pulse_new_output_dot());
+        assert!(state.pulse_new_output_dot());
 
         state.dispatch(AppCommand::TogglePulseNewOutputDot, &context);
-        assert!(state.pulse_new_output_dot());
-        assert!(state.interface_settings().pulse_new_output_dot());
+        assert!(!state.pulse_new_output_dot());
+        assert!(!state.interface_settings().pulse_new_output_dot());
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
-        assert!(!state.pulse_new_output_dot());
+        assert!(state.pulse_new_output_dot());
     }
 
     #[test]
@@ -6215,18 +6222,18 @@ mod tests {
     }
 
     #[test]
-    fn toggle_show_resumable_sessions_flips_state_and_resets_to_off() {
+    fn toggle_show_resumable_sessions_flips_state_and_resets_to_on() {
         // Feature request #70.
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert!(!state.show_resumable_sessions());
+        assert!(state.show_resumable_sessions());
 
         state.dispatch(AppCommand::ToggleShowResumableSessions, &context);
-        assert!(state.show_resumable_sessions());
-        assert!(state.interface_settings().show_resumable_sessions());
+        assert!(!state.show_resumable_sessions());
+        assert!(!state.interface_settings().show_resumable_sessions());
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
-        assert!(!state.show_resumable_sessions());
+        assert!(state.show_resumable_sessions());
     }
 
     #[test]
@@ -6613,9 +6620,42 @@ mod tests {
             .contains("No replacement shell"));
     }
 
+    /// Discovery runs `tmux ls`, `screen -ls`, and a daemon probe every two
+    /// seconds. With the preference on by default that would otherwise be
+    /// spent on every user forever, including while they are looking at a
+    /// terminal and could not see a Running Sessions panel if one existed.
+    #[test]
+    fn running_session_discovery_polls_only_while_the_launcher_is_on_screen() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(state.show_resumable_sessions, "on by default");
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
+
+        state.update_running_sessions(&context);
+        assert!(
+            state.discovery.is_enabled(),
+            "the Launcher is what shows Running Sessions"
+        );
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        state.update_running_sessions(&context);
+        assert!(
+            !state.discovery.is_enabled(),
+            "a session tab cannot show Running Sessions, so nothing should be probed for it"
+        );
+
+        state.dispatch(AppCommand::OpenLauncher, &context);
+        state.update_running_sessions(&context);
+        assert!(
+            state.discovery.is_enabled(),
+            "returning to the Launcher must start looking again"
+        );
+    }
+
     #[test]
     fn duplicate_resume_requests_are_bounded_and_disabled_discovery_does_not_launch() {
         let mut state = AppState::for_test();
+        state.show_resumable_sessions = false;
         state.begin_resume(|| panic!("disabled resume must not launch"));
         assert!(state.pending_resume.is_none());
         state.show_resumable_sessions = true;

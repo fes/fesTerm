@@ -1518,7 +1518,7 @@ quiet rows with subtle dividers:
   row** (the default, with the explanation that it keeps terminal height
   stable) or **Wrap to multiple rows** (which exposes more sessions but may
   reduce terminal rows).
-- **Show session details in chips** is an on/off switch, on by default. It shows
+- **Show session details in chips** is an on/off switch, off by default. It shows
   the sanitized terminal title or factual launch context under stable session
   identity. Turning it off makes every session, Launcher, and Settings chip a
   compact single-line chip. When the status bar is visible, only the active
@@ -1526,19 +1526,22 @@ quiet rows with subtle dividers:
 - **Show status bar** is an on/off switch, on by default, described factually as
   displaying sourced session state, terminal dimensions, and the active
   session detail when compact chips require that relocation.
-- **Confirm before closing live sessions** is an on/off switch, on by default.
+- **Confirm before closing live sessions** is an on/off switch, off by default.
   It applies to every live-session close route through the central application
-  policy. Turning it off closes immediately; it does not alter bounded backend
-  shutdown or the separate aggregate window/quit policy.
+  policy. Left off, a close takes effect immediately; turning it on asks first.
+  Either way it does not alter bounded backend shutdown or the separate
+  aggregate window/quit policy, which still confirms before ending several
+  sessions at once.
 - **Customize local shell before launch** is an off-by-default switch. When
   off, choosing Local Shell immediately starts the configured platform shell
   in the user's home directory. When on, it opens the focused executable,
   arguments, and working-directory form before launch.
-- **Workspace restore** is an on/off switch, off by default (see
-  "Configuration" below): unlike the four controls above, which always apply
-  and save immediately, resurrecting a previous run's open tabs - and the
-  size and position of the windows holding them - is an explicit opt-in.
-- **Compact New Session layout** is an off-by-default switch that shrinks the
+- **Workspace restore** is an on/off switch, on by default (see
+  "Configuration" below): reopening a previous run's tabs - and the size and
+  position of the windows holding them - is what a terminal holding long-lived
+  work is expected to do. Turning it off starts every run clean and scrubs any
+  tab list already on disk.
+- **Compact New Session layout** is an on-by-default switch that shrinks the
   Launcher's top launch cards' mark and padding while keeping their
   descriptions, since a card that only says "SSH" does not tell a new user
   what activating it will do; the Saved Profiles and Running Sessions panels
@@ -1547,9 +1550,9 @@ quiet rows with subtle dividers:
   `compact_launcher_grid` configuration key is retained and repurposed
   instead of removed so existing configuration files remain valid under
   strict settings deserialization.
-- **Pulse status dot on new background output** is an off-by-default switch
+- **Pulse status dot on new background output** is an on-by-default switch
   that animates only background-session chip dots when unseen output arrives.
-- **Resume unattached local sessions from New Session** is an off-by-default
+- **Resume unattached local sessions from New Session** is an on-by-default
   switch that surfaces locally running, unattached `festerm-sessiond`
   sessions as one-click Resume entries in the Launcher.
 
@@ -1566,8 +1569,8 @@ pixel-sized events is not reported as a full notch each, and the preference
 is not silently bypassed by the programs a user is most likely to scroll.
 
 The **Terminal typography** card exposes the bundled terminal-family selector
-plus the default-off ligature toggle. The **Quick switch** card currently
-exposes the off-by-default quick-switch-number overlay preference; it no
+plus the default-on ligature toggle. The **Quick switch** card currently
+exposes the on-by-default quick-switch-number overlay preference; it no
 longer restates the Command palette/Open Settings chords the **Keyboard
 bindings** card below owns, so a customized binding is never shown twice with
 two different values.

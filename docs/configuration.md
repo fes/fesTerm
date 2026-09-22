@@ -105,13 +105,13 @@ id = "settings"
 [settings]
 chip_layout = "single-row-scroll"
 status_bar_visible = true
-show_session_details = true
-confirm_session_close = true
+show_session_details = false
+confirm_session_close = false
 prefer_powershell = true
 customize_local_shell = false
-restore_workspace = false
+restore_workspace = true
 terminal_font = "jetbrains-mono"
-terminal_ligatures = false
+terminal_ligatures = true
 emoji_presentation = "color"
 scrollback_limit = "64-mib"
 ```
@@ -197,18 +197,18 @@ configuration representation.
 The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
-`show_session_details` (default `true`), `confirm_session_close` (default
-`true`), `prefer_powershell` (default `true`), `customize_local_shell`
-(default `false`), `restore_workspace` (default `false`), `terminal_font`
+`show_session_details` (default `false`), `confirm_session_close` (default
+`false`), `prefer_powershell` (default `true`), `customize_local_shell`
+(default `false`), `restore_workspace` (default `true`), `terminal_font`
 (`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
-default `"jetbrains-mono"`), `terminal_ligatures` (default `false`),
+default `"jetbrains-mono"`), `terminal_ligatures` (default `true`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
 `scrollback_limit` (`"disabled"`, `"16-mib"`, `"64-mib"`, or `"256-mib"`;
 default `"64-mib"`),
 `scroll_speed` (`"very-slow"`, `"slow"`, `"normal"`, `"fast"`, or
-`"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `false`),
-`compact_launcher_grid` (default `false`), `pulse_new_output_dot`
-(default `false`), and `show_resumable_sessions` (default `false`). They
+`"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `true`),
+`compact_launcher_grid` (default `true`), `pulse_new_output_dot`
+(default `true`), and `show_resumable_sessions` (default `true`). They
 mirror the current Settings controls for chip layout, chip details, the
 status bar, live-session close confirmation, workspace restoration, compact
 Launcher layout, background-output chip pulsing, resumable local-session

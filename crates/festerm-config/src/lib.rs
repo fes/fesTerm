@@ -2745,17 +2745,20 @@ schema_version = 99
     }
 
     #[test]
-    fn older_settings_tables_default_close_confirmation_to_on() {
+    fn a_settings_table_without_these_keys_reads_the_current_defaults() {
         let document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
 
         let configuration = Configuration::parse(document).unwrap();
 
-        assert!(configuration.interface_settings().confirm_session_close());
+        // Close confirmation is one of the two keys that is always written,
+        // so a document that omits it was never written by fesTerm and takes
+        // the current default rather than a historical one.
+        assert!(!configuration.interface_settings().confirm_session_close());
         assert_eq!(
             configuration.interface_settings().terminal_font(),
             TerminalFontPreference::JetBrainsMono
         );
-        assert!(!configuration.interface_settings().terminal_ligatures());
+        assert!(configuration.interface_settings().terminal_ligatures());
         assert_eq!(
             configuration.interface_settings().emoji_presentation(),
             EmojiPresentationPreference::Color
@@ -2817,7 +2820,7 @@ schema_version = 99
     #[test]
     fn terminal_typography_preferences_round_trip_and_reject_unknown_families() {
         let settings = InterfaceSettings::DEFAULT
-            .with_terminal_typography(TerminalFontPreference::IosevkaTerm, true);
+            .with_terminal_typography(TerminalFontPreference::IosevkaTerm, false);
         let configuration = Configuration::empty()
             .with_interface_settings(settings.clone())
             .unwrap();
@@ -2825,7 +2828,8 @@ schema_version = 99
         let serialized = configuration.to_toml().unwrap();
 
         assert!(serialized.contains("terminal_font = \"iosevka-term\""));
-        assert!(serialized.contains("terminal_ligatures = true"));
+        // Ligatures are on by default, so only turning them off is written.
+        assert!(serialized.contains("terminal_ligatures = false"));
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
@@ -2926,16 +2930,16 @@ schema_version = 99
     }
 
     #[test]
-    fn quick_switch_overlay_preference_round_trips_through_toml_and_defaults_to_off() {
+    fn quick_switch_overlay_preference_round_trips_through_toml_and_defaults_to_on() {
         // Feature request #69.
-        let settings = InterfaceSettings::DEFAULT.with_quick_switch_overlay(true);
+        let settings = InterfaceSettings::DEFAULT.with_quick_switch_overlay(false);
         let configuration = Configuration::empty()
             .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
 
-        assert!(serialized.contains("quick_switch_overlay = true"));
+        assert!(serialized.contains("quick_switch_overlay = false"));
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
@@ -2944,16 +2948,16 @@ schema_version = 99
             settings
         );
 
-        // An older settings table with no `quick_switch_overlay` key
-        // defaults to off, preserving today's chip presentation.
+        // A settings table with no `quick_switch_overlay` key takes the
+        // current default rather than a historical one.
         let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
-        assert!(!Configuration::parse(older_document)
+        assert!(Configuration::parse(older_document)
             .unwrap()
             .interface_settings()
             .quick_switch_overlay());
 
-        // The off state is the default and is omitted from serialization
-        // entirely, matching the other opt-in booleans here.
+        // The default is omitted from serialization entirely, so only a
+        // user who turned this off leaves a key behind.
         let default_serialized = Configuration::empty()
             .with_interface_settings(InterfaceSettings::DEFAULT)
             .unwrap()
@@ -2963,16 +2967,16 @@ schema_version = 99
     }
 
     #[test]
-    fn compact_launcher_grid_preference_round_trips_through_toml_and_defaults_to_off() {
+    fn compact_launcher_grid_preference_round_trips_through_toml_and_defaults_to_on() {
         // Feature request #64.
-        let settings = InterfaceSettings::DEFAULT.with_compact_launcher_grid(true);
+        let settings = InterfaceSettings::DEFAULT.with_compact_launcher_grid(false);
         let configuration = Configuration::empty()
             .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
 
-        assert!(serialized.contains("compact_launcher_grid = true"));
+        assert!(serialized.contains("compact_launcher_grid = false"));
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
@@ -2981,16 +2985,16 @@ schema_version = 99
             settings
         );
 
-        // An older settings table with no `compact_launcher_grid` key
-        // defaults to off, preserving today's single-column Launcher list.
+        // A settings table with no `compact_launcher_grid` key takes the
+        // current default rather than a historical one.
         let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
-        assert!(!Configuration::parse(older_document)
+        assert!(Configuration::parse(older_document)
             .unwrap()
             .interface_settings()
             .compact_launcher_grid());
 
-        // The off state is the default and is omitted from serialization
-        // entirely, matching the other opt-in booleans here.
+        // The default is omitted from serialization entirely, so only a
+        // user who turned this off leaves a key behind.
         let default_serialized = Configuration::empty()
             .with_interface_settings(InterfaceSettings::DEFAULT)
             .unwrap()
@@ -3000,16 +3004,16 @@ schema_version = 99
     }
 
     #[test]
-    fn pulse_new_output_dot_preference_round_trips_through_toml_and_defaults_to_off() {
+    fn pulse_new_output_dot_preference_round_trips_through_toml_and_defaults_to_on() {
         // Feature request #68.
-        let settings = InterfaceSettings::DEFAULT.with_pulse_new_output_dot(true);
+        let settings = InterfaceSettings::DEFAULT.with_pulse_new_output_dot(false);
         let configuration = Configuration::empty()
             .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
 
-        assert!(serialized.contains("pulse_new_output_dot = true"));
+        assert!(serialized.contains("pulse_new_output_dot = false"));
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
@@ -3018,16 +3022,16 @@ schema_version = 99
             settings
         );
 
-        // An older settings table with no `pulse_new_output_dot` key
-        // defaults to off, preserving today's static status dot.
+        // A settings table with no `pulse_new_output_dot` key takes the
+        // current default rather than a historical one.
         let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
-        assert!(!Configuration::parse(older_document)
+        assert!(Configuration::parse(older_document)
             .unwrap()
             .interface_settings()
             .pulse_new_output_dot());
 
-        // The off state is the default and is omitted from serialization
-        // entirely, matching the other opt-in booleans here.
+        // The default is omitted from serialization entirely, so only a
+        // user who turned this off leaves a key behind.
         let default_serialized = Configuration::empty()
             .with_interface_settings(InterfaceSettings::DEFAULT)
             .unwrap()
@@ -3071,16 +3075,16 @@ schema_version = 99
     }
 
     #[test]
-    fn show_resumable_sessions_preference_round_trips_through_toml_and_defaults_to_off() {
+    fn show_resumable_sessions_preference_round_trips_through_toml_and_defaults_to_on() {
         // Feature request #70.
-        let settings = InterfaceSettings::DEFAULT.with_show_resumable_sessions(true);
+        let settings = InterfaceSettings::DEFAULT.with_show_resumable_sessions(false);
         let configuration = Configuration::empty()
             .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
 
-        assert!(serialized.contains("show_resumable_sessions = true"));
+        assert!(serialized.contains("show_resumable_sessions = false"));
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
@@ -3089,16 +3093,16 @@ schema_version = 99
             settings
         );
 
-        // An older settings table with no `show_resumable_sessions` key
-        // defaults to off, preserving today's Launcher behavior.
+        // A settings table with no `show_resumable_sessions` key takes the
+        // current default rather than a historical one.
         let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
-        assert!(!Configuration::parse(older_document)
+        assert!(Configuration::parse(older_document)
             .unwrap()
             .interface_settings()
             .show_resumable_sessions());
 
-        // The off state is the default and is omitted from serialization
-        // entirely, matching the other opt-in booleans here.
+        // The default is omitted from serialization entirely, so only a
+        // user who turned this off leaves a key behind.
         let default_serialized = Configuration::empty()
             .with_interface_settings(InterfaceSettings::DEFAULT)
             .unwrap()

@@ -64,6 +64,13 @@ impl Discovery {
         }
     }
 
+    /// Whether discovery considers itself live, which is what decides if a
+    /// probe is spawned on this frame.
+    #[cfg(test)]
+    pub(crate) fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn update(&mut self, enabled: bool, context: &eframe::egui::Context) {
         self.update_with(enabled, context, Inventory::discover);
     }

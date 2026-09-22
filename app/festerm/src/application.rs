@@ -560,14 +560,14 @@ mod tests {
             .window_mut(0)
             .dispatch_for_test(AppCommand::OpenWindow, &context);
         application.settle_windows(&context);
-        assert!(!application.window_mut(1).compact_launcher_grid_for_test());
+        assert!(application.window_mut(1).compact_launcher_grid_for_test());
 
         application
             .window_mut(0)
-            .broadcast_for_test(configuration_with_compact_launcher_grid());
+            .broadcast_for_test(configuration_without_compact_launcher_grid());
         application.settle_windows(&context);
 
-        assert!(application.window_mut(1).compact_launcher_grid_for_test());
+        assert!(!application.window_mut(1).compact_launcher_grid_for_test());
     }
 
     #[test]
@@ -606,7 +606,7 @@ mod tests {
 
         application
             .window_mut(0)
-            .broadcast_for_test(configuration_with_compact_launcher_grid());
+            .broadcast_for_test(configuration_without_compact_launcher_grid());
         application.settle_windows(&context);
 
         assert_eq!(application.window_mut(1).tab_count_for_test(), tabs_before);
@@ -643,7 +643,7 @@ mod tests {
 
         application
             .window_mut(0)
-            .broadcast_for_test(configuration_with_compact_launcher_grid());
+            .broadcast_for_test(configuration_without_compact_launcher_grid());
         application.settle_windows(&context);
 
         // Both windows, not just the receiving one: an adopt that re-queued
@@ -1153,9 +1153,11 @@ id = "tab-3"
         );
     }
 
-    fn configuration_with_compact_launcher_grid() -> Configuration {
+    /// The compact Launcher layout is on by default, so the change a sibling
+    /// window has to notice is turning it *off*.
+    fn configuration_without_compact_launcher_grid() -> Configuration {
         Configuration::empty()
-            .with_interface_settings(InterfaceSettings::DEFAULT.with_compact_launcher_grid(true))
+            .with_interface_settings(InterfaceSettings::DEFAULT.with_compact_launcher_grid(false))
             .expect("a compact-launcher-grid preference is a valid configuration")
     }
 
