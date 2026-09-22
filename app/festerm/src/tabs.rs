@@ -5954,12 +5954,23 @@ mod tests {
 
     #[test]
     fn default_local_session_profile_starts_in_the_users_home_directory() {
+        // Computed independently of the helper the implementation calls, so
+        // the assertion still fails if home resolution degrades to the
+        // process's own directory or the filesystem root.
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from)
+            .expect("a test host provides a home directory");
+
         let profile = SessionTab::default_local_profile_for_session(true)
             .expect("this platform provides a default local shell");
 
-        assert_eq!(
+        assert_eq!(profile.working_directory(), Some(home.as_path()));
+        assert_ne!(
             profile.working_directory(),
-            Some(crate::sftp_file_manager::local_home_directory().as_path())
+            std::env::current_dir().ok().as_deref(),
+            "a shell must start in the user's home directory, not wherever \
+             fesTerm happened to be launched from"
         );
     }
 

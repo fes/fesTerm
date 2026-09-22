@@ -4919,16 +4919,22 @@ fn build_remote_markdown_source(
     .ok()
 }
 
-/// The directory the Home navigation and a freshly opened picker start from.
+/// The directory the Home navigation, a freshly opened picker, and a default
+/// local shell start from.
 ///
 /// Windows sets `USERPROFILE` rather than `HOME`, so consulting only `HOME`
 /// sent every Home navigation there to the filesystem root instead of the
-/// user's own folder.
+/// user's own folder. Each candidate is checked on its own rather than only
+/// the first one that happens to be set: a Windows MSYS2, Git Bash, or Cygwin
+/// environment exports a POSIX-style `HOME` (`/home/user`) that no Windows
+/// API can resolve, and that must fall through to `USERPROFILE` instead of
+/// all the way to whatever directory the process was launched from.
 pub(crate) fn local_home_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
         .map(PathBuf::from)
-        .filter(|path| path.is_dir())
+        .find(|path| path.is_dir())
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR_STR))
 }

@@ -1211,6 +1211,13 @@ impl LocalLauncherForm {
             }
             Err(error) => self.feedback = Some(error.to_string()),
         }
+        // The same directory an uncustomized launch would start in, shown
+        // rather than implied: turning customization on must not quietly
+        // move the new shell to whatever directory fesTerm itself was
+        // started from.
+        self.working_directory = crate::sftp_file_manager::local_home_directory()
+            .display()
+            .to_string();
     }
 
     fn submit(&mut self) -> Result<AppCommand, String> {
@@ -1220,9 +1227,14 @@ impl LocalLauncherForm {
         }
         let mut profile = festerm_pty::LocalProfile::new(executable)
             .with_arguments(self.arguments.split_whitespace());
-        if !self.working_directory.trim().is_empty() {
-            profile = profile.with_working_directory(self.working_directory.trim());
-        }
+        // An emptied field means "the default", which is the home directory
+        // the uncustomized launch uses, not fesTerm's own process directory.
+        let working_directory = self.working_directory.trim();
+        profile = if working_directory.is_empty() {
+            profile.with_working_directory(crate::sftp_file_manager::local_home_directory())
+        } else {
+            profile.with_working_directory(working_directory)
+        };
         profile.validate().map_err(|error| error.to_string())?;
         Ok(AppCommand::StartLocalSessionWithProfile { profile })
     }
@@ -4647,9 +4659,14 @@ mod tests {
         harness: &mut Harness<'static, LauncherHarnessState>,
         label: &str,
     ) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        // Steps one frame at a time rather than calling `Harness::run`: a
+        // background completion job that finishes mid-run requests another
+        // repaint, and on a loaded runner that can outlast `run`'s four-step
+        // budget and abort the test for a reason unrelated to what it
+        // asserts (#187).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
-            harness.run();
+            harness.step();
             if harness.query_by_label(label).is_some() {
                 return;
             }
@@ -4680,15 +4697,18 @@ mod tests {
             )
             .expect("custom local shell setting is valid");
         let mut harness = harness_with_configuration(configuration, 1240.0);
-        harness.run();
+        harness.run_ok();
         harness
             .get_by_label("Local Shell — Start a local terminal session")
             .click();
-        harness.run();
+        harness.run_ok();
         assert!(harness
             .get_by_label("Working directory (optional)")
             .is_focused());
 
+        // The field arrives prefilled with the home directory, so the typed
+        // path replaces it rather than being appended to it.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
         harness
             .get_by_label("Working directory (optional)")
             .type_text(&root.join("workspace").display().to_string());
@@ -4697,9 +4717,9 @@ mod tests {
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
             .click_accesskit();
-        harness.run();
+        harness.run_ok();
         harness.get_by_label("Start").click();
-        harness.run();
+        harness.run_ok();
 
         let Some(AppCommand::StartLocalSessionWithProfile { profile }) =
             harness.state().command.as_ref()
@@ -4738,23 +4758,31 @@ mod tests {
             )
             .expect("custom local shell setting is valid");
         let mut harness = harness_with_configuration(configuration, 1240.0);
-        harness.run();
+        harness.run_ok();
 
         harness
             .get_by_label("Local Shell — Start a local terminal session")
             .click();
-        harness.run();
+        harness.run_ok();
         assert!(harness
             .get_by_label("Working directory (optional)")
             .is_focused());
 
         harness.key_press(egui::Key::Enter);
-        harness.run();
+        harness.run_ok();
 
-        assert!(matches!(
-            harness.state().command,
-            Some(AppCommand::StartLocalSessionWithProfile { .. })
-        ));
+        // Customizing the launch changes which fields are on screen, not
+        // where the shell starts: submitting the prefilled form must start
+        // in the same home directory an uncustomized launch uses.
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from)
+            .expect("a test host provides a home directory");
+        let Some(AppCommand::StartLocalSessionWithProfile { profile }) = &harness.state().command
+        else {
+            panic!("Enter on the last field starts a local session");
+        };
+        assert_eq!(profile.working_directory(), Some(home.as_path()));
     }
 
     fn populated_launcher_harness(

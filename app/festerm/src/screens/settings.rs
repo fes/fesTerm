@@ -227,9 +227,10 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             if settings_toggle_row(
                                 ui,
                                 "Customize local shell before launch",
-                                "Show executable, arguments, and working-directory fields \
-                                 after choosing Local Shell. When off, start the default \
-                                 shell in your home directory immediately. Off by default.",
+                                "Show executable, arguments, and working-directory fields, \
+                                 prefilled with the defaults, after choosing Local Shell. \
+                                 When off, start the default shell in your home directory \
+                                 immediately. Off by default.",
                                 customize_local_shell,
                             ) {
                                 command = Some(AppCommand::ToggleCustomizeLocalShell);

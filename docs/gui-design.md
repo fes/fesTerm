@@ -322,8 +322,12 @@ remains absent from a shipped build rather than appearing as a disabled
 promise. By default, Local Shell immediately starts the configured platform
 shell in the user's home directory. The off-by-default **Customize local shell
 before launch** setting instead opens a focused form in the same launcher tab;
-the form accepts an executable, arguments, and optional initial working
-directory, and pressing Enter in the working-directory field launches it.
+the form accepts an executable, arguments, and an initial working directory,
+all prefilled with exactly what the immediate launch would have used - the
+same home directory included - so customizing a launch changes what can be
+edited rather than silently changing where the shell starts. Clearing the
+working-directory field restores that home-directory default. Pressing Enter
+in the working-directory field launches it.
 Executable and directory fields offer bounded filesystem-backed completion.
 SSH, SFTP, and Serial navigate within the same launcher tab to focused
 connection forms, while Markdown opens the Markdown workspace picker.
