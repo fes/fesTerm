@@ -8910,42 +8910,36 @@ mod tests {
         // output arrive". A real local shell's startup banner/prompt is a
         // few dozen bytes across a handful of events - nowhere near that
         // cap - so the flag was essentially never set for ordinary output.
-        // Exercises a real spawned local session end-to-end through
-        // `pump_all_sessions` rather than manually setting the flag (unlike
-        // `chip_pulses_only_for_a_background_session_with_new_output_and_the_preference_on`
-        // above, which only covers `chip_view_models`'s gating logic once
-        // the flag is already set).
+        // Inject output only after the session is in the background, then
+        // exercise the real controller and `pump_all_sessions` path rather
+        // than racing a shell's startup prompt or manually setting the flag.
         let context = egui::Context::default();
-        let (mut app, first) = FesTermApp::for_test_with_live_session(&context);
+        let (mut app, first, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
         assert!(
             app.state.interface_settings().pulse_new_output_dot(),
             "this test needs the preference on"
         );
-        // Starting a second local session makes it active, leaving `first`
-        // in the background while its real shell process starts up and
-        // prints its initial prompt.
-        app.state.dispatch(AppCommand::StartLocalSession, &context);
-        assert_ne!(app.state.active(), first, "the new session must be active");
+        app.state.dispatch(AppCommand::OpenLauncher, &context);
+        let second_transport = crate::session_controller::fake::FakeSshSession::new([]);
+        let second = app.state.replace_active_with_test_ssh_session(
+            second_transport,
+            "second-user",
+            "second.example.test",
+            22,
+        );
+        assert_eq!(app.state.active(), second, "the new session must be active");
 
-        let deadline = Instant::now() + Duration::from_millis(2_500);
-        let mut pulsing = false;
-        while Instant::now() < deadline {
-            app.pump_all_sessions(&context);
-            let (chips, _) = app.chip_view_models();
-            if chips
+        transport.push_event(festerm_session::SessionEvent::Output(
+            b"modest background output".to_vec(),
+        ));
+        app.pump_all_sessions(&context);
+        let (chips, _) = app.chip_view_models();
+        assert!(
+            chips
                 .iter()
                 .find(|chip| chip.id == ChipId(first.chip_id()))
-                .is_some_and(|chip| chip.pulse_new_output)
-            {
-                pulsing = true;
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        assert!(
-            pulsing,
-            "a background tab's real (modest) shell startup output must set the pulse flag"
+                .is_some_and(|chip| chip.pulse_new_output),
+            "a background tab's modest output must set the pulse flag"
         );
     }
 
