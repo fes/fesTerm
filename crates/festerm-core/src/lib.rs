@@ -532,6 +532,139 @@ mod tests {
     }
 
     #[test]
+    fn form_feed_and_vertical_tab_index_exactly_as_a_line_feed_does() {
+        // FF and VT are LF under different names: they move down a line and
+        // scroll at the bottom of the region, and they leave the column
+        // alone unless LNM says otherwise.
+        for control in [b"\n".as_slice(), b"\x0b", b"\x0c"] {
+            let mut terminal = terminal(8, 3);
+            terminal.ingest(b"\x1b[1;5H");
+            terminal.ingest(control);
+            assert_eq!(
+                (terminal.cursor().column(), terminal.cursor().row()),
+                (4, 1),
+                "{control:?} should index without changing the column"
+            );
+
+            // At the bottom of the screen it scrolls rather than stalling.
+            terminal.ingest(b"\x1b[2;1Htop\x1b[3;1H");
+            terminal.ingest(control);
+            assert_eq!(terminal.row_text(0).as_deref(), Some("top     "));
+            assert_eq!(terminal.cursor().row(), 2);
+        }
+    }
+
+    #[test]
+    fn new_line_mode_adds_a_carriage_return_to_every_index_control() {
+        // LNM (`CSI 20h`) is the one thing that distinguishes LF, VT and FF
+        // from a bare index, and it must apply to all three alike.
+        for control in [b"\n".as_slice(), b"\x0b", b"\x0c"] {
+            let mut terminal = terminal(8, 3);
+            terminal.ingest(b"\x1b[20h\x1b[1;5H");
+            terminal.ingest(control);
+            assert_eq!(
+                (terminal.cursor().column(), terminal.cursor().row()),
+                (0, 1),
+                "{control:?} should return as well as index under LNM"
+            );
+
+            // And stops the moment the mode is reset again.
+            terminal.ingest(b"\x1b[20l\x1b[1;5H");
+            terminal.ingest(control);
+            assert_eq!(
+                (terminal.cursor().column(), terminal.cursor().row()),
+                (4, 1),
+                "{control:?} should only index once LNM is reset"
+            );
+        }
+    }
+
+    #[test]
+    fn insert_mode_shifts_the_line_right_and_drops_what_passes_the_margin() {
+        // IRM makes room rather than overwriting, and the room it makes ends
+        // where a line would wrap. Cells pushed past that end are lost:
+        // insert mode does not carry them to the next line.
+        let mut terminal = terminal(12, 2);
+        terminal.ingest(b"\x1b[1;5Habcdef");
+        with_margins(&mut terminal, 5, 10);
+        terminal.ingest(b"\x1b[1;7H\x1b[4hX");
+
+        assert_eq!(terminal.row_text(0).as_deref(), Some("    abXcde  "));
+        // The 'f' pushed past the right margin is gone, not carried onto the
+        // line below: insert mode does not wrap.
+        assert_eq!(terminal.row_text(1).as_deref(), Some("            "));
+    }
+
+    #[test]
+    fn insert_mode_ends_when_a_soft_reset_puts_the_terminal_back_to_replace() {
+        // DECSTR lists IRM among the modes it returns to their power-on
+        // state, so an application that leaves insert mode on cannot poison
+        // the one that follows it.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"abcd\x1b[1;1H\x1b[4hX");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Xabcd   "));
+
+        terminal.ingest(b"\x1b[!p\x1b[1;1HY");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Yabcd   "));
+    }
+
+    #[test]
+    fn a_forward_tab_is_caught_by_the_right_margin_even_from_outside_it() {
+        // A cursor left of the left margin tabs *into* the margins, so the
+        // far one still binds it. Only a cursor already past the right
+        // margin is outside what the margin describes.
+        let mut terminal = terminal(40, 2);
+        with_margins(&mut terminal, 5, 30);
+
+        terminal.ingest(b"\x1b[1;7H\x1b[2I");
+        assert_eq!(terminal.cursor().column(), 16);
+
+        // Two more tabs would reach column 33, so the right margin catches it.
+        terminal.ingest(b"\x1b[2I");
+        assert_eq!(terminal.cursor().column(), 29);
+
+        // And the same from column one, which is left of the left margin.
+        terminal.ingest(b"\x1b[1;1H\x1b[9I");
+        assert_eq!(terminal.cursor().column(), 29);
+    }
+
+    #[test]
+    fn a_backward_tab_is_bounded_by_the_screen_rather_than_the_left_margin() {
+        // CBT is the exception to the rule above: it tabs backwards out of a
+        // left/right region entirely and stops at column one.
+        let mut terminal = terminal(40, 2);
+        terminal.ingest(b"\x1b[1;25H\x1b[2Z");
+        assert_eq!(terminal.cursor().column(), 8);
+
+        terminal.ingest(b"\x1b[1;25H\x1b[5Z");
+        assert_eq!(terminal.cursor().column(), 0);
+
+        with_margins(&mut terminal, 5, 30);
+        terminal.ingest(b"\x1b[1;7H\x1b[2Z");
+        assert_eq!(terminal.cursor().column(), 0);
+    }
+
+    #[test]
+    fn the_relative_position_controls_move_the_cursor_without_addressing_it() {
+        // HPR (`CSI a`) and VPR (`CSI e`) are CUF and CUD under different
+        // names. A relative move has no frame of reference for origin mode
+        // to change, so they behave the same inside a region as outside one.
+        let mut terminal = terminal(10, 6);
+        terminal.ingest(b"\x1b[2;3H\x1b[2a\x1b[3e");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (4, 4)
+        );
+
+        // Both stop at the edge rather than wrapping or scrolling.
+        terminal.ingest(b"\x1b[1;1H\x1b[99a\x1b[99e");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (9, 5)
+        );
+    }
+
+    #[test]
     fn text_wraps_at_the_right_margin_and_continues_at_the_left_one() {
         // With left/right margins a line is a column of text, not the whole
         // screen: it wraps at the right margin and resumes at the left one,
