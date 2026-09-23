@@ -571,14 +571,20 @@ produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
 save/restore cursor, the tab and index controls, mode reporting, selective
-erase, rectangular editing, the status reports and the string controls, 382
-tests, of which 384 pass with 17 known bugs and 0 failures - and CI fails if
-any of it regresses. `validation/esctest2-skip.txt` carries the exclusions
-*within* those families, one reason per line, so each skip is an admission
-rather than a silence; it is currently empty, so every allowlisted test runs.
+erase, rectangular editing, the status reports and the string controls - and
+CI fails if any of it regresses. That set currently reports 384 passed, 17
+known xterm bugs and 0 failures. `validation/esctest2-skip.txt` carries the
+exclusions *within* those families, one reason per line, so each skip is an
+admission rather than a silence; it is currently empty, so every allowlisted
+test runs.
+
 `scripts/run-esctest2.sh --everything` surveys the whole suite without gating,
-which is how to see what the next phase buys - though see #226 for why the
-colour families have to be excluded from that survey to get a usable number.
+which is how to see what the next phase buys. It honours a third file,
+`validation/esctest2-survey-exclude.txt`, which holds the tests that break the
+survey rather than merely failing it: esctest2 shares one pty and has no
+per-test drain, so a test that asks two questions, reads one answer and then
+aborts leaves the second answer behind to desync every test after it (#226).
+The survey names its exclusions on every run.
 
 DECRQCRA was the first phase for exactly this reason: 316 of the 559 methods
 assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
