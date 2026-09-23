@@ -1059,6 +1059,9 @@ impl SessionTab {
         } = meta;
         let mut terminal =
             Terminal::new(dimensions).expect("default terminal allocation should succeed");
+        // Color queries have to be answered with the shades this front end
+        // paints, not with the core's stand-in defaults.
+        terminal.set_color_scheme(festerm_ui_egui::terminal_color_scheme());
         let controller = match result {
             Ok(session) => {
                 tracing::info!(

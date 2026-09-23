@@ -3,6 +3,47 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Telling programs what color the terminal is
+
+A Copilot CLI session running inside fesTerm rendered its inline code spans as
+bare padding: the right amount of space, no highlight. It looked like a
+renderer defect, and the obvious suspects were the recent inline-background
+work and the tmux session in between.
+
+It was neither. `tmux capture-pane -e` dumps the escape sequences tmux itself
+received, which is upstream of anything fesTerm does, and across the whole
+screen the only background attribute present was the `ESC[44m` of the CLI's
+own tab chip - which fesTerm painted correctly. The application had simply
+decided not to style those spans. fesTerm could not drop a background it was
+never sent.
+
+The reason it decided that is the interesting part. A program that wants to
+tint a code span has to know what it is tinting against, and the standard way
+to ask is `OSC 11 ; ? ST` - "what is your background?" - along with `OSC 10`,
+`OSC 12` and `OSC 4` for the foreground, cursor and palette. vim and neovim
+use these for `background=` autodetection; bat, delta, fzf and a number of
+Node-based CLIs do the same. fesTerm understood exactly two OSC commands,
+title and hyperlink, and silently discarded everything else. Ask it what color
+it is and it said nothing, so applications fell back to their safe guess,
+which is usually no styling at all.
+
+Answering meant crossing a boundary the project guards carefully. Protocol
+replies belong in `festerm-core`, but the core is deliberately
+GUI-independent and had no idea what any of its colors actually look like -
+the RGB values lived in the renderer. ADR 0036 splits it: the core owns the
+reporting and the embedder owns the values, handed over as a `ColorScheme`
+when the application builds a terminal. Palette entries 16 through 255 are not
+a theme at all - the 6x6x6 cube and the gray ramp are defined by the protocol -
+so the core computes those, and the renderer now resolves colors through the
+same table instead of keeping its own copy. A test walks all 256 entries and
+asserts the reported color equals the painted one, because the failure mode
+worth preventing here is not a missing answer but a confident wrong one.
+
+For the same reason, fesTerm answers color *queries* and still ignores color
+*sets*. Accepting `OSC 11` with a real color would be easy and would make the
+next query describe a background nothing on screen uses, which is worse than
+saying nothing - the same judgement that shaped the `DECRQM` work.
+
 ## A terminal that answers, and a first run worth having (v0.4.0)
 
 This release is mostly about fesTerm telling the truth to two audiences: the

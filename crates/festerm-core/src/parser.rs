@@ -23,9 +23,60 @@ fn parse_dcs(payload: Vec<u8>) -> Option<DcsAction> {
 pub(crate) enum OscAction {
     SetTitle(String),
     SetHyperlink(Option<Arc<str>>),
+    /// One or more `OSC 4/10/11/12` color *queries*, in request order.
+    ///
+    /// Only the `?` form reaches here. A request that supplies a color is a
+    /// set, which this terminal does not perform, and pretending otherwise
+    /// would make the next query report a color nothing ever paints.
+    ReportColors {
+        queries: Vec<ColorQuery>,
+        terminator: StringTerminator,
+    },
 }
 
-fn parse_osc(payload: Vec<u8>) -> Option<OscAction> {
+/// A single color a program asked the terminal to describe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ColorQuery {
+    /// `OSC 4 ; <index> ; ?`
+    Palette(u8),
+    /// `OSC 10 ; ?`
+    Foreground,
+    /// `OSC 11 ; ?`
+    Background,
+    /// `OSC 12 ; ?`
+    Cursor,
+}
+
+/// How a string-protocol payload ended.
+///
+/// A reply mirrors the terminator of its request, as xterm does: a program
+/// that speaks `BEL` is usually reading until `BEL`, and answering with `ST`
+/// leaves it blocked.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum StringTerminator {
+    #[default]
+    String,
+    Bell,
+}
+
+impl StringTerminator {
+    pub(crate) const fn bytes(self) -> &'static [u8] {
+        match self {
+            Self::String => b"\x1b\\",
+            Self::Bell => b"\x07",
+        }
+    }
+}
+
+/// The most color queries honored from one request.
+///
+/// `OSC 4` accepts repeated `index;?` pairs, and the payload bound alone would
+/// still allow roughly a thousand of them in a single string. Replies are
+/// queued against a bounded transport, so an unbounded burst cannot grow
+/// memory, but it can crowd out everything else the session wanted to say.
+const MAX_COLOR_QUERIES: usize = 64;
+
+fn parse_osc(payload: Vec<u8>, terminator: StringTerminator) -> Option<OscAction> {
     let mut parts = payload.splitn(2, |byte| *byte == b';');
     let command = parts.next()?;
     let data = parts.next()?;
@@ -34,9 +85,79 @@ fn parse_osc(payload: Vec<u8>) -> Option<OscAction> {
             .ok()
             .map(sanitize_title)
             .map(OscAction::SetTitle),
+        b"4" => color_action(parse_palette_queries(data), terminator),
+        b"10" | b"11" | b"12" => {
+            // A single request may name consecutive colors: `OSC 10;?;?` asks
+            // for the foreground and then the background.
+            let first = match command {
+                b"10" => 10,
+                b"11" => 11,
+                _ => 12,
+            };
+            color_action(parse_dynamic_queries(first, data), terminator)
+        }
         b"8" => parse_osc8(data).map(OscAction::SetHyperlink),
         _ => None,
     }
+}
+
+fn color_action(queries: Vec<ColorQuery>, terminator: StringTerminator) -> Option<OscAction> {
+    (!queries.is_empty()).then_some(OscAction::ReportColors {
+        queries,
+        terminator,
+    })
+}
+
+/// Collects the `?` entries of an `OSC 4 ; <index> ; <spec>` request.
+///
+/// Anything that is not a query is skipped rather than rejected, so that the
+/// answerable half of a mixed `OSC 4;1;?;2;#ff0000` request is still answered.
+fn parse_palette_queries(data: &[u8]) -> Vec<ColorQuery> {
+    let mut queries = Vec::new();
+    let mut fields = data.split(|byte| *byte == b';');
+    while let (Some(index), Some(specification)) = (fields.next(), fields.next()) {
+        if queries.len() == MAX_COLOR_QUERIES {
+            break;
+        }
+        if specification != b"?" {
+            continue;
+        }
+        if let Some(index) = parse_palette_index(index) {
+            queries.push(ColorQuery::Palette(index));
+        }
+    }
+    queries
+}
+
+/// Collects the `?` entries of an `OSC 10/11/12` request.
+///
+/// Each successive field names the next dynamic color, so position decides
+/// which color a `?` is asking about. Positions past the cursor color name
+/// colors this terminal does not have and are skipped.
+fn parse_dynamic_queries(first: u8, data: &[u8]) -> Vec<ColorQuery> {
+    data.split(|byte| *byte == b';')
+        .enumerate()
+        .take(MAX_COLOR_QUERIES)
+        .filter(|(_, field)| *field == b"?")
+        .filter_map(|(offset, _)| {
+            let selector = usize::from(first).checked_add(offset)?;
+            match selector {
+                10 => Some(ColorQuery::Foreground),
+                11 => Some(ColorQuery::Background),
+                12 => Some(ColorQuery::Cursor),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn parse_palette_index(field: &[u8]) -> Option<u8> {
+    // Leading zeroes are legal; anything non-numeric, empty, or above 255 is
+    // not a palette entry this terminal can describe.
+    if field.is_empty() || field.len() > 3 || !field.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    std::str::from_utf8(field).ok()?.parse().ok()
 }
 
 fn sanitize_title(value: &str) -> String {
@@ -590,7 +711,7 @@ impl Parser {
             ParserState::String { kind, bytes } => {
                 if kind == StringKind::Osc && byte == 0x07 {
                     self.state = ParserState::Ground;
-                    return self.finish_string(kind);
+                    return self.finish_string(kind, StringTerminator::Bell);
                 } else if byte == 0x1b {
                     self.state = ParserState::StringEscape { kind, bytes };
                 } else {
@@ -600,7 +721,7 @@ impl Parser {
             ParserState::StringEscape { kind, .. } => {
                 if byte == b'\\' {
                     self.state = ParserState::Ground;
-                    return self.finish_string(kind);
+                    return self.finish_string(kind, StringTerminator::String);
                 }
                 // Anything other than ST abandons the string, and the byte
                 // starts a fresh escape sequence: `ESC` from a string state is
@@ -651,10 +772,10 @@ impl Parser {
         };
     }
 
-    fn finish_string(&mut self, kind: StringKind) -> TerminalOp {
+    fn finish_string(&mut self, kind: StringKind, terminator: StringTerminator) -> TerminalOp {
         match kind {
             StringKind::Osc => {
-                self.osc_action = parse_osc(std::mem::take(&mut self.string_payload));
+                self.osc_action = parse_osc(std::mem::take(&mut self.string_payload), terminator);
             }
             StringKind::Dcs => {
                 self.dcs_action = parse_dcs(std::mem::take(&mut self.string_payload));

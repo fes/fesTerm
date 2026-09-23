@@ -9,7 +9,7 @@ use egui::{
     Color32, ColorImage, FontFamily, FontId, Pos2, Rect, Stroke, StrokeKind, TextureHandle,
     TextureOptions, Vec2,
 };
-use festerm_core::{Attributes, Color, CursorStyle, Dimensions};
+use festerm_core::{Attributes, Color, ColorScheme, CursorStyle, Dimensions, Rgb};
 use swash::{
     scale::{image::Content, Render, ScaleContext, Source, StrikeWith},
     shape::ShapeContext,
@@ -887,48 +887,36 @@ pub(crate) fn cell_colors(cell: &RenderedCell) -> (Color32, Color32) {
 }
 
 /// Resolves terminal colors using the xterm-style ANSI/256-color palette.
+///
+/// The palette itself lives in `festerm-core` because the core has to report
+/// the same values through `OSC 4/10/11/12`. Painting and reporting resolve
+/// through one table so a program cannot be told one color and shown another.
 pub fn resolve_color(color: Color, default: Color32) -> Color32 {
     match color {
         Color::Default => default,
-        Color::Rgb { red, green, blue } => Color32::from_rgb(red, green, blue),
-        Color::Indexed(index) if index < 16 => ansi_color(index),
-        Color::Indexed(index @ 16..=231) => {
-            let value = index - 16;
-            let levels = [0, 95, 135, 175, 215, 255];
-            Color32::from_rgb(
-                levels[(value / 36) as usize],
-                levels[((value / 6) % 6) as usize],
-                levels[(value % 6) as usize],
-            )
-        }
-        Color::Indexed(index) => {
-            let level = 8 + (index - 232) * 10;
-            Color32::from_gray(level)
+        other => {
+            let resolved = terminal_color_scheme().resolve(other, Rgb::new(0, 0, 0));
+            Color32::from_rgb(resolved.red, resolved.green, resolved.blue)
         }
     }
 }
 
-fn ansi_color(index: u8) -> Color32 {
-    const COLORS: [(u8, u8, u8); 16] = [
-        (0, 0, 0),
-        (205, 49, 49),
-        (13, 188, 121),
-        (229, 229, 16),
-        (36, 114, 200),
-        (188, 63, 188),
-        (17, 168, 205),
-        (229, 229, 229),
-        (102, 102, 102),
-        (241, 76, 76),
-        (35, 209, 139),
-        (245, 245, 67),
-        (59, 142, 234),
-        (214, 112, 214),
-        (41, 184, 219),
-        (255, 255, 255),
-    ];
-    let (red, green, blue) = COLORS[index as usize];
-    Color32::from_rgb(red, green, blue)
+/// The colors this front end paints, in the form the core reports them.
+///
+/// The composition root hands this to each `Terminal` so that a color query
+/// is answered with the shade actually on screen.
+pub fn terminal_color_scheme() -> ColorScheme {
+    ColorScheme::new(
+        rgb_of(DEFAULT_FOREGROUND),
+        rgb_of(DEFAULT_BACKGROUND),
+        // `paint_terminal` draws the cursor in the default foreground color.
+        rgb_of(DEFAULT_FOREGROUND),
+        ColorScheme::DEFAULT_ANSI,
+    )
+}
+
+fn rgb_of(color: Color32) -> Rgb {
+    Rgb::new(color.r(), color.g(), color.b())
 }
 
 /// Measures through execution of `submit`, which is the point at which grid
@@ -943,6 +931,51 @@ pub(crate) fn measure_input_to_paint_submission<T>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_reported_scheme_is_the_palette_the_renderer_paints() {
+        // A color query is only useful if its answer matches the pixels. The
+        // two paths share `ColorScheme`, and this proves the sharing holds
+        // for every entry, including the defaults the theme owns.
+        let scheme = terminal_color_scheme();
+        for index in 0..=255u8 {
+            let reported = scheme.palette(index);
+            assert_eq!(
+                resolve_color(Color::Indexed(index), DEFAULT_BACKGROUND),
+                Color32::from_rgb(reported.red, reported.green, reported.blue),
+                "palette entry {index} is reported differently than it is painted"
+            );
+        }
+        assert_eq!(
+            scheme.foreground(),
+            Rgb::new(
+                DEFAULT_FOREGROUND.r(),
+                DEFAULT_FOREGROUND.g(),
+                DEFAULT_FOREGROUND.b()
+            )
+        );
+        assert_eq!(
+            scheme.background(),
+            Rgb::new(
+                DEFAULT_BACKGROUND.r(),
+                DEFAULT_BACKGROUND.g(),
+                DEFAULT_BACKGROUND.b()
+            )
+        );
+        assert_eq!(
+            scheme.cursor(),
+            scheme.foreground(),
+            "the cursor is drawn in the default foreground, so that is what OSC 12 must report"
+        );
+    }
+
+    #[test]
+    fn the_cores_stand_in_scheme_still_matches_this_theme() {
+        // `festerm-core` carries its own defaults so headless callers answer
+        // sensibly without an embedder. They are only honest while they agree
+        // with the theme this front end actually paints.
+        assert_eq!(ColorScheme::default(), terminal_color_scheme());
+    }
+
     use std::{
         path::PathBuf,
         sync::Arc,
