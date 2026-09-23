@@ -901,6 +901,10 @@ impl Terminal {
             TerminalOp::DeviceStatus(parameters) => self.device_status(parameters),
             TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
             TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
+            TerminalOp::RequestMode {
+                private,
+                parameters,
+            } => self.request_mode(private, parameters),
             TerminalOp::SoftReset => self.soft_reset(),
             TerminalOp::RequestRectangleChecksum(parameters) => {
                 self.request_rectangle_checksum(parameters);
@@ -1954,6 +1958,7 @@ impl Terminal {
         if !private {
             for index in 0..parameters.len() {
                 match parameters.value(index) {
+                    Some(2) => self.modes.keyboard_locked = enabled,
                     Some(4) => self.modes.insert_mode = enabled,
                     Some(20) => self.modes.line_feed_new_line = enabled,
                     _ => {}
@@ -1978,6 +1983,8 @@ impl Terminal {
                     }
                 }
                 25 => self.modes.cursor_visible = enabled,
+                66 => self.modes.application_keypad = enabled,
+                67 => self.modes.backarrow_sends_backspace = enabled,
                 69 => {
                     self.modes.left_right_margin_mode = enabled;
                     if !enabled {
@@ -2290,6 +2297,89 @@ impl Terminal {
         }
     }
 
+    /// Answers DECRQM (`CSI Pm $ p`, or `CSI ? Pm $ p` for a DEC private
+    /// mode) with DECRPM.
+    ///
+    /// The reply says whether a mode is *set*, not whether we perform its
+    /// function, and the two are easy to confuse into a lie. A terminal that
+    /// stores a bit for a mode it does not act on and then reports that bit
+    /// back has told the caller it will do something it will not: an
+    /// application that asks about `DECNRCM` and is told "set" will send
+    /// text we render wrongly. The reply for a function we do not perform is
+    /// "permanently reset" (4), which is exactly the answer that value
+    /// exists for, and "not recognized" (0) is reserved for modes we cannot
+    /// name at all.
+    fn request_mode(&mut self, private: bool, parameters: CsiParameters) {
+        let Some(mode) = parameters.value(0) else {
+            return;
+        };
+        let state = if private {
+            self.dec_mode_state(mode)
+        } else {
+            self.ansi_mode_state(mode)
+        };
+        let marker = if private { "?" } else { "" };
+        let reply = format!("\x1b[{marker}{mode};{state}$y");
+        self.queue_reply(reply.as_bytes());
+    }
+
+    fn ansi_mode_state(&self, mode: u16) -> u8 {
+        match mode {
+            2 => Self::mode_state(self.modes.keyboard_locked),
+            4 => Self::mode_state(self.modes.insert_mode),
+            20 => Self::mode_state(self.modes.line_feed_new_line),
+            // SRM reset is local echo, which a terminal emulator with no
+            // half-duplex line to echo onto can never do. We are permanently
+            // in send-receive mode rather than able to leave it.
+            12 => PERMANENTLY_SET,
+            // The rest of the original ANSI set governs the behaviour of a
+            // hardware terminal's keyboard, printer and transmission line -
+            // guarded areas, area transfer, editing extents, positioning
+            // units. There is no such hardware here to switch.
+            1 | 5 | 7 | 10 | 11 | 13..=19 => PERMANENTLY_RESET,
+            _ => NOT_RECOGNIZED,
+        }
+    }
+
+    fn dec_mode_state(&self, mode: u16) -> u8 {
+        match mode {
+            1 => Self::mode_state(self.modes.application_cursor),
+            6 => Self::mode_state(self.modes.origin_mode),
+            7 => Self::mode_state(self.modes.auto_wrap),
+            9 => Self::mode_state(self.modes.mouse_tracking == MouseTrackingMode::X10),
+            25 => Self::mode_state(self.modes.cursor_visible),
+            47 | 1047 | 1049 => Self::mode_state(self.modes.alternate_screen),
+            66 => Self::mode_state(self.modes.application_keypad),
+            67 => Self::mode_state(self.modes.backarrow_sends_backspace),
+            69 => Self::mode_state(self.modes.left_right_margin_mode),
+            1000 => Self::mode_state(self.modes.mouse_tracking == MouseTrackingMode::ButtonEvent),
+            1002 => Self::mode_state(self.modes.mouse_tracking == MouseTrackingMode::ButtonMotion),
+            1003 => Self::mode_state(self.modes.mouse_tracking == MouseTrackingMode::AnyMotion),
+            1004 => Self::mode_state(self.modes.focus_reporting),
+            1006 => Self::mode_state(self.modes.sgr_mouse),
+            2004 => Self::mode_state(self.modes.bracketed_paste),
+            // Named, and deliberately not performed. The column-width modes
+            // (3, 95) would have the terminal resize the window, which is the
+            // embedder's to decide; 4 and 8 are the timing of a scroll and of
+            // key autorepeat, neither of which a grid controls; 18 and 19 are
+            // a printer; and the remainder are the national, bidirectional
+            // and keyboard-hardware features of real DEC terminals. 5 is
+            // reverse video, which we could perform and do not yet.
+            2..=5 | 8 | 18 | 19 | 34..=36 | 42 | 57 | 60 | 61 | 64 | 68 | 73 | 81 | 95..=106 => {
+                PERMANENTLY_RESET
+            }
+            _ => NOT_RECOGNIZED,
+        }
+    }
+
+    const fn mode_state(set: bool) -> u8 {
+        if set {
+            SET
+        } else {
+            RESET
+        }
+    }
+
     /// Answers `DCS $ q <selector> ST` (DECRQSS).
     ///
     /// Only SGR (`m`) is reportable. This is what a program uses to discover
@@ -2373,6 +2463,14 @@ fn color_report(color: Color, background: bool) -> Option<String> {
         Color::Rgb { red, green, blue } => Some(format!("{extended}:2::{red}:{green}:{blue}")),
     }
 }
+
+/// The DECRPM states. A mode is set or reset, or it is one the terminal can
+/// name but whose state cannot change, or one it cannot name at all.
+const NOT_RECOGNIZED: u8 = 0;
+const SET: u8 = 1;
+const RESET: u8 = 2;
+const PERMANENTLY_SET: u8 = 3;
+const PERMANENTLY_RESET: u8 = 4;
 
 fn default_tab_stops(dimensions: Dimensions) -> Vec<bool> {
     (0..dimensions.columns())

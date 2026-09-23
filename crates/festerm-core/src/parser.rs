@@ -205,6 +205,10 @@ pub enum TerminalOp {
         secondary: bool,
     },
     ClearTabStops(CsiParameters),
+    RequestMode {
+        private: bool,
+        parameters: CsiParameters,
+    },
     /// `CSI ! p` (DECSTR). A soft reset: modes, the scroll region and the
     /// saved cursor go back to their power-on values, but the screen's
     /// contents and the tab stops survive.
@@ -665,6 +669,10 @@ impl Parser {
                 }
                 (false, 1, b'!', b'p') => TerminalOp::SoftReset,
                 (false, 1, b'*', b'y') => TerminalOp::RequestRectangleChecksum(parameters),
+                (_, 1, b'$', b'p') => TerminalOp::RequestMode {
+                    private,
+                    parameters,
+                },
                 _ => TerminalOp::Ignored,
             };
         }

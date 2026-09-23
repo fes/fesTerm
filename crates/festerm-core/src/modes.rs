@@ -33,6 +33,8 @@ pub struct TerminalModes {
     pub(crate) left_right_margin_mode: bool,
     pub(crate) insert_mode: bool,
     pub(crate) line_feed_new_line: bool,
+    pub(crate) keyboard_locked: bool,
+    pub(crate) backarrow_sends_backspace: bool,
     pub(crate) alternate_screen: bool,
     pub(crate) cursor_visible: bool,
     pub(crate) application_cursor: bool,
@@ -68,6 +70,17 @@ impl TerminalModes {
     /// indexing.
     pub const fn line_feed_new_line(self) -> bool {
         self.line_feed_new_line
+    }
+
+    /// KAM, ANSI mode 2. The keyboard is locked: nothing the user types
+    /// reaches the program.
+    pub const fn keyboard_locked(self) -> bool {
+        self.keyboard_locked
+    }
+
+    /// DECBKM, DECSET `?67`. The backarrow key sends BS rather than DEL.
+    pub const fn backarrow_sends_backspace(self) -> bool {
+        self.backarrow_sends_backspace
     }
 
     pub const fn alternate_screen(self) -> bool {
@@ -111,6 +124,8 @@ impl Default for TerminalModes {
             left_right_margin_mode: false,
             insert_mode: false,
             line_feed_new_line: false,
+            keyboard_locked: false,
+            backarrow_sends_backspace: false,
             alternate_screen: false,
             cursor_visible: true,
             application_cursor: false,

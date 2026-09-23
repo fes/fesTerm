@@ -566,12 +566,12 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 292 of the suite's 559 test methods today, so running all of it would
+We pass 315 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
-save/restore cursor, the tab and index controls and the string controls,
-250 tests - and CI fails if any
+save/restore cursor, the tab and index controls, mode reporting and the
+string controls, 274 tests - and CI fails if any
 of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
 rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
@@ -582,10 +582,10 @@ assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
 screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
 moved the survey from 110 to 219, left/right margins took it to 262, and the
-remaining motion and mode controls to 292. The largest remaining blockers are
-mode reporting (`DECRQM`, 32 tests), selective erase (`DECSCA` and the
-`DECSED`/`DECSEL` family), the rectangular editing operations, and colour
-queries. #193 tracks the phases.
+remaining motion controls to 292, and mode reporting to 315. The largest
+remaining blockers are selective erase (`DECSCA` and the `DECSED`/`DECSEL`
+family), the rectangular editing operations, and colour queries. #193 tracks
+the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -633,6 +633,46 @@ otherwise leave the next one typing into a line that slides away from it.
 `LNM` (`CSI 20 h`) makes `LF`, `VT` and `FF` perform a carriage return after
 indexing. It applies to all three alike, which is the practical reason to
 route them through one code path rather than to treat `FF` as a clear.
+
+### Mode reporting: DECRQM, and the difference between two kinds of no
+
+`CSI Pm $ p` (and `CSI ? Pm $ p` for a DEC private mode) asks what state a
+mode is in, and `DECRPM` answers with one of five values: not recognised (0),
+set (1), reset (2), permanently set (3), permanently reset (4).
+
+The trap here is that the reply is about whether a mode is *set*, not about
+whether the terminal performs its function, and the two are easy to conflate
+into a lie. It is trivial to store a bit for every mode a DEC terminal ever
+had and report the bit back, and doing so passes a conformance suite handily.
+It also tells an application that we will do something we will not: a program
+that asks about `DECNRCM`, is told "set", and starts sending text for national
+replacement character sets gets nonsense on the screen and has no way to find
+out why.
+
+So fesTerm reports 1 or 2 only for modes it actually performs, and 4 for
+modes it can name but does not act on - which is exactly the answer that
+value exists to give. The distinction from 0 is worth keeping too: "I do not
+do this" and "I have never heard of this" are different answers, and a
+program probing for an extension can use the difference.
+
+What falls into "named and deliberately not performed" is mostly the hardware
+of a real DEC terminal: the printer modes, the national and bidirectional
+character handling, keyboard-level features like autorepeat and key position
+reporting, and the timing of a scroll. The column-width modes (`DECCOLM`,
+`DECNCSM`) are there for a different reason - they would have the terminal
+resize its own window, which is the embedder's decision and not the grid's.
+`DECSCNM` (reverse video) is the one entry on that list we could perform and
+have not yet.
+
+`SRM` is the interesting inversion. Its *reset* state is local echo, which an
+emulator with no half-duplex line to echo onto can never enter, so we report
+it permanently **set** rather than permanently reset.
+
+Two modes were implemented rather than reported around, because both are
+small and both are real: `KAM` (`CSI 2 h`) locks the keyboard, and does so by
+refusing input rather than by queueing it, so the program is owed nothing
+when it unlocks; and `DECBKM` (`DECSET ?67`) makes the backarrow key send BS
+instead of DEL.
 
 ### Resets: DECSTR, and what a save actually saves
 
