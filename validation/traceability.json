@@ -180,6 +180,7 @@
         "timed_out_command_terminates_its_owned_descendants",
         "provider_attachment_keeps_inherited_executable_search_path",
         "absolute_provider_executable_uses_login_environment_correction",
+        "login_shell_environment_loads_interactive_startup_files",
         "unavailable_binary_is_not_a_provider_error",
         "registry_absence_corruption_and_lock_contention_have_distinct_bounded_results",
         "generation_lease_excludes_stale_pid_records_and_attached_native_sessions",

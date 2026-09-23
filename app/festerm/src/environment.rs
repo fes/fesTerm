@@ -20,7 +20,7 @@
 //!
 //! This module does not mutate the fesTerm process's own environment (that
 //! would need an `unsafe` `std::env::set_var`, forbidden workspace-wide);
-//! instead, on macOS only, it asks the user's real login shell for its
+//! instead, on macOS only, it asks the user's real interactive login shell for its
 //! resolved `PATH` and locale variables once per process and applies them
 //! as [`EnvironmentPolicy`] overrides on the profile about to be spawned,
 //! leaving every other inherited variable untouched. Terminal.app and
@@ -124,8 +124,8 @@ fn login_shell_environment(
     (!resolved.is_empty()).then_some(resolved)
 }
 
-/// Runs the user's login shell as a login (non-interactive) shell to print
-/// its resolved `PATH`, giving up after `timeout` rather than blocking
+/// Runs the user's login shell as an interactive login shell to print its
+/// resolved `PATH`, giving up after `timeout` rather than blocking
 /// fesTerm startup indefinitely if the user's shell startup files hang
 /// (e.g. on a stalled network mount or prompt).
 #[cfg(target_os = "macos")]
@@ -134,7 +134,7 @@ fn run_with_timeout(
     timeout: std::time::Duration,
 ) -> Option<std::process::Output> {
     let mut command = std::process::Command::new(shell);
-    command.args(["-l", "-c"]).arg(format!(
+    command.args(["-l", "-i", "-c"]).arg(format!(
         "echo {DELIMITER}; echo \"$PATH\"; echo \"$LANG\"; echo \"$LC_ALL\"; \
          echo \"$LC_CTYPE\"; echo {DELIMITER}"
     ));
@@ -282,8 +282,24 @@ mod tests {
     }
 
     #[test]
+    fn login_shell_environment_loads_interactive_startup_files() {
+        let script = write_executable_script(&format!(
+            "#!/bin/sh\n\
+             test \"$1\" = -l && test \"$2\" = -i && test \"$3\" = -c || exit 1\n\
+             printf '{DELIMITER}\\n/test/.local/bin:/usr/bin\\nen_US.UTF-8\\n\\n\\n{DELIMITER}\\n'\n"
+        ));
+        let resolved = login_shell_environment(Some(script.clone().into_os_string()))
+            .expect("the interactive login environment must be resolved");
+        let _ = std::fs::remove_file(&script);
+        assert_eq!(
+            resolved.get("PATH"),
+            Some(&std::ffi::OsString::from("/test/.local/bin:/usr/bin"))
+        );
+    }
+
+    #[test]
     fn run_with_timeout_gives_up_on_a_shell_that_never_exits() {
-        // A minimal script that ignores its `-l -c '...'` arguments and
+        // A minimal script that ignores its `-l -i -c '...'` arguments and
         // sleeps well past the short timeout below, so this deterministically
         // exercises the give-up path rather than depending on a real shell's
         // startup-file timing.
