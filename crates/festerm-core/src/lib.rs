@@ -531,6 +531,75 @@ mod tests {
         terminal.ingest(format!("\x1b[{left};{right}s").as_bytes());
     }
 
+    #[test]
+    fn a_selective_erase_spares_protected_cells_and_an_ordinary_one_does_not() {
+        // DECSCA marks cells the selective erases must leave alone. The
+        // ordinary erases are defined not to honour it, which is the whole
+        // point of the sequences being separate.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"ab\x1b[1\"qcd\x1b[0\"qef");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdef  "));
+
+        // Selective erase of the whole line leaves the protected pair.
+        terminal.ingest(b"\x1b[1;1H\x1b[?2K");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("  cd    "));
+
+        // An ordinary erase takes them too.
+        terminal.ingest(b"\x1b[2K");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("        "));
+    }
+
+    #[test]
+    fn an_iso_guarded_area_is_proof_against_every_erase_not_just_selective_ones() {
+        // SPA/EPA and DECSCA set the same bit but mean different things by
+        // it: ISO 6429's guarded area is meant to survive erasure generally,
+        // so the terminal has to remember which family it was last told
+        // about rather than only what each cell carries.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"ab\x1bVc\x1bW");
+        terminal.ingest(b"\x1b[1;1H\x1b[2K");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("  c     "));
+
+        // ECH is bound by it as well.
+        terminal.ingest(b"\x1b[1;1H\x1b[3X");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("  c     "));
+
+        // Once DECSCA has spoken, the ordinary erases stop sparing anything,
+        // including cells an earlier SPA protected.
+        terminal.ingest(b"\x1b[0\"q\x1b[1;1H\x1b[2K");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("        "));
+    }
+
+    #[test]
+    fn a_selective_erase_of_the_display_spares_protection_in_every_direction() {
+        // DECSED 0, 1 and 2 all take the sparing path, including the
+        // whole-screen form, which cannot use the bulk clear because some
+        // cells are staying put.
+        for (erase, expected) in [
+            (b"\x1b[?0J".as_slice(), ["ab      ", "xxc     "]),
+            (b"\x1b[?1J", [" b      ", "  cd    "]),
+            (b"\x1b[?2J", [" b      ", "  c     "]),
+        ] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(b"a\x1b[1\"qb\x1b[0\"q\x1b[2;1Hxx\x1b[1\"qc\x1b[0\"qd");
+            terminal.ingest(b"\x1b[2;3H");
+            terminal.ingest(erase);
+            assert_eq!(terminal.row_text(0).as_deref(), Some(expected[0]));
+            assert_eq!(terminal.row_text(1).as_deref(), Some(expected[1]));
+        }
+    }
+
+    #[test]
+    fn a_soft_reset_forgets_both_the_protection_and_who_asked_for_it() {
+        // DECSTR returns DECSCA to normal. The source has to go with it:
+        // leaving it at ISO would have the next ordinary erase keep sparing
+        // cells that nothing has protected.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1bVab\x1bW\x1b[!p");
+        terminal.ingest(b"\x1b[1;3Hcd\x1b[1;1H\x1b[2K");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("        "));
+    }
+
     fn mode_report(terminal: &mut Terminal, query: &[u8]) -> String {
         terminal.ingest(query);
         String::from_utf8(terminal.drain_replies()).unwrap()
