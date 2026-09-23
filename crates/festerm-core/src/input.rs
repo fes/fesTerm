@@ -136,12 +136,21 @@ pub enum InputEventOutcome {
 }
 
 pub(crate) fn encode_key(key: Key, modes: TerminalModes) -> Option<Vec<u8>> {
+    if modes.keyboard_locked() {
+        // KAM locks the keyboard rather than discarding what it produces, so
+        // nothing is queued and nothing is owed to the program later.
+        return None;
+    }
     let bytes = match key {
         Key::Character(character) => character.to_string().into_bytes(),
         Key::Control(character) => vec![control_byte(character)?],
         Key::Enter => b"\r".to_vec(),
         Key::Tab => b"\t".to_vec(),
-        Key::Backspace => vec![0x7f],
+        Key::Backspace => vec![if modes.backarrow_sends_backspace() {
+            0x08
+        } else {
+            0x7f
+        }],
         Key::Escape => vec![0x1b],
         Key::ArrowUp => cursor_key_bytes(b'A', modes.application_cursor()),
         Key::ArrowDown => cursor_key_bytes(b'B', modes.application_cursor()),

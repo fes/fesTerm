@@ -531,6 +531,89 @@ mod tests {
         terminal.ingest(format!("\x1b[{left};{right}s").as_bytes());
     }
 
+    fn mode_report(terminal: &mut Terminal, query: &[u8]) -> String {
+        terminal.ingest(query);
+        String::from_utf8(terminal.drain_replies()).unwrap()
+    }
+
+    #[test]
+    fn a_mode_report_follows_the_mode_it_is_reporting_on() {
+        // DECRQM answers 1 for set and 2 for reset, and the answer has to
+        // track the mode rather than being a fixed opinion about it.
+        let mut terminal = terminal(8, 3);
+        assert_eq!(mode_report(&mut terminal, b"\x1b[?7$p"), "\x1b[?7;1$y");
+        assert_eq!(mode_report(&mut terminal, b"\x1b[?6$p"), "\x1b[?6;2$y");
+
+        terminal.ingest(b"\x1b[?6h\x1b[?7l");
+        assert_eq!(mode_report(&mut terminal, b"\x1b[?7$p"), "\x1b[?7;2$y");
+        assert_eq!(mode_report(&mut terminal, b"\x1b[?6$p"), "\x1b[?6;1$y");
+
+        // The ANSI modes are asked about without the `?` and answered the
+        // same way.
+        assert_eq!(mode_report(&mut terminal, b"\x1b[4$p"), "\x1b[4;2$y");
+        terminal.ingest(b"\x1b[4h");
+        assert_eq!(mode_report(&mut terminal, b"\x1b[4$p"), "\x1b[4;1$y");
+    }
+
+    #[test]
+    fn a_mode_we_do_not_perform_is_reported_permanently_reset_not_set() {
+        // The reply says whether a mode is set, not whether we act on it, and
+        // conflating the two is a lie a program can act on. Storing a bit for
+        // a function we do not perform and reporting it back would tell an
+        // application we will do something we will not, so the answer is
+        // "permanently reset" - which is the value that exists to say so.
+        let mut terminal = terminal(8, 3);
+        for query in [b"\x1b[?42$p".as_slice(), b"\x1b[?18$p", b"\x1b[?3$p"] {
+            terminal.ingest(query);
+            let reply = String::from_utf8(terminal.drain_replies()).unwrap();
+            assert!(reply.ends_with(";4$y"), "unexpected reply {reply:?}");
+        }
+
+        // Setting one does not change that: the bit is not stored, so it
+        // cannot be reported back.
+        terminal.ingest(b"\x1b[?42h");
+        assert_eq!(mode_report(&mut terminal, b"\x1b[?42$p"), "\x1b[?42;4$y");
+
+        // A mode we cannot name at all is 0 rather than 4, because "I do not
+        // do this" and "I have never heard of this" are different answers.
+        assert_eq!(
+            mode_report(&mut terminal, b"\x1b[?12345$p"),
+            "\x1b[?12345;0$y"
+        );
+
+        // SRM is the other way round: we can never echo locally, so we are
+        // permanently in send-receive mode rather than able to leave it.
+        assert_eq!(mode_report(&mut terminal, b"\x1b[12$p"), "\x1b[12;3$y");
+    }
+
+    #[test]
+    fn a_locked_keyboard_sends_nothing_and_a_backarrow_mode_changes_what_it_sends() {
+        // KAM and DECBKM are reported because they are performed, which is
+        // the standard this file holds the mode reports to.
+        let mut terminal = terminal(8, 3);
+        terminal.handle_input(InputEvent::Key(Key::Backspace));
+        assert_eq!(terminal.drain_input(), [0x7f]);
+
+        terminal.ingest(b"\x1b[?67h");
+        terminal.handle_input(InputEvent::Key(Key::Backspace));
+        assert_eq!(terminal.drain_input(), [0x08]);
+        assert_eq!(mode_report(&mut terminal, b"\x1b[?67$p"), "\x1b[?67;1$y");
+
+        // A locked keyboard queues nothing at all rather than queueing it to
+        // deliver later, so the program is owed nothing when it unlocks.
+        terminal.ingest(b"\x1b[2h");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Character('a'))),
+            InputEventOutcome::Rejected
+        );
+        assert!(terminal.drain_input().is_empty());
+        assert_eq!(mode_report(&mut terminal, b"\x1b[2$p"), "\x1b[2;1$y");
+
+        terminal.ingest(b"\x1b[2l");
+        terminal.handle_input(InputEvent::Key(Key::Character('a')));
+        assert_eq!(terminal.drain_input(), b"a");
+    }
+
     #[test]
     fn form_feed_and_vertical_tab_index_exactly_as_a_line_feed_does() {
         // FF and VT are LF under different names: they move down a line and
