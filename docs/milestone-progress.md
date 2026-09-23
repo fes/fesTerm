@@ -3,6 +3,42 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Answering honestly, and stopping where the line does (v0.5.0)
+
+Two changes, both about fesTerm telling programs inside it the truth.
+
+The first began as a rendering complaint. A Copilot CLI session running in
+fesTerm drew its inline code spans as bare padding - the right amount of
+space, no highlight - and the obvious suspects were the recent
+inline-background work and the tmux session in between. It was neither. The
+application had simply declined to style them, because it asks the terminal
+what colour its background is before deciding, and fesTerm understood exactly
+two OSC commands and silently discarded the rest. Ask it what colour it was
+and it said nothing, so the program fell back to its safe guess. fesTerm now
+answers `OSC 4`, `OSC 10`, `OSC 11` and `OSC 12` queries with the colours the
+renderer actually paints, which is what vim, bat, delta, fzf and a long list
+of Node CLIs use to pick a theme.
+
+The second is reverse wraparound. `DECSET 45` lets a cursor backspaced past
+the left edge continue onto the previous row, so a long shell command line can
+be edited as the single line it is rather than the several rows it occupies.
+fesTerm stopped at the edge. It now climbs - but only across a row that
+genuinely wrapped, never past the start of the logical line, and never out of
+the scrolling region.
+
+Both changes are narrow, and both were shaped by the same refusal. fesTerm
+answers colour *queries* and still ignores colour *sets*, because accepting a
+set would make the next query describe a background nothing on screen uses.
+And reverse wraparound uses xterm's stricter post-383 bounds rather than the
+older rule that climbs onto whatever row happens to be above, because terminal
+output is untrusted and the looser rule lets a remote program move a user's
+editing cursor onto a line they never chose. In both cases the failure worth
+preventing is not a missing answer but a confident wrong one.
+
+The conformance suite reflects it: `validation/esctest2-skip.txt` is empty for
+the first time, and the gate runs every test the allowlist enables - 384
+passing, 0 failing.
+
 ## The last skipped test
 
 `validation/esctest2-skip.txt` existed so that every test the conformance
