@@ -3,6 +3,34 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## The last skipped test
+
+`validation/esctest2-skip.txt` existed so that every test the conformance
+allowlist enabled but the runner did not execute had to be written down with a
+reason. For a long time it held exactly two entries, both in `CUBTests`, both
+waiting on reverse wraparound - the mode that lets a cursor backspaced past the
+left edge continue onto the previous row, so a long shell command line can be
+edited as the single line it is rather than the several rows it occupies.
+
+The motion was never the hard part. The hard part was where it stops, and
+xterm has answered that twice. Originally the cursor climbed onto whatever row
+was above it; patch 383 narrowed it to rows that had actually wrapped. esctest2
+encodes both answers and picks between them from a command-line flag, so the
+suite could not settle it - it asserts whichever behaviour the terminal
+declares. fesTerm declares 383, because the older rule means a user backspacing
+at a left edge can silently start editing an unrelated line, and the terminal
+has no way to tell that apart from an intended edit.
+
+Implementing it exposed a quieter bug. fesTerm already recorded which rows
+soft-wrapped, because reflow on resize needs to know, but nothing ever cleared
+the mark: a row that wrapped once stayed marked even after a line feed proved
+it no longer continued anywhere. Nothing had read the flag to move a cursor
+before, so the staleness had never mattered. Now an explicit line break retires
+it, which makes reflow and selection slightly more accurate too.
+
+The skip file is empty for the first time, and the gate runs every test the
+allowlist enables: 384 passing, 0 failing.
+
 ## Telling programs what color the terminal is
 
 A Copilot CLI session running inside fesTerm rendered its inline code spans as

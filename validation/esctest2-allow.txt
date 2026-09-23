@@ -166,3 +166,19 @@ DECSETTests\.test_DECSET_DECOM
 #
 # esctest2 has no query-only colour test, so the query behaviour is pinned by
 # exact-byte tests in festerm-core instead.
+
+# Reverse wraparound, DECSET 45. The two CUBTests entries that used to be
+# skipped now run. The harness is told `--xterm-reverse-wrap 383` because
+# fesTerm implements the semantics xterm settled on in patch 383: the cursor
+# climbs only across rows that actually soft-wrapped and stops at the start
+# of the logical line, rather than the older behaviour of climbing
+# unconditionally onto whatever happens to be above. ADR 0037 records why.
+
+# XtermWinops is deliberately out of scope. Its tests resize, move, raise,
+# lower and iconify the window, and report its position in pixels - requests
+# that hand a remote program control of a local window. fesTerm does not
+# answer them, so the family is not an unfinished phase but a boundary.
+
+# DA, DA2 and DECID report a fixed identity chosen to match the feature set
+# fesTerm actually implements, and that identity is pinned by exact-byte
+# tests in festerm-core rather than by this suite.

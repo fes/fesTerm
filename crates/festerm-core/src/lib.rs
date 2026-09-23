@@ -204,6 +204,94 @@ mod tests {
     }
 
     #[test]
+    fn backspace_at_the_left_edge_stays_put_until_reverse_wraparound_is_on() {
+        let mut terminal = terminal(10, 5);
+        terminal.ingest(b"0123456789abc");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (3, 1)
+        );
+        terminal.ingest(b"\x08\x08\x08\x08");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 1),
+            "without DECSET 45 backspace must stop at the left edge"
+        );
+
+        terminal.ingest(b"\x1b[?45h\x08");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (9, 0),
+            "reverse wraparound climbs to the last column of the wrapped row"
+        );
+    }
+
+    #[test]
+    fn reverse_wraparound_stops_at_the_start_of_the_logical_line() {
+        let mut terminal = terminal(10, 5);
+        terminal.ingest(b"\x1b[?45h");
+        terminal.ingest(b"0123456789abc");
+        terminal.ingest(b"\x1b[100D");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 0),
+            "an oversized CUB unwinds the wrap but not past the line it began"
+        );
+    }
+
+    #[test]
+    fn reverse_wraparound_refuses_to_cross_a_row_that_did_not_wrap() {
+        let mut terminal = terminal(10, 5);
+        terminal.ingest(b"\x1b[?45h");
+        terminal.ingest(b"abc\r\ndef");
+        terminal.ingest(b"\x1b[100D");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 1),
+            "a line feed ended the row above, so there is nothing to climb into"
+        );
+    }
+
+    #[test]
+    fn reverse_wraparound_will_not_climb_out_of_the_scrolling_region() {
+        let mut terminal = terminal(10, 6);
+        terminal.ingest(b"\x1b[?45h");
+        terminal.ingest(b"0123456789abc");
+        terminal.ingest(b"\x1b[2;4r\x1b[2;1H");
+        terminal.ingest(b"\x1b[100D");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 1),
+            "row 1 is the top of the region even though row 0 wrapped into it"
+        );
+    }
+
+    #[test]
+    fn a_line_feed_clears_a_stale_wrap_mark_so_the_cursor_cannot_climb() {
+        let mut terminal = terminal(10, 5);
+        terminal.ingest(b"\x1b[?45h");
+        terminal.ingest(b"0123456789abc");
+        // Return to the row that wrapped and end it explicitly. The row below
+        // is no longer a continuation of it.
+        terminal.ingest(b"\x1b[1;5H\n");
+        terminal.ingest(b"\x1b[2;1H\x1b[100D");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 1),
+            "the line feed retired the wrap mark left behind by the earlier wrap"
+        );
+    }
+
+    #[test]
+    fn decrqm_reports_reverse_wraparound() {
+        let mut terminal = terminal(10, 5);
+        terminal.ingest(b"\x1b[?45$p");
+        assert_eq!(terminal.drain_replies(), b"\x1b[?45;2$y".to_vec());
+        terminal.ingest(b"\x1b[?45h\x1b[?45$p");
+        assert_eq!(terminal.drain_replies(), b"\x1b[?45;1$y".to_vec());
+    }
+
+    #[test]
     #[ignore = "manual throughput probe, not a regression test"]
     fn manual_ingest_throughput_probe() {
         let mut term = terminal(120, 40);

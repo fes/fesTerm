@@ -122,6 +122,7 @@ echo "running esctest2 ${ESCTEST_COMMIT:0:7}"
         --logfile "${logfile}" \
         --expected-terminal xterm \
         --xterm-checksum 334 \
+        --xterm-reverse-wrap 383 \
         --include "${include}"
 )
 
