@@ -132,7 +132,7 @@ is running inside, so `scripts/run-esctest2.sh` hosts it on a pty with
 ./scripts/run-esctest2.sh --everything  # survey the whole suite, never fails
 ```
 
-We pass 219 of 559 test methods today, so the allowlist is the contract rather
+We pass 262 of 559 test methods today, so the allowlist is the contract rather
 than the whole suite - see the standards notes for why, and #193 for the phases
 that widen it. The two files divide the work: the allowlist says what we are
 held to, and the skip list says which tests inside those families we have

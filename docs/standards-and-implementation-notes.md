@@ -566,11 +566,11 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 219 of the suite's 559 test methods today, so running all of it would
+We pass 262 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
-vertical motion, the erase and insert/delete families, tab stops,
-save/restore cursor and the string controls, 157 tests - and CI fails if any
+vertical motion, the erase and insert/delete families, scrolling, tab stops,
+save/restore cursor and the string controls, 219 tests - and CI fails if any
 of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
 rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
@@ -580,10 +580,10 @@ DECRQCRA was the first phase for exactly this reason: 316 of the 559 methods
 assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
 screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
-moved the survey from 110 to 219. The largest remaining blocker is left/right
-margins (`DECSLRM` and `DECSET 69`), which is a change to the screen model
-rather than a missing sequence; then selective erase (`DECSCA`) and reverse
-wraparound. #193 tracks the phases.
+moved the survey from 110 to 219, and left/right margins then took it to 262.
+The largest remaining blockers are mode reporting (`DECRQM`, 32 tests),
+selective erase (`DECSCA` and the `DECSED`/`DECSEL` family), the rectangular
+editing operations, and colour queries. #193 tracks the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -663,6 +663,48 @@ it. The page parameter is accepted and ignored - we have one page. A request
 naming an empty or inverted rectangle is answered with `0000` rather than
 ignored: an unanswered request strands the caller until its read times out,
 which is a worse failure than a zero.
+
+### Left and right margins
+
+`DECSLRM` (`CSI Pl ; Pr s`) narrows the columns that scrolling and editing
+act on, so that a region of the screen behaves like a column of text of its
+own. It only applies while `DECLRMM` (`DECSET 69`) is set, and resetting that
+mode discards the margins rather than suspending them - otherwise enabling
+the mode for an unrelated purpose would revive a stale pair.
+
+This is a change to the screen model rather than one more sequence. The rule
+that makes it tractable is that **the margins describe a window, and a cursor
+outside that window is not in the thing these operations act on**. So `ICH`,
+`DCH`, `IL` and `DL` do nothing at all from outside the margins rather than
+falling back to the whole row, and `IND`, `RI`, `LF` and `NEL` neither scroll
+nor move the cursor when it sits outside them at a margin row. Motion follows
+the same shape as the existing vertical rule: `CUF`/`CUB` are bound by a
+margin only when the cursor starts inside it.
+
+Three details are each worth stating because each is a fork:
+
+- **`CSI s` is ambiguous, and `DECLRMM` is what resolves it.** The same final
+  byte is SCOSC (save cursor) and DECSLRM. While the mode is set it is always
+  DECSLRM, so a bare `CSI s` resets the margins to full width rather than
+  saving anything. esctest2 asserts precisely this - saving the cursor inside
+  left/right margin mode is expected *not* to save.
+- **`NEL` indexes first and returns second.** Without margins the order is
+  invisible. With them it is not: returning first would move a cursor from
+  outside the margins to the left margin, and the index would then scroll
+  when it should have done nothing.
+- **Origin mode moves the column frame too.** In origin mode column 1 is the
+  left margin, so `CUP`, `HVP`, `CHA`, `DECRQCRA` and the `CPR` reply are all
+  measured from it. `HPA` is the exception and stays absolute, which is the
+  only thing separating it from `CHA`, and the reason they cannot share a
+  code path. A cursor left of the left margin has no meaningful offset from
+  an origin it is outside, so `CPR` reports where it actually is rather than
+  a number that cannot be negative.
+
+Autowrap follows the margins as well: a line wraps at the right margin and
+resumes at the left one. Below the terminal, `Screen`'s row-shifting
+operations take a `ColumnSpan`; the full-width case is checked in one place
+so the ring-rotation fast path for a whole-screen scroll is untouched. A
+partial-width scroll moves no whole line, so nothing is handed to scrollback.
 
 ## Deferred or Deliberate Decisions
 
