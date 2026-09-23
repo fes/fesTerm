@@ -201,6 +201,13 @@ pub enum TerminalOp {
         parameters: CsiParameters,
     },
     DeviceStatus(CsiParameters),
+    /// `DECDSR`: the private form of `DSR`, which asks about devices rather
+    /// than about the terminal itself.
+    DecDeviceStatus(CsiParameters),
+    /// `REP`: print the preceding graphic character again.
+    RepeatPrecedingCharacter(CsiParameters),
+    /// `DECALN`: fill the screen with `E` and reset the margins.
+    ScreenAlignmentPattern,
     DeviceAttributes {
         secondary: bool,
     },
@@ -277,7 +284,7 @@ enum Charset {
 enum ParserState {
     Ground,
     Escape,
-    EscapeIntermediate,
+    EscapeIntermediate(u8),
     /// Immediately after `ESC (` or `ESC )`: the next byte designates the
     /// named slot's charset.
     CharsetDesignate(CharsetSlot),
@@ -441,9 +448,16 @@ impl Parser {
                 _ => TerminalOp::Ignored,
             },
             ParserState::Escape => self.advance_escape(byte),
-            ParserState::EscapeIntermediate => {
+            ParserState::EscapeIntermediate(intermediate) => {
                 self.state = ParserState::Ground;
-                TerminalOp::Ignored
+                // `ESC # 8` is DECALN. The rest of the `#` family sets line
+                // attributes we do not implement, and the other intermediates
+                // designate character sets handled above.
+                if intermediate == b'#' && byte == b'8' {
+                    TerminalOp::ScreenAlignmentPattern
+                } else {
+                    TerminalOp::Ignored
+                }
             }
             ParserState::CharsetDesignate(slot) => {
                 self.state = ParserState::Ground;
@@ -507,7 +521,7 @@ impl Parser {
             b'X' | b'^' | b'_' => self.start_string(StringKind::Other),
             b'(' => ParserState::CharsetDesignate(CharsetSlot::G0),
             b')' => ParserState::CharsetDesignate(CharsetSlot::G1),
-            0x20..=0x2f => ParserState::EscapeIntermediate,
+            0x20..=0x2f => ParserState::EscapeIntermediate(byte),
             _ => ParserState::Ground,
         };
         match byte {
@@ -744,6 +758,7 @@ impl Parser {
                 },
                 b'J' => TerminalOp::SelectiveEraseDisplay(parameters),
                 b'K' => TerminalOp::SelectiveEraseLine(parameters),
+                b'n' => TerminalOp::DecDeviceStatus(parameters),
                 _ => TerminalOp::Ignored,
             };
         }
@@ -781,6 +796,7 @@ impl Parser {
             b'd' => TerminalOp::VerticalPositionAbsolute(parameters),
             b'm' => TerminalOp::SetGraphicsRendition(parameters),
             b'n' => TerminalOp::DeviceStatus(parameters),
+            b'b' => TerminalOp::RepeatPrecedingCharacter(parameters),
             b'c' => TerminalOp::DeviceAttributes { secondary: false },
             b'g' => TerminalOp::ClearTabStops(parameters),
             b't' => TerminalOp::WindowOperation(parameters),

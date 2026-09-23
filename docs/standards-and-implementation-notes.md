@@ -566,12 +566,13 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 388 of the suite's 559 test methods today, so running all of it would
+We pass 408 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
 save/restore cursor, the tab and index controls, mode reporting, selective
-erase, rectangular editing and the string controls, 361 tests - and CI fails if any
+erase, rectangular editing, the status reports and the string controls, 382
+tests - and CI fails if any
 of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
 rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
@@ -583,8 +584,9 @@ screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
 moved the survey from 110 to 219, left/right margins took it to 262, and the
 remaining motion controls to 292, mode reporting to 315 and selective erase
-to 344 and rectangular editing to 388. The largest remaining blockers are the
-colour queries, the window operations and `RIS`. #193 tracks the phases.
+to 344, rectangular editing to 388 and the status reports to 408. The largest
+remaining blockers are the colour queries and the window operations, both of
+which belong to the embedder rather than the core. #193 tracks the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -747,6 +749,48 @@ Protection turned out to be part of the saved cursor state. `DECSC`/`DECRC`
 and `SCOSC`/`SCORC` both restore it, which is easy to miss because it looks
 like a rendition and is stored beside them, but is not one: `SGR 0` cannot
 clear it, and the SCO form, which saves no renditions at all, saves this.
+
+### Reporting what we do not have
+
+`DECDSR` is the private form of `DSR`, and every report in it asks about a
+device: a printer port, user-defined keys, a locator, macro storage, a
+communications link, a multi-session multiplexer. We have none of them. Each
+is answered with the value that means *no such thing* - no printer rather
+than printer ready, locked UDKs rather than unlocked, no locator rather than
+a mouse - because the agreeable answer is the dangerous one. A program told a
+printer is ready will send a job into a void and wait.
+
+`DECXCPR` is reported without the page parameter for the same reason. The
+page is a VT400 claim, and `device_attributes` deliberately claims less.
+
+`DECRQSS` follows the rule established for `DECRQM`: it answers for the
+settings we actually hold - `SGR`, `DECSTBM`, `DECSLRM`, `DECSCUSR`,
+`DECSCA` - and replies `0$r`, "unrecognised", for everything else. A
+plausible default for a setting we ignore is a lie the caller cannot detect,
+and the sequence has a way to say "I do not keep that", so we use it.
+
+The primary device attributes are the clearest case of this and are the
+reason `DA` is not in the allowlist. esctest2 expects a default xterm to
+report `64;1;2;6;9;15;16;17;18;21;22;28;29`. We now genuinely have four of
+those - selective erase, horizontal scrolling, colour, and rectangular
+editing - but the list also claims a printer port, a ReGIS locator, user
+windows and terminal state reports. Passing the test would mean claiming all
+of it. The conservative `CSI ? 6 c` stays until the features behind the codes
+are real.
+
+### Repeat and the alignment pattern
+
+`REP` repeats the last *graphic* character, which is not the same as the last
+byte received: an intervening control sequence leaves it repeatable, while a
+combining mark that only extended an existing grapheme never becomes it. The
+repeats go through the ordinary print path, so wrapping and the margins apply
+to them exactly as they did to the character that seeded them - which is why
+esctest2 can test it against both margin sets.
+
+`DECALN` fills the page with `E`, homes the cursor and drops both sets of
+margins. It is a test pattern for screen alignment, so it deliberately leaves
+nothing of the previous state in the way; esctest2 checks the margins are
+gone by walking the cursor across where they were.
 
 ### Resets: DECSTR, and what a save actually saves
 

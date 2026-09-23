@@ -525,10 +525,118 @@ mod tests {
         );
     }
 
+    /// Everything the terminal has queued to send back, as a string.
+    fn drain(terminal: &mut Terminal) -> String {
+        String::from_utf8(terminal.drain_replies().to_vec()).expect("replies are utf-8")
+    }
+
+    /// Asks DECRQSS for one setting and returns the whole reply.
+    fn status_report(terminal: &mut Terminal, selector: &[u8]) -> String {
+        let mut query = b"\x1bP$q".to_vec();
+        query.extend_from_slice(selector);
+        query.extend_from_slice(b"\x1b\\");
+        terminal.ingest(&query);
+        drain(terminal)
+    }
+
     /// Turns on DECLRMM and sets left/right margins, one-based inclusive.
     fn with_margins(terminal: &mut Terminal, left: usize, right: usize) {
         terminal.ingest(b"\x1b[?69h");
         terminal.ingest(format!("\x1b[{left};{right}s").as_bytes());
+    }
+
+    #[test]
+    fn repeat_repeats_the_last_printed_character_not_the_last_byte() {
+        // REP is defined against the last *graphic* character, so an
+        // intervening control sequence leaves it repeatable, and a combining
+        // mark that only extended an existing grapheme does not become it.
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"a\x1b[1m\x1b[3b");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("aaaa    "));
+
+        // With nothing yet printed there is nothing to repeat.
+        let mut fresh = crate::tests::terminal(8, 1);
+        fresh.ingest(b"\x1b[3b");
+        assert_eq!(fresh.row_text(0).as_deref(), Some("        "));
+    }
+
+    #[test]
+    fn repeat_wraps_and_is_bounded_by_the_margins() {
+        // The repeats go through the ordinary print path, so they wrap at the
+        // right margin exactly as the character that seeded them would have.
+        let mut terminal = terminal(8, 2);
+        with_margins(&mut terminal, 2, 4);
+        terminal.ingest(b"\x1b[1;2Ha\x1b[3b");
+        assert_eq!(terminal.row_text(0).as_deref(), Some(" aaa    "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some(" a      "));
+    }
+
+    #[test]
+    fn the_alignment_pattern_fills_the_page_and_drops_the_margins() {
+        // DECALN is a test pattern, so it deliberately leaves none of the
+        // previous state in the way: both margin sets go, not just the
+        // contents of the screen.
+        let mut terminal = terminal(4, 3);
+        with_margins(&mut terminal, 2, 3);
+        terminal.ingest(b"\x1b[2;2r");
+        terminal.ingest(b"\x1b[2;2H\x1b#8");
+        for row in 0..3 {
+            assert_eq!(terminal.row_text(row).as_deref(), Some("EEEE"));
+        }
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 0)
+        );
+        // The cursor can now reach a corner that the margins had fenced off.
+        terminal.ingest(b"\x1b[3;4H");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (3, 2)
+        );
+    }
+
+    #[test]
+    fn setting_reports_answer_for_settings_we_hold_and_decline_the_rest() {
+        // DECRQSS replies `1$r<params><selector>` for a setting it keeps and
+        // `0$r` for one it does not. Declining is the honest answer: a
+        // plausible default for a setting we ignore would be a lie the
+        // caller cannot detect.
+        let mut terminal = terminal(10, 6);
+        terminal.ingest(b"\x1b[3;5r");
+        assert_eq!(status_report(&mut terminal, b"r"), "\x1bP1$r3;5r\x1b\\");
+
+        terminal.ingest(b"\x1b[4 q");
+        assert_eq!(status_report(&mut terminal, b" q"), "\x1bP1$r4 q\x1b\\");
+
+        terminal.ingest(b"\x1b[1\"q");
+        assert_eq!(status_report(&mut terminal, b"\"q"), "\x1bP1$r1\"q\x1b\\");
+
+        // DECSCL is a setting we do not keep, so we say so.
+        assert_eq!(status_report(&mut terminal, b"\"p"), "\x1bP0$r\x1b\\");
+    }
+
+    #[test]
+    fn device_status_reports_admit_the_devices_are_absent() {
+        // Every DECDSR report is about a device we do not have. The values
+        // chosen all mean "no such thing" rather than "ready": a program
+        // that believes a printer is attached will send a job into a void.
+        let mut terminal = terminal(10, 6);
+        for (query, reply) in [
+            (&b"\x1b[?15n"[..], "\x1b[?13n"),
+            (b"\x1b[?25n", "\x1b[?21n"),
+            (b"\x1b[?55n", "\x1b[?50n"),
+            (b"\x1b[?75n", "\x1b[?70n"),
+            (b"\x1b[?85n", "\x1b[?83n"),
+        ] {
+            terminal.ingest(query);
+            assert_eq!(drain(&mut terminal), reply);
+        }
+
+        // DECXCPR reports the cursor, and reports it without a page, because
+        // the page is a VT400 claim and our identity deliberately claims
+        // less than that.
+        terminal.ingest(b"\x1b[6;5H\x1b[?6n");
+        assert_eq!(drain(&mut terminal), "\x1b[?6;5R");
     }
 
     #[test]
