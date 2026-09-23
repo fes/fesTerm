@@ -31,6 +31,8 @@ pub struct TerminalModes {
     pub(crate) auto_wrap: bool,
     pub(crate) origin_mode: bool,
     pub(crate) left_right_margin_mode: bool,
+    pub(crate) insert_mode: bool,
+    pub(crate) line_feed_new_line: bool,
     pub(crate) alternate_screen: bool,
     pub(crate) cursor_visible: bool,
     pub(crate) application_cursor: bool,
@@ -54,6 +56,18 @@ impl TerminalModes {
     /// this is set; resetting it puts them back to the full width.
     pub const fn left_right_margin_mode(self) -> bool {
         self.left_right_margin_mode
+    }
+
+    /// IRM, ANSI mode 4. Printing shifts the rest of the line right rather
+    /// than overwriting it.
+    pub const fn insert_mode(self) -> bool {
+        self.insert_mode
+    }
+
+    /// LNM, ANSI mode 20. LF, VT and FF each perform a carriage return after
+    /// indexing.
+    pub const fn line_feed_new_line(self) -> bool {
+        self.line_feed_new_line
     }
 
     pub const fn alternate_screen(self) -> bool {
@@ -95,6 +109,8 @@ impl Default for TerminalModes {
             auto_wrap: true,
             origin_mode: false,
             left_right_margin_mode: false,
+            insert_mode: false,
+            line_feed_new_line: false,
             alternate_screen: false,
             cursor_visible: true,
             application_cursor: false,
