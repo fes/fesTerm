@@ -566,12 +566,12 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 315 of the suite's 559 test methods today, so running all of it would
+We pass 344 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
-save/restore cursor, the tab and index controls, mode reporting and the
-string controls, 274 tests - and CI fails if any
+save/restore cursor, the tab and index controls, mode reporting, selective
+erase and the string controls, 305 tests - and CI fails if any
 of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
 rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
@@ -582,10 +582,9 @@ assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
 screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
 moved the survey from 110 to 219, left/right margins took it to 262, and the
-remaining motion controls to 292, and mode reporting to 315. The largest
-remaining blockers are selective erase (`DECSCA` and the `DECSED`/`DECSEL`
-family), the rectangular editing operations, and colour queries. #193 tracks
-the phases.
+remaining motion controls to 292, mode reporting to 315 and selective erase
+to 344. The largest remaining blockers are the rectangular editing
+operations, colour queries and `RIS`. #193 tracks the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -633,6 +632,37 @@ otherwise leave the next one typing into a line that slides away from it.
 `LNM` (`CSI 20 h`) makes `LF`, `VT` and `FF` perform a carriage return after
 indexing. It applies to all three alike, which is the practical reason to
 route them through one code path rather than to treat `FF` as a clear.
+
+### Selective erase, and the two protections that are not the same
+
+A cell can be marked protected from erasure, and there are two sequences
+that do it: DEC's `DECSCA` (`CSI Ps " q`) and ISO 6429's `SPA`/`EPA`
+(`ESC V` / `ESC W`). They set the same per-cell bit, and they mean
+different things by it.
+
+`DECSCA` protection is honoured **only** by the selective erases, `DECSED`
+(`CSI ? Ps J`) and `DECSEL` (`CSI ? Ps K`). An ordinary `ED`, `EL` or `ECH`
+goes straight through it. That is not an oversight in the standard - it is
+the reason the selective forms exist at all, and esctest2 pins it from both
+sides with a `doesNotRespectDECProtection` test for each ordinary erase.
+
+`SPA`/`EPA` protection is a *guarded area*, and is meant to survive erasure
+generally, so every erase honours it.
+
+The consequence is that a terminal implementing both cannot decide what an
+ordinary erase does from the cell alone: it has to remember which family of
+sequences last spoke. fesTerm keeps that as a `ProtectionSource` alongside
+the current protection flag, and `DECSTR` clears both together - leaving the
+source at ISO would have the next ordinary erase keep sparing cells that
+nothing had protected.
+
+The bit itself lives in `Attributes`, because it travels with a cell exactly
+as a rendition does, but it is set from a flag of its own rather than from
+the current pen, so that `SGR 0` cannot clear it and an erase cannot set it.
+A selective erase walks its span cell by cell instead of filling it, and the
+whole-screen form gives up the bulk clear entirely, because that path
+collapses the ring buffer and resets every row's extent - which it cannot do
+while some cells are staying where they are.
 
 ### Mode reporting: DECRQM, and the difference between two kinds of no
 

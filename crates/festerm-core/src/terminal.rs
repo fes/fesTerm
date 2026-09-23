@@ -392,6 +392,11 @@ pub struct Terminal {
     cursor_style_set: bool,
     tab_stops: Vec<bool>,
     current_attributes: Attributes,
+    /// Whether characters printed from now on are protected from erasure, and
+    /// which family of sequences last said so. The source is kept because the
+    /// two families disagree about which erases honour it.
+    current_protected: bool,
+    protection: ProtectionSource,
     current_foreground: Color,
     current_background: Color,
     title: String,
@@ -425,6 +430,8 @@ impl Terminal {
             cursor_style_set: false,
             tab_stops: default_tab_stops(dimensions),
             current_attributes: Attributes::NONE,
+            current_protected: false,
+            protection: ProtectionSource::None,
             current_foreground: Color::Default,
             current_background: Color::Default,
             title: String::new(),
@@ -874,8 +881,8 @@ impl Terminal {
             TerminalOp::VerticalPositionAbsolute(parameters) => {
                 self.vertical_position_absolute(parameters)
             }
-            TerminalOp::EraseDisplay(parameters) => self.erase_display(parameters),
-            TerminalOp::EraseLine(parameters) => self.erase_line(parameters),
+            TerminalOp::EraseDisplay(parameters) => self.erase_display(parameters, false),
+            TerminalOp::EraseLine(parameters) => self.erase_line(parameters, false),
             TerminalOp::EraseCharacters(parameters) => self.erase_characters(parameters),
             TerminalOp::InsertCharacters(parameters) => self.insert_characters(parameters),
             TerminalOp::DeleteCharacters(parameters) => self.delete_characters(parameters),
@@ -901,6 +908,16 @@ impl Terminal {
             TerminalOp::DeviceStatus(parameters) => self.device_status(parameters),
             TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
             TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
+            TerminalOp::SetProtection { iso, protected } => {
+                self.protection = if iso {
+                    ProtectionSource::Iso
+                } else {
+                    ProtectionSource::Dec
+                };
+                self.current_protected = protected;
+            }
+            TerminalOp::SelectiveEraseDisplay(parameters) => self.erase_display(parameters, true),
+            TerminalOp::SelectiveEraseLine(parameters) => self.erase_line(parameters, true),
             TerminalOp::RequestMode {
                 private,
                 parameters,
@@ -1012,7 +1029,11 @@ impl Terminal {
         let cursor = self.cursor();
         let foreground = self.current_foreground;
         let background = self.current_background;
-        let attributes = self.current_attributes;
+        let attributes = if self.current_protected {
+            self.current_attributes.with(Attributes::PROTECTED)
+        } else {
+            self.current_attributes
+        };
         let hyperlink = self.current_hyperlink.clone();
         if self.current_hyperlink_cells_remaining > 0 {
             self.current_hyperlink_cells_remaining -= 1;
@@ -1492,7 +1513,7 @@ impl Terminal {
         buffer.pending_wrap = false;
     }
 
-    fn erase_display(&mut self, parameters: CsiParameters) {
+    fn erase_display(&mut self, parameters: CsiParameters, selective: bool) {
         let mode = Self::raw_parameter(parameters, 0, 0);
         if mode == 3 {
             if self.active_screen == ActiveScreen::Primary {
@@ -1500,32 +1521,59 @@ impl Terminal {
             }
             return;
         }
+        let spare = self.spares_protected_cells(selective);
         let columns = self.dimensions().columns();
         let rows = self.dimensions().rows();
         let cell = self.erase_cell();
         let cursor = self.cursor();
         let screen = &mut self.active_buffer_mut().screen;
-        match mode {
-            0 => screen.fill_linear(cursor.row * columns + cursor.column, columns * rows, cell),
-            1 => screen.fill_linear(0, cursor.row * columns + cursor.column + 1, cell),
-            2 => screen.clear_all(cell),
+        let start = cursor.row * columns + cursor.column;
+        match (mode, spare) {
+            (0, false) => screen.fill_linear(start, columns * rows, cell),
+            (0, true) => screen.fill_linear_sparing_protected(start, columns * rows, cell),
+            (1, false) => screen.fill_linear(0, start + 1, cell),
+            (1, true) => screen.fill_linear_sparing_protected(0, start + 1, cell),
+            (2, false) => screen.clear_all(cell),
+            // The whole-screen clear collapses the ring and resets every
+            // row's extent, which it cannot do while some cells are staying
+            // put, so a sparing erase takes the general path instead.
+            (2, true) => screen.fill_linear_sparing_protected(0, columns * rows, cell),
             _ => {}
         }
     }
 
-    fn erase_line(&mut self, parameters: CsiParameters) {
+    fn erase_line(&mut self, parameters: CsiParameters, selective: bool) {
         let mode = Self::raw_parameter(parameters, 0, 0);
+        let spare = self.spares_protected_cells(selective);
         let columns = self.dimensions().columns();
         let cell = self.erase_cell();
         let cursor = self.cursor();
-        let start = cursor.row * columns;
+        let row = cursor.row * columns;
+        let (from, to) = match mode {
+            0 => (row + cursor.column, row + columns),
+            1 => (row, row + cursor.column + 1),
+            2 => (row, row + columns),
+            _ => return,
+        };
         let screen = &mut self.active_buffer_mut().screen;
-        match mode {
-            0 => screen.fill_linear(start + cursor.column, start + columns, cell),
-            1 => screen.fill_linear(start, start + cursor.column + 1, cell),
-            2 => screen.fill_linear(start, start + columns, cell),
-            _ => {}
+        if spare {
+            screen.fill_linear_sparing_protected(from, to, cell);
+        } else {
+            screen.fill_linear(from, to, cell);
         }
+    }
+
+    /// Whether an erase leaves protected cells alone.
+    ///
+    /// A selective erase (`DECSED`, `DECSEL`) always does. An ordinary
+    /// `ED`, `EL` or `ECH` does not - except while protection came from
+    /// `SPA`/`EPA` rather than from `DECSCA`. That asymmetry is not ours:
+    /// the DEC sequences define protection as something only the selective
+    /// erases honour, while ISO 6429's guarded area is meant to be proof
+    /// against erasure generally, and a terminal that implements both has to
+    /// remember which of the two it was last told about.
+    fn spares_protected_cells(&self, selective: bool) -> bool {
+        selective || self.protection == ProtectionSource::Iso
     }
 
     fn erase_characters(&mut self, parameters: CsiParameters) {
@@ -1535,9 +1583,13 @@ impl Terminal {
         let cursor = self.cursor();
         let start = cursor.row * columns + cursor.column;
         let end = start.saturating_add(count).min((cursor.row + 1) * columns);
-        self.active_buffer_mut()
-            .screen
-            .fill_linear(start, end, cell);
+        let spare = self.spares_protected_cells(false);
+        let screen = &mut self.active_buffer_mut().screen;
+        if spare {
+            screen.fill_linear_sparing_protected(start, end, cell);
+        } else {
+            screen.fill_linear(start, end, cell);
+        }
     }
 
     fn insert_characters(&mut self, parameters: CsiParameters) {
@@ -2221,6 +2273,11 @@ impl Terminal {
         // the mode for its own purposes.
         self.modes.left_right_margin_mode = false;
         self.modes.insert_mode = false;
+        // DECSTR lists DECSCA among the things it returns to normal, and the
+        // source has to go with it: leaving it at Iso would have the next
+        // ordinary erase keep sparing cells nothing has protected.
+        self.current_protected = false;
+        self.protection = ProtectionSource::None;
         self.reset_graphics_rendition();
 
         let bottom = self.dimensions().rows() - 1;
@@ -2462,6 +2519,16 @@ fn color_report(color: Color, background: bool) -> Option<String> {
         Color::Indexed(index) => Some(format!("{extended}:5:{index}")),
         Color::Rgb { red, green, blue } => Some(format!("{extended}:2::{red}:{green}:{blue}")),
     }
+}
+
+/// Which family of sequences last set or cleared character protection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProtectionSource {
+    None,
+    /// `DECSCA`. Only `DECSED` and `DECSEL` honour it.
+    Dec,
+    /// `SPA`/`EPA`. Every erase honours it.
+    Iso,
 }
 
 /// The DECRPM states. A mode is set or reset, or it is one the terminal can

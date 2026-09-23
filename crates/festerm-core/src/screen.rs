@@ -1,7 +1,7 @@
 use compact_str::CompactString;
 
 use crate::{
-    cell::{blank_cell, Cell, CellWidth},
+    cell::{blank_cell, Attributes, Cell, CellWidth},
     terminal::TerminalError,
     Dimensions,
 };
@@ -332,6 +332,20 @@ impl Screen {
     }
 
     pub(crate) fn fill_linear(&mut self, start: usize, end: usize, cell: Cell) {
+        self.fill_linear_with(start, end, cell, false);
+    }
+
+    /// Fills a span, leaving protected cells where they are.
+    ///
+    /// This is a selective erase, so the span is walked cell by cell rather
+    /// than filled in one go. That is slower, and deliberately confined to
+    /// the erases that ask for it: an ordinary `ED` or `EL` keeps the bulk
+    /// fill below.
+    pub(crate) fn fill_linear_sparing_protected(&mut self, start: usize, end: usize, cell: Cell) {
+        self.fill_linear_with(start, end, cell, true);
+    }
+
+    fn fill_linear_with(&mut self, start: usize, end: usize, cell: Cell, spare_protected: bool) {
         if start >= end {
             return;
         }
@@ -356,7 +370,15 @@ impl Screen {
             }
             let physical_start = self.logical_linear_to_physical(row * columns + row_start);
             let physical_end = physical_start + (row_end - row_start);
-            self.cells[physical_start..physical_end].fill(cell.clone());
+            if spare_protected {
+                for existing in &mut self.cells[physical_start..physical_end] {
+                    if !existing.attributes.contains(Attributes::PROTECTED) {
+                        *existing = cell.clone();
+                    }
+                }
+            } else {
+                self.cells[physical_start..physical_end].fill(cell.clone());
+            }
             self.occupied_cells[physical_start..physical_end].fill(!is_structural_blank(&cell));
         }
         self.mark_dirty_range(first_row, last_row);

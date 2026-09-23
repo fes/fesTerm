@@ -35,6 +35,10 @@ impl Attributes {
     pub const INVERSE: Self = Self { bits: 1 << 7 };
     pub const CONCEALED: Self = Self { bits: 1 << 8 };
     pub const STRIKETHROUGH: Self = Self { bits: 1 << 9 };
+    /// Not a rendition. The cell is protected from erasure, by DECSCA or by
+    /// SPA/EPA. It lives here because it travels with the cell exactly as a
+    /// rendition does, but `SGR 0` must not clear it.
+    pub const PROTECTED: Self = Self { bits: 1 << 10 };
 
     pub const fn bits(self) -> u16 {
         self.bits

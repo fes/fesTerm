@@ -205,6 +205,12 @@ pub enum TerminalOp {
         secondary: bool,
     },
     ClearTabStops(CsiParameters),
+    SetProtection {
+        iso: bool,
+        protected: bool,
+    },
+    SelectiveEraseDisplay(CsiParameters),
+    SelectiveEraseLine(CsiParameters),
     RequestMode {
         private: bool,
         parameters: CsiParameters,
@@ -494,6 +500,14 @@ impl Parser {
             b'7' => TerminalOp::SaveDec,
             b'8' => TerminalOp::RestoreDec,
             b'H' => TerminalOp::SetTabStop,
+            b'V' => TerminalOp::SetProtection {
+                iso: true,
+                protected: true,
+            },
+            b'W' => TerminalOp::SetProtection {
+                iso: true,
+                protected: false,
+            },
             b'=' => TerminalOp::SetApplicationKeypad(true),
             b'>' => TerminalOp::SetApplicationKeypad(false),
             _ => TerminalOp::Ignored,
@@ -669,6 +683,12 @@ impl Parser {
                 }
                 (false, 1, b'!', b'p') => TerminalOp::SoftReset,
                 (false, 1, b'*', b'y') => TerminalOp::RequestRectangleChecksum(parameters),
+                (false, 1, b'"', b'q') => TerminalOp::SetProtection {
+                    iso: false,
+                    // DECSCA 1 protects; 0 and 2 alike do not, and anything
+                    // else is not a value the sequence has.
+                    protected: parameters.value(0) == Some(1),
+                },
                 (_, 1, b'$', b'p') => TerminalOp::RequestMode {
                     private,
                     parameters,
@@ -691,6 +711,8 @@ impl Parser {
                     enabled: false,
                     parameters,
                 },
+                b'J' => TerminalOp::SelectiveEraseDisplay(parameters),
+                b'K' => TerminalOp::SelectiveEraseLine(parameters),
                 _ => TerminalOp::Ignored,
             };
         }
