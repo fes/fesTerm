@@ -70,6 +70,15 @@ pub(crate) struct ColumnSpan {
     pub(crate) right: usize,
 }
 
+/// An absolute, already-clipped rectangle of the screen.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Rectangle {
+    pub(crate) top: usize,
+    pub(crate) left: usize,
+    pub(crate) bottom: usize,
+    pub(crate) right: usize,
+}
+
 impl ColumnSpan {
     pub(crate) fn new(left: usize, right: usize) -> Self {
         Self { left, right }
@@ -329,6 +338,79 @@ impl Screen {
         } else {
             self.recompute_occupied(row);
         }
+    }
+
+    /// Fills a rectangle, optionally leaving protected cells where they are.
+    ///
+    /// The rectangle operations are defined against the page rather than
+    /// against the margins, so this takes absolute bounds that the caller has
+    /// already clipped to the screen.
+    pub(crate) fn fill_rectangle(
+        &mut self,
+        rectangle: Rectangle,
+        cell: Cell,
+        spare_protected: bool,
+    ) {
+        let occupied = !is_structural_blank(&cell);
+        let span = ColumnSpan::new(rectangle.left, rectangle.right);
+        for row in rectangle.top..=rectangle.bottom {
+            let start = self.physical_row_start(row) + rectangle.left;
+            for offset in 0..span.width() {
+                if spare_protected
+                    && self.cells[start + offset]
+                        .attributes
+                        .contains(Attributes::PROTECTED)
+                {
+                    continue;
+                }
+                self.cells[start + offset] = cell.clone();
+                self.occupied_cells[start + offset] = occupied;
+            }
+            self.repair_span_edges(row, span);
+            self.recompute_occupied(row);
+        }
+        self.mark_dirty_range(rectangle.top, rectangle.bottom);
+    }
+
+    /// Copies a rectangle to a new top-left corner, clipped to the screen.
+    ///
+    /// The source is read out in full before anything is written, because
+    /// DECCRA is defined for overlapping rectangles and a cell-by-cell copy
+    /// would smear the overlap rather than move it.
+    pub(crate) fn copy_rectangle(
+        &mut self,
+        source: Rectangle,
+        destination_top: usize,
+        destination_left: usize,
+    ) {
+        let height = (source.bottom + 1 - source.top).min(self.dimensions.rows() - destination_top);
+        let width =
+            (source.right + 1 - source.left).min(self.dimensions.columns() - destination_left);
+        if height == 0 || width == 0 {
+            return;
+        }
+        let mut copied = Vec::with_capacity(height * width);
+        for row in 0..height {
+            let start = self.physical_row_start(source.top + row) + source.left;
+            for offset in 0..width {
+                copied.push((
+                    self.cells[start + offset].clone(),
+                    self.occupied_cells[start + offset],
+                ));
+            }
+        }
+        let span = ColumnSpan::new(destination_left, destination_left + width - 1);
+        for row in 0..height {
+            let start = self.physical_row_start(destination_top + row) + destination_left;
+            for offset in 0..width {
+                let (cell, occupied) = copied[row * width + offset].clone();
+                self.cells[start + offset] = cell;
+                self.occupied_cells[start + offset] = occupied;
+            }
+            self.repair_span_edges(destination_top + row, span);
+            self.recompute_occupied(destination_top + row);
+        }
+        self.mark_dirty_range(destination_top, destination_top + height - 1);
     }
 
     pub(crate) fn fill_linear(&mut self, start: usize, end: usize, cell: Cell) {

@@ -532,6 +532,139 @@ mod tests {
     }
 
     #[test]
+    fn a_copied_rectangle_survives_overlapping_itself() {
+        // DECCRA is defined for rectangles that overlap, so the source has to
+        // be read out before any of it is written back. A cell-by-cell copy
+        // would smear the leading edge across the rest of the block.
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"abcdefgh\r\nijklmnop\r\nqrstuvwx\r\nyz012345");
+        // Copy rows 2-4, columns 2-4 up and left onto rows 3-5, columns 3-5.
+        terminal.ingest(b"\x1b[2;2;4;4;1;3;3;1$v");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdefgh"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("ijklmnop"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("qrjklvwx"));
+        assert_eq!(terminal.row_text(3).as_deref(), Some("yzrst345"));
+    }
+
+    #[test]
+    fn rectangle_operations_ignore_the_margins() {
+        // Almost everything else in the terminal is bounded by DECSTBM and
+        // DECSLRM. The rectangle family is the exception: it addresses the
+        // page, so setting margins must not move or clip it.
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"abcdefgh\r\nijklmnop\r\nqrstuvwx\r\nyz012345");
+        with_margins(&mut terminal, 3, 6);
+        terminal.ingest(b"\x1b[2;6h");
+        terminal.ingest(b"\x1b[65;1;1;2;8$x");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("AAAAAAAA"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("AAAAAAAA"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("qrstuvwx"));
+    }
+
+    #[test]
+    fn an_inverted_rectangle_is_not_a_rectangle() {
+        // A bottom above the top, or a right left of the left, describes no
+        // cells at all. The sequence is discarded rather than normalised:
+        // swapping the edges would erase a region the caller never named.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"abcdefgh\r\nijklmnop");
+        terminal.ingest(b"\x1b[2;2;1;1$z");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdefgh"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("ijklmnop"));
+    }
+
+    #[test]
+    fn a_selective_rectangle_erase_spares_dec_protection_but_not_iso() {
+        // DECSED and DECSEL honour an ISO guarded area; DECSERA does not.
+        // The rectangle form is a later, purely DEC addition and spares only
+        // what DECSCA protected.
+        let mut dec = terminal(4, 1);
+        dec.ingest(b"\x1b[1\"qab\x1b[0\"qcd");
+        dec.ingest(b"\x1b[1;1;1;4${");
+        assert_eq!(dec.row_text(0).as_deref(), Some("ab  "));
+
+        let mut iso = terminal(4, 1);
+        iso.ingest(b"\x1bVab\x1bWcd");
+        iso.ingest(b"\x1b[1;1;1;4${");
+        assert_eq!(iso.row_text(0).as_deref(), Some("    "));
+    }
+
+    #[test]
+    fn inserting_a_column_shifts_every_row_of_the_region() {
+        // DECIC is not ICH repeated at the cursor: it opens a column down the
+        // whole vertical region, including the rows the cursor is not on.
+        let mut terminal = terminal(8, 3);
+        terminal.ingest(b"abcdefg\r\nABCDEFG\r\nzyxwvut");
+        terminal.ingest(b"\x1b[2;2H\x1b[2'}");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("a  bcdef"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("A  BCDEF"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("z  yxwvu"));
+    }
+
+    #[test]
+    fn back_index_scrolls_at_the_left_margin_and_steps_back_outside_it() {
+        // DECBI moves the cursor everywhere except at the left margin, where
+        // it moves the screen instead and leaves the cursor where it is.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1b[1;3Habcde");
+        with_margins(&mut terminal, 3, 5);
+        terminal.ingest(b"\x1b[1;3H\x1b6");
+        // Columns 3-5 held "abc"; they shift right, dropping the "c", and
+        // the "de" outside the right margin stays where it was.
+        assert_eq!(terminal.row_text(0).as_deref(), Some("   abde "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (2, 0)
+        );
+
+        // Left of the left margin it is an ordinary step backwards.
+        terminal.ingest(b"\x1b[1;2H\x1b6");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn forward_index_scrolls_at_the_right_margin_and_steps_on_outside_it() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1b[1;3Habcde");
+        with_margins(&mut terminal, 3, 5);
+        terminal.ingest(b"\x1b[1;5H\x1b9");
+        // Columns 3-5 shift left, dropping the "a" past the left margin.
+        assert_eq!(terminal.row_text(0).as_deref(), Some("  bc de "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (4, 0)
+        );
+
+        // Right of the right margin it is an ordinary step forwards.
+        terminal.ingest(b"\x1b[1;6H\x1b9");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (6, 0)
+        );
+    }
+
+    #[test]
+    fn saving_the_cursor_carries_the_protection_state_with_it() {
+        // Protection looks like a rendition but is not one, so it is easy to
+        // leave out of the saved state. Both save/restore pairs carry it:
+        // the DEC form because it saves renditions, and the SCO form because
+        // esctest2 holds it to that too.
+        for (save, restore) in [(&b"\x1b7"[..], &b"\x1b8"[..]), (b"\x1b[s", b"\x1b[u")] {
+            let mut terminal = terminal(4, 1);
+            terminal.ingest(b"\x1b[1\"q");
+            terminal.ingest(save);
+            terminal.ingest(b"\x1b[0\"q");
+            terminal.ingest(restore);
+            terminal.ingest(b"a");
+            terminal.ingest(b"\x1b[1;1;1;1${");
+            assert_eq!(terminal.row_text(0).as_deref(), Some("a   "));
+        }
+    }
+
+    #[test]
     fn a_selective_erase_spares_protected_cells_and_an_ordinary_one_does_not() {
         // DECSCA marks cells the selective erases must leave alone. The
         // ordinary erases are defined not to honour it, which is the whole
