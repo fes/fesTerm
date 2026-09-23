@@ -27,6 +27,10 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0022: Focused-Chip-First Single-Row Chrome Allocation](0022-focused-chip-first-single-row-chrome.md)
 - [ADR 0023: `serialport` Crate and Worker-Thread Model for the Serial Session Backend](0023-serialport-worker-thread-serial-backend.md)
 - [ADR 0024: Native Secret Store Extended to Stored Private Keys](0024-native-secret-store-stored-private-keys.md)
+- [ADR 0026: Grapheme Width and Color Emoji Fallback](0026-grapheme-width-and-color-emoji-fallback.md)
+- [ADR 0032: Single-Process Multi-Window via egui Viewports](0032-single-process-multi-window.md) — see issue #119
+- [ADR 0033: Moving Tabs Between Windows](0033-moving-tabs-between-windows.md) — builds on ADR 0032
+- [ADR 0035: Syntax Highlighting as a Cached View of Parsed Text](0035-syntax-highlighting.md) — extends ADR 0034's document/view split to tree-sitter highlighting
 - [ADR 0036: The Core Reports Colors From an Embedder-Supplied Scheme](0036-embedder-color-scheme-in-core.md) — keeps `OSC 4/10/11/12` answers in `festerm-core` while `festerm-ui-egui` owns the values; see issue #222
 - [ADR 0037: Reverse Wraparound Climbs Only the Line It Is On](0037-reverse-wraparound-bounds.md) — implements `DECSET 45` with xterm's post-383 bounds and retires stale soft-wrap marks on explicit line breaks
 
@@ -37,9 +41,12 @@ Architecture decision records preserve decisions that affect the project across 
 ## Proposed Decisions
 
 - [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
+- [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38
+- [ADR 0028: Text-Mode SFTP Session Tabs via `russh-sftp`](0028-text-mode-sftp-session-tabs-via-russh-sftp.md)
+- [ADR 0029: GUI SFTP File Manager Surface](0029-gui-sftp-file-manager.md) — see `docs/sftp-ui-design.md`
+- [ADR 0030: Native Markdown Viewer as a First-Class Bounded Application Surface](0030-native-markdown-viewer.md) — amended by ADR 0034
 - [ADR 0031: Mobile (iOS/Android) Port Strategy](0031-mobile-ios-android-port-strategy.md) — exploratory design only; see `docs/mobile-port-plan.md`, `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`
 - [ADR 0034: Shared Mutable Documents for Native Text Editing](0034-shared-mutable-text-documents.md) — amends ADR 0030's read-only snapshot boundary; see issue #166
-- [ADR 0035: Syntax Highlighting as a Cached View of Parsed Text](0035-syntax-highlighting.md) — extends ADR 0034's document/view split to tree-sitter highlighting
 
 ## Status Values
 

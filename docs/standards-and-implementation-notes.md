@@ -566,17 +566,19 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 408 of the suite's 559 test methods today, so running all of it would
+We pass 414 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
 save/restore cursor, the tab and index controls, mode reporting, selective
 erase, rectangular editing, the status reports and the string controls, 382
-tests - and CI fails if any
-of it regresses. `validation/esctest2-skip.txt` carries the exclusions
+tests, of which 384 pass with 17 known bugs and 0 failures - and CI fails if
+any of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
-rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
-whole suite without gating, which is how to see what the next phase buys.
+rather than a silence; it is currently empty, so every allowlisted test runs.
+`scripts/run-esctest2.sh --everything` surveys the whole suite without gating,
+which is how to see what the next phase buys - though see #226 for why the
+colour families have to be excluded from that survey to get a usable number.
 
 DECRQCRA was the first phase for exactly this reason: 316 of the 559 methods
 assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
@@ -584,9 +586,11 @@ screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
 moved the survey from 110 to 219, left/right margins took it to 262, and the
 remaining motion controls to 292, mode reporting to 315 and selective erase
-to 344, rectangular editing to 388 and the status reports to 408. The largest
-remaining blockers are the colour queries and the window operations, both of
-which belong to the embedder rather than the core. #193 tracks the phases.
+to 344, rectangular editing to 388 and the status reports to 408; answering
+the colour queries and implementing reverse wraparound took it to 414. The
+largest remaining blocker is the window operations, which belong to the
+embedder rather than the core and are deliberately out of scope. The phases
+that got here are closed with #193; #220 records what is left and why.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -950,11 +954,15 @@ the egui renderer maps the shape without changing cell geometry. It does not
 schedule a blink timer, so blinking and steady variants intentionally share
 their static shape until a presentation-timing policy exists.
 
-The bounded OSC parser retains only OSC 0/2 titles and OSC 8 hyperlink
-metadata. Titles are UTF-8 validated, stripped of controls, and capped at 256
-characters before the application requests a native window-title update. OSC
-8 accepts only `http`, `https`, and `mailto` targets up to 2,048 bytes, stores
-them on cells, and never opens a target automatically. OSC 52 remains
+The bounded OSC parser retains OSC 0/2 titles, OSC 8 hyperlink metadata, and
+the *query* forms of OSC 4/10/11/12. Titles are UTF-8 validated, stripped of
+controls, and capped at 256 characters before the application requests a
+native window-title update. OSC 8 accepts only `http`, `https`, and `mailto`
+targets up to 2,048 bytes, stores them on cells, and never opens a target
+automatically. Colour queries are answered from the scheme the renderer
+actually paints, which ADR 0036 pushes into the core; the *set* forms and the
+OSC 104/110/111/112 resets stay ignored rather than reported as applied, so a
+query can never describe a colour nothing on screen uses. OSC 52 remains
 unsupported. All other string controls remain discard-only and every OSC
 payload remains bounded by `MAX_STRING_BYTES`.
 

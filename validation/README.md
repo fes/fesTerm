@@ -132,10 +132,17 @@ is running inside, so `scripts/run-esctest2.sh` hosts it on a pty with
 ./scripts/run-esctest2.sh --everything  # survey the whole suite, never fails
 ```
 
-The full survey passes 408 tests today, with 43 known xterm bugs and 114
-failures still outstanding, so the allowlist is the contract rather
-than the whole suite - see the standards notes for why, and #193 for the phases
-that widen it. The two files divide the work: the allowlist says what we are
-held to, and the skip list says which tests inside those families we have
-pulled out and why. Every skip carries its reason on the line above it, so a
-skip is an admission rather than a silence.
+The gate passes 384 tests with 17 known xterm bugs and 0 failures. The full
+survey passes 414, with 43 known bugs and 63 failures still outstanding, so the
+allowlist is the contract rather than the whole suite - see the standards notes
+for why, and #220 for what is deliberately left out.
+
+The two files divide the work: the allowlist says what we are held to, and the
+skip list says which tests inside those families we have pulled out and why.
+Every skip carries its reason on the line above it, so a skip is an admission
+rather than a silence. The skip file is currently empty, which is the strongest
+form of that promise - every test the allowlist enables actually runs.
+
+Note that `--everything` currently understates the result badly, because the
+colour families poison it; see #226 and pass `--include` with those classes
+excluded to get the 414 figure above.

@@ -6,7 +6,8 @@
 # over the allowlist.
 #
 # "We have not got round to it" does not belong here - that is the
-# allowlist's absence, and #193 tracks the phases. This is for tests we have
-# deliberately pulled *out* of a family we otherwise hold ourselves to.
+# allowlist's absence, and #220 records what is deliberately left out. This is
+# for tests we have deliberately pulled *out* of a family we otherwise hold
+# ourselves to.
 
 # (no skips: every allowlisted test runs)
