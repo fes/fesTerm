@@ -3,6 +3,50 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## A terminal that answers, and a first run worth having (v0.4.0)
+
+This release is mostly about fesTerm telling the truth to two audiences: the
+programs running inside it, and the person who just installed it.
+
+The larger half is conformance. fesTerm now hosts xterm's esctest2 suite
+against `festerm-core` in CI, and eight rounds of work against it closed real
+gaps: scrolling and editing now respect left and right margins, protected
+cells survive the erases that are meant to spare them, rectangular area
+operations work, and the terminal answers cursor-position reports, status
+reports, `DECRQCRA`, `REP` and `DECALN`. Three outright defects the harness
+found on its first run were fixed before any of that. The suite is a gate,
+not a trophy: an allowlist file is the contract, so a regression fails the
+build rather than quietly lowering a score.
+
+Where the honest answer was "we do not do that", fesTerm says so. `DECRQM`
+reports only the modes it genuinely performs, and `DA`/`DA2`/`DECID` remain
+unimplemented rather than echo xterm's claim to a printer port, a ReGIS
+locator and user windows we do not have. The remaining conformance questions
+are recorded rather than guessed at.
+
+One parser fix is worth calling out because its symptom is invisible. `ESC`
+inside an OSC or DCS string abandons that string; fesTerm used to swallow it
+and everything after, so a program that died mid-sequence could take the
+screen with it until a length bound expired. A truncated request is now
+discarded rather than acted on. The parser is also fuzzed and property-tested
+now, and a corpus of real TUI programs is replayed against reviewed pixel
+snapshots.
+
+The smaller half is the first run. A fresh install used to start with almost
+every convenience switched off, so each new user rediscovered the same nine
+toggles; the settings this project's own daily driver has been running with
+are now the defaults. Workspace restore, in particular, finally restores: the
+first window reopens at the size and position it was left at, and a move or
+resize saves on its own rather than waiting for some other change to carry it.
+Local shells start in the user's home directory on every platform, including
+the Windows shells whose `HOME` no Windows API resolves.
+
+On Windows, every durable local session now gets the verified ConPTY sidecar
+instead of silently falling back to the inbox one. Each release's helper is
+staged as a self-contained generation directory, so an upgrade never has to
+overwrite a DLL a live daemon still has open - which is also the install
+conflict people were hitting.
+
 ## Compact true-color backgrounds
 
 Copilot CLI inline code exposed a true-color compatibility gap: its leading
