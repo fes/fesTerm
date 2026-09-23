@@ -792,7 +792,17 @@ impl Terminal {
                 self.active_buffer_mut().cursor.column = column;
                 self.clear_pending_wrap();
             }
-            TerminalOp::LineFeed | TerminalOp::Index => {
+            TerminalOp::LineFeed => {
+                self.current_hyperlink = None;
+                self.current_hyperlink_cells_remaining = 0;
+                self.index();
+                if self.modes.line_feed_new_line {
+                    let column = self.carriage_return_column();
+                    self.active_buffer_mut().cursor.column = column;
+                }
+                self.clear_pending_wrap();
+            }
+            TerminalOp::Index => {
                 self.current_hyperlink = None;
                 self.current_hyperlink_cells_remaining = 0;
                 self.index();
@@ -805,6 +815,18 @@ impl Terminal {
             }
             TerminalOp::Tab => {
                 self.tab();
+                self.clear_pending_wrap();
+            }
+            TerminalOp::CursorForwardTab(parameters) => {
+                for _ in 0..Self::parameter_or(parameters, 0, 1) {
+                    self.tab();
+                }
+                self.clear_pending_wrap();
+            }
+            TerminalOp::CursorBackwardTab(parameters) => {
+                for _ in 0..Self::parameter_or(parameters, 0, 1) {
+                    self.backward_tab();
+                }
                 self.clear_pending_wrap();
             }
             TerminalOp::NextLine => {
@@ -963,6 +985,24 @@ impl Terminal {
                 self.print(char::REPLACEMENT_CHARACTER);
                 return;
             }
+        }
+
+        if self.modes.insert_mode {
+            // IRM shifts the rest of the line right to make room, and the
+            // room it makes ends at the same place a line wraps: the right
+            // margin when there is one, the screen's edge otherwise. Cells
+            // pushed past that end are lost rather than carried to the next
+            // line - insert mode does not wrap.
+            let span = ColumnSpan::new(0, wrap_limit - 1);
+            let cell = self.erase_cell();
+            let cursor = self.cursor();
+            self.active_buffer_mut().screen.insert_characters(
+                cursor.column,
+                cursor.row,
+                width,
+                cell,
+                span,
+            );
         }
 
         let cursor = self.cursor();
@@ -1177,12 +1217,15 @@ impl Terminal {
     fn tab(&mut self) {
         let columns = self.dimensions().columns();
         let cursor_column = self.cursor().column;
-        // A tab stops at the right margin rather than running past it, but
-        // only for a cursor that is inside the margins to begin with.
-        let limit = if self.cursor_within_margins() {
-            self.horizontal_margins().right
-        } else {
+        // A tab stops at the right margin rather than running past it. That
+        // holds for a cursor left of the left margin too - it tabs *into* the
+        // margins and is caught by the far one - so the only cursor the
+        // margin does not bind is one already past it.
+        let right_margin = self.horizontal_margins().right;
+        let limit = if cursor_column > right_margin {
             columns - 1
+        } else {
+            right_margin
         };
         let next_tab_stop = self
             .tab_stops
@@ -1193,6 +1236,22 @@ impl Terminal {
             .unwrap_or(limit)
             .min(limit.max(cursor_column));
         self.active_buffer_mut().cursor.column = next_tab_stop;
+    }
+
+    /// CBT (`CSI Z`). Unlike a forward tab this is bounded by the screen's
+    /// own edge rather than by the left margin: esctest2 tabs backwards out
+    /// of a left/right region and expects to land on column one.
+    fn backward_tab(&mut self) {
+        let cursor_column = self.cursor().column;
+        let previous_tab_stop = self
+            .tab_stops
+            .iter()
+            .enumerate()
+            .take(cursor_column)
+            .filter_map(|(column, set)| set.then_some(column))
+            .next_back()
+            .unwrap_or(0);
+        self.active_buffer_mut().cursor.column = previous_tab_stop;
     }
 
     fn set_tab_stop(&mut self) {
@@ -1893,6 +1952,13 @@ impl Terminal {
 
     fn set_modes(&mut self, private: bool, enabled: bool, parameters: CsiParameters) {
         if !private {
+            for index in 0..parameters.len() {
+                match parameters.value(index) {
+                    Some(4) => self.modes.insert_mode = enabled,
+                    Some(20) => self.modes.line_feed_new_line = enabled,
+                    _ => {}
+                }
+            }
             return;
         }
         for index in 0..parameters.len() {
@@ -2147,6 +2213,7 @@ impl Terminal {
         // pair of margins that reappear the moment an application enables
         // the mode for its own purposes.
         self.modes.left_right_margin_mode = false;
+        self.modes.insert_mode = false;
         self.reset_graphics_rendition();
 
         let bottom = self.dimensions().rows() - 1;

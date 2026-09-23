@@ -566,11 +566,12 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 262 of the suite's 559 test methods today, so running all of it would
+We pass 292 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
-save/restore cursor and the string controls, 219 tests - and CI fails if any
+save/restore cursor, the tab and index controls and the string controls,
+250 tests - and CI fails if any
 of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
 rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
@@ -580,16 +581,58 @@ DECRQCRA was the first phase for exactly this reason: 316 of the 559 methods
 assert screen contents, and `AssertScreenCharsInRectEqual` can only read the
 screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
-moved the survey from 110 to 219, and left/right margins then took it to 262.
-The largest remaining blockers are mode reporting (`DECRQM`, 32 tests),
-selective erase (`DECSCA` and the `DECSED`/`DECSEL` family), the rectangular
-editing operations, and colour queries. #193 tracks the phases.
+moved the survey from 110 to 219, left/right margins took it to 262, and the
+remaining motion and mode controls to 292. The largest remaining blockers are
+mode reporting (`DECRQM`, 32 tests), selective erase (`DECSCA` and the
+`DECSED`/`DECSEL` family), the rectangular editing operations, and colour
+queries. #193 tracks the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
 single test. They are questions about the grid, which we can answer exactly.
 The rest of `CSI ... t` moves, resizes, raises and iconifies a window, which
 belongs to the embedder, and is ignored.
+
+### The controls that are other controls under another name
+
+A conformance suite tests a lot of sequences that are not new behaviour so
+much as new spellings, and the useful thing to record is which is which,
+because an alias that is *nearly* an alias is where the defects hide.
+
+`FF` (`0x0C`) and `VT` (`0x0B`) are `LF`: each moves down a line, scrolls at
+the bottom margin, and becomes a new line under `LNM`. `HPR` (`CSI a`) and
+`VPR` (`CSI e`) are `CUF` and `CUD`. The reason these can share a code path
+where `CHA` and `HPA` cannot is that all four are *relative*: a relative move
+has no frame of reference for origin mode to change, so there is nothing for
+the two spellings to disagree about.
+
+The tab controls are not aliases, and the pair is asymmetric in a way that
+looks like a bug until you see the rule. `CHT` (`CSI I`) is bounded by the
+right margin even when the cursor starts left of the left margin - such a
+cursor is tabbing *into* the margins, so the far one still catches it, and
+only a cursor already past the right margin escapes. `CBT` (`CSI Z`) is
+bounded by the screen's own edge instead: esctest2 tabs backwards out of a
+left/right region and expects column one, not the left margin. The
+asymmetry is xterm's, and the reasoning behind it is that a forward tab is
+a way of moving through a region's columns while a backward one is a way of
+getting out.
+
+### The two ANSI modes: IRM and LNM
+
+Almost every mode fesTerm honours is a DEC private one. Two are not.
+
+`IRM` (`CSI 4 h`) makes printing shift the rest of the line right instead of
+overwriting it. The room it makes ends exactly where a line wraps - the right
+margin when there is one, the screen's edge otherwise - and cells pushed past
+that end are discarded rather than carried onto the next line. That last part
+is the whole of the mode's difficulty: insert mode does not wrap, so a line
+that is full simply loses its last cell. `DECSTR` returns it to replace mode,
+which matters because an application that exits without resetting it would
+otherwise leave the next one typing into a line that slides away from it.
+
+`LNM` (`CSI 20 h`) makes `LF`, `VT` and `FF` perform a carriage return after
+indexing. It applies to all three alike, which is the practical reason to
+route them through one code path rather than to treat `FF` as a clear.
 
 ### Resets: DECSTR, and what a save actually saves
 

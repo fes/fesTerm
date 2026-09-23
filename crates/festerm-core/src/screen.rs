@@ -71,6 +71,10 @@ pub(crate) struct ColumnSpan {
 }
 
 impl ColumnSpan {
+    pub(crate) fn new(left: usize, right: usize) -> Self {
+        Self { left, right }
+    }
+
     pub(crate) fn full(columns: usize) -> Self {
         Self {
             left: 0,

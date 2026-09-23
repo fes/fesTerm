@@ -157,6 +157,8 @@ pub enum TerminalOp {
     LineFeed,
     Backspace,
     Tab,
+    CursorForwardTab(CsiParameters),
+    CursorBackwardTab(CsiParameters),
     Index,
     NextLine,
     ReverseIndex,
@@ -698,6 +700,13 @@ impl Parser {
             b'F' => TerminalOp::CursorPreviousLine(parameters),
             b'G' => TerminalOp::CursorHorizontalAbsolute(parameters),
             b'`' => TerminalOp::HorizontalPositionAbsolute(parameters),
+            // HPR and VPR are the relative halves of the same pair, and are
+            // indistinguishable from CUF and CUD: a relative move has no
+            // frame of reference for origin mode to change.
+            b'a' => TerminalOp::CursorForward(parameters),
+            b'e' => TerminalOp::CursorDown(parameters),
+            b'I' => TerminalOp::CursorForwardTab(parameters),
+            b'Z' => TerminalOp::CursorBackwardTab(parameters),
             b'H' | b'f' => TerminalOp::CursorPosition(parameters),
             b'J' => TerminalOp::EraseDisplay(parameters),
             b'K' => TerminalOp::EraseLine(parameters),
@@ -752,6 +761,9 @@ pub(crate) fn c0_operation(byte: u8) -> Option<TerminalOp> {
         b'\n' => Some(TerminalOp::LineFeed),
         b'\x08' => Some(TerminalOp::Backspace),
         b'\t' => Some(TerminalOp::Tab),
+        // FF and VT are index variants: both move down a line and scroll at
+        // the bottom, and LNM turns both into a new line just as it does LF.
+        b'\x0b' | b'\x0c' => Some(TerminalOp::LineFeed),
         _ => None,
     }
 }
