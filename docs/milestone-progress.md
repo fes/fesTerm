@@ -37,7 +37,7 @@ preventing is not a missing answer but a confident wrong one.
 
 The conformance suite reflects it: `validation/esctest2-skip.txt` is empty for
 the first time, and the gate runs every test the allowlist enables - 384
-passing, 0 failing.
+passing, 17 known xterm bugs, 0 failing.
 
 ## The last skipped test
 
@@ -65,7 +65,7 @@ before, so the staleness had never mattered. Now an explicit line break retires
 it, which makes reflow and selection slightly more accurate too.
 
 The skip file is empty for the first time, and the gate runs every test the
-allowlist enables: 384 passing, 0 failing.
+allowlist enables: 384 passing, 17 known xterm bugs, 0 failing.
 
 ## Telling programs what color the terminal is
 
