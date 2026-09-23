@@ -8,6 +8,7 @@
 use std::fmt;
 
 mod cell;
+mod colors;
 mod history;
 mod input;
 mod modes;
@@ -149,6 +150,7 @@ impl Cursor {
 }
 
 pub use cell::{Attributes, Cell, CellWidth, Color};
+pub use colors::{ColorScheme, Rgb};
 pub use input::{
     FocusEvent, InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
     MouseEventKind, MouseWheel,
@@ -165,10 +167,11 @@ mod model_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        Attributes, CellWidth, Color, ContentPosition, Dimensions, FocusEvent, InputEvent,
-        InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent, MouseEventKind,
-        MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Terminal, TerminalOp,
-        MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
+        Attributes, CellWidth, Color, ColorScheme, ContentPosition, Dimensions, FocusEvent,
+        InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
+        MouseEventKind, MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Rgb, Terminal,
+        TerminalOp, MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_STRING_BYTES,
+        TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
 
@@ -1388,6 +1391,136 @@ mod tests {
         assert_eq!(terminal.cell(4, 0).unwrap().text(), "X");
         assert_eq!(terminal.cell(4, 0).unwrap().hyperlink(), None);
         assert!(terminal.drain_replies().is_empty());
+    }
+
+    fn replies(terminal: &mut Terminal) -> String {
+        String::from_utf8(terminal.drain_replies()).expect("replies are ASCII")
+    }
+
+    #[test]
+    fn osc_color_queries_report_the_colors_the_embedder_paints() {
+        // Without these answers a program cannot tell a light terminal from a
+        // dark one, and the usual fallback is to drop background styling
+        // entirely rather than risk an unreadable guess.
+        let mut terminal = terminal(8, 1);
+        terminal.set_color_scheme(ColorScheme::new(
+            Rgb::new(0xe8, 0xed, 0xf2),
+            Rgb::new(0x11, 0x16, 0x1e),
+            Rgb::new(0xff, 0x00, 0x00),
+            ColorScheme::DEFAULT_ANSI,
+        ));
+        terminal.ingest(b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b]4;1;?\x1b\\");
+
+        assert_eq!(
+            replies(&mut terminal),
+            "\x1b]10;rgb:e8e8/eded/f2f2\x1b\\\
+             \x1b]11;rgb:1111/1616/1e1e\x1b\\\
+             \x1b]12;rgb:ffff/0000/0000\x1b\\\
+             \x1b]4;1;rgb:cdcd/3131/3131\x1b\\"
+        );
+    }
+
+    #[test]
+    fn a_color_reply_mirrors_the_terminator_of_its_request() {
+        // A program that ended its request with BEL is reading until BEL;
+        // answering with ST would leave it waiting for a byte never sent.
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]11;?\x07");
+
+        assert_eq!(replies(&mut terminal), "\x1b]11;rgb:1111/1616/1e1e\x07");
+    }
+
+    #[test]
+    fn consecutive_dynamic_colors_are_answered_in_request_order() {
+        // `OSC 10;?;?` asks for the foreground and then the color after it.
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]10;?;?;?\x1b\\");
+
+        assert_eq!(
+            replies(&mut terminal),
+            "\x1b]10;rgb:e8e8/eded/f2f2\x1b\\\
+             \x1b]11;rgb:1111/1616/1e1e\x1b\\\
+             \x1b]12;rgb:e8e8/eded/f2f2\x1b\\"
+        );
+    }
+
+    #[test]
+    fn a_color_set_is_ignored_and_never_changes_a_later_report() {
+        // This terminal does not repaint on a program's command, so accepting
+        // a set would make the next query describe a color nothing draws.
+        // Reporting no color is recoverable; reporting a false one is not.
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b]4;1;#00ff00\x1b\\");
+        assert!(
+            terminal.drain_replies().is_empty(),
+            "a set is not a query and gets no reply"
+        );
+
+        terminal.ingest(b"\x1b]11;?\x1b\\\x1b]4;1;?\x1b\\");
+        assert_eq!(
+            replies(&mut terminal),
+            "\x1b]11;rgb:1111/1616/1e1e\x1b\\\x1b]4;1;rgb:cdcd/3131/3131\x1b\\",
+            "the reported colors are still the ones actually painted"
+        );
+    }
+
+    #[test]
+    fn the_answerable_half_of_a_mixed_palette_request_is_still_answered() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]4;1;#ff0000;2;?\x1b\\");
+
+        assert_eq!(replies(&mut terminal), "\x1b]4;2;rgb:0d0d/bcbc/7979\x1b\\");
+    }
+
+    #[test]
+    fn malformed_and_out_of_range_color_requests_are_silent() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(
+            b"\x1b]4;256;?\x1b\\\
+              \x1b]4;-1;?\x1b\\\
+              \x1b]4;1x;?\x1b\\\
+              \x1b]4;;?\x1b\\\
+              \x1b]4;7\x1b\\\
+              \x1b]13;?\x1b\\\
+              \x1b]11\x1b\\",
+        );
+
+        assert!(
+            terminal.drain_replies().is_empty(),
+            "a request this terminal cannot describe is answered with silence"
+        );
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), " ");
+    }
+
+    #[test]
+    fn a_color_query_burst_is_bounded() {
+        // One string may carry hundreds of `index;?` pairs. Replies share the
+        // bounded transport queue with everything else the session needs to
+        // say, so the count a single request can trigger is capped.
+        let mut terminal = terminal(8, 1);
+        let mut request = b"\x1b]4".to_vec();
+        for index in 0..=255u16 {
+            request.extend_from_slice(format!(";{index};?").as_bytes());
+        }
+        request.extend_from_slice(b"\x1b\\");
+        terminal.ingest(&request);
+
+        let answered = replies(&mut terminal).matches("\x1b]4;").count();
+        assert!(
+            (1..=64).contains(&answered),
+            "expected a bounded number of replies, got {answered}"
+        );
+    }
+
+    #[test]
+    fn an_abandoned_color_query_is_never_answered() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]11;?\x1b[0m");
+
+        assert!(
+            terminal.drain_replies().is_empty(),
+            "a request that never reached its terminator was never a request"
+        );
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub use input::{
     route_input, route_mouse_input, EncodedInputSink, InputRoute, InputSinkDiagnostics,
     TERMINAL_RESIZE_DEBOUNCE,
 };
-pub use renderer::{resolve_color, FontSettings};
+pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
 pub use view::{FrameDiagnostics, TerminalView, TerminalViewOptions};
 

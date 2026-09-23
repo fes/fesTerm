@@ -5,13 +5,17 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth, Color},
+    colors::ColorScheme,
     history::{LogicalLine, Scrollback, ScrollbackStats, DEFAULT_SCROLLBACK_LIMIT_BYTES},
     input::{
         encode_key, encode_legacy_mouse, encode_paste, encode_sgr_mouse, mouse_event_is_reported,
         paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome, MouseEvent,
     },
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
-    parser::{CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser, TerminalOp},
+    parser::{
+        ColorQuery, CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser,
+        StringTerminator, TerminalOp,
+    },
     replies::{queue_transport_bytes, QueuePushResult},
     screen::{ColumnSpan, Rectangle, Screen},
     unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
@@ -408,6 +412,7 @@ pub struct Terminal {
     title: String,
     current_hyperlink: Option<Arc<str>>,
     current_hyperlink_cells_remaining: usize,
+    color_scheme: ColorScheme,
     reply_queue: Vec<u8>,
     input_queue: Vec<u8>,
     reply_queue_overflowed: bool,
@@ -444,6 +449,7 @@ impl Terminal {
             title: String::new(),
             current_hyperlink: None,
             current_hyperlink_cells_remaining: 0,
+            color_scheme: ColorScheme::default(),
             reply_queue: Vec::new(),
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
@@ -697,6 +703,19 @@ impl Terminal {
     /// Reports and clears whether an input write overflowed since the last call.
     pub fn take_input_queue_overflowed(&mut self) -> bool {
         std::mem::take(&mut self.input_queue_overflowed)
+    }
+
+    /// The colors this terminal reports to programs that ask for them.
+    pub const fn color_scheme(&self) -> &ColorScheme {
+        &self.color_scheme
+    }
+
+    /// Tells the terminal which colors its embedder actually paints.
+    ///
+    /// Only reporting uses this. The terminal never changes the scheme on a
+    /// program's behalf, so what it reports stays what the embedder draws.
+    pub fn set_color_scheme(&mut self, scheme: ColorScheme) {
+        self.color_scheme = scheme;
     }
 
     /// Queues an atomic terminal-protocol reply for the session transport.
@@ -977,7 +996,34 @@ impl Terminal {
                     if hyperlink.is_some() { 4_096 } else { 0 };
                 self.current_hyperlink = hyperlink;
             }
+            Some(OscAction::ReportColors {
+                queries,
+                terminator,
+            }) => self.report_colors(&queries, terminator),
             None => {}
+        }
+    }
+
+    /// Answers `OSC 4/10/11/12` color queries.
+    ///
+    /// Each query gets its own complete reply rather than one combined
+    /// string, which is what xterm does and what parsers in the wild expect.
+    fn report_colors(&mut self, queries: &[ColorQuery], terminator: StringTerminator) {
+        for query in queries {
+            let (selector, index, color) = match *query {
+                ColorQuery::Palette(index) => (4, Some(index), self.color_scheme.palette(index)),
+                ColorQuery::Foreground => (10, None, self.color_scheme.foreground()),
+                ColorQuery::Background => (11, None, self.color_scheme.background()),
+                ColorQuery::Cursor => (12, None, self.color_scheme.cursor()),
+            };
+            let mut reply = format!("\x1b]{selector};");
+            if let Some(index) = index {
+                reply.push_str(&format!("{index};"));
+            }
+            reply.push_str(&color.to_xparsecolor());
+            let mut reply = reply.into_bytes();
+            reply.extend_from_slice(terminator.bytes());
+            self.queue_reply(&reply);
         }
     }
 

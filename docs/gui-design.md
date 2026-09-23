@@ -2270,7 +2270,11 @@ imports require schema validation, bounded names, and safe fallback roles.
 Previews show representative text and all ANSI colors without starting a
 process or fabricating session output. Cursor/selection visibility receives a
 documented accessibility fallback. History can be re-presented under another
-scheme without mutating cell data. No automatic scheme changes derive from
+scheme without mutating cell data. A scheme change must also be pushed into
+the session's terminal with `Terminal::set_color_scheme`: `festerm-core`
+answers `OSC 4/10/11/12` queries from the scheme it was last given (ADR 0036),
+so a scheme applied only in the renderer would leave the terminal reporting
+colors it no longer paints. No automatic scheme changes derive from
 remote host, shell, or command, and no selector appears while only one real
 scheme exists.
 

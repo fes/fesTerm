@@ -150,3 +150,19 @@ DECSETTests\.test_DECSET_DECLRMM
 DECSETTests\.test_DECSET_DECAWM_O(n|ff)RespectsLeftRightMargin
 DECSETTests\.test_DECSET_DECAWM_NoLineWrapOnTabWithLeftRightMargin
 DECSETTests\.test_DECSET_DECOM
+
+# Colour: the 47 tests in ChangeColorTests, ChangeDynamicColorTests,
+# ChangeSpecialColorTests, ResetColorTests and ResetSpecialColorTests stay
+# disabled, and they will not move on the strength of the OSC 4/10/11/12
+# *query* support added for #222.
+#
+# Every one of those tests sets a colour and then queries it back, so they
+# measure the half fesTerm deliberately does not do. ADR 0036 answers queries
+# with the colours the renderer actually paints and ignores sets, because the
+# renderer does not read a scheme back at paint time: accepting a set would
+# make the next query describe a colour nothing on screen uses. Enabling this
+# family means implementing runtime palette changes and the cache
+# invalidation they imply, which is #220's remaining colour item.
+#
+# esctest2 has no query-only colour test, so the query behaviour is pinned by
+# exact-byte tests in festerm-core instead.

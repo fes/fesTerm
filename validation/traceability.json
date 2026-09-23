@@ -1644,14 +1644,17 @@
       "requirements": [
         "docs/gui-design.md#terminal-color-schemes"
       ],
-      "decisions": [],
+      "decisions": [
+        "ADR-0036"
+      ],
       "automated_tests": [],
       "manual_scenarios": [
         "CP-05"
       ],
       "status": "deferred",
       "prerequisites": [
-        "Multiple complete terminal color schemes"
+        "Multiple complete terminal color schemes",
+        "ADR 0036 obligation: a runtime scheme change must also push the new scheme into the session terminal with Terminal::set_color_scheme, or OSC 4/10/11/12 will keep reporting the previous scheme instead of the colors being painted"
       ]
     },
     {
