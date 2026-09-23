@@ -13,7 +13,7 @@ use crate::{
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser, TerminalOp},
     replies::{queue_transport_bytes, QueuePushResult},
-    screen::{ColumnSpan, Screen},
+    screen::{ColumnSpan, Rectangle, Screen},
     unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
@@ -366,11 +366,15 @@ struct SavedDecState {
     foreground: Color,
     background: Color,
     origin_mode: bool,
+    protected: bool,
+    protection: ProtectionSource,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SavedAnsiCursor {
     cursor: Cursor,
+    protected: bool,
+    protection: ProtectionSource,
 }
 
 /// GUI-independent terminal state. The terminal owns one logical writer.
@@ -923,6 +927,22 @@ impl Terminal {
                 parameters,
             } => self.request_mode(private, parameters),
             TerminalOp::SoftReset => self.soft_reset(),
+            TerminalOp::CopyRectangle(parameters) => self.copy_rectangle(parameters),
+            TerminalOp::FillRectangle(parameters) => self.fill_rectangle(parameters),
+            TerminalOp::EraseRectangle {
+                parameters,
+                selective,
+            } => self.erase_rectangle(parameters, selective),
+            TerminalOp::InsertColumns(parameters) => self.insert_columns(parameters),
+            TerminalOp::DeleteColumns(parameters) => self.delete_columns(parameters),
+            TerminalOp::BackIndex => {
+                self.back_index();
+                self.clear_pending_wrap();
+            }
+            TerminalOp::ForwardIndex => {
+                self.forward_index();
+                self.clear_pending_wrap();
+            }
             TerminalOp::RequestRectangleChecksum(parameters) => {
                 self.request_rectangle_checksum(parameters);
             }
@@ -1592,6 +1612,212 @@ impl Terminal {
         }
     }
 
+    /// Reads the four one-based, inclusive edges starting at `first` into an
+    /// absolute rectangle clipped to the screen.
+    ///
+    /// Origin mode moves where the rectangle starts, because that is what
+    /// origin mode means for every other coordinate. It does not confine it:
+    /// the rectangle operations are not margin-bounded, so a rectangle that
+    /// runs past the region simply keeps going to the edge of the page.
+    /// An omitted or zero edge is the corresponding edge of the page, and a
+    /// rectangle whose bottom is above its top - or whose right is left of
+    /// its left - is not a rectangle, so the caller does nothing at all.
+    fn rectangle_from(&self, parameters: CsiParameters, first: usize) -> Option<Rectangle> {
+        let dimensions = self.dimensions();
+        let rows = dimensions.rows();
+        let columns = dimensions.columns();
+        let edge = |index: usize, default: usize| -> usize {
+            match parameters.value(index) {
+                Some(0) | None => default,
+                Some(value) => usize::from(value),
+            }
+        };
+        let (row_origin, column_origin) = if self.modes.origin_mode {
+            let margins = self.horizontal_margins();
+            (self.active_buffer().scroll_top, margins.left)
+        } else {
+            (0, 0)
+        };
+        let top = row_origin + edge(first, 1) - 1;
+        let left = column_origin + edge(first + 1, 1) - 1;
+        let bottom = row_origin + edge(first + 2, rows - row_origin) - 1;
+        let right = column_origin + edge(first + 3, columns - column_origin) - 1;
+        if bottom < top || right < left {
+            return None;
+        }
+        let bottom = bottom.min(rows - 1);
+        let right = right.min(columns - 1);
+        if top > bottom || left > right {
+            return None;
+        }
+        Some(Rectangle {
+            top,
+            left,
+            bottom,
+            right,
+        })
+    }
+
+    /// DECFRA. The fill character comes first, before the rectangle.
+    fn fill_rectangle(&mut self, parameters: CsiParameters) {
+        // The character is restricted to the two printable ranges of the
+        // eight-bit set; anything else is not a character this sequence can
+        // carry, so the whole command is discarded rather than guessed at.
+        let character = match parameters.value(0) {
+            Some(value @ (32..=126 | 160..=255)) => char::from(value as u8),
+            _ => return,
+        };
+        let Some(rectangle) = self.rectangle_from(parameters, 1) else {
+            return;
+        };
+        let mut cell = self.erase_cell();
+        cell.text = CompactString::from(character.to_string());
+        self.active_buffer_mut()
+            .screen
+            .fill_rectangle(rectangle, cell, false);
+    }
+
+    /// DECERA and DECSERA.
+    fn erase_rectangle(&mut self, parameters: CsiParameters, selective: bool) {
+        let Some(rectangle) = self.rectangle_from(parameters, 0) else {
+            return;
+        };
+        let cell = self.erase_cell();
+        // DECSERA is the one selective erase that does not honour an ISO
+        // guarded area: DECSED and DECSEL both do. The rectangle form is a
+        // later, purely DEC addition, and it was given the narrower rule of
+        // sparing only what DECSCA protected, so it is asked separately here
+        // rather than being folded into the general one.
+        let spare = if selective {
+            self.protection == ProtectionSource::Dec
+        } else {
+            self.spares_protected_cells(false)
+        };
+        self.active_buffer_mut()
+            .screen
+            .fill_rectangle(rectangle, cell, spare);
+    }
+
+    /// DECCRA. The source rectangle comes first, then its page, then the
+    /// destination's top-left corner and its page. We have one page, so the
+    /// page parameters are read past rather than acted on.
+    fn copy_rectangle(&mut self, parameters: CsiParameters) {
+        let Some(source) = self.rectangle_from(parameters, 0) else {
+            return;
+        };
+        let dimensions = self.dimensions();
+        let (row_origin, column_origin) = if self.modes.origin_mode {
+            let margins = self.horizontal_margins();
+            (self.active_buffer().scroll_top, margins.left)
+        } else {
+            (0, 0)
+        };
+        let corner = |index: usize, origin: usize, limit: usize| -> usize {
+            let value = match parameters.value(index) {
+                Some(0) | None => 1,
+                Some(value) => usize::from(value),
+            };
+            (origin + value - 1).min(limit - 1)
+        };
+        let top = corner(5, row_origin, dimensions.rows());
+        let left = corner(6, column_origin, dimensions.columns());
+        self.active_buffer_mut()
+            .screen
+            .copy_rectangle(source, top, left);
+    }
+
+    /// The rows DECIC, DECDC, DECBI and DECFI shift sideways.
+    fn vertical_region(&self) -> (usize, usize) {
+        let buffer = self.active_buffer();
+        (buffer.scroll_top, buffer.scroll_bottom)
+    }
+
+    /// DECIC. Unlike `ICH`, which shifts one line, this shifts every line of
+    /// the vertical region at once - it inserts a column, not a gap.
+    fn insert_columns(&mut self, parameters: CsiParameters) {
+        let count = Self::parameter_or(parameters, 0, 1);
+        if !self.cursor_within_margins() {
+            return;
+        }
+        let span = self.horizontal_margins();
+        let cell = self.erase_cell();
+        let column = self.cursor().column;
+        let (top, bottom) = self.vertical_region();
+        for row in top..=bottom {
+            self.active_buffer_mut().screen.insert_characters(
+                column,
+                row,
+                count,
+                cell.clone(),
+                span,
+            );
+        }
+    }
+
+    /// DECDC, the mirror of DECIC.
+    fn delete_columns(&mut self, parameters: CsiParameters) {
+        let count = Self::parameter_or(parameters, 0, 1);
+        if !self.cursor_within_margins() {
+            return;
+        }
+        let span = self.horizontal_margins();
+        let cell = self.erase_cell();
+        let column = self.cursor().column;
+        let (top, bottom) = self.vertical_region();
+        for row in top..=bottom {
+            self.active_buffer_mut().screen.delete_characters(
+                column,
+                row,
+                count,
+                cell.clone(),
+                span,
+            );
+        }
+    }
+
+    /// DECBI: back a column, or, from the left margin, scroll the region
+    /// right and stay put. The cursor never moves when the screen does.
+    fn back_index(&mut self) {
+        let margins = self.horizontal_margins();
+        let column = self.cursor().column;
+        if column == margins.left {
+            let cell = self.erase_cell();
+            let (top, bottom) = self.vertical_region();
+            for row in top..=bottom {
+                self.active_buffer_mut().screen.insert_characters(
+                    margins.left,
+                    row,
+                    1,
+                    cell.clone(),
+                    margins,
+                );
+            }
+        } else if column > 0 {
+            self.active_buffer_mut().cursor.column -= 1;
+        }
+    }
+
+    /// DECFI, the mirror of DECBI.
+    fn forward_index(&mut self) {
+        let margins = self.horizontal_margins();
+        let column = self.cursor().column;
+        if column == margins.right {
+            let cell = self.erase_cell();
+            let (top, bottom) = self.vertical_region();
+            for row in top..=bottom {
+                self.active_buffer_mut().screen.delete_characters(
+                    margins.left,
+                    row,
+                    1,
+                    cell.clone(),
+                    margins,
+                );
+            }
+        } else if column + 1 < self.dimensions().columns() {
+            self.active_buffer_mut().cursor.column += 1;
+        }
+    }
+
     fn insert_characters(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
         if !self.cursor_within_margins() {
@@ -1728,6 +1954,8 @@ impl Terminal {
         let foreground = self.current_foreground;
         let background = self.current_background;
         let origin_mode = self.modes.origin_mode;
+        let protected = self.current_protected;
+        let protection = self.protection;
         let buffer = self.active_buffer_mut();
         buffer.dec_saved = Some(SavedDecState {
             cursor: buffer.cursor,
@@ -1736,6 +1964,8 @@ impl Terminal {
             foreground,
             background,
             origin_mode,
+            protected,
+            protection,
         });
     }
 
@@ -1750,6 +1980,8 @@ impl Terminal {
             self.current_attributes = Attributes::default();
             self.current_foreground = Color::Default;
             self.current_background = Color::Default;
+            self.current_protected = false;
+            self.protection = ProtectionSource::None;
             let buffer = self.active_buffer_mut();
             buffer.cursor = Cursor { column: 0, row: 0 };
             buffer.pending_wrap = false;
@@ -1773,11 +2005,23 @@ impl Terminal {
         self.current_foreground = saved.foreground;
         self.current_background = saved.background;
         self.modes.origin_mode = saved.origin_mode;
+        self.current_protected = saved.protected;
+        self.protection = saved.protection;
     }
 
     fn save_ansi(&mut self) {
         let cursor = self.cursor();
-        self.active_buffer_mut().ansi_saved = Some(SavedAnsiCursor { cursor });
+        // The SCO form saves no renditions, but protection is not a
+        // rendition: esctest2 holds both save/restore pairs to restoring it,
+        // and it is the character-protection state rather than the character
+        // attributes that DECSCA sets.
+        let protected = self.current_protected;
+        let protection = self.protection;
+        self.active_buffer_mut().ansi_saved = Some(SavedAnsiCursor {
+            cursor,
+            protected,
+            protection,
+        });
     }
 
     fn restore_ansi(&mut self) {
@@ -1787,6 +2031,8 @@ impl Terminal {
         // mean something different from the one that was saved.
         self.modes.origin_mode = false;
         let Some(saved) = self.active_buffer().ansi_saved else {
+            self.current_protected = false;
+            self.protection = ProtectionSource::None;
             // Same rule as DECRC: nothing saved means the power-on position.
             // The SCO form only ever saved a position, so that is all it
             // restores.
@@ -1802,6 +2048,8 @@ impl Terminal {
             row: saved.cursor.row.min(dimensions.rows() - 1),
         };
         buffer.pending_wrap = false;
+        self.current_protected = saved.protected;
+        self.protection = saved.protection;
     }
 
     fn set_graphics_rendition(&mut self, parameters: CsiParameters) {

@@ -566,12 +566,12 @@ stdout, and the terminal's replies come back on stdin. So conformance-testing
 writes `drain_replies()` back into the pty. `scripts/run-esctest2.sh` fetches
 the pinned commit and runs it.
 
-We pass 344 of the suite's 559 test methods today, so running all of it would
+We pass 388 of the suite's 559 test methods today, so running all of it would
 produce a wall of red that everyone learns to ignore. Instead
 `validation/esctest2-allow.txt` names what we are held to - cursor addressing,
 vertical motion, the erase and insert/delete families, scrolling, tab stops,
 save/restore cursor, the tab and index controls, mode reporting, selective
-erase and the string controls, 305 tests - and CI fails if any
+erase, rectangular editing and the string controls, 361 tests - and CI fails if any
 of it regresses. `validation/esctest2-skip.txt` carries the exclusions
 *within* those families, one reason per line, so each skip is an admission
 rather than a silence. `scripts/run-esctest2.sh --everything` surveys the
@@ -583,8 +583,8 @@ screen by asking for a rectangle's checksum. Until that was answered those
 tests could not observe anything at all - not pass, not fail. Implementing it
 moved the survey from 110 to 219, left/right margins took it to 262, and the
 remaining motion controls to 292, mode reporting to 315 and selective erase
-to 344. The largest remaining blockers are the rectangular editing
-operations, colour queries and `RIS`. #193 tracks the phases.
+to 344 and rectangular editing to 388. The largest remaining blockers are the
+colour queries, the window operations and `RIS`. #193 tracks the phases.
 
 Two window operations are implemented for this reason and no other: `CSI 18 t`
 and `CSI 19 t` report the screen size, which esctest asks for before every
@@ -703,6 +703,50 @@ small and both are real: `KAM` (`CSI 2 h`) locks the keyboard, and does so by
 refusing input rather than by queueing it, so the program is owed nothing
 when it unlocks; and `DECBKM` (`DECSET ?67`) makes the backarrow key send BS
 instead of DEL.
+
+### Rectangular editing addresses the page, not the margins
+
+Almost everything in this file is bounded by a margin. `ICH` and `DCH` stop at
+the right margin; `IL`, `DL`, `IND` and `RI` stop at the top and bottom ones;
+all six do nothing at all from outside them. The rectangular operations -
+`DECCRA`, `DECFRA`, `DECERA`, `DECSERA` - are the exception, and esctest2 has
+an `ignoresMargins` test for each of them to say so. A rectangle names its own
+four edges, so a margin has nothing to add: honouring one would silently move
+or clip a region the caller has already described exactly.
+
+Origin mode is not the same kind of thing and does still apply. It changes
+where the coordinates are measured from, exactly as it does for `CUP`, so a
+rectangle given in origin mode starts at the region's corner. It does not
+confine the rectangle, because confinement is the margin behaviour the
+operations have just been excused from. The edges are then clipped to the
+page, an omitted or zero edge means the page's own edge, and a rectangle whose
+bottom is above its top is discarded rather than normalised - swapping the
+edges would act on cells the caller never named.
+
+`DECCRA` copies through a buffer rather than cell by cell. It is defined for
+overlapping source and destination, and a direct copy smears the leading edge
+across the overlap instead of moving it.
+
+`DECSERA` breaks the rule established in the selective-erase section above.
+`DECSED` and `DECSEL` honour an ISO guarded area; `DECSERA` does not, and
+spares only what `DECSCA` protected. That is not a principle, it is history:
+the rectangle form is a later, purely DEC addition, and it was given the
+narrower rule. esctest2 pins all three, so the terminal asks separately for
+the rectangle case rather than generalising.
+
+`DECIC` and `DECDC` are margin-bounded, and are not `ICH` and `DCH` under
+another name: they shift *every* row of the vertical region at once, so they
+open and close a column rather than a gap. `DECBI` and `DECFI` are the same
+shift by one, chosen by where the cursor is - at the left or right margin they
+move the screen and leave the cursor alone, and anywhere else they move the
+cursor by a column and leave the screen alone. With no margins set every
+column is the margin, which is why `DECFI` at the last column of the screen
+scrolls the whole page rather than doing nothing.
+
+Protection turned out to be part of the saved cursor state. `DECSC`/`DECRC`
+and `SCOSC`/`SCORC` both restore it, which is easy to miss because it looks
+like a rendition and is stored beside them, but is not one: `SGR 0` cannot
+clear it, and the SCO form, which saves no renditions at all, saves this.
 
 ### Resets: DECSTR, and what a save actually saves
 

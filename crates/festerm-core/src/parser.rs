@@ -211,6 +211,23 @@ pub enum TerminalOp {
     },
     SelectiveEraseDisplay(CsiParameters),
     SelectiveEraseLine(CsiParameters),
+    /// DECCRA: copy a rectangle of the page somewhere else on it.
+    CopyRectangle(CsiParameters),
+    /// DECFRA: fill a rectangle with a character.
+    FillRectangle(CsiParameters),
+    /// DECERA and DECSERA: erase a rectangle, selectively or not.
+    EraseRectangle {
+        parameters: CsiParameters,
+        selective: bool,
+    },
+    /// DECIC: insert columns within the margins.
+    InsertColumns(CsiParameters),
+    /// DECDC: delete columns within the margins.
+    DeleteColumns(CsiParameters),
+    /// DECBI: step back a column, scrolling the margins right at the edge.
+    BackIndex,
+    /// DECFI: step on a column, scrolling the margins left at the edge.
+    ForwardIndex,
     RequestMode {
         private: bool,
         parameters: CsiParameters,
@@ -500,6 +517,8 @@ impl Parser {
             b'7' => TerminalOp::SaveDec,
             b'8' => TerminalOp::RestoreDec,
             b'H' => TerminalOp::SetTabStop,
+            b'6' => TerminalOp::BackIndex,
+            b'9' => TerminalOp::ForwardIndex,
             b'V' => TerminalOp::SetProtection {
                 iso: true,
                 protected: true,
@@ -693,6 +712,18 @@ impl Parser {
                     private,
                     parameters,
                 },
+                (false, 1, b'$', b'v') => TerminalOp::CopyRectangle(parameters),
+                (false, 1, b'$', b'x') => TerminalOp::FillRectangle(parameters),
+                (false, 1, b'$', b'z') => TerminalOp::EraseRectangle {
+                    parameters,
+                    selective: false,
+                },
+                (false, 1, b'$', b'{') => TerminalOp::EraseRectangle {
+                    parameters,
+                    selective: true,
+                },
+                (false, 1, b'\'', b'}') => TerminalOp::InsertColumns(parameters),
+                (false, 1, b'\'', b'~') => TerminalOp::DeleteColumns(parameters),
                 _ => TerminalOp::Ignored,
             };
         }
