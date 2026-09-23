@@ -29,6 +29,7 @@ pub enum MouseTrackingMode {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalModes {
     pub(crate) auto_wrap: bool,
+    pub(crate) reverse_wrap: bool,
     pub(crate) origin_mode: bool,
     pub(crate) left_right_margin_mode: bool,
     pub(crate) insert_mode: bool,
@@ -48,6 +49,10 @@ pub struct TerminalModes {
 impl TerminalModes {
     pub const fn auto_wrap(self) -> bool {
         self.auto_wrap
+    }
+
+    pub const fn reverse_wrap(self) -> bool {
+        self.reverse_wrap
     }
 
     pub const fn origin_mode(self) -> bool {
@@ -120,6 +125,7 @@ impl Default for TerminalModes {
     fn default() -> Self {
         Self {
             auto_wrap: true,
+            reverse_wrap: false,
             origin_mode: false,
             left_right_margin_mode: false,
             insert_mode: false,

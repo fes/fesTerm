@@ -828,6 +828,7 @@ impl Terminal {
             TerminalOp::LineFeed => {
                 self.current_hyperlink = None;
                 self.current_hyperlink_cells_remaining = 0;
+                self.end_logical_line();
                 self.index();
                 if self.modes.line_feed_new_line {
                     let column = self.carriage_return_column();
@@ -838,13 +839,12 @@ impl Terminal {
             TerminalOp::Index => {
                 self.current_hyperlink = None;
                 self.current_hyperlink_cells_remaining = 0;
+                self.end_logical_line();
                 self.index();
                 self.clear_pending_wrap();
             }
             TerminalOp::Backspace => {
-                let buffer = self.active_buffer_mut();
-                buffer.cursor.column = buffer.cursor.column.saturating_sub(1);
-                buffer.pending_wrap = false;
+                self.move_cursor_back(1);
             }
             TerminalOp::Tab => {
                 self.tab();
@@ -869,6 +869,7 @@ impl Terminal {
                 // margins the order is observable: a cursor outside the
                 // margins must not scroll, and returning first would carry it
                 // inside them and let it scroll after all.
+                self.end_logical_line();
                 self.index();
                 let column = self.carriage_return_column();
                 self.active_buffer_mut().cursor.column = column;
@@ -1524,14 +1525,63 @@ impl Terminal {
 
     fn move_horizontal(&mut self, parameters: CsiParameters, forward: bool) {
         let count = Self::parameter_or(parameters, 0, 1);
-        let (left, right) = self.relative_horizontal_bounds();
+        if !forward {
+            self.move_cursor_back(count);
+            return;
+        }
+        let (_, right) = self.relative_horizontal_bounds();
         let buffer = self.active_buffer_mut();
-        buffer.cursor.column = if forward {
-            buffer.cursor.column.saturating_add(count).min(right)
-        } else {
-            buffer.cursor.column.saturating_sub(count).max(left)
-        };
+        buffer.cursor.column = buffer.cursor.column.saturating_add(count).min(right);
         buffer.pending_wrap = false;
+    }
+
+    /// Records that the cursor's row ends a logical line.
+    ///
+    /// Only the wrap path marks a row as continuing onto the next one, and
+    /// nothing used to unmark it, so a row that wrapped once stayed marked
+    /// even after an explicit line break proved it no longer did. Reverse
+    /// wraparound is the first feature to read the flag for cursor motion,
+    /// where a stale mark would climb onto an unrelated line.
+    fn end_logical_line(&mut self) {
+        let buffer = self.active_buffer_mut();
+        let row = buffer.cursor.row;
+        buffer.screen.clear_soft_wrapped(row);
+    }
+
+    /// Moves the cursor left, climbing onto the previous row when reverse
+    /// wraparound (DECSET 45) is on.
+    ///
+    /// The climb is bounded three ways, and every bound matters. It stops at
+    /// the top of the scrolling region, because a cursor that escaped the
+    /// region would be outside the window the application believes it is
+    /// drawing in. It stops at any row that did not wrap, so the cursor can
+    /// never leave the logical line it started on. And within that line it
+    /// stops at the left margin, which is where the logical line begins.
+    /// With the mode off the first bound is reached immediately, which is
+    /// the ordinary CUB and BS behaviour.
+    fn move_cursor_back(&mut self, count: usize) {
+        let (left, right) = self.relative_horizontal_bounds();
+        let reverse_wrap = self.modes.reverse_wrap;
+        let mut remaining = count;
+        loop {
+            let buffer = self.active_buffer_mut();
+            let step = remaining.min(buffer.cursor.column.saturating_sub(left));
+            buffer.cursor.column -= step;
+            remaining -= step;
+            let row = buffer.cursor.row;
+            let at_region_top = row == buffer.scroll_top || row == 0;
+            if remaining == 0 || !reverse_wrap || at_region_top {
+                break;
+            }
+            if self.active_buffer().screen.row_soft_wrapped(row - 1) != Some(true) {
+                break;
+            }
+            let buffer = self.active_buffer_mut();
+            buffer.cursor.row = row - 1;
+            buffer.cursor.column = right;
+            remaining -= 1;
+        }
+        self.active_buffer_mut().pending_wrap = false;
     }
 
     /// CHA (`CSI G`) and HPA (`CSI \``) address the same column, but only CHA
@@ -2342,6 +2392,7 @@ impl Terminal {
                     }
                 }
                 25 => self.modes.cursor_visible = enabled,
+                45 => self.modes.reverse_wrap = enabled,
                 66 => self.modes.application_keypad = enabled,
                 67 => self.modes.backarrow_sends_backspace = enabled,
                 69 => {
@@ -2712,6 +2763,7 @@ impl Terminal {
             7 => Self::mode_state(self.modes.auto_wrap),
             9 => Self::mode_state(self.modes.mouse_tracking == MouseTrackingMode::X10),
             25 => Self::mode_state(self.modes.cursor_visible),
+            45 => Self::mode_state(self.modes.reverse_wrap),
             47 | 1047 | 1049 => Self::mode_state(self.modes.alternate_screen),
             66 => Self::mode_state(self.modes.application_keypad),
             67 => Self::mode_state(self.modes.backarrow_sends_backspace),

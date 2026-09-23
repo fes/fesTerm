@@ -28,6 +28,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0023: `serialport` Crate and Worker-Thread Model for the Serial Session Backend](0023-serialport-worker-thread-serial-backend.md)
 - [ADR 0024: Native Secret Store Extended to Stored Private Keys](0024-native-secret-store-stored-private-keys.md)
 - [ADR 0036: The Core Reports Colors From an Embedder-Supplied Scheme](0036-embedder-color-scheme-in-core.md) — keeps `OSC 4/10/11/12` answers in `festerm-core` while `festerm-ui-egui` owns the values; see issue #222
+- [ADR 0037: Reverse Wraparound Climbs Only the Line It Is On](0037-reverse-wraparound-bounds.md) — implements `DECSET 45` with xterm's post-383 bounds and retires stale soft-wrap marks on explicit line breaks
 
 ## Superseded Decisions
 

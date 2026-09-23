@@ -701,6 +701,14 @@ impl Screen {
         self.soft_wrapped_rows[physical_row] = true;
     }
 
+    /// Records that a row ends a logical line rather than continuing onto
+    /// the next one. A line feed proves this even for a row that wrapped
+    /// earlier, and reverse wraparound must not climb across such a row.
+    pub(crate) fn clear_soft_wrapped(&mut self, row: usize) {
+        let physical_row = self.physical_row(row);
+        self.soft_wrapped_rows[physical_row] = false;
+    }
+
     fn cell_index(&self, column: usize, row: usize) -> Option<usize> {
         (column < self.dimensions.columns() && row < self.dimensions.rows())
             .then_some(self.physical_row_start(row) + column)

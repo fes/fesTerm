@@ -57,7 +57,7 @@ Required for the first meaningful compatibility milestone:
 - Primary and alternate screen switching and restoration.
 - Cursor addressing, movement, save, and restore.
 - Erase, insert, delete, scroll, and scrolling-region behavior.
-- Autowrap, pending-wrap, origin, and margin behavior.
+- Autowrap, pending-wrap, reverse wraparound, origin, and margin behavior.
 - Standard SGR attributes and 256-color support.
 - True color.
 - Resize events and terminal-dimension reporting.
@@ -121,6 +121,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Titles | Apply sanitized OSC 0/2 titles without affecting grid state | passing | Core fixture; application title mapping |
 | Hyperlinks | Preserve normalized HTTP/HTTPS OSC 8 metadata; open only by explicit modifier-click or context command through application policy | implemented | Core parser/lifetime, UI intent-routing, and application allowlist tests |
 | Color queries | Report the painted foreground, background, cursor, and palette entries for OSC 4/10/11/12 queries, mirroring the request terminator; color *sets* and the OSC 104/110/111/112 resets stay ignored rather than reported as applied | passing | Exact-byte core tests; renderer/core palette-agreement test; ADR 0036 |
+| Reverse wraparound | Honor DECSET 45 by climbing to the previous row only across a soft-wrapped boundary, stopping at the start of the logical line and at the top of the scrolling region | passing | esctest2 `CUBTests`; core cursor-motion tests; ADR 0037 |
 | Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
 | Emoji and fallback | Preserve cell layout across fallback fonts | passing | All 3,773 fully-qualified Unicode 15.1 emoji are tested for streamed two-cell geometry, color classification/rasterization, and owned monochrome scalar coverage; users can select deterministic color or monochrome presentation without changing geometry; bounded positive/negative caches with per-frame work budgets and cold/warm Criterion workloads; reviewed Windows/Linux snapshots; native emoji smoke verifies geometry and color-texture submission |
