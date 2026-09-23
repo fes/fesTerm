@@ -58,14 +58,25 @@ if ! command -v "${python}" >/dev/null 2>&1; then
     exit 1
 fi
 
-if [[ ! -d "${checkout}/.git" ]]; then
-    rm -rf "${checkout}"
-    git clone --quiet "${ESCTEST_REPOSITORY}" "${checkout}"
-fi
-git -C "${checkout}" fetch --quiet origin
 # Pinned: the suite is a moving target and an unpinned conformance run that
 # changes under us is a flaky test, not a signal.
-git -C "${checkout}" checkout --quiet "${ESCTEST_COMMIT}"
+sync_checkout() {
+    if [[ ! -d "${checkout}/.git" ]]; then
+        rm -rf "${checkout}"
+        git clone --quiet "${ESCTEST_REPOSITORY}" "${checkout}" || return 1
+    fi
+    git -C "${checkout}" fetch --quiet origin || return 1
+    git -C "${checkout}" checkout --quiet "${ESCTEST_COMMIT}" || return 1
+}
+
+# A cached checkout can be left half-written, and a partial object store fails
+# here rather than where it was truncated. Re-cloning is cheap next to an
+# unexplained red run, so we spend it rather than report a flake.
+if ! sync_checkout; then
+    echo "esctest2 checkout unusable, re-cloning" >&2
+    rm -rf "${checkout}"
+    sync_checkout
+fi
 
 # Turn the allow/skip files into the single regex esctest2 understands. It
 # only offers `--include`, so a skip becomes a negative lookahead in front of

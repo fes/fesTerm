@@ -9,42 +9,9 @@
 # allowlist's absence, and #193 tracks the phases. This is for tests we have
 # deliberately pulled *out* of a family we otherwise hold ourselves to.
 
-# --- Blocked on left/right margins, DECSLRM and DECSET 69 (#193 phase 5) ---
-# We have no left/right margin in the screen model, so every operation that
-# should clip or scroll within one uses the whole row instead. This is the
-# largest single gap left in the suite: it is a change to the screen model,
-# not a missing sequence, and it touches every path that clips or scrolls.
-CNLTests\.test_CNL_StopsAtBottomLineWhenBegunBelowScrollRegion
-CNLTests\.test_CNL_StopsAtBottomMarginInScrollRegion
-CPLTests\.test_CPL_StopsAtTopLineWhenBegunAboveScrollRegion
-CPLTests\.test_CPL_StopsAtTopMarginInScrollRegion
-CRTests\.test_CR_MovesToLeftMarginWhenRightOfLeftMargin
-CRTests\.test_CR_StaysPutWhenAtLeftMargin
-CRTests\.test_CR_MovesToLeftMarginWhenLeftOfLeftMarginInOriginMode
-CUBTests\.test_CUB_StopsAtLeftMarginInScrollRegion
-CUFTests\.test_CUF_StopsAtRightMarginInScrollRegion
-# Origin mode is relative to the left/right margins as well as the top and
-# bottom ones, so these measure the column we cannot yet honour.
-CHATests\.test_CHA_RespectsOriginMode
-CUPTests\.test_CUP_RespectsOriginMode
-HVPTests\.test_HVP_RespectsOriginMode
-SCORCTests\.test_SaveRestoreCursor_ResetsOriginMode
-DCHTests\.test_DCH_DeleteAllWithMargins
-DCHTests\.test_DCH_DoesNothingOutsideLeftRightMargin
-DCHTests\.test_DCH_RespectsMargins
-ICHTests\.test_ICH_IsNoOpWhenCursorBeginsOutsideScrollRegion
-ICHTests\.test_ICH_ScrollOffRightMarginInScrollRegion
-ILTests\.test_IL_RespectsScrollRegion
-ILTests\.test_IL_RespectsScrollRegion_Over
-INDTests\.test_IND_MovesDoesNotScrollOutsideLeftRight
-LFTests\.test_LF_MovesDoesNotScrollOutsideLeftRight
-NELTests\.test_NEL_MovesDoesNotScrollOutsideLeftRight
-RITests\.test_RI_MovesDoesNotScrollOutsideLeftRight
-SCORCTests\.test_SaveRestoreCursor_WorksInLRM
-
-# --- Blocked on selective erase, DECSCA (#193 phase 6) ---
+# --- Blocked on selective erase, DECSCA (#193) ---
 # A cell cannot be marked protected, so the erases that are supposed to spare
-# protected cells erase them.
+# protected cells erase them instead.
 DECSTRTests\.test_DECSTR_DECSCA
 ECHTests\.test_ECH_respectsISOProtection
 EDTests\.test_ED_respectsISOProtection
@@ -53,6 +20,7 @@ ELTests\.test_EL_respectsISOProtection
 # --- Blocked on reverse wraparound, DECSET 45 ---
 # Backspace past the left edge does not climb to the previous line. Not in
 # any phase of #193 yet; it needs a decision first, because reverse wrap is
-# only well defined when the terminal remembers which rows soft-wrapped.
+# only well defined when the terminal remembers which rows soft-wrapped, and
+# ours records that only for reflow.
 CUBTests\.test_CUB_AfterNoWrappedInlines
 CUBTests\.test_CUB_AfterOneWrappedInline
