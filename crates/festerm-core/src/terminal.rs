@@ -387,6 +387,8 @@ pub struct Terminal {
     active_screen: ActiveScreen,
     modes: TerminalModes,
     cursor_style: CursorStyle,
+    /// The last character printed, for `REP` to repeat.
+    last_graphic_character: Option<char>,
     /// Whether the running program has ever requested a cursor style via
     /// DECSCUSR. GUI front ends use this to distinguish "the spec-mandated
     /// blinking-block reset state" from "no preference has been expressed
@@ -431,6 +433,7 @@ impl Terminal {
             active_screen: ActiveScreen::Primary,
             modes: TerminalModes::default(),
             cursor_style: CursorStyle::default(),
+            last_graphic_character: None,
             cursor_style_set: false,
             tab_stops: default_tab_stops(dimensions),
             current_attributes: Attributes::NONE,
@@ -910,6 +913,11 @@ impl Terminal {
                 parameters,
             } => self.set_modes(private, enabled, parameters),
             TerminalOp::DeviceStatus(parameters) => self.device_status(parameters),
+            TerminalOp::DecDeviceStatus(parameters) => self.dec_device_status(parameters),
+            TerminalOp::RepeatPrecedingCharacter(parameters) => {
+                self.repeat_preceding_character(parameters);
+            }
+            TerminalOp::ScreenAlignmentPattern => self.screen_alignment_pattern(),
             TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
             TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
             TerminalOp::SetProtection { iso, protected } => {
@@ -1003,6 +1011,11 @@ impl Terminal {
             self.clear_grapheme_anchor();
             return;
         }
+        // REP repeats the last character that reached the screen, so it is
+        // recorded here rather than in the parser: a zero-width mark or a
+        // combining character that only extended an existing grapheme has
+        // not been printed in the sense REP means.
+        self.last_graphic_character = Some(character);
         if self.active_buffer().pending_wrap && self.modes.auto_wrap {
             let (_, home) = self.wrap_geometry();
             let buffer = self.active_buffer_mut();
@@ -2694,15 +2707,135 @@ impl Terminal {
     /// indistinguishable from one that has no truecolor at all. Anything
     /// else is answered with the "not recognized" form rather than left
     /// unanswered, so a caller is never left waiting.
+    /// DECDSR, the private form of DSR. Every report here is a report about
+    /// a device, and every device it asks about is one we do not have, so
+    /// the answers are the "no such thing" values rather than invented ones.
+    /// Saying "printer ready" to be agreeable would be worse than silence.
+    fn dec_device_status(&mut self, parameters: CsiParameters) {
+        let reply = match parameters.value(0) {
+            // DECXCPR. The page is reported only by terminals that claim
+            // VT400, and ours deliberately claims less, so the two-parameter
+            // form is the honest one - see `device_attributes`.
+            Some(6) => {
+                let cursor = self.cursor();
+                format!("\x1b[?{};{}R", cursor.row + 1, cursor.column + 1)
+            }
+            // No printer port.
+            Some(15) => "\x1b[?13n".to_owned(),
+            // User-defined keys are locked, because we have none to unlock.
+            Some(25) => "\x1b[?21n".to_owned(),
+            // No locator device, and so no locator type worth naming.
+            Some(53 | 55) => "\x1b[?50n".to_owned(),
+            Some(56) => "\x1b[?57;0n".to_owned(),
+            // No macro storage, so none free and nothing to checksum.
+            Some(62) => "\x1b[0*{".to_owned(),
+            Some(63) => {
+                let identifier = parameters.value(1).unwrap_or(0);
+                format!("\x1bP{identifier}!~0000\x1b\\")
+            }
+            // The link cannot have errors, having no link.
+            Some(75) => "\x1b[?70n".to_owned(),
+            // Not configured for multiple sessions.
+            Some(85) => "\x1b[?83n".to_owned(),
+            _ => return,
+        };
+        self.queue_reply(reply.as_bytes());
+    }
+
+    /// REP. ECMA-48 defines this against the last graphic character, which
+    /// means it repeats a *rendered* character rather than the last byte
+    /// received: a control sequence in between does not clear it, but a
+    /// character that never reached the screen never becomes repeatable.
+    fn repeat_preceding_character(&mut self, parameters: CsiParameters) {
+        let Some(character) = self.last_graphic_character else {
+            return;
+        };
+        // The repeats go through the ordinary print path, so wrapping and
+        // the margins apply to them exactly as they did to the original.
+        for _ in 0..Self::parameter_or(parameters, 0, 1) {
+            self.print(character);
+        }
+    }
+
+    /// DECALN, the alignment pattern. It fills the page with `E`, homes the
+    /// cursor and drops both sets of margins - it is a test pattern, so it
+    /// deliberately leaves nothing of the previous state in the way.
+    fn screen_alignment_pattern(&mut self) {
+        let dimensions = self.dimensions();
+        let rectangle = Rectangle {
+            top: 0,
+            left: 0,
+            bottom: dimensions.rows() - 1,
+            right: dimensions.columns() - 1,
+        };
+        let cell = Cell {
+            text: CompactString::const_new("E"),
+            width: CellWidth::Single,
+            foreground: Color::Default,
+            background: Color::Default,
+            attributes: Attributes::default(),
+            hyperlink: None,
+        };
+        self.modes.left_right_margin_mode = false;
+        let rows = dimensions.rows();
+        let columns = dimensions.columns();
+        let buffer = self.active_buffer_mut();
+        buffer.scroll_top = 0;
+        buffer.scroll_bottom = rows - 1;
+        buffer.scroll_left = 0;
+        buffer.scroll_right = columns - 1;
+        buffer.cursor = Cursor { column: 0, row: 0 };
+        buffer.pending_wrap = false;
+        buffer.screen.fill_rectangle(rectangle, cell, false);
+    }
+
     fn apply_dcs_action(&mut self, action: Option<DcsAction>) {
         let Some(DcsAction::RequestStatusString(selector)) = action else {
             return;
         };
-        if selector == b"m" {
-            let report = self.graphics_rendition_report();
-            self.queue_reply(format!("\x1bP1$r{report}m\x1b\\").as_bytes());
-        } else {
-            self.queue_reply(b"\x1bP0$r\x1b\\");
+        // A valid reply is `1$r` plus the parameters that would set the
+        // setting again, plus the selector. Only settings we actually hold
+        // are answered: `0$r` says "I do not know that one", which is a
+        // better answer than a plausible default for a setting we ignore.
+        let report = match selector.as_slice() {
+            b"m" => Some(self.graphics_rendition_report()),
+            b"r" => {
+                let buffer = self.active_buffer();
+                Some(format!(
+                    "{};{}",
+                    buffer.scroll_top + 1,
+                    buffer.scroll_bottom + 1
+                ))
+            }
+            b"s" => {
+                let margins = self.horizontal_margins();
+                Some(format!("{};{}", margins.left + 1, margins.right + 1))
+            }
+            b"\"q" => Some(
+                usize::from(self.current_protected && self.protection == ProtectionSource::Dec)
+                    .to_string(),
+            ),
+            b" q" => Some(
+                match self.cursor_style {
+                    CursorStyle::BlinkingBlock => 1,
+                    CursorStyle::SteadyBlock => 2,
+                    CursorStyle::BlinkingUnderline => 3,
+                    CursorStyle::SteadyUnderline => 4,
+                    CursorStyle::BlinkingBar => 5,
+                    CursorStyle::SteadyBar => 6,
+                }
+                .to_string(),
+            ),
+            _ => None,
+        };
+        match report {
+            Some(report) => {
+                let selector = String::from_utf8_lossy(&selector);
+                self.queue_reply(format!("\x1bP1$r{report}{selector}\x1b\\").as_bytes());
+            }
+            None => {
+                self.queue_reply(b"\x1bP0$r\x1b\\");
+            }
         }
     }
 
