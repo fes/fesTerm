@@ -30,6 +30,7 @@ pub enum MouseTrackingMode {
 pub struct TerminalModes {
     pub(crate) auto_wrap: bool,
     pub(crate) origin_mode: bool,
+    pub(crate) left_right_margin_mode: bool,
     pub(crate) alternate_screen: bool,
     pub(crate) cursor_visible: bool,
     pub(crate) application_cursor: bool,
@@ -47,6 +48,12 @@ impl TerminalModes {
 
     pub const fn origin_mode(self) -> bool {
         self.origin_mode
+    }
+
+    /// DECSET `?69` (DECLRMM). Left and right margins only take effect while
+    /// this is set; resetting it puts them back to the full width.
+    pub const fn left_right_margin_mode(self) -> bool {
+        self.left_right_margin_mode
     }
 
     pub const fn alternate_screen(self) -> bool {
@@ -87,6 +94,7 @@ impl Default for TerminalModes {
         Self {
             auto_wrap: true,
             origin_mode: false,
+            left_right_margin_mode: false,
             alternate_screen: false,
             cursor_visible: true,
             application_cursor: false,

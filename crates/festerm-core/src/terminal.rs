@@ -13,7 +13,7 @@ use crate::{
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser, TerminalOp},
     replies::{queue_transport_bytes, QueuePushResult},
-    screen::Screen,
+    screen::{ColumnSpan, Screen},
     unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
@@ -59,6 +59,8 @@ struct BufferState {
     cursor: Cursor,
     scroll_top: usize,
     scroll_bottom: usize,
+    scroll_left: usize,
+    scroll_right: usize,
     pending_wrap: bool,
     grapheme_anchor: Option<Cursor>,
     dec_saved: Option<SavedDecState>,
@@ -72,6 +74,8 @@ impl BufferState {
             cursor: Cursor { column: 0, row: 0 },
             scroll_top: 0,
             scroll_bottom: dimensions.rows() - 1,
+            scroll_left: 0,
+            scroll_right: dimensions.columns() - 1,
             pending_wrap: false,
             grapheme_anchor: None,
             dec_saved: None,
@@ -88,6 +92,7 @@ impl BufferState {
         // never trigger a scroll, silently overwriting rows in place instead
         // of appending a new one.
         let was_full_screen = self.scroll_top == 0 && self.scroll_bottom + 1 == old_rows;
+        let (scroll_left, scroll_right) = self.resized_horizontal_margins(dimensions);
         let mut resized = Self {
             screen: self.screen.resized(dimensions)?,
             cursor: Cursor {
@@ -96,6 +101,8 @@ impl BufferState {
             },
             scroll_top: self.scroll_top.min(dimensions.rows() - 1),
             scroll_bottom: self.scroll_bottom.min(dimensions.rows() - 1),
+            scroll_left,
+            scroll_right,
             pending_wrap: self.pending_wrap,
             grapheme_anchor: self
                 .grapheme_anchor
@@ -263,11 +270,14 @@ impl BufferState {
             scroll_bottom = dimensions.rows() - 1;
         }
 
+        let (scroll_left, scroll_right) = self.resized_horizontal_margins(dimensions);
         let mut resized = Self {
             screen,
             cursor,
             scroll_top,
             scroll_bottom,
+            scroll_left,
+            scroll_right,
             pending_wrap: self.pending_wrap,
             // A reflow can move cell content arbitrarily relative to a
             // grapheme anchor's original row/column, so (like the
@@ -279,6 +289,27 @@ impl BufferState {
         resized.pending_wrap &= resized.cursor.column + 1 == dimensions.columns();
         resized.clamp_saved_states(dimensions);
         Ok((resized, resolved_positions))
+    }
+
+    /// Left and right margins after a resize.
+    ///
+    /// Margins spanning the full old width are the default, and must keep
+    /// spanning the full width once the screen is wider - otherwise output
+    /// would silently wrap at the old right edge. Narrower margins are
+    /// clamped, and collapse back to the full width if the screen shrank
+    /// past them, because a margin wider than the screen cannot be honoured
+    /// and half-honouring it is worse than dropping it.
+    fn resized_horizontal_margins(&self, dimensions: Dimensions) -> (usize, usize) {
+        let old_columns = self.screen.dimensions().columns();
+        let columns = dimensions.columns();
+        let was_full_width = self.scroll_left == 0 && self.scroll_right + 1 == old_columns;
+        let left = self.scroll_left.min(columns - 1);
+        let right = self.scroll_right.min(columns - 1);
+        if was_full_width || (left >= right && columns > 1) {
+            (0, columns - 1)
+        } else {
+            (left, right)
+        }
     }
 
     fn grapheme_anchor_survives_resize(&self, anchor: Cursor, dimensions: Dimensions) -> bool {
@@ -303,6 +334,8 @@ impl BufferState {
         self.cursor = Cursor { column: 0, row: 0 };
         self.scroll_top = 0;
         self.scroll_bottom = self.screen.dimensions().rows() - 1;
+        self.scroll_left = 0;
+        self.scroll_right = self.screen.dimensions().columns() - 1;
         self.pending_wrap = false;
         self.grapheme_anchor = None;
         self.dec_saved = None;
@@ -755,7 +788,8 @@ impl Terminal {
         match operation {
             TerminalOp::Print(character) => self.print(character),
             TerminalOp::CarriageReturn => {
-                self.active_buffer_mut().cursor.column = 0;
+                let column = self.carriage_return_column();
+                self.active_buffer_mut().cursor.column = column;
                 self.clear_pending_wrap();
             }
             TerminalOp::LineFeed | TerminalOp::Index => {
@@ -776,8 +810,13 @@ impl Terminal {
             TerminalOp::NextLine => {
                 self.current_hyperlink = None;
                 self.current_hyperlink_cells_remaining = 0;
-                self.active_buffer_mut().cursor.column = 0;
+                // NEL indexes first and returns second, and with left/right
+                // margins the order is observable: a cursor outside the
+                // margins must not scroll, and returning first would carry it
+                // inside them and let it scroll after all.
                 self.index();
+                let column = self.carriage_return_column();
+                self.active_buffer_mut().cursor.column = column;
                 self.clear_pending_wrap();
             }
             TerminalOp::ReverseIndex => {
@@ -795,14 +834,19 @@ impl Terminal {
             TerminalOp::CursorBack(parameters) => self.move_horizontal(parameters, false),
             TerminalOp::CursorNextLine(parameters) => {
                 self.move_vertical(parameters, true);
-                self.active_buffer_mut().cursor.column = 0;
+                let column = self.carriage_return_column();
+                self.active_buffer_mut().cursor.column = column;
             }
             TerminalOp::CursorPreviousLine(parameters) => {
                 self.move_vertical(parameters, false);
-                self.active_buffer_mut().cursor.column = 0;
+                let column = self.carriage_return_column();
+                self.active_buffer_mut().cursor.column = column;
             }
             TerminalOp::CursorHorizontalAbsolute(parameters) => {
-                self.cursor_horizontal_absolute(parameters)
+                self.cursor_horizontal_absolute(parameters, true)
+            }
+            TerminalOp::HorizontalPositionAbsolute(parameters) => {
+                self.cursor_horizontal_absolute(parameters, false)
             }
             TerminalOp::CursorPosition(parameters) => self.cursor_position(parameters),
             TerminalOp::VerticalPositionAbsolute(parameters) => {
@@ -818,7 +862,13 @@ impl Terminal {
             TerminalOp::ScrollUp(parameters) => self.scroll_up(parameters),
             TerminalOp::ScrollDown(parameters) => self.scroll_down(parameters),
             TerminalOp::SetScrollRegion(parameters) => self.set_scroll_region(parameters),
-            TerminalOp::SaveAnsi => self.save_ansi(),
+            TerminalOp::SaveAnsiOrSetHorizontalMargins(parameters) => {
+                if self.modes.left_right_margin_mode {
+                    self.set_horizontal_margins(parameters);
+                } else if parameters.is_empty() {
+                    self.save_ansi();
+                }
+            }
             TerminalOp::RestoreAnsi => self.restore_ansi(),
             TerminalOp::SetGraphicsRendition(parameters) => self.set_graphics_rendition(parameters),
             TerminalOp::SetModes {
@@ -891,21 +941,22 @@ impl Terminal {
             return;
         }
         if self.active_buffer().pending_wrap && self.modes.auto_wrap {
+            let (_, home) = self.wrap_geometry();
             let buffer = self.active_buffer_mut();
             buffer.screen.mark_soft_wrapped(buffer.cursor.row);
-            buffer.cursor.column = 0;
+            buffer.cursor.column = home;
             buffer.pending_wrap = false;
             self.index();
         }
 
-        let columns = self.dimensions().columns();
+        let (wrap_limit, wrap_home) = self.wrap_geometry();
         let auto_wrap = self.modes.auto_wrap;
         let width = width.min(2);
-        if width == 2 && self.cursor().column() + 1 == columns {
+        if width == 2 && self.cursor().column() + 1 == wrap_limit {
             if auto_wrap {
                 let buffer = self.active_buffer_mut();
                 buffer.screen.mark_soft_wrapped(buffer.cursor.row);
-                buffer.cursor.column = 0;
+                buffer.cursor.column = wrap_home;
                 buffer.pending_wrap = false;
                 self.index();
             } else {
@@ -947,7 +998,22 @@ impl Terminal {
             },
         );
         buffer.grapheme_anchor = Some(cursor);
-        Self::place_cursor_after_cluster(buffer, cursor, width, columns, auto_wrap);
+        Self::place_cursor_after_cluster(buffer, cursor, width, wrap_limit, auto_wrap);
+    }
+
+    /// Where a line wraps, and where it wraps *to*.
+    ///
+    /// With left/right margins in force a line wraps at the right margin and
+    /// continues at the left one, so the visible effect is a column of text
+    /// rather than the whole screen. A cursor sitting outside the margins is
+    /// not in that column and wraps at the screen's own edges instead.
+    fn wrap_geometry(&self) -> (usize, usize) {
+        if self.cursor_within_margins() {
+            let margins = self.horizontal_margins();
+            (margins.right + 1, margins.left)
+        } else {
+            (self.dimensions().columns(), 0)
+        }
     }
 
     fn try_extend_grapheme(&mut self, character: char) -> bool {
@@ -964,7 +1030,7 @@ impl Terminal {
             cell.text.clear();
             cell.text.push(char::REPLACEMENT_CHARACTER);
             cell.width = CellWidth::Single;
-            let columns = self.dimensions().columns();
+            let (wrap_limit, _) = self.wrap_geometry();
             let auto_wrap = self.modes.auto_wrap;
             let buffer = self.active_buffer_mut();
             buffer
@@ -972,7 +1038,7 @@ impl Terminal {
                 .replace_cluster(anchor.column, anchor.row, cell);
             buffer.grapheme_anchor = None;
             buffer.pending_wrap = false;
-            Self::place_cursor_after_cluster(buffer, anchor, 1, columns, auto_wrap);
+            Self::place_cursor_after_cluster(buffer, anchor, 1, wrap_limit, auto_wrap);
             return true;
         }
         cell.text.push(character);
@@ -988,8 +1054,9 @@ impl Terminal {
         };
 
         let columns = self.dimensions().columns();
+        let (wrap_limit, wrap_home) = self.wrap_geometry();
         let auto_wrap = self.modes.auto_wrap;
-        if old_width == 1 && new_width == 2 && anchor.column + 1 == columns {
+        if old_width == 1 && new_width == 2 && anchor.column + 1 == wrap_limit {
             if !auto_wrap {
                 cell.text.clear();
                 cell.text.push(char::REPLACEMENT_CHARACTER);
@@ -1009,7 +1076,7 @@ impl Terminal {
                 let buffer = self.active_buffer_mut();
                 buffer.screen.fill_linear(linear, linear + 1, fill);
                 buffer.screen.mark_soft_wrapped(anchor.row);
-                buffer.cursor.column = 0;
+                buffer.cursor.column = wrap_home;
                 buffer.pending_wrap = false;
             }
             self.index();
@@ -1019,7 +1086,7 @@ impl Terminal {
                 .screen
                 .replace_cluster(cursor.column, cursor.row, cell);
             buffer.grapheme_anchor = Some(cursor);
-            Self::place_cursor_after_cluster(buffer, cursor, new_width, columns, auto_wrap);
+            Self::place_cursor_after_cluster(buffer, cursor, new_width, wrap_limit, auto_wrap);
             return true;
         }
 
@@ -1032,19 +1099,23 @@ impl Terminal {
                 .replace_cluster(anchor.column, anchor.row, cell);
         }
         buffer.grapheme_anchor = Some(anchor);
-        Self::place_cursor_after_cluster(buffer, anchor, new_width, columns, auto_wrap);
+        Self::place_cursor_after_cluster(buffer, anchor, new_width, wrap_limit, auto_wrap);
         true
     }
 
+    /// `wrap_limit` is one past the last column a cluster may occupy - the
+    /// right margin's column plus one, or the screen width when no margin
+    /// applies. Reaching it arms the pending-wrap flag rather than moving the
+    /// cursor, so the wrap only happens if something is actually printed.
     fn place_cursor_after_cluster(
         buffer: &mut BufferState,
         anchor: Cursor,
         width: usize,
-        columns: usize,
+        wrap_limit: usize,
         auto_wrap: bool,
     ) {
         buffer.cursor.row = anchor.row;
-        if anchor.column + width == columns {
+        if anchor.column + width >= wrap_limit {
             buffer.cursor.column = anchor.column;
             buffer.pending_wrap = auto_wrap;
         } else {
@@ -1060,14 +1131,24 @@ impl Terminal {
     fn index(&mut self) {
         let fill = self.erase_cell();
         let dimensions = self.dimensions();
+        let span = self.horizontal_margins();
+        // A cursor outside the left/right margins is not in the window that
+        // scrolls, so at the bottom margin it neither scrolls nor moves.
+        let within_margins = self.cursor_within_margins();
         let retain_history = self.active_screen == ActiveScreen::Primary
             && self.primary.scroll_top == 0
-            && self.primary.scroll_bottom + 1 == dimensions.rows();
+            && self.primary.scroll_bottom + 1 == dimensions.rows()
+            && span.left == 0
+            && span.right + 1 == dimensions.columns();
         let buffer = self.active_buffer_mut();
         if buffer.cursor.row == buffer.scroll_bottom {
-            let removed = buffer
-                .screen
-                .scroll_up(buffer.scroll_top, buffer.scroll_bottom, 1, fill);
+            if !within_margins {
+                return;
+            }
+            let removed =
+                buffer
+                    .screen
+                    .scroll_up(buffer.scroll_top, buffer.scroll_bottom, 1, fill, span);
             if retain_history {
                 self.scrollback.push_rows(removed);
             }
@@ -1078,11 +1159,16 @@ impl Terminal {
 
     fn reverse_index(&mut self) {
         let fill = self.erase_cell();
+        let span = self.horizontal_margins();
+        let within_margins = self.cursor_within_margins();
         let buffer = self.active_buffer_mut();
         if buffer.cursor.row == buffer.scroll_top {
+            if !within_margins {
+                return;
+            }
             buffer
                 .screen
-                .scroll_down(buffer.scroll_top, buffer.scroll_bottom, 1, fill);
+                .scroll_down(buffer.scroll_top, buffer.scroll_bottom, 1, fill, span);
         } else {
             buffer.cursor.row = buffer.cursor.row.saturating_sub(1);
         }
@@ -1091,13 +1177,21 @@ impl Terminal {
     fn tab(&mut self) {
         let columns = self.dimensions().columns();
         let cursor_column = self.cursor().column;
+        // A tab stops at the right margin rather than running past it, but
+        // only for a cursor that is inside the margins to begin with.
+        let limit = if self.cursor_within_margins() {
+            self.horizontal_margins().right
+        } else {
+            columns - 1
+        };
         let next_tab_stop = self
             .tab_stops
             .iter()
             .enumerate()
             .skip(cursor_column.saturating_add(1))
             .find_map(|(column, set)| set.then_some(column))
-            .unwrap_or(columns - 1);
+            .unwrap_or(limit)
+            .min(limit.max(cursor_column));
         self.active_buffer_mut().cursor.column = next_tab_stop;
     }
 
@@ -1147,6 +1241,71 @@ impl Terminal {
 
     fn raw_parameter(parameters: CsiParameters, index: usize, default: usize) -> usize {
         parameters.value(index).map_or(default, usize::from)
+    }
+
+    /// The left and right margins in force.
+    ///
+    /// DECSLRM's margins only apply while DECLRMM (`DECSET 69`) is set, so
+    /// this is the single place that decision is made; everything else asks
+    /// here rather than reading `scroll_left`/`scroll_right` directly.
+    fn horizontal_margins(&self) -> ColumnSpan {
+        if self.modes.left_right_margin_mode {
+            let buffer = self.active_buffer();
+            ColumnSpan {
+                left: buffer.scroll_left,
+                right: buffer.scroll_right,
+            }
+        } else {
+            ColumnSpan::full(self.dimensions().columns())
+        }
+    }
+
+    /// Whether the cursor is between the left and right margins.
+    ///
+    /// Operations that shift cells sideways (`ICH`, `DCH`) and the ones that
+    /// scroll (`IND`, `RI`, `LF`, `NEL`) do nothing at all when the cursor is
+    /// outside the margins: the cursor is not in the window those operations
+    /// act on, so there is nothing for them to act on.
+    fn cursor_within_margins(&self) -> bool {
+        let margins = self.horizontal_margins();
+        let column = self.active_buffer().cursor.column;
+        (margins.left..=margins.right).contains(&column)
+    }
+
+    /// The column a carriage return, `NEL`, `CNL` or `CPL` returns to.
+    ///
+    /// The left margin, unless the cursor is already left of it, in which
+    /// case the screen's own left edge - a cursor outside the margins was
+    /// never in that window, so pulling it *into* one would move it somewhere
+    /// it had not been. Origin mode is the exception: there the left margin
+    /// is where column 1 is, so that is where the cursor goes regardless.
+    fn carriage_return_column(&self) -> usize {
+        let margins = self.horizontal_margins();
+        if self.modes.origin_mode || self.active_buffer().cursor.column >= margins.left {
+            margins.left
+        } else {
+            0
+        }
+    }
+
+    /// The columns `CUF`/`CUB` may move between.
+    ///
+    /// The same rule as `relative_vertical_bounds`, one axis over: a margin
+    /// binds relative motion only for a cursor that starts inside it.
+    fn relative_horizontal_bounds(&self) -> (usize, usize) {
+        let margins = self.horizontal_margins();
+        let column = self.active_buffer().cursor.column;
+        let left = if column >= margins.left {
+            margins.left
+        } else {
+            0
+        };
+        let right = if column <= margins.right {
+            margins.right
+        } else {
+            self.dimensions().columns() - 1
+        };
+        (left, right)
     }
 
     fn vertical_bounds(&self) -> (usize, usize) {
@@ -1202,37 +1361,58 @@ impl Terminal {
 
     fn move_horizontal(&mut self, parameters: CsiParameters, forward: bool) {
         let count = Self::parameter_or(parameters, 0, 1);
-        let columns = self.dimensions().columns();
+        let (left, right) = self.relative_horizontal_bounds();
         let buffer = self.active_buffer_mut();
         buffer.cursor.column = if forward {
-            buffer.cursor.column.saturating_add(count).min(columns - 1)
+            buffer.cursor.column.saturating_add(count).min(right)
         } else {
-            buffer.cursor.column.saturating_sub(count)
+            buffer.cursor.column.saturating_sub(count).max(left)
         };
         buffer.pending_wrap = false;
     }
 
-    fn cursor_horizontal_absolute(&mut self, parameters: CsiParameters) {
-        let column = Self::parameter_or(parameters, 0, 1) - 1;
-        let columns = self.dimensions().columns();
+    /// CHA (`CSI G`) and HPA (`CSI \``) address the same column, but only CHA
+    /// measures it from the left margin in origin mode. HPA is defined
+    /// against the screen, which is why the two cannot share a code path.
+    fn cursor_horizontal_absolute(&mut self, parameters: CsiParameters, origin_relative: bool) {
+        let requested = Self::parameter_or(parameters, 0, 1) - 1;
+        let column = if origin_relative {
+            self.absolute_column(requested)
+        } else {
+            requested.min(self.dimensions().columns() - 1)
+        };
         let buffer = self.active_buffer_mut();
-        buffer.cursor.column = column.min(columns - 1);
+        buffer.cursor.column = column;
         buffer.pending_wrap = false;
+    }
+
+    /// Resolves a zero-based absolute column request.
+    ///
+    /// In origin mode column 1 is the left margin, exactly as row 1 is the
+    /// top one, and the result cannot escape past the right margin.
+    fn absolute_column(&self, requested: usize) -> usize {
+        let columns = self.dimensions().columns();
+        if self.modes.origin_mode {
+            let margins = self.horizontal_margins();
+            margins.left.saturating_add(requested).min(margins.right)
+        } else {
+            requested.min(columns - 1)
+        }
     }
 
     fn cursor_position(&mut self, parameters: CsiParameters) {
         let requested_row = Self::parameter_or(parameters, 0, 1) - 1;
         let requested_column = Self::parameter_or(parameters, 1, 1) - 1;
-        let columns = self.dimensions().columns();
         let (top, bottom) = self.vertical_bounds();
         let row = if self.modes.origin_mode {
             top.saturating_add(requested_row).min(bottom)
         } else {
             requested_row.min(bottom)
         };
+        let column = self.absolute_column(requested_column);
         let buffer = self.active_buffer_mut();
         buffer.cursor.row = row;
-        buffer.cursor.column = requested_column.min(columns - 1);
+        buffer.cursor.column = column;
         buffer.pending_wrap = false;
     }
 
@@ -1299,41 +1479,65 @@ impl Terminal {
 
     fn insert_characters(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
+        if !self.cursor_within_margins() {
+            return;
+        }
+        let span = self.horizontal_margins();
         let cell = self.erase_cell();
         let cursor = self.cursor();
-        self.active_buffer_mut()
-            .screen
-            .insert_characters(cursor.column, cursor.row, count, cell);
+        self.active_buffer_mut().screen.insert_characters(
+            cursor.column,
+            cursor.row,
+            count,
+            cell,
+            span,
+        );
     }
 
     fn delete_characters(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
+        if !self.cursor_within_margins() {
+            return;
+        }
+        let span = self.horizontal_margins();
         let cell = self.erase_cell();
         let cursor = self.cursor();
-        self.active_buffer_mut()
-            .screen
-            .delete_characters(cursor.column, cursor.row, count, cell);
+        self.active_buffer_mut().screen.delete_characters(
+            cursor.column,
+            cursor.row,
+            count,
+            cell,
+            span,
+        );
     }
 
     fn insert_lines(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
+        if !self.cursor_within_margins() {
+            return;
+        }
+        let span = self.horizontal_margins();
         let cell = self.erase_cell();
         let buffer = self.active_buffer_mut();
         if (buffer.scroll_top..=buffer.scroll_bottom).contains(&buffer.cursor.row) {
             buffer
                 .screen
-                .insert_lines(buffer.cursor.row, buffer.scroll_bottom, count, cell);
+                .insert_lines(buffer.cursor.row, buffer.scroll_bottom, count, cell, span);
         }
     }
 
     fn delete_lines(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
+        if !self.cursor_within_margins() {
+            return;
+        }
+        let span = self.horizontal_margins();
         let cell = self.erase_cell();
         let buffer = self.active_buffer_mut();
         if (buffer.scroll_top..=buffer.scroll_bottom).contains(&buffer.cursor.row) {
             buffer
                 .screen
-                .delete_lines(buffer.cursor.row, buffer.scroll_bottom, count, cell);
+                .delete_lines(buffer.cursor.row, buffer.scroll_bottom, count, cell, span);
         }
     }
 
@@ -1341,13 +1545,17 @@ impl Terminal {
         let count = Self::parameter_or(parameters, 0, 1);
         let cell = self.erase_cell();
         let dimensions = self.dimensions();
+        let span = self.horizontal_margins();
         let retain_history = self.active_screen == ActiveScreen::Primary
             && self.primary.scroll_top == 0
-            && self.primary.scroll_bottom + 1 == dimensions.rows();
+            && self.primary.scroll_bottom + 1 == dimensions.rows()
+            && span.left == 0
+            && span.right + 1 == dimensions.columns();
         let buffer = self.active_buffer_mut();
-        let removed = buffer
-            .screen
-            .scroll_up(buffer.scroll_top, buffer.scroll_bottom, count, cell);
+        let removed =
+            buffer
+                .screen
+                .scroll_up(buffer.scroll_top, buffer.scroll_bottom, count, cell, span);
         if retain_history {
             self.scrollback.push_rows(removed);
         }
@@ -1355,11 +1563,12 @@ impl Terminal {
 
     fn scroll_down(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
+        let span = self.horizontal_margins();
         let cell = self.erase_cell();
         let buffer = self.active_buffer_mut();
         buffer
             .screen
-            .scroll_down(buffer.scroll_top, buffer.scroll_bottom, count, cell);
+            .scroll_down(buffer.scroll_top, buffer.scroll_bottom, count, cell, span);
     }
 
     fn set_scroll_region(&mut self, parameters: CsiParameters) {
@@ -1376,6 +1585,27 @@ impl Terminal {
         buffer.cursor.column = 0;
         buffer.cursor.row = if origin_mode { top } else { 0 };
         buffer.pending_wrap = false;
+        self.home_cursor();
+    }
+
+    /// `CSI Pl ; Pr s` (DECSLRM), which shares its final byte with SCOSC.
+    ///
+    /// The two are told apart by DECLRMM, not by the parameters: while the
+    /// mode is set `CSI s` is always DECSLRM, and a bare `CSI s` therefore
+    /// resets the margins to the full width rather than saving the cursor.
+    /// That is xterm's behaviour and the suite asserts it - `SCOSC` inside
+    /// left/right margin mode is expected *not* to save anything.
+    fn set_horizontal_margins(&mut self, parameters: CsiParameters) {
+        let columns = self.dimensions().columns();
+        let left = Self::parameter_or(parameters, 0, 1) - 1;
+        let right = Self::parameter_or(parameters, 1, columns) - 1;
+        if left >= right || right >= columns {
+            return;
+        }
+        let buffer = self.active_buffer_mut();
+        buffer.scroll_left = left;
+        buffer.scroll_right = right;
+        self.home_cursor();
     }
 
     fn save_dec(&mut self) {
@@ -1436,6 +1666,11 @@ impl Terminal {
     }
 
     fn restore_ansi(&mut self) {
+        // The SCO form saves a position and nothing else, so everything it
+        // does not save comes back at its power-on value - which for origin
+        // mode means off. Leaving it on would make the restored position
+        // mean something different from the one that was saved.
+        self.modes.origin_mode = false;
         let Some(saved) = self.active_buffer().ansi_saved else {
             // Same rule as DECRC: nothing saved means the power-on position.
             // The SCO form only ever saved a position, so that is all it
@@ -1677,6 +1912,20 @@ impl Terminal {
                     }
                 }
                 25 => self.modes.cursor_visible = enabled,
+                69 => {
+                    self.modes.left_right_margin_mode = enabled;
+                    if !enabled {
+                        // Turning the mode off does not merely stop honouring
+                        // the margins, it discards them: xterm's DECRESET 69
+                        // resets them to the full width, so turning the mode
+                        // back on later starts from a clean screen rather
+                        // than silently reviving a stale pair.
+                        let columns = self.dimensions().columns();
+                        let buffer = self.active_buffer_mut();
+                        buffer.scroll_left = 0;
+                        buffer.scroll_right = columns - 1;
+                    }
+                }
                 9 => self.set_mouse_tracking(MouseTrackingMode::X10, enabled),
                 1000 => self.set_mouse_tracking(MouseTrackingMode::ButtonEvent, enabled),
                 1002 => self.set_mouse_tracking(MouseTrackingMode::ButtonMotion, enabled),
@@ -1775,8 +2024,9 @@ impl Terminal {
 
     fn home_cursor(&mut self) {
         let origin_mode = self.modes.origin_mode;
+        let left = self.horizontal_margins().left;
         let buffer = self.active_buffer_mut();
-        buffer.cursor.column = 0;
+        buffer.cursor.column = if origin_mode { left } else { 0 };
         buffer.cursor.row = if origin_mode { buffer.scroll_top } else { 0 };
         buffer.pending_wrap = false;
     }
@@ -1823,15 +2073,31 @@ impl Terminal {
                 Some(value) => usize::from(value),
             }
         };
-        let top = edge(2, 1);
-        let left = edge(3, 1);
-        let bottom = edge(4, rows).min(rows);
-        let right = edge(5, columns).min(columns);
+        // In origin mode the rectangle is measured from the scroll region's
+        // top-left corner and cannot reach outside it, exactly as CUP is.
+        // A program that has set a region and asked to work relative to it
+        // means the same thing when it reads the screen back.
+        let (row_origin, row_limit, column_origin, column_limit) = if self.modes.origin_mode {
+            let margins = self.horizontal_margins();
+            let buffer = self.active_buffer();
+            (
+                buffer.scroll_top,
+                buffer.scroll_bottom + 1,
+                margins.left,
+                margins.right + 1,
+            )
+        } else {
+            (0, rows, 0, columns)
+        };
+        let top = (row_origin + edge(2, 1) - 1).min(row_limit);
+        let left = (column_origin + edge(3, 1) - 1).min(column_limit);
+        let bottom = (row_origin + edge(4, row_limit - row_origin)).min(row_limit);
+        let right = (column_origin + edge(5, column_limit - column_origin)).min(column_limit);
 
         let mut checksum: u16 = 0;
-        if top <= bottom && left <= right {
-            for row in (top - 1)..bottom {
-                for column in (left - 1)..right {
+        if top < bottom && left < right {
+            for row in top..bottom {
+                for column in left..right {
                     let Some(cell) = self.cell_ref(column, row) else {
                         continue;
                     };
@@ -1876,12 +2142,20 @@ impl Terminal {
         self.modes.cursor_visible = true;
         self.modes.application_cursor = false;
         self.modes.application_keypad = false;
+        // DEC STD 070 has DECSTR reset left/right margin mode, and the
+        // margins with it - resetting one without the other would leave a
+        // pair of margins that reappear the moment an application enables
+        // the mode for its own purposes.
+        self.modes.left_right_margin_mode = false;
         self.reset_graphics_rendition();
 
         let bottom = self.dimensions().rows() - 1;
+        let right = self.dimensions().columns() - 1;
         let buffer = self.active_buffer_mut();
         buffer.scroll_top = 0;
         buffer.scroll_bottom = bottom;
+        buffer.scroll_left = 0;
+        buffer.scroll_right = right;
         buffer.pending_wrap = false;
         buffer.dec_saved = None;
         buffer.ansi_saved = None;
@@ -1929,7 +2203,20 @@ impl Terminal {
                 } else {
                     cursor.row.saturating_add(1)
                 };
-                let reply = format!("\x1b[{row};{}R", cursor.column.saturating_add(1));
+                // Origin mode redefines column 1 as the left margin just as
+                // it redefines row 1, so a report that stayed absolute would
+                // not round-trip through the CUP that produced it.
+                let left = self.horizontal_margins().left;
+                let column = if self.modes.origin_mode && cursor.column >= left {
+                    cursor.column - left + 1
+                } else {
+                    // A cursor left of the left margin has no meaningful
+                    // offset from an origin it is not inside, and a negative
+                    // column is not something CPR can express, so it reports
+                    // where the cursor actually is.
+                    cursor.column + 1
+                };
+                let reply = format!("\x1b[{row};{column}R");
                 self.queue_reply(reply.as_bytes());
             }
             _ => {}

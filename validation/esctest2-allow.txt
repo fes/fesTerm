@@ -1,6 +1,6 @@
 # Which esctest2 tests fesTerm is held to.
 #
-# esctest2 has 559 test methods and we pass 208 of them; #193 tracks the
+# esctest2 has 559 test methods and we pass 262 of them; #193 tracks the
 # phases that change that. A suite that is mostly red on every run gets
 # ignored, so this file is the contract instead: everything listed here must
 # pass, and a regression in any of it fails CI.
@@ -38,6 +38,11 @@ NELTests
 RITests
 DECSTBMTests
 
+# Scrolling the region explicitly, rather than as a side effect of moving
+# off the end of it.
+SDTests
+SUTests
+
 # Erasing and editing within a line or the screen.
 DCHTests
 ECHTests
@@ -45,6 +50,7 @@ EDTests
 ELTests
 ICHTests
 ILTests
+DLTests
 
 # Tab stops: set one, clear one, clear all.
 HTSTests
@@ -70,3 +76,11 @@ S8C1TTests
 
 # Reset mode.
 RMTests
+
+# Left and right margins. DECSLRM itself has no test class - it is measured
+# through the operations above, which is why enabling it widened so many of
+# them at once - but these pin the mode that gates it.
+DECSETTests\.test_DECSET_DECLRMM
+DECSETTests\.test_DECSET_DECAWM_O(n|ff)RespectsLeftRightMargin
+DECSETTests\.test_DECSET_DECAWM_NoLineWrapOnTabWithLeftRightMargin
+DECSETTests\.test_DECSET_DECOM

@@ -58,6 +58,35 @@ pub(crate) struct ScreenRow {
     pub(crate) soft_wrapped: bool,
 }
 
+/// The columns a row-shifting operation is confined to.
+///
+/// Before DECSLRM has been used this is always the whole row, which is both
+/// the overwhelmingly common case and the only one that can take the ring's
+/// rotation fast path, so the span is carried explicitly rather than read
+/// from the screen: it makes the full-width case checkable in one place.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ColumnSpan {
+    pub(crate) left: usize,
+    pub(crate) right: usize,
+}
+
+impl ColumnSpan {
+    pub(crate) fn full(columns: usize) -> Self {
+        Self {
+            left: 0,
+            right: columns - 1,
+        }
+    }
+
+    pub(crate) fn width(&self) -> usize {
+        self.right + 1 - self.left
+    }
+
+    fn is_full(&self, columns: usize) -> bool {
+        self.left == 0 && self.right + 1 == columns
+    }
+}
+
 impl Screen {
     pub fn new(dimensions: Dimensions) -> Result<Self, TerminalError> {
         let mut cells = Vec::new();
@@ -370,11 +399,16 @@ impl Screen {
         row: usize,
         count: usize,
         cell: Cell,
+        span: ColumnSpan,
     ) {
         let columns = self.dimensions.columns();
-        let count = count.min(columns - column);
+        let right = span.right.min(columns - 1);
+        if column > right {
+            return;
+        }
+        let count = count.min(right + 1 - column);
         let row_start = self.physical_row_start(row);
-        let row_end = row_start + columns;
+        let row_end = row_start + right + 1;
         let start = row_start + column;
         self.move_cells_within_row(start..row_end - count, start + count);
         self.cells[start..start + count].fill(cell.clone());
@@ -382,7 +416,7 @@ impl Screen {
         self.mark_dirty(row);
         self.repair_neighborhood(row, column, &cell);
         self.repair_neighborhood(row, column + count, &cell);
-        self.repair_neighborhood(row, columns, &cell);
+        self.repair_neighborhood(row, right + 1, &cell);
         self.recompute_occupied(row);
     }
 
@@ -392,39 +426,77 @@ impl Screen {
         row: usize,
         count: usize,
         cell: Cell,
+        span: ColumnSpan,
     ) {
         let columns = self.dimensions.columns();
-        let count = count.min(columns - column);
+        let right = span.right.min(columns - 1);
+        if column > right {
+            return;
+        }
+        let count = count.min(right + 1 - column);
         let row_start = self.physical_row_start(row);
-        let row_end = row_start + columns;
+        let row_end = row_start + right + 1;
         let start = row_start + column;
         self.move_cells_within_row(start + count..row_end, start);
         self.cells[row_end - count..row_end].fill(cell.clone());
         self.occupied_cells[row_end - count..row_end].fill(!is_structural_blank(&cell));
         self.mark_dirty(row);
         self.repair_neighborhood(row, column, &cell);
-        self.repair_neighborhood(row, columns - count, &cell);
+        self.repair_neighborhood(row, right + 1 - count, &cell);
+        self.repair_neighborhood(row, right + 1, &cell);
         self.recompute_occupied(row);
     }
 
-    pub(crate) fn insert_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
+    pub(crate) fn insert_lines(
+        &mut self,
+        row: usize,
+        bottom: usize,
+        count: usize,
+        cell: Cell,
+        span: ColumnSpan,
+    ) {
         let count = count.min(bottom - row + 1);
-        for logical in (row..bottom + 1 - count).rev() {
-            self.copy_row(logical, logical + count);
-        }
-        for logical in row..row + count {
-            self.fill_row(logical, cell.clone());
+        if span.is_full(self.dimensions.columns()) {
+            for logical in (row..bottom + 1 - count).rev() {
+                self.copy_row(logical, logical + count);
+            }
+            for logical in row..row + count {
+                self.fill_row(logical, cell.clone());
+            }
+        } else {
+            for logical in (row..bottom + 1 - count).rev() {
+                self.copy_row_span(logical, logical + count, span);
+            }
+            for logical in row..row + count {
+                self.fill_row_span(logical, cell.clone(), span);
+            }
         }
         self.mark_dirty_range(row, bottom);
     }
 
-    pub(crate) fn delete_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
+    pub(crate) fn delete_lines(
+        &mut self,
+        row: usize,
+        bottom: usize,
+        count: usize,
+        cell: Cell,
+        span: ColumnSpan,
+    ) {
         let count = count.min(bottom - row + 1);
-        for logical in row + count..=bottom {
-            self.copy_row(logical, logical - count);
-        }
-        for logical in bottom + 1 - count..=bottom {
-            self.fill_row(logical, cell.clone());
+        if span.is_full(self.dimensions.columns()) {
+            for logical in row + count..=bottom {
+                self.copy_row(logical, logical - count);
+            }
+            for logical in bottom + 1 - count..=bottom {
+                self.fill_row(logical, cell.clone());
+            }
+        } else {
+            for logical in row + count..=bottom {
+                self.copy_row_span(logical, logical - count, span);
+            }
+            for logical in bottom + 1 - count..=bottom {
+                self.fill_row_span(logical, cell.clone(), span);
+            }
         }
         self.mark_dirty_range(row, bottom);
     }
@@ -435,8 +507,21 @@ impl Screen {
         bottom: usize,
         count: usize,
         cell: Cell,
+        span: ColumnSpan,
     ) -> Vec<ScreenRow> {
         let count = count.min(bottom - top + 1);
+        if !span.is_full(self.dimensions.columns()) {
+            // Only part of each row moves, so nothing leaves the screen as a
+            // whole line and there is nothing to hand to scrollback.
+            for logical in top + count..=bottom {
+                self.copy_row_span(logical, logical - count, span);
+            }
+            for logical in bottom + 1 - count..=bottom {
+                self.fill_row_span(logical, cell.clone(), span);
+            }
+            self.mark_dirty_range(top, bottom);
+            return Vec::new();
+        }
         let removed = (top..top + count)
             .map(|row| {
                 let start = self.physical_row_start(row);
@@ -474,13 +559,29 @@ impl Screen {
         removed
     }
 
-    pub(crate) fn scroll_down(&mut self, top: usize, bottom: usize, count: usize, cell: Cell) {
+    pub(crate) fn scroll_down(
+        &mut self,
+        top: usize,
+        bottom: usize,
+        count: usize,
+        cell: Cell,
+        span: ColumnSpan,
+    ) {
         let count = count.min(bottom - top + 1);
-        for logical in (top..bottom + 1 - count).rev() {
-            self.copy_row(logical, logical + count);
-        }
-        for logical in top..top + count {
-            self.fill_row(logical, cell.clone());
+        if span.is_full(self.dimensions.columns()) {
+            for logical in (top..bottom + 1 - count).rev() {
+                self.copy_row(logical, logical + count);
+            }
+            for logical in top..top + count {
+                self.fill_row(logical, cell.clone());
+            }
+        } else {
+            for logical in (top..bottom + 1 - count).rev() {
+                self.copy_row_span(logical, logical + count, span);
+            }
+            for logical in top..top + count {
+                self.fill_row_span(logical, cell.clone(), span);
+            }
         }
         self.mark_dirty_range(top, bottom);
     }
@@ -549,6 +650,48 @@ impl Screen {
         let physical_row = self.physical_row(row);
         self.soft_wrapped_rows[physical_row] = false;
         self.occupied_columns[physical_row] = row_extent(occupied, columns);
+    }
+
+    /// Copies part of one logical row onto the same columns of another.
+    ///
+    /// The whole-row `copy_row` moves the line's identity with it - its
+    /// soft-wrap flag and occupied extent travel along, because the line
+    /// itself moved. Within left/right margins only a window of each row
+    /// moves, and the rows either side of that window stay where they are,
+    /// so the destination keeps its own wrap flag and its extent has to be
+    /// recomputed from the cells rather than copied.
+    fn copy_row_span(&mut self, source_row: usize, destination_row: usize, span: ColumnSpan) {
+        let source_start = self.physical_row_start(source_row) + span.left;
+        let destination_start = self.physical_row_start(destination_row) + span.left;
+        if source_start == destination_start {
+            return;
+        }
+        for offset in 0..span.width() {
+            self.cells[destination_start + offset] = self.cells[source_start + offset].clone();
+            self.occupied_cells[destination_start + offset] =
+                self.occupied_cells[source_start + offset];
+        }
+        self.repair_span_edges(destination_row, span);
+        self.recompute_occupied(destination_row);
+    }
+
+    /// Overwrites the columns within `span` of one logical row with `cell`.
+    fn fill_row_span(&mut self, row: usize, cell: Cell, span: ColumnSpan) {
+        let start = self.physical_row_start(row) + span.left;
+        let occupied = !is_structural_blank(&cell);
+        self.cells[start..start + span.width()].fill(cell);
+        self.occupied_cells[start..start + span.width()].fill(occupied);
+        self.repair_span_edges(row, span);
+        self.recompute_occupied(row);
+    }
+
+    /// A wide glyph can straddle a margin, and moving or clearing one side of
+    /// it would otherwise leave half a character behind. Both edges are swept
+    /// so the surviving half becomes a blank.
+    fn repair_span_edges(&mut self, row: usize, span: ColumnSpan) {
+        let fill = blank_cell();
+        self.repair_neighborhood(row, span.left, &fill);
+        self.repair_neighborhood(row, span.right + 1, &fill);
     }
 
     fn move_cells_within_row(&mut self, source: std::ops::Range<usize>, destination: usize) {

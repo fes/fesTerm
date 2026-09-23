@@ -525,6 +525,153 @@ mod tests {
         );
     }
 
+    /// Turns on DECLRMM and sets left/right margins, one-based inclusive.
+    fn with_margins(terminal: &mut Terminal, left: usize, right: usize) {
+        terminal.ingest(b"\x1b[?69h");
+        terminal.ingest(format!("\x1b[{left};{right}s").as_bytes());
+    }
+
+    #[test]
+    fn text_wraps_at_the_right_margin_and_continues_at_the_left_one() {
+        // With left/right margins a line is a column of text, not the whole
+        // screen: it wraps at the right margin and resumes at the left one,
+        // leaving everything either side untouched.
+        let mut terminal = terminal(8, 3);
+        with_margins(&mut terminal, 2, 4);
+        terminal.ingest(b"abcdefgh");
+
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcd    "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some(" efg    "));
+        assert_eq!(terminal.row_text(2).as_deref(), Some(" h      "));
+
+        // Dropping the mode discards the margins rather than merely
+        // suspending them, so the next line uses the whole width.
+        terminal.ingest(b"\x1b[?69l\x1b[1;1HABCDEFGH");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("ABCDEFGH"));
+    }
+
+    #[test]
+    fn a_cursor_outside_the_margins_neither_scrolls_nor_shifts_cells() {
+        // The margins describe a window. A cursor outside that window is not
+        // in the thing these operations act on, so they must do nothing at
+        // all rather than fall back to acting on the whole row.
+        let mut terminal = terminal(6, 4);
+        terminal.ingest(b"\x1b[1;1Habcdef");
+        with_margins(&mut terminal, 2, 4);
+
+        terminal.ingest(b"\x1b[1;1H\x1b[99P");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdef"));
+        terminal.ingest(b"\x1b[1;1H\x1b[99@");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdef"));
+
+        // Inside the window they act, but only as far as the right margin:
+        // the `e` past it stays put and the `d` falls off the edge.
+        terminal.ingest(b"\x1b[1;2H\x1b[P");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("acd ef"));
+    }
+
+    #[test]
+    fn an_index_outside_the_margins_does_not_scroll_the_screen_under_it() {
+        // At the bottom margin an index normally scrolls. Outside the
+        // left/right margins there is nothing to scroll, and the cursor must
+        // not move either - it cannot go down, and the region it would push
+        // is not the region it is in.
+        let mut terminal = terminal(6, 4);
+        terminal.ingest(b"\x1b[2;4r"); // rows 2..4
+        with_margins(&mut terminal, 2, 4);
+        terminal.ingest(b"\x1b[4;2Hx");
+
+        terminal.ingest(b"\x1b[4;6H\x1bD");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (5, 3)
+        );
+        assert_eq!(terminal.row_text(3).as_deref(), Some(" x    "));
+
+        // NEL indexes first and returns second, so the same cursor still
+        // fails to scroll, and only then moves to the left margin.
+        terminal.ingest(b"\x1b[4;6H\x1bE");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (1, 3)
+        );
+        assert_eq!(terminal.row_text(3).as_deref(), Some(" x    "));
+
+        // From inside the margins it does scroll, and only within them.
+        terminal.ingest(b"\x1b[4;3H\x1bD");
+        assert_eq!(terminal.row_text(3).as_deref(), Some("      "));
+    }
+
+    #[test]
+    fn scrolling_within_margins_moves_only_the_columns_between_them() {
+        let mut terminal = terminal(5, 3);
+        for (row, text) in ["abcde", "fghij", "klmno"].iter().enumerate() {
+            terminal.ingest(format!("\x1b[{};1H{text}", row + 1).as_bytes());
+        }
+        with_margins(&mut terminal, 2, 4);
+        terminal.ingest(b"\x1b[1;3H\x1b[M"); // delete line, inside the margins
+
+        assert_eq!(terminal.row_text(0).as_deref(), Some("aghie"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("flmnj"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("k   o"));
+    }
+
+    #[test]
+    fn origin_mode_measures_columns_from_the_left_margin_but_hpa_does_not() {
+        // CHA and HPA address the same column and differ in exactly one way:
+        // origin mode moves CHA's frame of reference and leaves HPA's alone.
+        let mut terminal = terminal(12, 4);
+        with_margins(&mut terminal, 5, 10);
+        terminal.ingest(b"\x1b[2;4r\x1b[?6h");
+
+        terminal.ingest(b"\x1b[1;1H");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (4, 1)
+        );
+
+        terminal.ingest(b"\x1b[3G");
+        assert_eq!(terminal.cursor().column(), 6);
+        terminal.ingest(b"\x1b[3`");
+        assert_eq!(terminal.cursor().column(), 2);
+
+        // A cursor that origin mode does not reach reports where it is,
+        // since it has no meaningful offset from an origin it is outside.
+        terminal.ingest(b"\x1b[6n");
+        assert_eq!(terminal.drain_replies(), b"\x1b[1;3R");
+        terminal.ingest(b"\x1b[3G\x1b[6n");
+        assert_eq!(terminal.drain_replies(), b"\x1b[1;3R");
+    }
+
+    #[test]
+    fn a_carriage_return_returns_to_the_left_margin_only_from_inside_it() {
+        let mut terminal = terminal(12, 2);
+        with_margins(&mut terminal, 5, 10);
+
+        terminal.ingest(b"\x1b[1;6H\r");
+        assert_eq!(terminal.cursor().column(), 4);
+        terminal.ingest(b"\x1b[1;5H\r");
+        assert_eq!(terminal.cursor().column(), 4);
+        terminal.ingest(b"\x1b[1;4H\r");
+        assert_eq!(terminal.cursor().column(), 0);
+
+        // Origin mode is the exception: there the left margin *is* column 1,
+        // so that is where a return goes from anywhere on the row.
+        terminal.ingest(b"\x1b[?6h\x1b[1;4H\r");
+        assert_eq!(terminal.cursor().column(), 4);
+    }
+
+    #[test]
+    fn a_soft_reset_discards_the_margins_and_the_mode_that_gated_them() {
+        // Resetting one without the other would leave margins that spring
+        // back the moment an application enables the mode for its own use.
+        let mut terminal = terminal(8, 2);
+        with_margins(&mut terminal, 2, 4);
+        terminal.ingest(b"\x1b[!p");
+        terminal.ingest(b"\x1b[?69h\x1b[1;1Habcdefgh");
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcdefgh"));
+    }
+
     #[test]
     fn checksums_a_rectangle_by_its_characters_and_nothing_else() {
         // DECRQCRA is the only way a program can read the screen back out of

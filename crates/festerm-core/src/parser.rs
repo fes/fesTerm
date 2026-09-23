@@ -172,6 +172,9 @@ pub enum TerminalOp {
     CursorNextLine(CsiParameters),
     CursorPreviousLine(CsiParameters),
     CursorHorizontalAbsolute(CsiParameters),
+    /// `CSI ... \``. The same destination as CHA, but measured from the
+    /// screen's left edge even in origin mode - the one place the two differ.
+    HorizontalPositionAbsolute(CsiParameters),
     CursorPosition(CsiParameters),
     VerticalPositionAbsolute(CsiParameters),
     EraseDisplay(CsiParameters),
@@ -184,7 +187,10 @@ pub enum TerminalOp {
     ScrollUp(CsiParameters),
     ScrollDown(CsiParameters),
     SetScrollRegion(CsiParameters),
-    SaveAnsi,
+    /// `CSI ... s`. SCOSC and DECSLRM share a final byte, and which one is
+    /// meant depends on whether DECLRMM is set - a mode the parser does not
+    /// track - so the choice is left to the terminal.
+    SaveAnsiOrSetHorizontalMargins(CsiParameters),
     RestoreAnsi,
     SetGraphicsRendition(CsiParameters),
     SetModes {
@@ -690,7 +696,8 @@ impl Parser {
             b'D' => TerminalOp::CursorBack(parameters),
             b'E' => TerminalOp::CursorNextLine(parameters),
             b'F' => TerminalOp::CursorPreviousLine(parameters),
-            b'G' | b'`' => TerminalOp::CursorHorizontalAbsolute(parameters),
+            b'G' => TerminalOp::CursorHorizontalAbsolute(parameters),
+            b'`' => TerminalOp::HorizontalPositionAbsolute(parameters),
             b'H' | b'f' => TerminalOp::CursorPosition(parameters),
             b'J' => TerminalOp::EraseDisplay(parameters),
             b'K' => TerminalOp::EraseLine(parameters),
@@ -708,7 +715,7 @@ impl Parser {
             b'g' => TerminalOp::ClearTabStops(parameters),
             b't' => TerminalOp::WindowOperation(parameters),
             b'r' => TerminalOp::SetScrollRegion(parameters),
-            b's' if parameters.is_empty() => TerminalOp::SaveAnsi,
+            b's' => TerminalOp::SaveAnsiOrSetHorizontalMargins(parameters),
             b'u' if parameters.is_empty() => TerminalOp::RestoreAnsi,
             b'h' => TerminalOp::SetModes {
                 private: false,
