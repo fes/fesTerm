@@ -496,6 +496,7 @@ impl NativeWindowSmoke {
     fn finish(&mut self, context: &eframe::egui::Context, status: &str, detail: &str) {
         Self::write_result(&self.result_path, status, detail);
         self.phase = Phase::Finished;
+        crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::NativeSmokeComplete);
         context.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
     }
 

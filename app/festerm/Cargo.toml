@@ -27,6 +27,8 @@ festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 image = "0.25"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1.17.0", default-features = false, features = ["rt", "sync", "time", "process", "io-util", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -48,8 +50,6 @@ winresource = "0.1"
 accesskit = "0.24"
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0"
 sha2 = "0.11"
 
 [lints]

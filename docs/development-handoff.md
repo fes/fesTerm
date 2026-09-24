@@ -281,6 +281,10 @@ recording terminal content.
 
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
+- fesTerm keeps the current and previous bounded application logs plus at most
+  five Rust panic reports in its native per-user state directory. About shows a
+  redacted last-exit summary; a stale run marker is reported as an unclean exit
+  on the next launch.
 - `FESTERM_PROTOCOL_TRACE=1` only reports that tracing was requested; terminal
   content tracing is intentionally not implemented.
 - `FESTERM_CONFIG_PATH` selects a non-empty Unicode configuration-file path

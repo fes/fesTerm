@@ -579,6 +579,11 @@ impl FesTermApp {
             match pending.purpose {
                 QuitConfirmationPurpose::Quit | QuitConfirmationPurpose::CloseWindow => {
                     self.quit_confirmed = true;
+                    if pending.purpose == QuitConfirmationPurpose::Quit {
+                        crate::diagnostics::record_exit_intent(
+                            crate::diagnostics::ExitIntent::UserQuit,
+                        );
+                    }
                     context.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 QuitConfirmationPurpose::InstallUpdate => {

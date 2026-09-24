@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Leaving evidence when the application disappears
+
+An application that exits abruptly cannot explain itself after the fact unless
+it leaves evidence before and during the run. fesTerm now creates a small
+per-run marker in the platform's native user-state directory, records accepted
+quit and updater-restart intent, and removes the marker only after eframe
+returns normally. On the next launch, a marker left behind becomes an honest
+`Unclean` result rather than a guessed crash cause; a completed run records
+whether it followed an ordinary quit, an update restart, automation, or an
+event-loop error.
+
+Rust panics also write a local report with the panic location and backtrace.
+Application tracing now reaches a pair of two-megabyte local logs instead of
+disappearing with the GUI process, and panic-report retention is capped at
+five. About exposes only the bounded, path-free last-exit summary and includes
+it in Copy Version Information. Hard native faults, forced termination, and
+power loss remain deliberately grouped as unclean/unknown: distinguishing
+those reliably requires the later out-of-process native dump handler, not
+unsafe work inside an already-failing process.
+
 ## Answering honestly, and stopping where the line does (v0.5.0)
 
 Two changes, both about fesTerm telling programs inside it the truth.
