@@ -322,7 +322,10 @@ inherited PATH from an absolute executable using normal login-environment
 correction. A controlled login shell with a deliberately different PATH
 reproduced the former required-CI assertion failure; the corrected tests also
 check that discovery actually executes with the PATH retained for attachment.
-Production discovery/attachment environment policy is unchanged.
+The login-environment probe is interactive as well as login-scoped so paths
+configured by the user's interactive startup files, including `~/.local/bin`,
+are available to packaged Finder-launched sessions. Its three-second deadline
+still bounds startup files that prompt or hang.
 
 The macOS VM backend failure at `59ba3b7` exposed a separate checkout-depth
 problem: its generated native socket pathname was 106 bytes, beyond macOS's
