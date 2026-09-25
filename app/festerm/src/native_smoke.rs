@@ -119,24 +119,34 @@ impl NativeWindowSmoke {
         smoke
     }
 
-    pub fn from_environment() -> Option<Self> {
-        let kind = match (
-            std::env::var_os(SMOKE_ENV).is_some(),
-            std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
-            std::env::var_os(LIVE_RESIZE_SMOKE_ENV).is_some(),
-            std::env::var_os(EMOJI_SMOKE_ENV).is_some(),
-        ) {
-            (false, false, false, false) => return None,
-            (true, false, false, false) => SmokeKind::NativeWindow,
-            (false, true, false, false) => SmokeKind::OsInput,
-            (false, false, true, false) => SmokeKind::LiveResize,
-            (false, false, false, true) => SmokeKind::Emoji,
-            _ => {
-                panic!(
+    pub fn requested() -> bool {
+        Self::kind_from_environment().is_some()
+    }
+
+    fn kind_from_environment() -> Option<SmokeKind> {
+        Some(
+            match (
+                std::env::var_os(SMOKE_ENV).is_some(),
+                std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
+                std::env::var_os(LIVE_RESIZE_SMOKE_ENV).is_some(),
+                std::env::var_os(EMOJI_SMOKE_ENV).is_some(),
+            ) {
+                (false, false, false, false) => return None,
+                (true, false, false, false) => SmokeKind::NativeWindow,
+                (false, true, false, false) => SmokeKind::OsInput,
+                (false, false, true, false) => SmokeKind::LiveResize,
+                (false, false, false, true) => SmokeKind::Emoji,
+                _ => {
+                    panic!(
                     "only one of {SMOKE_ENV}, {OS_INPUT_SMOKE_ENV}, {LIVE_RESIZE_SMOKE_ENV}, and {EMOJI_SMOKE_ENV} may be enabled"
                 )
-            }
-        };
+                }
+            },
+        )
+    }
+
+    pub fn from_environment() -> Option<Self> {
+        let kind = Self::kind_from_environment()?;
 
         let result_path = std::env::var_os(RESULT_PATH_ENV)
             .map(PathBuf::from)

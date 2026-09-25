@@ -657,7 +657,7 @@ impl FesTermApp {
         secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
         documents: SharedDocuments,
     ) -> Self {
-        let mut window = Self::with_configuration_status_and_secret_store(
+        let mut window = Self::with_configuration_status_and_secret_store_and_native_smoke(
             context,
             // A new window starts on the Launcher. Workspace restore is the
             // primary window's startup behaviour, not something every later
@@ -665,6 +665,7 @@ impl FesTermApp {
             configuration.without_workspace(),
             configuration_status,
             secret_store,
+            None,
         );
         window.configuration_reloader = configuration_reloader;
         // The registry is application-scoped: a second window joins the one
@@ -9356,6 +9357,58 @@ mod tests {
             app.configuration_status,
             ConfigurationStartupStatus::Loaded
         ));
+    }
+
+    #[test]
+    fn native_smoke_secondary_window_ignores_process_smoke_environment() {
+        const CHILD: &str = "FESTERM_TEST_SECONDARY_SMOKE";
+        if std::env::var_os(CHILD).is_some() {
+            let window = FesTermApp::secondary_window(
+                &egui::Context::default(),
+                Configuration::empty(),
+                ConfigurationStartupStatus::Missing,
+                ConfigurationReloader::unavailable(),
+                Ok(Arc::new(MemorySecretStore::new())),
+                crate::documents::DocumentRegistry::shared(),
+            );
+            assert!(matches!(
+                window.state.active_tab().content,
+                TabContent::Launcher
+            ));
+            assert!(window.primary_tab.is_none());
+            assert!(window.native_smoke.is_none());
+            return;
+        }
+
+        // Use a child process instead of changing the parallel test runner's
+        // environment. Secondary construction must not initialize smoke at all,
+        // even when its result-path and child-binary prerequisites are absent.
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "app::tests::native_smoke_secondary_window_ignores_process_smoke_environment",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env_remove("FESTERM_NATIVE_WINDOW_SMOKE")
+            .env_remove("FESTERM_NATIVE_OS_INPUT_SMOKE")
+            .env_remove("FESTERM_NATIVE_LIVE_RESIZE_SMOKE")
+            .env("FESTERM_NATIVE_EMOJI_SMOKE", "1")
+            .env_remove("FESTERM_NATIVE_SMOKE_RESULT_PATH");
+        let output = crate::local_command::output(command, Duration::from_secs(15))
+            .expect("secondary-window probe must finish within its deadline")
+            .expect("the test executable exists");
+        assert!(
+            output.status.success(),
+            "secondary-window probe failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+            "the child must execute exactly the secondary-window probe"
+        );
     }
 
     #[test]

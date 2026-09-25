@@ -103,6 +103,9 @@ not a saved workspace, and must not save smoke state into an existing user
 workspace. This also protects local/VM optional runs that already have a
 configuration: enabling workspace restoration by default must not replace the
 fixture with a restored Launcher.
+The smoke viewport also ignores saved window size/position, and a secondary
+window never initializes another smoke driver or fixture from process-wide
+smoke flags.
 
 The in-app smoke deadline is 20 seconds, including a missing smoke session.
 Each GUI workflow step also has an independent two-minute deadline, so an

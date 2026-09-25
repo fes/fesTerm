@@ -1552,7 +1552,9 @@
         "workspace_restoration_recreates_ordered_fresh_local_tabs_and_focus",
         "workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions",
         "native_smoke_startup_uses_the_controlled_fixture_instead_of_restoring_workspace",
-        "native_smoke_does_not_request_or_write_workspace_persistence"
+        "native_smoke_does_not_request_or_write_workspace_persistence",
+        "native_smoke_ignores_saved_window_geometry",
+        "native_smoke_secondary_window_ignores_process_smoke_environment"
       ],
       "manual_scenarios": [
         "CP-02"
