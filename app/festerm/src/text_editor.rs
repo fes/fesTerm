@@ -1294,6 +1294,10 @@ impl TextEditorTab {
         Some(AppCommand::CloseTab(tab_id))
     }
 
+    pub(crate) fn cancel_close_after_save(&mut self) {
+        self.close_after_save = false;
+    }
+
     /// The version the source now holds, when a conflict captured one.
     fn source_text(&self, documents: &SharedDocuments) -> Option<String> {
         documents.borrow().get(self.document).and_then(|open| {

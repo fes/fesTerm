@@ -529,10 +529,13 @@ an independent plain-text snapshot with no ANSI/control-sequence export and no
 live link back to the session. **Open Terminal History in Editor** creates an
 untitled dirty editor document; **Save Terminal History As…** opens that same
 snapshot and immediately continues into the normal Save As sheet. The snapshot
-actions stay available for exited or disconnected retained history. Unavailable
-entries are omitted; in particular, Paste is absent for a read-only history,
-and the history-snapshot actions are omitted while a text selection is active
-so Copy remains the text action in that position.
+actions stay available for exited or disconnected retained history. If the
+retained text would exceed the editor's honest byte, line, or single-line
+bounds, fesTerm refuses before allocating a document and says so without
+quoting the history itself. Unavailable entries are omitted; in particular,
+Paste is absent for a read-only history, and the history-snapshot actions are
+omitted while a text selection is active so Copy remains the text action in
+that position.
 
 Clear, Close session, Disconnect, Reconnect, Settings, and appearance actions
 do not belong in this menu. **Select all** is also omitted initially because it

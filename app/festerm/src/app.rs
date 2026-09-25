@@ -3856,6 +3856,24 @@ impl FesTermApp {
         ctx.request_repaint();
     }
 
+    fn cancel_active_editor_close_after_save(&mut self) {
+        let tab = self.state.active_tab_mut();
+        if let TabContent::TextEditor(editor) = &mut tab.content {
+            editor.cancel_close_after_save();
+        }
+    }
+
+    fn active_editor_still_dirty(&self) -> bool {
+        let Some(document) = self.state.active_document() else {
+            return false;
+        };
+        self.state
+            .documents()
+            .borrow()
+            .get(document)
+            .is_some_and(|open| open.text().is_dirty())
+    }
+
     fn show_save_as_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
         let Some(picker) = self.overlays.save_as_picker.as_mut() else {
             return;
@@ -3881,8 +3899,22 @@ impl FesTermApp {
                 self.close_save_as_picker(ctx);
                 self.state
                     .dispatch(AppCommand::SaveTextDocumentTo { path }, ctx);
+                if let Some(pending) = self.overlays.pending_document_close_after_save_as.take() {
+                    if self.state.document_close_consequence(pending.tab).is_none() {
+                        self.state.dispatch(AppCommand::CloseTab(pending.tab), ctx);
+                        self.continue_document_close(pending.then, ctx);
+                    } else {
+                        self.cancel_active_editor_close_after_save();
+                    }
+                } else if self.active_editor_still_dirty() {
+                    self.cancel_active_editor_close_after_save();
+                }
             }
-            Some(crate::save_as::SaveAsOutcome::Cancelled) => self.close_save_as_picker(ctx),
+            Some(crate::save_as::SaveAsOutcome::Cancelled) => {
+                self.overlays.pending_document_close_after_save_as = None;
+                self.cancel_active_editor_close_after_save();
+                self.close_save_as_picker(ctx);
+            }
             Some(crate::save_as::SaveAsOutcome::Pending) | None => {}
         }
     }
@@ -5786,6 +5818,12 @@ impl FesTermApp {
             });
             self.overlays.open_refusal_focused = false;
         }
+        if let Some(refusal) = self.state.take_history_snapshot_refusal() {
+            self.overlays.transient_notice = Some((
+                format!("Cannot snapshot terminal history. {}", refusal.detail()),
+                Instant::now() + Duration::from_secs(5),
+            ));
+        }
         self.show_open_refusal_notice(ui.ctx(), confirmation_escape);
 
         if self.state.take_save_as_request() {
@@ -7637,7 +7675,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8502,7 +8540,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8623,7 +8661,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8801,6 +8839,113 @@ mod tests {
             festerm_document::DocumentOrigin::Untitled(_)
         ));
         assert!(open.text().is_dirty());
+    }
+
+    #[test]
+    fn oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest(&vec![b'x'; 65 * 1024 + 1]);
+
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
+        app.dispatch_palette_selection(OPEN_TERMINAL_HISTORY_IN_EDITOR, &context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.step();
+
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+        assert_eq!(harness.state().state.tabs().len(), 1);
+        assert_eq!(harness.state().state.documents().borrow().len(), 0);
+        assert!(harness.state().overlays.save_as_picker.is_none());
+        let notice = harness
+            .state()
+            .overlays
+            .transient_notice
+            .as_ref()
+            .expect("the refusal must be surfaced")
+            .0
+            .clone();
+        assert!(notice.starts_with("Cannot snapshot terminal history."));
+        assert!(notice.contains("64 KB editor limit"));
+    }
+
+    #[test]
+    fn saving_an_untitled_snapshot_from_dirty_close_continues_through_save_as() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        let directory = smoke_artifact_directory("snapshot-close-save");
+        app.overlays.save_as_directory = Some(directory.clone());
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest("alpha\r\nbeta".as_bytes());
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
+        app.dispatch_palette_selection(OPEN_TERMINAL_HISTORY_IN_EDITOR, &context);
+        let snapshot_tab = app.state.active();
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness
+            .state_mut()
+            .request_close_tab(snapshot_tab, &context);
+        harness.run();
+        harness
+            .query_all_by_label("Save")
+            .find(|save| save.is_focused())
+            .expect("the dirty-close Save action should be focused")
+            .click();
+        harness.run();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .pending_document_close_after_save_as
+            .is_some());
+        assert!(harness.state().overlays.save_as_picker.is_some());
+
+        harness
+            .query_all_by_label("Save")
+            .last()
+            .expect("the Save As sheet should expose a Save action")
+            .click();
+        harness.run();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .pending_document_close_after_save_as
+            .is_none());
+        assert!(harness.state().overlays.save_as_picker.is_none());
+        assert_eq!(harness.state().state.active(), tab);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+
+        let entries: Vec<_> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(entries.len(), 1, "the snapshot should be written once");
+        assert_eq!(fs::read_to_string(&entries[0]).unwrap(), "alpha\nbeta");
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]

@@ -160,7 +160,8 @@ pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
 pub use terminal::{
-    ContentPosition, Terminal, TerminalError, TerminalTextSnapshot, TerminalTextSnapshotScreen,
+    ContentPosition, Terminal, TerminalError, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
+    TerminalTextSnapshotScreen,
 };
 
 #[cfg(test)]
@@ -172,8 +173,8 @@ mod tests {
         Attributes, CellWidth, Color, ColorScheme, ContentPosition, Dimensions, FocusEvent,
         InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
         MouseEventKind, MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Rgb, Terminal,
-        TerminalOp, TerminalTextSnapshotScreen, MAX_CELL_COUNT, MAX_CSI_PARAMETERS,
-        MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
+        TerminalOp, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_CELL_COUNT,
+        MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
 
@@ -2915,6 +2916,50 @@ mod tests {
 
         assert_eq!(snapshot.screen(), TerminalTextSnapshotScreen::Alternate);
         assert_eq!(snapshot.text(), "one\ntwo\nthre\nmenu");
+    }
+
+    #[test]
+    fn bounded_text_snapshot_refuses_an_overlong_logical_line() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(&[b'x'; 65]);
+
+        let refusal = terminal
+            .bounded_text_snapshot(4 * 1024, 64, 64)
+            .unwrap_err();
+
+        assert_eq!(
+            refusal,
+            TerminalTextSnapshotRefusal::LineTooLong { line: 1, limit: 64 }
+        );
+    }
+
+    #[test]
+    fn bounded_text_snapshot_refuses_when_line_count_exceeds_the_limit() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\nthree");
+
+        let refusal = terminal.bounded_text_snapshot(4 * 1024, 2, 64).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            TerminalTextSnapshotRefusal::TooManyLines { lines: 3, limit: 2 }
+        );
+    }
+
+    #[test]
+    fn bounded_text_snapshot_refuses_when_total_bytes_exceed_the_limit() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour");
+
+        let refusal = terminal.bounded_text_snapshot(9, 8, 64).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            TerminalTextSnapshotRefusal::TooLarge {
+                bytes: 10,
+                limit: 9
+            }
+        );
     }
 
     #[test]

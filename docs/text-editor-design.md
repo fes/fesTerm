@@ -280,7 +280,11 @@ plus the currently applicable visible screen into a new untitled dirty
 document. It never aliases the live terminal buffer, never exports ANSI/control
 sequences, and stays unchanged while later terminal output continues. **Save
 Terminal History As…** uses the same snapshot and immediately opens the normal
-Save As sheet.
+Save As sheet, and plain **Save** / `:w` / `:wq` on that untitled snapshot
+continue through the same Save As flow until a real destination is chosen.
+Auto-save stays unavailable until the snapshot is bound to a file. If the
+retained text would exceed the editor's declared bounds, fesTerm refuses
+before opening a document and reports the limit without quoting the history.
 
 ## What is not built yet
 

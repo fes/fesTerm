@@ -133,8 +133,13 @@ impl OpenDocument {
             auto_save_requested: self.auto_save_requested,
             last_error: self.last_error.clone(),
             remote: self.origin.is_remote(),
+            has_save_target: !matches!(self.origin, DocumentOrigin::Untitled(_)),
             recently_reloaded: self.reloaded.is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
         })
+    }
+
+    pub(crate) const fn requires_save_as(&self) -> bool {
+        matches!(self.origin, DocumentOrigin::Untitled(_))
     }
 
     /// The spans covering `range`, reparsing only if the text has moved on.
@@ -319,22 +324,10 @@ impl DocumentRegistry {
         let file_name = format!("{name_prefix}-{next}.txt");
         let origin = UntitledOrigin::new(key, file_name, qualified_label)
             .expect("generated untitled origins are valid");
-        let bounds = snapshot_bounds(bytes);
-        let mut text =
-            TextDocument::from_bytes(b"", bounds).expect("empty snapshot seed fits its bounds");
-        if bytes.is_empty() {
-            text.replace(0..0, " ")
-                .expect("untitled snapshots can create a one-byte dirty marker");
-            text.replace(0..1, "")
-                .expect("untitled snapshots can remove their dirty marker");
-        } else {
-            text.replace(
-                0..0,
-                std::str::from_utf8(bytes)
-                    .expect("terminal snapshot bytes are valid UTF-8 and already bounded"),
-            )
-            .expect("the generated untitled document bounds already allow the snapshot text");
-        }
+        let mut text = TextDocument::from_bytes(bytes, self.bounds)
+            .expect("untitled snapshots are preflighted against editor bounds");
+        text.replace(0..0, "")
+            .expect("a zero-delta untitled transaction preserves the snapshot");
         self.insert(DocumentOrigin::from(origin), text, None, false)
     }
 
@@ -391,6 +384,10 @@ impl DocumentRegistry {
         self.documents.is_empty()
     }
 
+    pub(crate) const fn bounds(&self) -> DocumentBounds {
+        self.bounds
+    }
+
     /// Writes a local document back to its origin, revalidating first.
     ///
     /// A conflict is not an error the user has to interpret: the source's text
@@ -400,6 +397,14 @@ impl DocumentRegistry {
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
         let DocumentOrigin::Local(origin) = &document.origin else {
+            if matches!(document.origin, DocumentOrigin::Untitled(_)) {
+                let error = SaveError::new(
+                    "Choose a destination first",
+                    "This snapshot is not on disk yet. Use Save As to choose where to write it.",
+                );
+                document.last_error = Some(error.clone());
+                return Some(SaveOutcome::Failed(error));
+            }
             // Remote saves travel through the SFTP worker and complete
             // asynchronously; they do not run on this path.
             return None;
@@ -719,21 +724,11 @@ fn conflict_for(path: &Path, bounds: DocumentBounds) -> festerm_document::Confli
     }
 }
 
-fn snapshot_bounds(bytes: &[u8]) -> DocumentBounds {
-    let text = std::str::from_utf8(bytes).expect("snapshot bytes are valid UTF-8");
-    let line_count = text.lines().count().max(1);
-    let longest_line = text.lines().map(str::len).max().unwrap_or(0);
-    DocumentBounds::new(
-        bytes.len().max(DocumentBounds::MAX_BYTES),
-        line_count.max(DocumentBounds::MAX_LINES),
-        longest_line.max(DocumentBounds::MAX_LINE_BYTES),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Instant;
 
     use festerm_document::Severity;
 
@@ -1001,7 +996,9 @@ mod tests {
         ));
         assert_eq!(document.text().text(), "alpha\nbeta");
         assert!(document.text().is_dirty());
+        assert!(document.status().can_save());
         assert!(document.status().can_save_as());
+        assert_eq!(document.status().auto_save(), AutoSaveControl::Unavailable);
     }
 
     #[test]
@@ -1026,6 +1023,48 @@ mod tests {
         assert_eq!(document.text().text(), "alpha\n");
         assert!(document.text().is_dirty());
         assert_eq!(document.status().detail(), error.detail());
+    }
+
+    #[test]
+    fn saving_an_untitled_snapshot_requires_save_as_instead_of_succeeding_silently() {
+        let mut registry = DocumentRegistry::new();
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\n",
+        );
+
+        let outcome = registry.save(id).unwrap();
+
+        let error = match outcome {
+            SaveOutcome::Failed(error) => error,
+            other => panic!("expected save failure, got {other:?}"),
+        };
+        assert_eq!(error.headline(), "Choose a destination first");
+        assert_eq!(
+            error.detail(),
+            "This snapshot is not on disk yet. Use Save As to choose where to write it."
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn untitled_snapshots_never_enter_auto_save() {
+        let mut registry = DocumentRegistry::new();
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\n",
+        );
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let start = Instant::now();
+
+        assert!(!registry.get(id).unwrap().auto_save_should_write());
+        assert!(registry.auto_save(start + AUTO_SAVE_IDLE * 4).is_empty());
+        assert_eq!(
+            registry.get(id).unwrap().status().auto_save(),
+            AutoSaveControl::Unavailable
+        );
     }
 
     #[test]

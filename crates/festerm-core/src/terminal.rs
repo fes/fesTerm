@@ -37,6 +37,45 @@ pub enum TerminalTextSnapshotScreen {
     Alternate,
 }
 
+/// Why a terminal snapshot cannot be materialized as one editor document.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalTextSnapshotRefusal {
+    TooLarge { bytes: usize, limit: usize },
+    TooManyLines { lines: usize, limit: usize },
+    LineTooLong { line: usize, limit: usize },
+}
+
+impl TerminalTextSnapshotRefusal {
+    pub fn headline(self) -> &'static str {
+        match self {
+            Self::TooLarge { .. } => "Terminal history is too large to open in the editor",
+            Self::TooManyLines { .. } => {
+                "Terminal history has too many lines to open in the editor"
+            }
+            Self::LineTooLong { .. } => {
+                "Terminal history has a line that is too long to open in the editor"
+            }
+        }
+    }
+
+    pub fn detail(self) -> String {
+        match self {
+            Self::TooLarge { bytes, limit } => format!(
+                "It is {} and the editor limit is {}.",
+                describe_bytes(bytes),
+                describe_bytes(limit)
+            ),
+            Self::TooManyLines { lines, limit } => {
+                format!("It has {lines} lines and the editor limit is {limit}.")
+            }
+            Self::LineTooLong { line, limit } => format!(
+                "Line {line} is longer than the {} editor limit for a single line.",
+                describe_bytes(limit)
+            ),
+        }
+    }
+}
+
 /// Plain-text extraction of the terminal's retained primary history plus the
 /// currently applicable screen.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,39 +120,178 @@ impl fmt::Display for TerminalError {
 
 impl std::error::Error for TerminalError {}
 
-fn push_cells_text(target: &mut String, cells: &[Cell]) {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SnapshotBounds {
+    max_bytes: usize,
+    max_lines: usize,
+    max_line_bytes: usize,
+}
+
+struct SnapshotAccumulator {
+    text: String,
+    bytes: usize,
+    lines: usize,
+    current_line_bytes: usize,
+    trailing_newline: bool,
+    bounds: Option<SnapshotBounds>,
+}
+
+impl SnapshotAccumulator {
+    fn unbounded() -> Self {
+        Self {
+            text: String::new(),
+            bytes: 0,
+            lines: 1,
+            current_line_bytes: 0,
+            trailing_newline: false,
+            bounds: None,
+        }
+    }
+
+    fn bounded(max_bytes: usize, max_lines: usize, max_line_bytes: usize) -> Self {
+        Self {
+            text: String::with_capacity(max_bytes.min(8 * 1024)),
+            bytes: 0,
+            lines: 1,
+            current_line_bytes: 0,
+            trailing_newline: false,
+            bounds: Some(SnapshotBounds {
+                max_bytes,
+                max_lines,
+                max_line_bytes,
+            }),
+        }
+    }
+
+    fn into_text(self) -> String {
+        self.text
+    }
+
+    fn push_cell_text(&mut self, text: &str) -> Result<(), TerminalTextSnapshotRefusal> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        if self.trailing_newline {
+            self.start_line()?;
+        }
+        let Some(next_line_bytes) = self.current_line_bytes.checked_add(text.len()) else {
+            return Err(TerminalTextSnapshotRefusal::LineTooLong {
+                line: self.lines,
+                limit: self
+                    .bounds
+                    .map_or(usize::MAX, |bounds| bounds.max_line_bytes),
+            });
+        };
+        if let Some(bounds) = self.bounds {
+            if next_line_bytes > bounds.max_line_bytes {
+                return Err(TerminalTextSnapshotRefusal::LineTooLong {
+                    line: self.lines,
+                    limit: bounds.max_line_bytes,
+                });
+            }
+        }
+        self.reserve_bytes(text.len())?;
+        self.current_line_bytes = next_line_bytes;
+        self.text.push_str(text);
+        Ok(())
+    }
+
+    fn push_newline(&mut self) -> Result<(), TerminalTextSnapshotRefusal> {
+        if self.trailing_newline {
+            self.start_line()?;
+        }
+        self.reserve_bytes(1)?;
+        self.text.push('\n');
+        self.current_line_bytes = 0;
+        self.trailing_newline = true;
+        Ok(())
+    }
+
+    fn start_line(&mut self) -> Result<(), TerminalTextSnapshotRefusal> {
+        self.trailing_newline = false;
+        let Some(next_lines) = self.lines.checked_add(1) else {
+            return Err(TerminalTextSnapshotRefusal::TooManyLines {
+                lines: usize::MAX,
+                limit: self.bounds.map_or(usize::MAX, |bounds| bounds.max_lines),
+            });
+        };
+        if let Some(bounds) = self.bounds {
+            if next_lines > bounds.max_lines {
+                return Err(TerminalTextSnapshotRefusal::TooManyLines {
+                    lines: next_lines,
+                    limit: bounds.max_lines,
+                });
+            }
+        }
+        self.lines = next_lines;
+        Ok(())
+    }
+
+    fn reserve_bytes(&mut self, added: usize) -> Result<(), TerminalTextSnapshotRefusal> {
+        let Some(next_bytes) = self.bytes.checked_add(added) else {
+            return Err(TerminalTextSnapshotRefusal::TooLarge {
+                bytes: usize::MAX,
+                limit: self.bounds.map_or(usize::MAX, |bounds| bounds.max_bytes),
+            });
+        };
+        if let Some(bounds) = self.bounds {
+            if next_bytes > bounds.max_bytes {
+                return Err(TerminalTextSnapshotRefusal::TooLarge {
+                    bytes: next_bytes,
+                    limit: bounds.max_bytes,
+                });
+            }
+        }
+        self.bytes = next_bytes;
+        Ok(())
+    }
+}
+
+fn push_cells_text(
+    target: &mut SnapshotAccumulator,
+    cells: &[Cell],
+) -> Result<(), TerminalTextSnapshotRefusal> {
     for cell in cells {
         if cell.is_continuation() {
             continue;
         }
-        target.push_str(cell.text());
+        target.push_cell_text(cell.text())?;
     }
+    Ok(())
 }
 
 fn append_visible_screen_text(
-    target: &mut String,
+    target: &mut SnapshotAccumulator,
     screen: &Screen,
     cursor_row: usize,
     continue_first_row: bool,
-) {
+) -> Result<(), TerminalTextSnapshotRefusal> {
     let content_rows = screen
         .occupied_row_count()
         .max(cursor_row + 1)
         .min(screen.dimensions().rows());
-    let mut screen_text = String::new();
     let mut continuing = continue_first_row;
     for row in screen.to_rows().into_iter().take(content_rows) {
-        if !continuing && !screen_text.is_empty() {
-            screen_text.push('\n');
+        if !continuing && target.bytes > 0 && !target.trailing_newline {
+            target.push_newline()?;
         }
-        push_cells_text(&mut screen_text, &row.cells);
+        push_cells_text(target, &row.cells)?;
         continuing = row.soft_wrapped;
     }
-    if !screen_text.is_empty() {
-        if !target.is_empty() && !continue_first_row && !target.ends_with('\n') {
-            target.push('\n');
-        }
-        target.push_str(&screen_text);
+    Ok(())
+}
+
+fn describe_bytes(bytes: usize) -> String {
+    const KIB: usize = 1024;
+    const MIB: usize = 1024 * KIB;
+    if bytes >= MIB && bytes.is_multiple_of(MIB) {
+        format!("{} MB", bytes / MIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{} KB", bytes / KIB)
+    } else {
+        format!("{bytes} bytes")
     }
 }
 
@@ -618,12 +796,35 @@ impl Terminal {
     /// and any off-screen alternate-screen content were never retained and are
     /// therefore not reconstructed.
     pub fn text_snapshot(&self) -> TerminalTextSnapshot {
-        let mut text = String::new();
+        self.snapshot_with_accumulator(SnapshotAccumulator::unbounded())
+            .expect("unbounded snapshots cannot refuse")
+    }
+
+    /// Freezes retained primary history plus the currently applicable screen
+    /// as plain text, refusing before the snapshot grows beyond the requested
+    /// editor-safe limits.
+    pub fn bounded_text_snapshot(
+        &self,
+        max_bytes: usize,
+        max_lines: usize,
+        max_line_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalTextSnapshotRefusal> {
+        self.snapshot_with_accumulator(SnapshotAccumulator::bounded(
+            max_bytes,
+            max_lines,
+            max_line_bytes,
+        ))
+    }
+
+    fn snapshot_with_accumulator(
+        &self,
+        mut text: SnapshotAccumulator,
+    ) -> Result<TerminalTextSnapshot, TerminalTextSnapshotRefusal> {
         let mut continue_primary = false;
         for line in self.scrollback.lines() {
-            push_cells_text(&mut text, line.cells());
+            push_cells_text(&mut text, line.cells())?;
             if line.has_hard_break() {
-                text.push('\n');
+                text.push_newline()?;
                 continue_primary = false;
             } else {
                 continue_primary = true;
@@ -631,10 +832,7 @@ impl Terminal {
         }
 
         let screen = if self.modes.alternate_screen() {
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            append_visible_screen_text(&mut text, self.screen(), self.cursor().row(), false);
+            append_visible_screen_text(&mut text, self.screen(), self.cursor().row(), false)?;
             TerminalTextSnapshotScreen::Alternate
         } else {
             append_visible_screen_text(
@@ -642,15 +840,15 @@ impl Terminal {
                 self.primary_screen(),
                 self.primary.cursor.row,
                 continue_primary,
-            );
+            )?;
             TerminalTextSnapshotScreen::Primary
         };
 
-        TerminalTextSnapshot {
-            text,
+        Ok(TerminalTextSnapshot {
+            text: text.into_text(),
             screen,
             evicted_logical_lines: self.scrollback.stats().evicted_lines(),
-        }
+        })
     }
 
     #[cfg(test)]

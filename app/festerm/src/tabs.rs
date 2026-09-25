@@ -26,7 +26,10 @@ use festerm_config::{
     SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
     TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
-use festerm_core::{Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotScreen};
+use festerm_core::{
+    Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
+    TerminalTextSnapshotScreen,
+};
 use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{
     default_local_profile_with_powershell_preference, LocalProfile, LocalPtySession,
@@ -587,12 +590,16 @@ fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
     ))
 }
 
-fn terminal_history_snapshot_label(session_label: &str, snapshot: &TerminalTextSnapshot) -> String {
-    let screen = match snapshot.screen() {
+fn terminal_history_snapshot_label(
+    session_label: &str,
+    screen: TerminalTextSnapshotScreen,
+    retained_history_was_evicted: bool,
+) -> String {
+    let screen = match screen {
         TerminalTextSnapshotScreen::Primary => "current primary screen",
         TerminalTextSnapshotScreen::Alternate => "current alternate screen",
     };
-    let truncated = if snapshot.evicted_logical_lines() > 0 {
+    let truncated = if retained_history_was_evicted {
         " · older retained history was already discarded"
     } else {
         ""
@@ -2167,6 +2174,9 @@ pub struct AppState {
     /// application overlay rather than tab state, so the application takes
     /// this each frame and opens it.
     save_as_requested: bool,
+    /// A history snapshot that was honestly refused before an editor buffer
+    /// was allocated. Drained by the composition root into a transient notice.
+    history_snapshot_refusal: Option<TerminalTextSnapshotRefusal>,
     /// The last file that could not be opened, waiting to be shown to the
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
@@ -2243,6 +2253,7 @@ impl AppState {
             pending_profile_edit: None,
             window_open_requested: false,
             save_as_requested: false,
+            history_snapshot_refusal: None,
             open_refusal: None,
             pending_tab_move: None,
             pending_profile_create: None,
@@ -3394,6 +3405,13 @@ impl AppState {
         registry.save(document)
     }
 
+    pub(crate) fn document_requires_save_as(&self, document: DocumentId) -> bool {
+        self.documents
+            .borrow()
+            .get(document)
+            .is_some_and(crate::documents::OpenDocument::requires_save_as)
+    }
+
     fn with_active_document(&mut self, action: impl FnOnce(&mut DocumentRegistry, DocumentId)) {
         let Some(id) = self.active_document() else {
             return;
@@ -3404,9 +3422,14 @@ impl AppState {
     }
 
     fn save_active_text_document(&mut self) {
-        self.with_active_document(|registry, id| {
-            registry.save(id);
-        });
+        let Some(document) = self.active_document() else {
+            return;
+        };
+        if self.document_requires_save_as(document) {
+            self.save_as_requested = true;
+            return;
+        }
+        self.documents.borrow_mut().save(document);
     }
 
     /// Writes the active editor's text to `path` and moves that view onto the
@@ -3475,6 +3498,13 @@ impl AppState {
         let Some((snapshot, label)) = self.active_terminal_history_snapshot() else {
             return;
         };
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(refusal) => {
+                self.history_snapshot_refusal = Some(refusal);
+                return;
+            }
+        };
         let document = self.documents.borrow_mut().create_untitled(
             TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX,
             &label,
@@ -3520,12 +3550,31 @@ impl AppState {
         self.workspace_dirty = true;
     }
 
-    fn active_terminal_history_snapshot(&self) -> Option<(TerminalTextSnapshot, String)> {
+    fn active_terminal_history_snapshot(
+        &self,
+    ) -> Option<(
+        Result<TerminalTextSnapshot, TerminalTextSnapshotRefusal>,
+        String,
+    )> {
         let TabContent::Session(session) = &self.active_tab().content else {
             return None;
         };
-        let snapshot = session.terminal.text_snapshot();
-        let label = terminal_history_snapshot_label(&session.label, &snapshot);
+        let bounds = self.documents.borrow().bounds();
+        let screen = if session.terminal.modes().alternate_screen() {
+            TerminalTextSnapshotScreen::Alternate
+        } else {
+            TerminalTextSnapshotScreen::Primary
+        };
+        let snapshot = session.terminal.bounded_text_snapshot(
+            bounds.max_bytes(),
+            bounds.max_lines(),
+            bounds.max_line_bytes(),
+        );
+        let label = terminal_history_snapshot_label(
+            &session.label,
+            screen,
+            session.terminal.scrollback_stats().evicted_lines() > 0,
+        );
         Some((snapshot, label))
     }
 
@@ -3635,6 +3684,10 @@ impl AppState {
     /// Whether a Save As destination has been asked for since the last frame.
     pub fn take_save_as_request(&mut self) -> bool {
         std::mem::take(&mut self.save_as_requested)
+    }
+
+    pub fn take_history_snapshot_refusal(&mut self) -> Option<TerminalTextSnapshotRefusal> {
+        self.history_snapshot_refusal.take()
     }
 
     pub fn take_window_open_request(&mut self) -> bool {

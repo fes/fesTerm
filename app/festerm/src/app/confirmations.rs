@@ -401,6 +401,13 @@ impl FesTermApp {
         }
         if save {
             self.overlays.pending_document_close = None;
+            if self.state.document_requires_save_as(pending.document) {
+                self.overlays.pending_document_close_after_save_as = Some(pending.clone());
+                self.state
+                    .dispatch(AppCommand::ActivateTab(pending.tab), context);
+                self.state.dispatch(AppCommand::SaveTextDocumentAs, context);
+                return;
+            }
             match self.state.save_document(pending.document) {
                 Some(festerm_document::SaveOutcome::Saved) => {
                     self.state
@@ -489,7 +496,11 @@ impl FesTermApp {
 
     /// Moves a window close or quit on to the next document holding unsaved
     /// changes, and lets the close proceed once none are left.
-    fn continue_document_close(&mut self, then: AfterDocumentClose, context: &egui::Context) {
+    pub(super) fn continue_document_close(
+        &mut self,
+        then: AfterDocumentClose,
+        context: &egui::Context,
+    ) {
         let AfterDocumentClose::ResumeClose(purpose) = then else {
             return;
         };

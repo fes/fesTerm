@@ -244,6 +244,10 @@ pub(crate) struct OverlayState {
     pub(crate) open_refusal_focused: bool,
     /// The final-view dirty-close prompt for a text document (ADR 0034 §7).
     pub(crate) pending_document_close: Option<PendingDocumentCloseConfirmation>,
+    /// A dirty-close Save that had to continue through Save As. Held outside
+    /// the modal prompt itself so the picker can take over and, on success,
+    /// finish the original close.
+    pub(crate) pending_document_close_after_save_as: Option<PendingDocumentCloseConfirmation>,
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
