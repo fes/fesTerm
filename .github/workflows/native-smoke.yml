@@ -28,6 +28,7 @@ jobs:
   smoke-windows:
     name: Windows ConPTY smoke
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
@@ -81,8 +82,10 @@ jobs:
           cargo test -p festerm-secret-store --test native_secret_store -- --ignored --nocapture
 
       - name: Run Windows native-window smoke
+        timeout-minutes: 2
         shell: pwsh
         env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-window-config.toml
           FESTERM_NATIVE_WINDOW_SMOKE: "1"
           FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
           RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
@@ -99,8 +102,10 @@ jobs:
           }
 
       - name: Run Windows native emoji smoke
+        timeout-minutes: 2
         shell: pwsh
         env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-emoji-config.toml
           FESTERM_NATIVE_EMOJI_SMOKE: "1"
           FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
         run: |
@@ -113,32 +118,31 @@ jobs:
           }
 
       - name: Upload failure artifacts
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: native-smoke-artifacts-windows
           path: |
             native-smoke-artifacts/
+            native-smoke-window-result.txt
+            native-emoji-smoke-result.txt
+            sessiond-trace.log
           if-no-files-found: ignore
 
   # ── Linux PTY smoke (Xvfb environment for future native-window component) ───
   smoke-linux:
     name: Linux PTY smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
 
-      # Install Xvfb for any future native-window smoke step.  The PTY tests
-      # themselves do not require a display, but the job is already configured
-      # here so adding a display-requiring step later is a one-line change.
-      - name: Install Xvfb
-        run: sudo apt-get install -y xvfb
-
       - name: Install native smoke dependencies
-        run: >-
-          sudo apt-get install -y socat pkg-config libudev-dev dbus-x11
-          gnome-keyring libxkbcommon-x11-0
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb socat pkg-config libudev-dev dbus-x11 \
+            gnome-keyring libxkbcommon-x11-0
 
       - name: Build workspace
         run: cargo build --workspace
@@ -172,7 +176,9 @@ jobs:
           cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
 
       - name: Run Linux native-window smoke
+        timeout-minutes: 2
         env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-window-config.toml
           FESTERM_NATIVE_WINDOW_SMOKE: "1"
           # Xvfb has no window manager to assign focus. The self-smoke still
           # proves a real viewport, resize, and PTY flow; real-desktop focus
@@ -187,7 +193,9 @@ jobs:
           grep -qx 'status=pass' native-smoke-window-result.txt
 
       - name: Run Linux native emoji smoke
+        timeout-minutes: 2
         env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-emoji-config.toml
           FESTERM_NATIVE_EMOJI_SMOKE: "1"
           FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED: "1"
           FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
@@ -198,18 +206,21 @@ jobs:
           grep -qx 'status=pass' native-emoji-smoke-result.txt
 
       - name: Upload failure artifacts
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: native-smoke-artifacts-linux
           path: |
             native-smoke-artifacts/
+            native-smoke-window-result.txt
+            native-emoji-smoke-result.txt
           if-no-files-found: ignore
 
   # ── macOS PTY smoke (advisory — not blocking) ────────────────────────────────
   smoke-macos:
     name: macOS PTY smoke (advisory)
     runs-on: macos-latest
+    timeout-minutes: 45
     # Advisory: macOS failure does not block a release decision.  See
     # docs/ui-test-plan.md platform matrix and docs/native-smoke-policy.md.
     continue-on-error: true
@@ -235,7 +246,9 @@ jobs:
           cargo test -p festerm-secret-store --test native_secret_store -- --ignored --nocapture
 
       - name: Run macOS native-window smoke (advisory)
+        timeout-minutes: 2
         env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-window-config.toml
           FESTERM_NATIVE_WINDOW_SMOKE: "1"
           FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
           RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
@@ -246,7 +259,9 @@ jobs:
           grep -qx 'status=pass' native-smoke-window-result.txt
 
       - name: Run macOS native emoji smoke (advisory)
+        timeout-minutes: 2
         env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-emoji-config.toml
           FESTERM_NATIVE_EMOJI_SMOKE: "1"
           FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
         run: |
@@ -256,10 +271,12 @@ jobs:
           grep -qx 'status=pass' native-emoji-smoke-result.txt
 
       - name: Upload failure artifacts
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: native-smoke-artifacts-macos
           path: |
             native-smoke-artifacts/
+            native-smoke-window-result.txt
+            native-emoji-smoke-result.txt
           if-no-files-found: ignore

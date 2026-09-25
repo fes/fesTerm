@@ -874,7 +874,19 @@ fn native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_us
             std::env::consts::ARCH
         )
     );
-    assert!(registry.join("helpers").join(helper_identity).is_file());
+    let staged_helper = registry
+        .join("helpers")
+        .join(
+            Path::new(helper_identity)
+                .file_stem()
+                .expect("helper identity has a generation name"),
+        )
+        .join(helper_identity);
+    assert!(
+        staged_helper.is_file(),
+        "the daemon helper must be staged in its generation directory: {}",
+        staged_helper.display()
+    );
 
     fs::remove_file(&packaged_helper)
         .expect("the package-owned helper must not be locked by the staged daemon");

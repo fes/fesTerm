@@ -37,6 +37,7 @@ for target in parser parser_chunked; do
     printf '\033]0;%s\033\\X' "$(head -c 5000 /dev/zero | tr '\0' 'A')" \
         >"${corpus}/oversized-title"
     printf '\033P$qm\033\\' >"${corpus}/decrqss-sgr"
+    printf '\033P$qm\033\\\033[5n\033P$qx\033\\\033[6n' >"${corpus}/mixed-dcs-csi-replies"
     printf '\033[38;2;1;2;3m\033[48;5;9m' >"${corpus}/truecolour-pen"
 
     echo "seeded ${corpus} with $(find "${corpus}" -type f | wc -l | tr -d ' ') inputs"

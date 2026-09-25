@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-core"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "compact_str",
  "unicode-segmentation",
@@ -75,7 +75,15 @@ name = "festerm-fuzz"
 version = "0.0.0"
 dependencies = [
  "festerm-core",
+ "festerm-test-support",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "festerm-test-support"
+version = "0.5.0"
+dependencies = [
+ "festerm-core",
 ]
 
 [[package]]
