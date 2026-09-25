@@ -6,8 +6,9 @@ use std::{
     io::{self, Write},
     panic::PanicHookInfo,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     sync::{Arc, Mutex, OnceLock, TryLockError},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing_subscriber::{
     fmt::{self, MakeWriter},
@@ -20,12 +21,18 @@ const RUN_MARKER_FILE: &str = "current-run.json";
 const EXIT_INTENT_FILE: &str = "exit-intent.json";
 const LAST_EXIT_FILE: &str = "last-exit.json";
 const CURRENT_LOG_FILE: &str = "festerm.log";
-const PREVIOUS_LOG_FILE: &str = "festerm.previous.log";
 const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_PANIC_REPORTS: usize = 5;
+const MAX_PANIC_BYTES: usize = 256 * 1024;
+const MAX_INACTIVE_RUNS_PER_CLASS: usize = 5;
+const RUNS_DIRECTORY: &str = "runs-v2";
+const CATALOG_LOCK_FILE: &str = "catalog.lock";
+const RUN_LOCK_FILE: &str = "lifetime.lock";
+const PANIC_OBSERVED_FILE: &str = "panic-observed";
 
 static JOURNAL: OnceLock<Mutex<RunJournal>> = OnceLock::new();
 static LAST_EXIT: OnceLock<Option<ExitRecord>> = OnceLock::new();
+static PANICKED: AtomicBool = AtomicBool::new(false);
+static DIAGNOSTICS_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,27 +122,32 @@ impl DiagnosticsGuard {
         let Some(journal) = JOURNAL.get() else {
             return;
         };
-        match journal.lock() {
-            Ok(mut journal) => {
-                if let Err(error) = journal.finish(succeeded, now_unix_ms()) {
-                    tracing::error!(
-                        target: "festerm::diagnostics",
-                        %error,
-                        "could not record the application exit"
-                    );
-                }
+        let mut journal = match journal.lock() {
+            Ok(journal) => journal,
+            Err(error) => {
+                DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+                eprintln!("fesTerm is recovering its poisoned lifecycle journal: {error}");
+                error.into_inner()
             }
-            Err(error) => tracing::error!(
+        };
+        journal.panic_seen |= PANICKED.load(Ordering::Relaxed);
+        if let Err(error) = journal.finish(succeeded, now_unix_ms()) {
+            DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+            tracing::error!(
                 target: "festerm::diagnostics",
                 %error,
-                "could not lock the application lifecycle journal"
-            ),
+                "could not record the application exit"
+            );
         }
     }
 }
 
 pub fn init() -> DiagnosticsGuard {
-    let (journal, previous_exit, diagnostics_error) = match diagnostics_directory() {
+    init_in(diagnostics_directory())
+}
+
+fn init_in(directory: Option<PathBuf>) -> DiagnosticsGuard {
+    let (journal, previous_exit, diagnostics_error) = match directory {
         Some(directory) => match RunJournal::start_in(directory, now_unix_ms()) {
             Ok((journal, previous_exit)) => (Some(journal), previous_exit, None),
             Err(error) => (None, None, Some(error)),
@@ -149,16 +161,16 @@ pub fn init() -> DiagnosticsGuard {
         ),
     };
 
-    let log_writer =
-        journal
-            .as_ref()
-            .and_then(|journal| match BoundedLog::open(&journal.directory) {
-                Ok(writer) => Some(Arc::new(Mutex::new(writer))),
-                Err(error) => {
-                    eprintln!("fesTerm could not initialize its diagnostic log: {error}");
-                    None
-                }
-            });
+    let log_writer = journal
+        .as_ref()
+        .and_then(|journal| match BoundedLog::open(journal) {
+            Ok(writer) => Some(Arc::new(Mutex::new(writer))),
+            Err(error) => {
+                eprintln!("fesTerm could not initialize its diagnostic log: {error}");
+                DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+                None
+            }
+        });
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("festerm=info,warn"));
     fmt::fmt()
@@ -166,14 +178,20 @@ pub fn init() -> DiagnosticsGuard {
         .with_target(true)
         .with_ansi(false)
         .with_writer(DiagnosticMakeWriter { log_writer })
-        .init();
+        .try_init()
+        .unwrap_or_else(|error| {
+            DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+            eprintln!("fesTerm tracing initialization failed: {error}");
+        });
 
     let _ = LAST_EXIT.set(previous_exit);
     if let Some(journal) = journal {
+        let directory = journal.directory.clone();
         let _ = JOURNAL.set(Mutex::new(journal));
-        install_panic_hook();
+        install_panic_hook(&directory);
     }
     if let Some(error) = diagnostics_error {
+        DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
         tracing::warn!(
             target: "festerm::diagnostics",
             %error,
@@ -196,6 +214,7 @@ pub(crate) fn record_exit_intent(intent: ExitIntent) {
     match journal.lock() {
         Ok(mut journal) => {
             if let Err(error) = journal.record_intent(intent, now_unix_ms()) {
+                DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
                 tracing::error!(
                     target: "festerm::diagnostics",
                     %error,
@@ -203,19 +222,30 @@ pub(crate) fn record_exit_intent(intent: ExitIntent) {
                 );
             }
         }
-        Err(error) => tracing::error!(
-            target: "festerm::diagnostics",
-            %error,
-            "could not lock the application lifecycle journal"
-        ),
+        Err(error) => {
+            DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+            tracing::error!(
+                target: "festerm::diagnostics",
+                %error,
+                "could not lock the application lifecycle journal"
+            );
+        }
     }
 }
 
 pub(crate) fn last_exit_summary() -> Option<String> {
-    LAST_EXIT
+    let summary = LAST_EXIT
         .get()
         .and_then(|record| record.as_ref())
-        .map(ExitRecord::support_summary)
+        .map(ExitRecord::support_summary);
+    if DIAGNOSTICS_UNAVAILABLE.load(Ordering::Relaxed) {
+        Some(format!(
+            "{}Local diagnostics are unavailable or incomplete for this run",
+            summary.map_or_else(String::new, |summary| format!("{summary}; "))
+        ))
+    } else {
+        summary
+    }
 }
 
 fn diagnostics_directory() -> Option<PathBuf> {
@@ -227,30 +257,44 @@ fn diagnostics_directory() -> Option<PathBuf> {
     })
 }
 
-fn install_panic_hook() {
+fn install_panic_hook(directory: &Path) {
+    let panic_marker = directory.join(PANIC_OBSERVED_FILE);
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |information| {
+        // Independent of the journal mutex: a worker can panic while finish
+        // publishes a clean record. This durable flag takes precedence on
+        // recovery even when the richer panic report cannot acquire the mutex.
+        if let Err(error) = atomic_write(&panic_marker, b"panic\n") {
+            DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+            eprintln!("fesTerm could not persist its panic flag: {error}");
+        }
         record_panic(information);
         previous(information);
     }));
 }
 
 fn record_panic(information: &PanicHookInfo<'_>) {
+    // Set before trying the journal: a panic while it is held must never
+    // deadlock or subsequently be reported as a clean event-loop exit.
+    PANICKED.store(true, Ordering::Relaxed);
     let Some(journal) = JOURNAL.get() else {
         return;
     };
     let mut journal = match journal.try_lock() {
         Ok(journal) => journal,
         Err(TryLockError::Poisoned(error)) => {
+            DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
             eprintln!("fesTerm could not lock its panic journal: {error}");
             return;
         }
         Err(TryLockError::WouldBlock) => {
+            DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
             eprintln!("fesTerm panic journal was busy; no panic report was written");
             return;
         }
     };
     if let Err(error) = journal.record_panic(information, now_unix_ms()) {
+        DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
         eprintln!("fesTerm could not write its panic report: {error}");
     }
 }
@@ -259,96 +303,99 @@ struct RunJournal {
     directory: PathBuf,
     marker: RunMarker,
     intent: Option<ExitIntent>,
+    lifetime: Arc<File>,
+    panic_seen: bool,
+    finished: bool,
 }
 
 impl RunJournal {
     fn start_in(directory: PathBuf, now: u128) -> io::Result<(Self, Option<ExitRecord>)> {
         fs::create_dir_all(&directory)?;
-        let previous = Self::load_previous_exit(&directory, now);
-        if let Some(previous) = &previous {
-            write_json(&directory.join(LAST_EXIT_FILE), previous)?;
-        }
+        // The catalog inode is permanent. All creation, probing and removal of
+        // run directories happens under this lock; panic/finish never need it.
+        let _catalog = lock_catalog(&directory)?;
+        let runs = directory.join(RUNS_DIRECTORY);
+        fs::create_dir_all(&runs)?;
+        let previous = scan_and_prune(&runs, now)?;
+        static NEXT_RUN: AtomicU64 = AtomicU64::new(0);
+        let (directory, run_id) = loop {
+            let id = format!(
+                "{}-{now}-{}",
+                std::process::id(),
+                NEXT_RUN.fetch_add(1, Ordering::Relaxed)
+            );
+            let path = runs.join(&id);
+            match fs::create_dir(&path) {
+                Ok(()) => break (path, id),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        };
+        let lifetime = Arc::new(open_lock(&directory.join(RUN_LOCK_FILE))?);
+        fs2::FileExt::try_lock_exclusive(lifetime.as_ref())?;
         let marker = RunMarker {
-            schema_version: 1,
-            run_id: format!("{}-{now}", std::process::id()),
+            schema_version: 2,
+            run_id,
             started_at_unix_ms: now,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             os: std::env::consts::OS.to_owned(),
             architecture: std::env::consts::ARCH.to_owned(),
         };
-        remove_if_exists(&directory.join(EXIT_INTENT_FILE))?;
         write_json(&directory.join(RUN_MARKER_FILE), &marker)?;
-        prune_panic_reports(&directory, MAX_PANIC_REPORTS)?;
         Ok((
             Self {
                 directory,
                 marker,
                 intent: None,
+                lifetime,
+                panic_seen: false,
+                finished: false,
             },
             previous,
         ))
     }
 
-    fn load_previous_exit(directory: &Path, now: u128) -> Option<ExitRecord> {
-        let marker = match read_json::<RunMarker>(&directory.join(RUN_MARKER_FILE)) {
-            Ok(marker) => marker,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return match read_json(&directory.join(LAST_EXIT_FILE)) {
-                    Ok(record) => Some(record),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                    Err(error) => {
-                        eprintln!("fesTerm could not read its last-exit record: {error}");
-                        None
-                    }
-                };
+    fn load_previous_exit(directory: &Path, now: u128) -> io::Result<Option<ExitRecord>> {
+        if let Some(mut record) = read_optional_json::<ExitRecord>(&directory.join(LAST_EXIT_FILE))?
+        {
+            if directory.join(PANIC_OBSERVED_FILE).try_exists()? {
+                record.status = ExitStatus::Panic;
+                record.reason = "The run encountered a Rust panic".to_owned();
             }
-            Err(error) => {
-                eprintln!("fesTerm could not read its previous run marker: {error}");
-                return Some(ExitRecord {
-                    schema_version: 1,
-                    run_id: "unreadable".to_owned(),
-                    started_at_unix_ms: 0,
-                    ended_at_unix_ms: now,
-                    status: ExitStatus::Unclean,
-                    reason: "The previous run marker was unreadable".to_owned(),
-                    version: "unknown".to_owned(),
-                    os: std::env::consts::OS.to_owned(),
-                    architecture: std::env::consts::ARCH.to_owned(),
-                    artifact: None,
-                });
-            }
+            return Ok(Some(record));
+        }
+        let Some(marker): Option<RunMarker> = read_optional_json(&directory.join(RUN_MARKER_FILE))?
+        else {
+            // Startup was interrupted before publishing a marker.
+            return Ok(None);
         };
-        let intent = match read_json::<PersistedIntent>(&directory.join(EXIT_INTENT_FILE)) {
-            Ok(intent) if intent.run_id == marker.run_id => Some(intent.intent),
-            Ok(_) => None,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => {
-                eprintln!("fesTerm could not read its previous exit intent: {error}");
-                None
-            }
-        };
+        let intent = read_optional_json::<PersistedIntent>(&directory.join(EXIT_INTENT_FILE))?
+            .filter(|intent| intent.run_id == marker.run_id)
+            .map(|intent| intent.intent);
         let panic_name = format!("panic-{}.txt", marker.run_id);
         let panic_path = directory.join(&panic_name);
-        let (status, reason, artifact) = if panic_path.is_file() {
-            (
-                ExitStatus::Panic,
-                "The previous run ended during a Rust panic".to_owned(),
-                Some(panic_name),
-            )
-        } else {
-            let reason = intent.map_or_else(
-                || "No clean shutdown was recorded".to_owned(),
-                |intent| {
-                    format!(
-                        "No clean shutdown followed this intent: {}",
-                        intent.description()
-                    )
-                },
-            );
-            (ExitStatus::Unclean, reason, None)
-        };
-        Some(ExitRecord {
-            schema_version: 1,
+        let has_report = panic_path.try_exists()?;
+        let (status, reason, artifact) =
+            if has_report || directory.join(PANIC_OBSERVED_FILE).try_exists()? {
+                (
+                    ExitStatus::Panic,
+                    "The run encountered a Rust panic; no final exit was recorded".to_owned(),
+                    has_report.then_some(panic_name),
+                )
+            } else {
+                let reason = intent.map_or_else(
+                    || "No clean shutdown was recorded".to_owned(),
+                    |intent| {
+                        format!(
+                            "No clean shutdown followed this intent: {}",
+                            intent.description()
+                        )
+                    },
+                );
+                (ExitStatus::Unclean, reason, None)
+            };
+        Ok(Some(ExitRecord {
+            schema_version: 2,
             run_id: marker.run_id,
             started_at_unix_ms: marker.started_at_unix_ms,
             ended_at_unix_ms: now,
@@ -358,14 +405,13 @@ impl RunJournal {
             os: marker.os,
             architecture: marker.architecture,
             artifact,
-        })
+        }))
     }
 
     fn record_intent(&mut self, intent: ExitIntent, now: u128) -> io::Result<()> {
         if self.intent.is_some() {
             return Ok(());
         }
-        self.intent = Some(intent);
         write_json(
             &self.directory.join(EXIT_INTENT_FILE),
             &PersistedIntent {
@@ -373,11 +419,23 @@ impl RunJournal {
                 intent,
                 recorded_at_unix_ms: now,
             },
-        )
+        )?;
+        self.intent = Some(intent);
+        Ok(())
     }
 
     fn finish(&mut self, succeeded: bool, now: u128) -> io::Result<()> {
-        let (status, reason) = if succeeded {
+        self.panic_seen |= self.directory.join(PANIC_OBSERVED_FILE).try_exists()?;
+        if self.finished {
+            return Ok(());
+        }
+        let (status, reason) = if self.panic_seen {
+            (
+                ExitStatus::Panic,
+                "The run encountered a Rust panic (even if the event loop later returned)"
+                    .to_owned(),
+            )
+        } else if succeeded {
             (
                 ExitStatus::Clean,
                 self.intent.map_or_else(
@@ -392,7 +450,7 @@ impl RunJournal {
             )
         };
         let record = ExitRecord {
-            schema_version: 1,
+            schema_version: 2,
             run_id: self.marker.run_id.clone(),
             started_at_unix_ms: self.marker.started_at_unix_ms,
             ended_at_unix_ms: now,
@@ -401,15 +459,22 @@ impl RunJournal {
             version: self.marker.version.clone(),
             os: self.marker.os.clone(),
             architecture: self.marker.architecture.clone(),
-            artifact: None,
+            artifact: self.panic_artifact()?,
         };
         write_json(&self.directory.join(LAST_EXIT_FILE), &record)?;
         remove_if_exists(&self.directory.join(EXIT_INTENT_FILE))?;
-        remove_if_exists(&self.directory.join(RUN_MARKER_FILE))
+        remove_if_exists(&self.directory.join(RUN_MARKER_FILE))?;
+        self.finished = true;
+        Ok(())
+    }
+
+    fn panic_artifact(&self) -> io::Result<Option<String>> {
+        let name = format!("panic-{}.txt", self.marker.run_id);
+        Ok(self.directory.join(&name).try_exists()?.then_some(name))
     }
 
     fn record_panic(&mut self, information: &PanicHookInfo<'_>, now: u128) -> io::Result<()> {
-        prune_panic_reports(&self.directory, MAX_PANIC_REPORTS.saturating_sub(1))?;
+        self.panic_seen = true;
         let report_name = format!("panic-{}.txt", self.marker.run_id);
         let payload = information
             .payload()
@@ -452,13 +517,14 @@ impl RunJournal {
             Backtrace::force_capture(),
         );
         let path = self.directory.join(&report_name);
-        let mut file = File::create(path)?;
-        file.write_all(report.as_bytes())?;
-        file.sync_all()?;
+        atomic_write(
+            &path,
+            &report.as_bytes()[..report.len().min(MAX_PANIC_BYTES)],
+        )?;
         write_json(
             &self.directory.join(LAST_EXIT_FILE),
             &ExitRecord {
-                schema_version: 1,
+                schema_version: 2,
                 run_id: self.marker.run_id.clone(),
                 started_at_unix_ms: self.marker.started_at_unix_ms,
                 ended_at_unix_ms: now,
@@ -473,6 +539,88 @@ impl RunJournal {
     }
 }
 
+fn open_lock(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+}
+
+fn try_lock(file: &File) -> io::Result<bool> {
+    match fs2::FileExt::try_lock_exclusive(file) {
+        Ok(()) => Ok(true),
+        Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn lock_catalog(directory: &Path) -> io::Result<File> {
+    let file = open_lock(&directory.join(CATALOG_LOCK_FILE))?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !try_lock(&file)? {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "diagnostic catalog is busy",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Ok(file)
+}
+
+fn scan_and_prune(runs: &Path, now: u128) -> io::Result<Option<ExitRecord>> {
+    let mut records = Vec::new();
+    for entry in fs::read_dir(runs)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let directory = entry.path();
+        let lifetime = open_lock(&directory.join(RUN_LOCK_FILE))?;
+        if !try_lock(&lifetime)? {
+            continue;
+        }
+        let record = RunJournal::load_previous_exit(&directory, now)?;
+        if let Some(record) = record {
+            write_json(&directory.join(LAST_EXIT_FILE), &record)?;
+            records.push((directory, record));
+        } else {
+            // Windows requires closing the probe before unlinking. Catalog
+            // ownership excludes every possible new opener until removal ends.
+            drop(lifetime);
+            fs::remove_dir_all(directory)?;
+        }
+    }
+    records.sort_by(|(_, a), (_, b)| {
+        (b.ended_at_unix_ms, &b.run_id).cmp(&(a.ended_at_unix_ms, &a.run_id))
+    });
+    let previous = records
+        .iter()
+        .find(|(_, record)| record.status != ExitStatus::Clean)
+        .or_else(|| records.first())
+        .map(|(_, record)| record.clone());
+    let (mut clean, mut failed) = (0, 0);
+    for (directory, record) in records {
+        // Keep separate failure/clean quotas so unrelated clean runs cannot
+        // conceal the last failure. Active runs were excluded before reading.
+        let count = if record.status == ExitStatus::Clean {
+            &mut clean
+        } else {
+            &mut failed
+        };
+        *count += 1;
+        if *count > MAX_INACTIVE_RUNS_PER_CLASS {
+            fs::remove_dir_all(directory)?;
+        }
+    }
+    Ok(previous)
+}
+
 fn now_unix_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -485,17 +633,32 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> io::Result<T> {
     serde_json::from_slice(&bytes).map_err(io::Error::other)
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
-    let temporary = path.with_extension("tmp");
-    let mut file = File::create(&temporary)?;
-    file.write_all(&bytes)?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
-    if fs::rename(&temporary, path).is_err() {
-        remove_if_exists(path)?;
-        fs::rename(temporary, path)?;
+fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &Path) -> io::Result<Option<T>> {
+    match read_json(path) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
+}
+
+fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
+    bytes.push(b'\n');
+    atomic_write(path, &bytes)
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("missing parent"))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    // persist replaces atomically on Windows as well as Unix, without an
+    // unlink-first fallback that could discard the previous valid record.
+    file.persist(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -505,28 +668,6 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
-}
-
-fn prune_panic_reports(directory: &Path, retain: usize) -> io::Result<()> {
-    let mut reports = fs::read_dir(directory)?
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.starts_with("panic-") && name.ends_with(".txt")
-        })
-        .collect::<Vec<_>>();
-    reports.sort_by_key(|entry| {
-        entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .ok()
-    });
-    let remove_count = reports.len().saturating_sub(retain);
-    for report in reports.into_iter().take(remove_count) {
-        remove_if_exists(&report.path())?;
-    }
-    Ok(())
 }
 
 #[derive(Clone)]
@@ -558,12 +699,16 @@ impl Write for DiagnosticWriter {
             match log_writer.lock() {
                 Ok(mut writer) => {
                     if let Err(error) = writer.write_all(buffer) {
+                        DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
                         eprintln!("fesTerm diagnostic log write failed: {error}");
                     } else {
                         log_succeeded = true;
                     }
                 }
-                Err(error) => eprintln!("fesTerm diagnostic log lock failed: {error}"),
+                Err(error) => {
+                    DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+                    eprintln!("fesTerm diagnostic log lock failed: {error}");
+                }
             }
         }
         if stderr_result.is_ok() || log_succeeded {
@@ -576,8 +721,14 @@ impl Write for DiagnosticWriter {
     fn flush(&mut self) -> io::Result<()> {
         self.stderr.flush()?;
         if let Some(log_writer) = &self.log_writer {
-            if let Ok(mut writer) = log_writer.lock() {
-                writer.flush()?;
+            let result = log_writer
+                .lock()
+                .map_err(|error| io::Error::other(error.to_string()))
+                .and_then(|mut writer| writer.flush());
+            if let Err(error) = result {
+                DIAGNOSTICS_UNAVAILABLE.store(true, Ordering::Relaxed);
+                eprintln!("fesTerm diagnostic log flush failed: {error}");
+                return Err(error);
             }
         }
         Ok(())
@@ -587,24 +738,20 @@ impl Write for DiagnosticWriter {
 struct BoundedLog {
     file: File,
     remaining: u64,
+    _lifetime: Arc<File>,
 }
 
 impl BoundedLog {
-    fn open(directory: &Path) -> io::Result<Self> {
-        let current = directory.join(CURRENT_LOG_FILE);
-        let previous = directory.join(PREVIOUS_LOG_FILE);
-        remove_if_exists(&previous)?;
-        if current.exists() {
-            fs::rename(&current, previous)?;
-        }
+    fn open(journal: &RunJournal) -> io::Result<Self> {
+        let current = journal.directory.join(CURRENT_LOG_FILE);
         let file = OpenOptions::new()
-            .create(true)
+            .create_new(true)
             .write(true)
-            .truncate(true)
             .open(current)?;
         Ok(Self {
             file,
             remaining: MAX_LOG_BYTES,
+            _lifetime: journal.lifetime.clone(),
         })
     }
 }
@@ -632,11 +779,13 @@ mod tests {
 
     fn temporary_directory(label: &str) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let directory = std::env::temp_dir().join(format!(
-            "festerm-diagnostics-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!(
+                "festerm-diagnostics-{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
         fs::create_dir_all(&directory).unwrap();
         directory
     }
@@ -650,11 +799,12 @@ mod tests {
         journal.record_intent(ExitIntent::UserQuit, 110).unwrap();
         journal.finish(true, 120).unwrap();
 
-        assert!(!directory.join(RUN_MARKER_FILE).exists());
-        assert!(!directory.join(EXIT_INTENT_FILE).exists());
-        let record: ExitRecord = read_json(&directory.join(LAST_EXIT_FILE)).unwrap();
+        assert!(!journal.directory.join(RUN_MARKER_FILE).exists());
+        assert!(!journal.directory.join(EXIT_INTENT_FILE).exists());
+        let record: ExitRecord = read_json(&journal.directory.join(LAST_EXIT_FILE)).unwrap();
         assert_eq!(record.status, ExitStatus::Clean);
         assert_eq!(record.reason, "User requested quit");
+        drop(journal);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -667,7 +817,7 @@ mod tests {
             .unwrap();
         drop(abandoned);
 
-        let (_current, previous) = RunJournal::start_in(directory.clone(), 300).unwrap();
+        let (current, previous) = RunJournal::start_in(directory.clone(), 300).unwrap();
         let previous = previous.expect("the abandoned run must be reported");
         assert_eq!(previous.status, ExitStatus::Unclean);
         assert!(
@@ -676,6 +826,7 @@ mod tests {
                 .contains("Update installed; restart requested"),
             "persisted user intent should survive the abrupt exit"
         );
+        drop(current);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -690,8 +841,9 @@ mod tests {
         journal.record_intent(ExitIntent::UserQuit, 370).unwrap();
         journal.finish(true, 380).unwrap();
 
-        let record: ExitRecord = read_json(&directory.join(LAST_EXIT_FILE)).unwrap();
+        let record: ExitRecord = read_json(&journal.directory.join(LAST_EXIT_FILE)).unwrap();
         assert_eq!(record.reason, "Update installed; restart requested");
+        drop(journal);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -700,18 +852,21 @@ mod tests {
         let directory = temporary_directory("previous-clean");
         let (mut first, _) = RunJournal::start_in(directory.clone(), 400).unwrap();
         first.finish(true, 410).unwrap();
+        drop(first);
 
-        let (_second, previous) = RunJournal::start_in(directory.clone(), 500).unwrap();
+        let (second, previous) = RunJournal::start_in(directory.clone(), 500).unwrap();
         let previous = previous.expect("the clean exit should remain available");
         assert_eq!(previous.status, ExitStatus::Clean);
         assert_eq!(previous.reason, "Application event loop returned normally");
+        drop(second);
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn bounded_log_never_grows_past_its_per_run_limit() {
         let directory = temporary_directory("bounded-log");
-        let mut writer = BoundedLog::open(&directory).unwrap();
+        let (journal, _) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        let mut writer = BoundedLog::open(&journal).unwrap();
         let chunk = vec![b'x'; 64 * 1024];
         for _ in 0..40 {
             writer.write_all(&chunk).unwrap();
@@ -719,33 +874,410 @@ mod tests {
         writer.flush().unwrap();
 
         assert_eq!(
-            fs::metadata(directory.join(CURRENT_LOG_FILE))
+            fs::metadata(journal.directory.join(CURRENT_LOG_FILE))
                 .unwrap()
                 .len(),
             MAX_LOG_BYTES
         );
+        drop(writer);
+        drop(journal);
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn startup_caps_panic_report_retention_at_five() {
-        let directory = temporary_directory("panic-retention");
-        for index in 0..7 {
+    fn startup_bounds_inactive_runs_but_protects_active_runs_and_failure_evidence() {
+        let directory = temporary_directory("retention");
+        let (active, _) = RunJournal::start_in(directory.clone(), 1).unwrap();
+        let mut writer = BoundedLog::open(&active).unwrap();
+        writer.write_all(b"active log").unwrap();
+        let active_path = active.directory.clone();
+        // A surviving log writer also owns the lifetime lock.
+        drop(active);
+        let mut failure_path = PathBuf::new();
+        for now in 2..12 {
+            let (mut run, _) = RunJournal::start_in(directory.clone(), now).unwrap();
+            run.finish(false, now).unwrap();
+            failure_path = run.directory.clone();
+        }
+        for now in 12..22 {
+            let (mut run, previous) = RunJournal::start_in(directory.clone(), now).unwrap();
+            assert_eq!(previous.unwrap().status, ExitStatus::RuntimeError);
+            run.finish(true, now).unwrap();
+        }
+        let (last, previous) = RunJournal::start_in(directory.clone(), 30).unwrap();
+        assert_eq!(previous.unwrap().status, ExitStatus::RuntimeError);
+        assert!(failure_path.exists());
+        assert_eq!(
+            fs::read(active_path.join(CURRENT_LOG_FILE)).unwrap(),
+            b"active log"
+        );
+        assert_eq!(
+            fs::read_dir(directory.join(RUNS_DIRECTORY))
+                .unwrap()
+                .count(),
+            12
+        );
+        drop(last);
+        drop(writer);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn overlapping_same_process_runs_are_unique_and_do_not_erase_each_other() {
+        let directory = temporary_directory("overlap");
+        let (mut a, _) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        let (b, previous) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        assert!(previous.is_none(), "a live run is not an unclean exit");
+        assert_ne!(a.marker.run_id, b.marker.run_id);
+        let b_id = b.marker.run_id.clone();
+        let mut a_log = BoundedLog::open(&a).unwrap();
+        let mut b_log = BoundedLog::open(&b).unwrap();
+        a_log.write_all(b"a").unwrap();
+        b_log.write_all(b"b").unwrap();
+        a.finish(true, 110).unwrap();
+        assert!(b.directory.join(RUN_MARKER_FILE).exists());
+        assert_eq!(fs::read(a.directory.join(CURRENT_LOG_FILE)).unwrap(), b"a");
+        assert_eq!(fs::read(b.directory.join(CURRENT_LOG_FILE)).unwrap(), b"b");
+        drop((a_log, b_log, a, b));
+        let (c, previous) = RunJournal::start_in(directory.clone(), 120).unwrap();
+        let previous = previous.unwrap();
+        assert_eq!(previous.run_id, b_id);
+        assert_eq!(previous.status, ExitStatus::Unclean);
+        drop(c);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_atomic_replacement_preserves_evidence_and_intent_can_retry() {
+        let directory = temporary_directory("write-error");
+        let (mut run, _) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        let intent = run.directory.join(EXIT_INTENT_FILE);
+        fs::create_dir(&intent).unwrap();
+        fs::write(intent.join("evidence"), b"keep").unwrap();
+        assert!(run.record_intent(ExitIntent::UserQuit, 101).is_err());
+        assert!(run.intent.is_none());
+        assert_eq!(fs::read(intent.join("evidence")).unwrap(), b"keep");
+        fs::remove_dir_all(&intent).unwrap();
+        run.record_intent(ExitIntent::NativeSmokeComplete, 102)
+            .unwrap();
+        run.finish(false, 103).unwrap();
+        let record: ExitRecord = read_json(&run.directory.join(LAST_EXIT_FILE)).unwrap();
+        assert_eq!(record.status, ExitStatus::RuntimeError);
+        assert_eq!(
+            record.reason,
+            "The application event loop returned an error"
+        );
+        assert!(BoundedLog::open(&run).is_ok());
+        assert!(
+            BoundedLog::open(&run).is_err(),
+            "never truncate an existing log"
+        );
+        drop(run);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn catalog_serializes_same_process_openers_and_incomplete_creation_is_recovered() {
+        let directory = temporary_directory("catalog");
+        let catalog = lock_catalog(&directory).unwrap();
+        let other = open_lock(&directory.join(CATALOG_LOCK_FILE)).unwrap();
+        assert!(!try_lock(&other).unwrap());
+        let incomplete = directory.join(RUNS_DIRECTORY).join("incomplete");
+        fs::create_dir_all(&incomplete).unwrap();
+        drop((catalog, other));
+        let (run, previous) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        assert!(previous.is_none());
+        assert!(!incomplete.exists());
+        drop(run);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unreadable_evidence_and_catalog_errors_are_propagated() {
+        let directory = temporary_directory("read-error");
+        let (run, _) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        fs::write(run.directory.join(RUN_MARKER_FILE), b"not json").unwrap();
+        drop(run);
+        assert!(RunJournal::start_in(directory.clone(), 101).is_err());
+        fs::remove_dir_all(directory.join(RUNS_DIRECTORY)).unwrap();
+        fs::remove_file(directory.join(CATALOG_LOCK_FILE)).unwrap();
+        fs::create_dir(directory.join(CATALOG_LOCK_FILE)).unwrap();
+        assert!(RunJournal::start_in(directory.clone(), 102).is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn panic_artifact_without_final_record_survives_recovery_and_retention() {
+        let directory = temporary_directory("panic-artifact");
+        for now in 1..8 {
+            let (run, _) = RunJournal::start_in(directory.clone(), now).unwrap();
             fs::write(
-                directory.join(format!("panic-test-{index}.txt")),
-                format!("report {index}"),
+                run.directory
+                    .join(format!("panic-{}.txt", run.marker.run_id)),
+                b"controlled report",
             )
             .unwrap();
         }
-
-        let (_journal, _) = RunJournal::start_in(directory.clone(), 600).unwrap();
-
-        let retained = fs::read_dir(&directory)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("panic-"))
-            .count();
-        assert_eq!(retained, MAX_PANIC_REPORTS);
+        let (run, previous) = RunJournal::start_in(directory.clone(), 8).unwrap();
+        let previous = previous.unwrap();
+        assert_eq!(previous.status, ExitStatus::Panic);
+        assert!(previous.artifact.is_some());
+        assert_eq!(
+            fs::read_dir(directory.join(RUNS_DIRECTORY))
+                .unwrap()
+                .count(),
+            6
+        );
+        drop(run);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_smoke_exit_is_clean_and_finishing_twice_is_idempotent() {
+        let directory = temporary_directory("smoke");
+        let (mut run, _) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        run.record_intent(ExitIntent::NativeSmokeComplete, 101)
+            .unwrap();
+        run.finish(true, 102).unwrap();
+        run.finish(false, 103).unwrap();
+        let record: ExitRecord = read_json(&run.directory.join(LAST_EXIT_FILE)).unwrap();
+        assert_eq!(record.status, ExitStatus::Clean);
+        assert_eq!(record.reason, "Native smoke completed");
+        drop(run);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    // Re-enter only this test in owned child processes, never the GUI or daemon.
+    #[test]
+    fn diagnostics_child_process() {
+        let Some(directory) = std::env::var_os("FESTERM_DIAGNOSTICS_TEST_ROOT") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        let label = std::env::var("FESTERM_DIAGNOSTICS_TEST_LABEL").unwrap();
+        let mode = std::env::var("FESTERM_DIAGNOSTICS_TEST_MODE").unwrap();
+        if mode == "startup-error" || mode == "catalog-busy" {
+            if mode == "startup-error" {
+                fs::create_dir(directory.join(CATALOG_LOCK_FILE)).unwrap();
+            }
+            let guard = init_in(Some(directory));
+            assert!(last_exit_summary().unwrap().contains("unavailable"));
+            guard.finish(true);
+            return;
+        }
+        let (mut journal, previous) = RunJournal::start_in(directory.clone(), 100).unwrap();
+        assert!(previous.is_none());
+        journal
+            .record_intent(ExitIntent::UpdateRestart, 101)
+            .unwrap();
+        let mut log = BoundedLog::open(&journal).unwrap();
+        log.write_all(label.as_bytes()).unwrap();
+        log.flush().unwrap();
+        let id = journal.marker.run_id.clone();
+        let run_directory = journal.directory.clone();
+        let mut journal = Some(journal);
+        if mode.starts_with("panic") {
+            assert!(JOURNAL.set(Mutex::new(journal.take().unwrap())).is_ok());
+            install_panic_hook(&run_directory);
+        }
+        atomic_write(&directory.join(format!("{label}.ready")), id.as_bytes()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !directory.join(format!("{label}.go")).exists() {
+            assert!(Instant::now() < deadline, "child handshake timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        match mode.as_str() {
+            "clean" => journal.as_mut().unwrap().finish(true, 110).unwrap(),
+            "abrupt" => std::process::exit(23),
+            "panic-clean" => {
+                assert!(std::thread::spawn(|| panic!("controlled worker panic"))
+                    .join()
+                    .is_err());
+                DiagnosticsGuard.finish(true);
+                let record: ExitRecord =
+                    read_json(&directory.join(RUNS_DIRECTORY).join(id).join(LAST_EXIT_FILE))
+                        .unwrap();
+                assert_eq!(record.status, ExitStatus::Panic);
+                assert!(record.artifact.is_some());
+            }
+            "panic-busy" => {
+                let guard = JOURNAL.get().unwrap().lock().unwrap();
+                assert!(std::panic::catch_unwind(|| panic!("controlled busy panic")).is_err());
+                drop(guard);
+                DiagnosticsGuard.finish(true);
+                let record: ExitRecord =
+                    read_json(&directory.join(RUNS_DIRECTORY).join(id).join(LAST_EXIT_FILE))
+                        .unwrap();
+                assert_eq!(record.status, ExitStatus::Panic);
+            }
+            "panic-poisoned" => {
+                assert!(std::panic::catch_unwind(|| {
+                    let _guard = JOURNAL.get().unwrap().lock().unwrap();
+                    panic!("controlled poisoned journal");
+                })
+                .is_err());
+                DiagnosticsGuard.finish(true);
+                let record: ExitRecord =
+                    read_json(&directory.join(RUNS_DIRECTORY).join(id).join(LAST_EXIT_FILE))
+                        .unwrap();
+                assert_eq!(record.status, ExitStatus::Panic);
+            }
+            "panic-during-finish" => {
+                let mut guard = JOURNAL.get().unwrap().lock().unwrap();
+                guard.finish(true, 110).unwrap();
+                assert!(
+                    std::thread::spawn(|| panic!("panic after clean publication"))
+                        .join()
+                        .is_err()
+                );
+                // Model the race after finish chose Clean but before releasing
+                // its mutex: only the independent flag can preserve this panic.
+                let record: ExitRecord = read_json(&run_directory.join(LAST_EXIT_FILE)).unwrap();
+                assert_eq!(record.status, ExitStatus::Clean);
+            }
+            _ => panic!("unexpected child mode"),
+        }
+    }
+
+    struct OwnedChild(std::process::Child);
+
+    impl OwnedChild {
+        fn spawn(directory: &Path, label: &str, mode: &str) -> Self {
+            Self(
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "diagnostics::tests::diagnostics_child_process",
+                        "--nocapture",
+                    ])
+                    .env("FESTERM_DIAGNOSTICS_TEST_ROOT", directory)
+                    .env("FESTERM_DIAGNOSTICS_TEST_LABEL", label)
+                    .env("FESTERM_DIAGNOSTICS_TEST_MODE", mode)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            )
+        }
+
+        fn wait(&mut self) -> std::process::ExitStatus {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Some(status) = self.0.try_wait().unwrap() {
+                    return status;
+                }
+                assert!(Instant::now() < deadline, "owned child did not exit");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn ready(&mut self, directory: &Path, label: &str) -> String {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let path = directory.join(format!("{label}.ready"));
+            loop {
+                if path.exists() {
+                    return fs::read_to_string(path).unwrap();
+                }
+                assert!(
+                    self.0.try_wait().unwrap().is_none(),
+                    "child exited before ready"
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "owned child did not become ready"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().unwrap().is_none() {
+                self.0.kill().unwrap();
+                self.wait();
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_child_processes_preserve_killed_and_abrupt_exit_evidence() {
+        for mode in ["killed", "abrupt"] {
+            let directory = temporary_directory(mode);
+            let mut a = OwnedChild::spawn(&directory, "a", "clean");
+            let mut b = OwnedChild::spawn(&directory, "b", "abrupt");
+            let a_id = a.ready(&directory, "a");
+            let b_id = b.ready(&directory, "b");
+            let (probe, previous) = RunJournal::start_in(directory.clone(), 105).unwrap();
+            assert!(previous.is_none(), "both real processes are live");
+            fs::write(directory.join("a.go"), b"").unwrap();
+            assert!(a.wait().success());
+            let b_path = directory.join(RUNS_DIRECTORY).join(&b_id);
+            assert!(b_path.join(RUN_MARKER_FILE).exists());
+            assert_eq!(fs::read(b_path.join(CURRENT_LOG_FILE)).unwrap(), b"b");
+            assert_eq!(
+                fs::read(
+                    directory
+                        .join(RUNS_DIRECTORY)
+                        .join(a_id)
+                        .join(CURRENT_LOG_FILE)
+                )
+                .unwrap(),
+                b"a"
+            );
+            if mode == "killed" {
+                b.0.kill().unwrap();
+            } else {
+                fs::write(directory.join("b.go"), b"").unwrap();
+            }
+            assert!(!b.wait().success());
+            let (mut clean, previous) = RunJournal::start_in(directory.clone(), 120).unwrap();
+            let previous = previous.unwrap();
+            assert_eq!(previous.run_id, b_id);
+            assert_eq!(previous.status, ExitStatus::Unclean);
+            assert!(previous.reason.contains("restart requested"));
+            clean.finish(true, 121).unwrap();
+            drop(clean);
+            let (next, previous) = RunJournal::start_in(directory.clone(), 130).unwrap();
+            assert_eq!(
+                previous.unwrap().run_id,
+                b_id,
+                "a later clean exit must not hide b"
+            );
+            drop((a, b, probe, next));
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn child_panics_survive_clean_finish_and_busy_hook_never_deadlocks() {
+        for mode in [
+            "panic-clean",
+            "panic-busy",
+            "panic-poisoned",
+            "panic-during-finish",
+        ] {
+            let directory = temporary_directory(mode);
+            let mut child = OwnedChild::spawn(&directory, "panic", mode);
+            child.ready(&directory, "panic");
+            fs::write(directory.join("panic.go"), b"").unwrap();
+            assert!(child.wait().success());
+            let (run, previous) = RunJournal::start_in(directory.clone(), 150).unwrap();
+            assert_eq!(previous.unwrap().status, ExitStatus::Panic);
+            drop((child, run));
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn unavailable_diagnostics_do_not_abort_application_initialization() {
+        for mode in ["startup-error", "catalog-busy"] {
+            let directory = temporary_directory(mode);
+            let catalog = (mode == "catalog-busy").then(|| lock_catalog(&directory).unwrap());
+            let mut child = OwnedChild::spawn(&directory, "error", mode);
+            assert!(child.wait().success());
+            drop((child, catalog));
+            fs::remove_dir_all(directory).unwrap();
+        }
     }
 }

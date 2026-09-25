@@ -6,22 +6,36 @@
 ## Leaving evidence when the application disappears
 
 An application that exits abruptly cannot explain itself after the fact unless
-it leaves evidence before and during the run. fesTerm now creates a small
-per-run marker in the platform's native user-state directory, records accepted
-quit and updater-restart intent, and removes the marker only after eframe
-returns normally. On the next launch, a marker left behind becomes an honest
-`Unclean` result rather than a guessed crash cause; a completed run records
-whether it followed an ordinary quit, an update restart, automation, or an
-event-loop error.
+it leaves evidence before and during the run. fesTerm records accepted quit,
+updater-restart and automation intent, and distinguishes completed event-loop
+returns, runtime errors, Rust panics, and abandoned runs. About exposes only a
+bounded, path-free exit summary and includes it in Copy Version Information.
 
-Rust panics also write a local report with the panic location and backtrace.
-Application tracing now reaches a pair of two-megabyte local logs instead of
-disappearing with the GUI process, and panic-report retention is capped at
-five. About exposes only the bounded, path-free last-exit summary and includes
-it in Copy Version Information. Hard native faults, forced termination, and
-power loss remain deliberately grouped as unclean/unknown: distinguishing
-those reliably requires the later out-of-process native dump handler, not
-unsafe work inside an already-failing process.
+Review caught a flaw in the first journal: its shared marker and rotating log
+assumed there was only one application process. Starting B could label live A
+unclean; finishing A could erase B's marker and hide B's later crash. Each run
+now has a collision-resistant directory and OS-held lifetime lock. A permanent
+catalog lock serializes publication, abandoned-run detection, and pruning,
+including closing Windows file handles before removal. Logs belong to their
+run rather than a shared rotation. Separate five-run inactive clean/failure
+quotas keep unrelated clean exits from hiding a failure, while active runs
+remain protected. Each log is capped at two MiB and each panic report at
+256 KiB.
+
+The regression suite launches owned concurrent child processes, finishes one
+while the other is live, then kills or abruptly exits the other and checks
+the surviving evidence. Same-process collisions, retention, atomic-write
+failures, and caught worker panics are covered too. A busy panic hook never
+waits for its own mutex, and a later clean event-loop return cannot erase the
+remembered panic, including after mutex poisoning. Failures in diagnostic
+startup are surfaced without blocking application initialization. A separate
+durable panic flag also covers the narrower race where a worker panics while
+the journal mutex is held after a clean record has already been published.
+
+These are local files, not an upload service or native minidump handler. Hard
+native faults, forced termination, and power loss remain unclean/unknown.
+Packaged GUI teardown, platform presentation, and power-loss evidence are
+still native/manual boundaries; subprocess journal tests do not certify them.
 
 ## Keeping scheduled evidence independent of user defaults
 

@@ -281,10 +281,35 @@ recording terminal content.
 
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
-- fesTerm keeps the current and previous bounded application logs plus at most
-  five Rust panic reports in its native per-user state directory. About shows a
-  redacted last-exit summary; a stale run marker is reported as an unclean exit
-  on the next launch.
+- fesTerm keeps local lifecycle metadata and logs under
+  `diagnostics/runs-v2/<run-id>/` in its native per-user state directory.
+  Each run owns its marker, exit intent, final record, at most one 256 KiB Rust
+  panic report, and one 2 MiB application log; concurrent processes never rotate
+  or overwrite each other's files. No report upload is implemented.
+- An OS-held lifetime lock, not PID existence or age, distinguishes live runs
+  from abandoned ones. A permanent `diagnostics/catalog.lock` serializes
+  creation, scanning, and retention; never delete lock files while fesTerm is
+  running. Catalog acquisition has a two-second deadline. Diagnostic errors
+  are reported through tracing/stderr and a content-free About warning rather
+  than preventing GUI startup. A panic hook uses a nonblocking journal lock;
+  if busy, it warns that the report could not be written. An independently
+  published panic flag preserves the panic even when a concurrent finish has
+  already chosen a clean record.
+- At each startup, retain the five newest inactive failed runs and five newest
+  inactive clean runs, including their logs/reports. Active runs are exempt
+  until a later startup observes their locks released. About reports the
+  newest retained failure, or the newest clean exit if no failure remains;
+  unrelated clean exits cannot hide an unclean run. This startup snapshot is
+  not a live process monitor. A caught worker panic remains a panic even if the
+  event loop later returns normally. Native faults, forced termination, and
+  power loss remain unclean/unknown, not a diagnosed cause.
+- Old experimental shared files directly inside `diagnostics/` are left
+  untouched and excluded from v2 scanning: their markers cannot safely
+  distinguish an older still-running binary from an abandoned run. After all
+  older processes stop, those legacy files can be archived or removed manually.
+  Atomic file replacement avoids deleting valid evidence before a replacement
+  succeeds; Unix parent directories are synced, but this is not a guarantee
+  against every filesystem or hardware power-loss failure.
 - `FESTERM_PROTOCOL_TRACE=1` only reports that tracing was requested; terminal
   content tracing is intentionally not implemented.
 - `FESTERM_CONFIG_PATH` selects a non-empty Unicode configuration-file path
