@@ -90,11 +90,14 @@ pub(crate) fn window_viewport_builder(
 }
 
 /// Builds the first window's viewport, at its restored geometry when a saved
-/// workspace has one and at `default_size` otherwise.
+/// workspace has one and at `default_size` otherwise. Smoke runs never inherit
+/// a saved position or size.
 fn primary_viewport_builder(
     restored: Option<festerm_config::WorkspaceWindowGeometry>,
     default_size: eframe::egui::Vec2,
+    native_smoke: bool,
 ) -> eframe::egui::ViewportBuilder {
+    let restored = restored.filter(|_| !native_smoke);
     let size = restored.map_or(default_size, |geometry| {
         let (width, height) = geometry.size();
         eframe::egui::vec2(width, height)
@@ -131,6 +134,7 @@ fn main() -> eframe::Result<()> {
     let viewport = primary_viewport_builder(
         restored_geometry,
         eframe::egui::vec2(default_width, default_height),
+        native_smoke::NativeWindowSmoke::requested(),
     );
     let options = eframe::NativeOptions {
         viewport,
@@ -236,6 +240,7 @@ mod tests {
         let builder = super::primary_viewport_builder(
             Some(restored),
             eframe::egui::vec2(super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT),
+            false,
         );
 
         assert_eq!(builder.inner_size, Some(eframe::egui::vec2(1440.0, 900.0)));
@@ -250,7 +255,20 @@ mod tests {
         let default_size =
             eframe::egui::vec2(super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT);
 
-        let builder = super::primary_viewport_builder(None, default_size);
+        let builder = super::primary_viewport_builder(None, default_size, false);
+
+        assert_eq!(builder.inner_size, Some(default_size));
+        assert_eq!(builder.position, None);
+    }
+
+    #[test]
+    fn native_smoke_ignores_saved_window_geometry() {
+        let restored =
+            festerm_config::WorkspaceWindowGeometry::new(-20_000.0, -20_000.0, 1440.0, 900.0);
+        let default_size =
+            eframe::egui::vec2(super::DEFAULT_WINDOW_WIDTH, super::DEFAULT_WINDOW_HEIGHT);
+
+        let builder = super::primary_viewport_builder(Some(restored), default_size, true);
 
         assert_eq!(builder.inner_size, Some(default_size));
         assert_eq!(builder.position, None);

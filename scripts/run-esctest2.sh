@@ -15,7 +15,8 @@
 # Usage:
 #   scripts/run-esctest2.sh [--everything] [--include REGEX] [--keep]
 #
-#   --everything  Ignore the allowlist and run the whole suite. Reports the
+#   --everything  Ignore the allowlist and run the whole suite, minus
+#                 `validation/esctest2-survey-exclude.txt`. Reports the
 #                 numbers but always exits 0, because it is a survey, not a
 #                 gate. This is how you find out what the next phase buys.
 #   --include     Run only tests matching a regex, still minus the skips.
@@ -91,6 +92,16 @@ join_alternation() {
 
 skips="$(patterns "${repository}/validation/esctest2-skip.txt" | join_alternation)"
 
+# A survey is a measuring instrument, and a few tests break the instrument
+# rather than merely failing it: they leave unread replies in the pty, which
+# desyncs every test that follows. Excluding them is what makes the remaining
+# numbers mean anything. See the file's header and #226.
+survey_excludes=""
+if (( everything )); then
+    survey_excludes="$(patterns \
+        "${repository}/validation/esctest2-survey-exclude.txt" | join_alternation)"
+fi
+
 if [[ -n "${include_override}" ]]; then
     allows="${include_override}"
 elif (( everything )); then
@@ -103,8 +114,13 @@ else
     fi
 fi
 
-if [[ -n "${skips}" ]]; then
-    include="^(?!(?:${skips}))(?:${allows})"
+blocked="${skips}"
+if [[ -n "${survey_excludes}" ]]; then
+    blocked="${blocked:+${blocked}|}${survey_excludes}"
+fi
+
+if [[ -n "${blocked}" ]]; then
+    include="^(?!(?:${blocked}))(?:${allows})"
 else
     include="^(?:${allows})"
 fi
@@ -152,7 +168,13 @@ if (( keep == 0 )); then
 fi
 
 if (( everything )); then
-    # A survey reports; it does not gate.
+    # A survey reports; it does not gate. Name the exclusions rather than
+    # quietly reporting a number that was measured on a smaller suite.
+    if [[ -n "${survey_excludes}" ]]; then
+        echo "excluded from this survey (see validation/esctest2-survey-exclude.txt):"
+        patterns "${repository}/validation/esctest2-survey-exclude.txt" \
+            | sed -e 's/^/  /'
+    fi
     exit 0
 fi
 

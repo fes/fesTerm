@@ -96,24 +96,57 @@ impl NativeWindowSmoke {
         }
     }
 
-    pub fn from_environment() -> Option<Self> {
-        let kind = match (
-            std::env::var_os(SMOKE_ENV).is_some(),
-            std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
-            std::env::var_os(LIVE_RESIZE_SMOKE_ENV).is_some(),
-            std::env::var_os(EMOJI_SMOKE_ENV).is_some(),
-        ) {
-            (false, false, false, false) => return None,
-            (true, false, false, false) => SmokeKind::NativeWindow,
-            (false, true, false, false) => SmokeKind::OsInput,
-            (false, false, true, false) => SmokeKind::LiveResize,
-            (false, false, false, true) => SmokeKind::Emoji,
-            _ => {
-                panic!(
+    #[cfg(test)]
+    pub fn running_for_test(result_path: PathBuf) -> Self {
+        let mut smoke = Self::finished_for_test();
+        smoke.result_path = result_path;
+        smoke.test_child_path = std::env::current_dir()
+            .expect("current working directory is available for tests")
+            .join(format!(
+                ".festerm-native-smoke-missing-test-child-{}",
+                std::process::id()
+            ));
+        smoke.started = Instant::now();
+        smoke.phase = Phase::AwaitInitialOutput;
+        smoke.phase_started = Instant::now();
+        smoke
+    }
+
+    #[cfg(test)]
+    pub fn timed_out_for_test(result_path: PathBuf) -> Self {
+        let mut smoke = Self::running_for_test(result_path);
+        smoke.started = Instant::now() - TIMEOUT - Duration::from_millis(1);
+        smoke
+    }
+
+    pub fn requested() -> bool {
+        Self::kind_from_environment().is_some()
+    }
+
+    fn kind_from_environment() -> Option<SmokeKind> {
+        Some(
+            match (
+                std::env::var_os(SMOKE_ENV).is_some(),
+                std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
+                std::env::var_os(LIVE_RESIZE_SMOKE_ENV).is_some(),
+                std::env::var_os(EMOJI_SMOKE_ENV).is_some(),
+            ) {
+                (false, false, false, false) => return None,
+                (true, false, false, false) => SmokeKind::NativeWindow,
+                (false, true, false, false) => SmokeKind::OsInput,
+                (false, false, true, false) => SmokeKind::LiveResize,
+                (false, false, false, true) => SmokeKind::Emoji,
+                _ => {
+                    panic!(
                     "only one of {SMOKE_ENV}, {OS_INPUT_SMOKE_ENV}, {LIVE_RESIZE_SMOKE_ENV}, and {EMOJI_SMOKE_ENV} may be enabled"
                 )
-            }
-        };
+                }
+            },
+        )
+    }
+
+    pub fn from_environment() -> Option<Self> {
+        let kind = Self::kind_from_environment()?;
 
         let result_path = std::env::var_os(RESULT_PATH_ENV)
             .map(PathBuf::from)
@@ -189,15 +222,9 @@ impl NativeWindowSmoke {
         }
     }
 
-    pub fn drive<S: Session>(
-        &mut self,
-        context: &eframe::egui::Context,
-        terminal: &mut Terminal,
-        controller: &mut SessionController<S>,
-        color_emoji_paints: usize,
-    ) {
+    pub fn finish_if_timed_out(&mut self, context: &eframe::egui::Context) -> bool {
         if self.phase == Phase::Finished {
-            return;
+            return true;
         }
         if self.started.elapsed() > TIMEOUT {
             self.finish(
@@ -208,6 +235,25 @@ impl NativeWindowSmoke {
                     self.phase, self.focus_observed
                 ),
             );
+            return true;
+        }
+        false
+    }
+
+    pub fn fail_startup(&mut self, context: &eframe::egui::Context, detail: &str) {
+        if self.phase != Phase::Finished {
+            self.finish(context, "fail", detail);
+        }
+    }
+
+    pub fn drive<S: Session>(
+        &mut self,
+        context: &eframe::egui::Context,
+        terminal: &mut Terminal,
+        controller: &mut SessionController<S>,
+        color_emoji_paints: usize,
+    ) {
+        if self.finish_if_timed_out(context) {
             return;
         }
 

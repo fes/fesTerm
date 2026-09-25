@@ -143,6 +143,8 @@ Every skip carries its reason on the line above it, so a skip is an admission
 rather than a silence. The skip file is currently empty, which is the strongest
 form of that promise - every test the allowlist enables actually runs.
 
-Note that `--everything` currently understates the result badly, because the
-colour families poison it; see #226 and pass `--include` with those classes
-excluded to get the 414 figure above.
+A third file, `esctest2-survey-exclude.txt`, applies to `--everything` only.
+It holds tests that break the survey rather than merely failing it - they
+leave unread replies in the pty and desync everything after them - and the
+survey prints its contents each run so the exclusion is never silent. See
+#226 for the mechanism.
