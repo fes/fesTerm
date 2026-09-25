@@ -30,6 +30,36 @@ pub struct ContentPosition {
     pub absolute_row: u64,
 }
 
+/// Which visible buffer contributed the snapshot's live-screen suffix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalTextSnapshotScreen {
+    Primary,
+    Alternate,
+}
+
+/// Plain-text extraction of the terminal's retained primary history plus the
+/// currently applicable screen.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalTextSnapshot {
+    text: String,
+    screen: TerminalTextSnapshotScreen,
+    evicted_logical_lines: u64,
+}
+
+impl TerminalTextSnapshot {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub const fn screen(&self) -> TerminalTextSnapshotScreen {
+        self.screen
+    }
+
+    pub const fn evicted_logical_lines(&self) -> u64 {
+        self.evicted_logical_lines
+    }
+}
+
 #[derive(Debug)]
 pub struct TerminalError {
     message: String,
@@ -50,6 +80,42 @@ impl fmt::Display for TerminalError {
 }
 
 impl std::error::Error for TerminalError {}
+
+fn push_cells_text(target: &mut String, cells: &[Cell]) {
+    for cell in cells {
+        if cell.is_continuation() {
+            continue;
+        }
+        target.push_str(cell.text());
+    }
+}
+
+fn append_visible_screen_text(
+    target: &mut String,
+    screen: &Screen,
+    cursor_row: usize,
+    continue_first_row: bool,
+) {
+    let content_rows = screen
+        .occupied_row_count()
+        .max(cursor_row + 1)
+        .min(screen.dimensions().rows());
+    let mut screen_text = String::new();
+    let mut continuing = continue_first_row;
+    for row in screen.to_rows().into_iter().take(content_rows) {
+        if !continuing && !screen_text.is_empty() {
+            screen_text.push('\n');
+        }
+        push_cells_text(&mut screen_text, &row.cells);
+        continuing = row.soft_wrapped;
+    }
+    if !screen_text.is_empty() {
+        if !target.is_empty() && !continue_first_row && !target.ends_with('\n') {
+            target.push('\n');
+        }
+        target.push_str(&screen_text);
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActiveScreen {
@@ -539,6 +605,52 @@ impl Terminal {
     /// Returns content-free retained-history accounting and eviction metrics.
     pub fn scrollback_stats(&self) -> ScrollbackStats {
         self.scrollback.stats()
+    }
+
+    /// Freezes retained primary history plus the currently applicable screen
+    /// as plain text.
+    ///
+    /// Primary-screen extraction merges retained logical lines with the live
+    /// primary screen's visible rows, preserving hard newlines while omitting
+    /// synthetic newlines at soft-wrap boundaries. When the alternate screen
+    /// is active, only the retained primary history and the currently visible
+    /// alternate screen are exported: any hidden primary-screen viewport rows
+    /// and any off-screen alternate-screen content were never retained and are
+    /// therefore not reconstructed.
+    pub fn text_snapshot(&self) -> TerminalTextSnapshot {
+        let mut text = String::new();
+        let mut continue_primary = false;
+        for line in self.scrollback.lines() {
+            push_cells_text(&mut text, line.cells());
+            if line.has_hard_break() {
+                text.push('\n');
+                continue_primary = false;
+            } else {
+                continue_primary = true;
+            }
+        }
+
+        let screen = if self.modes.alternate_screen() {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            append_visible_screen_text(&mut text, self.screen(), self.cursor().row(), false);
+            TerminalTextSnapshotScreen::Alternate
+        } else {
+            append_visible_screen_text(
+                &mut text,
+                self.primary_screen(),
+                self.primary.cursor.row,
+                continue_primary,
+            );
+            TerminalTextSnapshotScreen::Primary
+        };
+
+        TerminalTextSnapshot {
+            text,
+            screen,
+            evicted_logical_lines: self.scrollback.stats().evicted_lines(),
+        }
     }
 
     #[cfg(test)]

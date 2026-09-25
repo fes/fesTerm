@@ -159,7 +159,9 @@ pub use modes::{CursorStyle, MouseTrackingMode, TerminalModes};
 pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
-pub use terminal::{ContentPosition, Terminal, TerminalError};
+pub use terminal::{
+    ContentPosition, Terminal, TerminalError, TerminalTextSnapshot, TerminalTextSnapshotScreen,
+};
 
 #[cfg(test)]
 mod model_tests;
@@ -170,8 +172,8 @@ mod tests {
         Attributes, CellWidth, Color, ColorScheme, ContentPosition, Dimensions, FocusEvent,
         InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
         MouseEventKind, MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Rgb, Terminal,
-        TerminalOp, MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_STRING_BYTES,
-        TRANSPORT_QUEUE_HIGH_WATERMARK,
+        TerminalOp, TerminalTextSnapshotScreen, MAX_CELL_COUNT, MAX_CSI_PARAMETERS,
+        MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
 
@@ -2889,6 +2891,58 @@ mod tests {
                 .contains("five"),
             "output after reset should scroll normally"
         );
+    }
+
+    #[test]
+    fn text_snapshot_preserves_soft_wraps_and_graphemes() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest("e\u{301}🤖AB".as_bytes());
+        terminal.ingest(b"CD\r\ntail");
+
+        let snapshot = terminal.text_snapshot();
+
+        assert_eq!(snapshot.screen(), TerminalTextSnapshotScreen::Primary);
+        assert_eq!(snapshot.text(), "e\u{301}🤖ABCD\ntail");
+    }
+
+    #[test]
+    fn alternate_screen_snapshot_keeps_retained_history_and_visible_alt_screen_only() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour");
+        terminal.ingest(b"\x1b[?1049hmenu");
+
+        let snapshot = terminal.text_snapshot();
+
+        assert_eq!(snapshot.screen(), TerminalTextSnapshotScreen::Alternate);
+        assert_eq!(snapshot.text(), "one\ntwo\nthre\nmenu");
+    }
+
+    #[test]
+    fn text_snapshot_reports_when_older_history_was_evicted() {
+        let dimensions = Dimensions::new(4, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 96).unwrap();
+        for line in 0..20 {
+            terminal.ingest(format!("{line:02}\r\n").as_bytes());
+        }
+
+        let snapshot = terminal.text_snapshot();
+
+        assert!(
+            snapshot.evicted_logical_lines() > 0,
+            "the tiny history budget must report prior retained-line eviction"
+        );
+        assert!(
+            !snapshot.text().is_empty(),
+            "the retained snapshot still has text"
+        );
+    }
+
+    #[test]
+    fn empty_text_snapshot_is_empty() {
+        let terminal = terminal(8, 3);
+        let snapshot = terminal.text_snapshot();
+        assert!(snapshot.text().is_empty());
+        assert_eq!(snapshot.evicted_logical_lines(), 0);
     }
 
     #[test]

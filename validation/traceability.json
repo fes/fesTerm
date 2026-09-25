@@ -695,10 +695,13 @@
       "decisions": [],
       "automated_tests": [
         "command_palette_selection_activates_the_chosen_tab_end_to_end",
-        "escape_dismisses_without_a_selection"
+        "escape_dismisses_without_a_selection",
+        "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
+        "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot"
       ],
       "manual_scenarios": [
-        "AS-04"
+        "AS-04",
+        "TI-14"
       ],
       "status": "partial",
       "prerequisites": []
@@ -812,6 +815,8 @@
       ],
       "automated_tests": [
         "terminal_context_menu_intercepts_local_right_click_without_pty_input",
+        "terminal_context_menu_can_queue_history_snapshot_actions_without_pty_input",
+        "terminal_history_snapshot_actions_hide_while_text_is_selected",
         "terminal_context_menu_exposes_copy_for_selection_without_clearing_it",
         "selection_expands_continuations_and_copies_leading_text",
         "shift_drag_forces_local_selection_while_application_tracks_mouse",
@@ -829,7 +834,8 @@
         "TI-01",
         "TI-02",
         "TI-03",
-        "TI-10"
+        "TI-10",
+        "TI-14"
       ],
       "status": "partial",
       "prerequisites": [
@@ -929,6 +935,12 @@
         "trimmed_end_boundary_does_not_alias_recreated_content",
         "end_boundary_affinity_stays_on_the_preceding_soft_wrapped_row",
         "generated_output_resize_and_clear_sequences_keep_scrollback_strictly_bounded",
+        "text_snapshot_preserves_soft_wraps_and_graphemes",
+        "alternate_screen_snapshot_keeps_retained_history_and_visible_alt_screen_only",
+        "text_snapshot_reports_when_older_history_was_evicted",
+        "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
+        "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
+        "disconnected_terminal_history_can_still_open_in_editor",
         "resize_remaps_content_positions_through_logical_lines",
         "resize_does_not_alias_blank_trailing_rows_to_real_content",
         "resize_eviction_rejects_stale_positions_instead_of_aliasing",
@@ -947,11 +959,12 @@
       ],
       "manual_scenarios": [
         "TI-04",
-        "TI-05"
+        "TI-05",
+        "TI-14"
       ],
       "status": "partial",
       "prerequisites": [
-        "eviction and disconnected-history completion"
+        "native usability/performance review for eviction pressure, alternate-screen TUIs, and disconnected-history browsing"
       ]
     },
     {
@@ -965,13 +978,20 @@
       "decisions": [
         "ADR-0017"
       ],
-      "automated_tests": [],
-      "manual_scenarios": [
-        "CP-05"
+      "automated_tests": [
+        "open_terminal_search_opens_find_bar_and_focuses_query",
+        "terminal_search_finds_and_navigates_matches",
+        "escape_closes_terminal_search_and_restores_terminal_focus",
+        "find_in_terminal_palette_command_opens_the_find_bar",
+        "terminal_context_menu_can_request_find_without_pty_input"
       ],
-      "status": "deferred",
+      "manual_scenarios": [
+        "CP-05",
+        "TI-14"
+      ],
+      "status": "partial",
       "prerequisites": [
-        "Terminal-content search implementation"
+        "native review for alternate-screen usability and any future in-grid highlight presentation"
       ]
     },
     {
@@ -1203,6 +1223,10 @@
         "changing_view_options_is_not_something_undo_can_take_back",
         "saving_somewhere_else_writes_there_and_leaves_the_original_alone",
         "saving_onto_an_already_open_file_binds_to_that_document_rather_than_a_second_copy",
+        "create_untitled_snapshot_starts_dirty_and_saveable",
+        "untitled_save_as_failure_preserves_the_snapshot_and_reports_the_error",
+        "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
+        "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
         "save_as_matching_an_existing_file_states_the_overwrite_and_still_saves",
         "save_as_matching_an_existing_directory_disables_save_and_says_why",
         "save_as_remote_destination_is_present_but_refuses_and_explains",
@@ -1238,7 +1262,8 @@
         "a_view_without_vi_keys_never_draws_a_block_caret"
       ],
       "manual_scenarios": [
-        "CP-15"
+        "CP-15",
+        "TI-14"
       ],
       "status": "partial",
       "prerequisites": [

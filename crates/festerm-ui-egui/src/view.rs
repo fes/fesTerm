@@ -62,6 +62,9 @@ pub struct TerminalViewOptions {
     /// unaware of `festerm-config`'s `ScrollSpeedPreference` clickstop names
     /// and only sees the resulting multiplier (feature request #67).
     pub scroll_speed_multiplier: f32,
+    /// Whether the application wants terminal-history snapshot actions in the
+    /// local context menu when no selection is active.
+    pub history_snapshot_actions: bool,
 }
 
 impl Default for TerminalViewOptions {
@@ -72,8 +75,15 @@ impl Default for TerminalViewOptions {
             keyboard_input_enabled: true,
             defer_paste_to_application: false,
             scroll_speed_multiplier: 1.0,
+            history_snapshot_actions: false,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalHistoryAction {
+    OpenInEditor,
+    SaveAs,
 }
 
 /// Diagnostics captured by the UI path without recording terminal content.
@@ -142,7 +152,9 @@ pub struct TerminalView {
     scrollbar_dragging: bool,
     pending_paste_requests: VecDeque<String>,
     pending_clipboard_read: bool,
+    pending_find_request: bool,
     pending_link_requests: VecDeque<Arc<str>>,
+    pending_history_actions: VecDeque<TerminalHistoryAction>,
     /// Fractional scroll rows left over from the last wheel event after
     /// applying `scroll_speed_multiplier`, carried into the next event so a
     /// slow clickstop (e.g. "Very slow", well under `1.0`) actually slows
@@ -407,10 +419,21 @@ impl TerminalView {
         std::mem::take(&mut self.pending_clipboard_read)
     }
 
+    pub fn take_find_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_find_request)
+    }
+
     /// Takes explicit OSC 8 activation intents for application-owned
     /// validation and OS launch policy.
     pub fn take_link_requests(&mut self) -> Vec<Arc<str>> {
         self.pending_link_requests.drain(..).collect()
+    }
+
+    /// Takes terminal-history snapshot intents chosen from the local context
+    /// menu. They stay application-owned so the same commands can also come
+    /// from the command palette.
+    pub fn take_history_actions(&mut self) -> Vec<TerminalHistoryAction> {
+        self.pending_history_actions.drain(..).collect()
     }
 
     /// Scrolls history so a terminal-search match becomes visible, used by
@@ -1030,36 +1053,20 @@ impl TerminalView {
             &self.selection,
         )
         .filter(|text| !text.is_empty());
+        let show_history_actions = options.history_snapshot_actions && selected_text.is_none();
+        let show_find = options.terminal_input_enabled;
         let menu_has_items = options.terminal_input_enabled
-            && (self.context_link.is_some() || selected_text.is_some() || options.paste_available);
+            && (self.context_link.is_some()
+                || selected_text.is_some()
+                || options.paste_available
+                || show_find
+                || show_history_actions);
         let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
         let menu = Popup::context_menu(&response)
             .open_memory(set_open)
             .show(|ui| {
                 style_context_menu(ui);
-                if let Some(text) = selected_text.clone() {
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(text);
-                        self.selection.clear();
-                        ui.close();
-                    }
-                }
-                if options.paste_available && ui.button("Paste").clicked() {
-                    response.request_focus();
-                    if options.defer_paste_to_application {
-                        self.pending_clipboard_read = true;
-                    } else {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    }
-                    ui.close();
-                }
-                // Find in terminal belongs immediately above this separator
-                // once search exists. Do not render an inert placeholder.
                 if let Some(link) = self.context_link.clone() {
-                    if selected_text.is_some() || options.paste_available {
-                        ui.separator();
-                    }
                     ui.label(egui::RichText::new(link.as_ref()).small().monospace())
                         .on_hover_text(link.as_ref());
                     if ui.button("Open link").clicked() {
@@ -1068,6 +1075,62 @@ impl TerminalView {
                     }
                     if ui.button("Copy link").clicked() {
                         ui.ctx().copy_text(link.to_string());
+                        ui.close();
+                    }
+                }
+                if let Some(text) = selected_text.clone() {
+                    if self.context_link.is_some() {
+                        ui.separator();
+                    }
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(text);
+                        self.selection.clear();
+                        ui.close();
+                    }
+                }
+                if options.paste_available {
+                    if self.context_link.is_some() && selected_text.is_none() {
+                        ui.separator();
+                    }
+                    if ui.button("Paste").clicked() {
+                        response.request_focus();
+                        if options.defer_paste_to_application {
+                            self.pending_clipboard_read = true;
+                        } else {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                        }
+                        ui.close();
+                    }
+                }
+                if show_find {
+                    if self.context_link.is_some()
+                        || selected_text.is_some()
+                        || options.paste_available
+                    {
+                        ui.separator();
+                    }
+                    if ui.button("Find in Terminal").clicked() {
+                        self.pending_find_request = true;
+                        ui.close();
+                    }
+                }
+                if show_history_actions {
+                    if self.context_link.is_some()
+                        || selected_text.is_some()
+                        || options.paste_available
+                        || show_find
+                    {
+                        ui.separator();
+                    }
+                    if ui.button("Open Terminal History in Editor").clicked() {
+                        self.pending_history_actions
+                            .push_back(TerminalHistoryAction::OpenInEditor);
+                        ui.close();
+                    }
+                    if ui.button("Save Terminal History As…").clicked() {
+                        self.pending_history_actions
+                            .push_back(TerminalHistoryAction::SaveAs);
                         ui.close();
                     }
                 }
@@ -2218,6 +2281,125 @@ mod tests {
     }
 
     #[test]
+    fn terminal_context_menu_can_queue_history_snapshot_actions_without_pty_input() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            history_snapshot_actions: true,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Find in Terminal").is_some());
+        assert!(harness
+            .query_by_label("Open Terminal History in Editor")
+            .is_some());
+        assert!(harness
+            .query_by_label("Save Terminal History As…")
+            .is_some());
+        harness
+            .get_by_label("Open Terminal History in Editor")
+            .click();
+        harness.run();
+
+        assert_eq!(
+            harness.state_mut().view.take_history_actions(),
+            vec![TerminalHistoryAction::OpenInEditor]
+        );
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_can_request_find_without_pty_input() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        harness.get_by_label("Find in Terminal").click();
+        harness.run();
+
+        assert!(harness.state_mut().view.take_find_request());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_history_snapshot_actions_hide_while_text_is_selected() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"selectable");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            history_snapshot_actions: true,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("rendered grid");
+        let start = grid.left_top() + egui::vec2(2.0, 2.0);
+        let end = start + egui::vec2(48.0, 0.0);
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerMoved(end));
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Copy").is_some());
+        assert!(harness
+            .query_by_label("Open Terminal History in Editor")
+            .is_none());
+        assert!(harness
+            .query_by_label("Save Terminal History As…")
+            .is_none());
+    }
+
+    #[test]
     fn shift_right_click_overrides_tui_mouse_reporting_without_leaking_bytes() {
         let mut state = HeadlessViewState::new();
         state.terminal.ingest(b"\x1b[?1000h");
@@ -2428,6 +2610,7 @@ mod tests {
                             keyboard_input_enabled: true,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
+                            history_snapshot_actions: false,
                         },
                     );
                 },
@@ -2467,6 +2650,7 @@ mod tests {
                             keyboard_input_enabled: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
+                            history_snapshot_actions: false,
                         },
                     );
                 },

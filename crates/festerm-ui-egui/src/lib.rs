@@ -45,7 +45,7 @@ pub use input::{
 };
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
-pub use view::{FrameDiagnostics, TerminalView, TerminalViewOptions};
+pub use view::{FrameDiagnostics, TerminalHistoryAction, TerminalView, TerminalViewOptions};
 
 /// A read-only, renderer-facing view of the currently visible terminal grid.
 ///

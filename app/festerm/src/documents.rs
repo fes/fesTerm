@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use festerm_document::{
     AutoSaveControl, Availability, DocumentBounds, DocumentId, DocumentKey, DocumentOrigin,
     DocumentStatus, LocalOrigin, OriginError, SaveError, SaveOutcome, SaveProgress, StatusInputs,
-    TextDocument, UnavailableReason,
+    TextDocument, UnavailableReason, UntitledOrigin,
 };
 
 use festerm_syntax::{DocumentSyntax, SyntaxStatus};
@@ -303,6 +303,41 @@ impl DocumentRegistry {
         }
     }
 
+    /// Adds a new untitled document whose bytes are already in memory.
+    ///
+    /// The bounds grow to fit the snapshot being adopted so an export can open
+    /// whatever bounded history the terminal retained without relaxing the
+    /// ordinary file-on-disk editor limits for unrelated documents.
+    pub(crate) fn create_untitled(
+        &mut self,
+        name_prefix: &str,
+        qualified_label: &str,
+        bytes: &[u8],
+    ) -> DocumentId {
+        let next = self.next_id + 1;
+        let key = format!("{name_prefix}-{next}");
+        let file_name = format!("{name_prefix}-{next}.txt");
+        let origin = UntitledOrigin::new(key, file_name, qualified_label)
+            .expect("generated untitled origins are valid");
+        let bounds = snapshot_bounds(bytes);
+        let mut text =
+            TextDocument::from_bytes(b"", bounds).expect("empty snapshot seed fits its bounds");
+        if bytes.is_empty() {
+            text.replace(0..0, " ")
+                .expect("untitled snapshots can create a one-byte dirty marker");
+            text.replace(0..1, "")
+                .expect("untitled snapshots can remove their dirty marker");
+        } else {
+            text.replace(
+                0..0,
+                std::str::from_utf8(bytes)
+                    .expect("terminal snapshot bytes are valid UTF-8 and already bounded"),
+            )
+            .expect("the generated untitled document bounds already allow the snapshot text");
+        }
+        self.insert(DocumentOrigin::from(origin), text, None, false)
+    }
+
     /// Records one fewer view. The document is forgotten when the last view
     /// goes, which is also when a watcher would be released.
     ///
@@ -439,17 +474,11 @@ impl DocumentRegistry {
 
         let generation = match document_store::save(path, &bytes, None) {
             Ok(generation) => generation,
-            Err(SaveFailure::Gone) => {
-                return Some((SaveOutcome::Unavailable(UnavailableReason::Missing), None));
-            }
-            Err(SaveFailure::PermissionDenied) => {
-                return Some((
-                    SaveOutcome::Unavailable(UnavailableReason::PermissionDenied),
-                    None,
-                ));
-            }
             Err(failure) => {
                 let error = SaveError::new(failure.headline(), failure.detail());
+                if let Some(document) = self.documents.get_mut(&id) {
+                    document.last_error = Some(error.clone());
+                }
                 return Some((SaveOutcome::Failed(error), None));
             }
         };
@@ -688,6 +717,17 @@ fn conflict_for(path: &Path, bounds: DocumentBounds) -> festerm_document::Confli
         Ok(loaded) => conflict.with_source_text(loaded.document.text()),
         Err(_) => conflict,
     }
+}
+
+fn snapshot_bounds(bytes: &[u8]) -> DocumentBounds {
+    let text = std::str::from_utf8(bytes).expect("snapshot bytes are valid UTF-8");
+    let line_count = text.lines().count().max(1);
+    let longest_line = text.lines().map(str::len).max().unwrap_or(0);
+    DocumentBounds::new(
+        bytes.len().max(DocumentBounds::MAX_BYTES),
+        line_count.max(DocumentBounds::MAX_LINES),
+        longest_line.max(DocumentBounds::MAX_LINE_BYTES),
+    )
 }
 
 #[cfg(test)]
@@ -939,6 +979,53 @@ mod tests {
             "alpha\nbeta\n",
             "and the document already open on it has to show what is now there"
         );
+    }
+
+    #[test]
+    fn create_untitled_snapshot_starts_dirty_and_saveable() {
+        let mut registry = DocumentRegistry::new();
+
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\nbeta",
+        );
+
+        let document = registry.get(id).unwrap();
+        assert!(matches!(
+            document.origin(),
+            DocumentOrigin::Untitled(origin)
+                if origin.file_name() == "terminal-history-1.txt"
+                    && origin.qualified_label()
+                        == "Local Shell · terminal history snapshot"
+        ));
+        assert_eq!(document.text().text(), "alpha\nbeta");
+        assert!(document.text().is_dirty());
+        assert!(document.status().can_save_as());
+    }
+
+    #[test]
+    fn untitled_save_as_failure_preserves_the_snapshot_and_reports_the_error() {
+        let directory = TemporaryDirectory::new("untitled-save-error");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\n",
+        );
+
+        let (outcome, moved) = registry.save_as(id, directory.path.as_path()).unwrap();
+        let error = match outcome {
+            SaveOutcome::Failed(error) => error,
+            other => panic!("expected save failure, got {other:?}"),
+        };
+
+        assert_eq!(moved, None);
+        let document = registry.get(id).unwrap();
+        assert!(matches!(document.origin(), DocumentOrigin::Untitled(_)));
+        assert_eq!(document.text().text(), "alpha\n");
+        assert!(document.text().is_dirty());
+        assert_eq!(document.status().detail(), error.detail());
     }
 
     #[test]

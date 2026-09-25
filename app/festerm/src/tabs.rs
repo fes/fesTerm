@@ -26,7 +26,7 @@ use festerm_config::{
     SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
     TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
-use festerm_core::{Dimensions, Terminal};
+use festerm_core::{Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotScreen};
 use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{
     default_local_profile_with_powershell_preference, LocalProfile, LocalPtySession,
@@ -62,6 +62,8 @@ use crate::sftp_file_manager::{
     SftpFileManagerAuthentication, SftpFileManagerLaunchTarget, SftpFileManagerTab,
 };
 use crate::text_editor::TextEditorTab;
+
+const TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX: &str = "terminal-history";
 
 /// Stable application-level tab identifier.
 ///
@@ -583,6 +585,21 @@ fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
         "{} · {}",
         persistence.provider_label, persistence.session_name
     ))
+}
+
+fn terminal_history_snapshot_label(session_label: &str, snapshot: &TerminalTextSnapshot) -> String {
+    let screen = match snapshot.screen() {
+        TerminalTextSnapshotScreen::Primary => "current primary screen",
+        TerminalTextSnapshotScreen::Alternate => "current alternate screen",
+    };
+    let truncated = if snapshot.evicted_logical_lines() > 0 {
+        " · older retained history was already discarded"
+    } else {
+        ""
+    };
+    format!(
+        "{session_label} · terminal history snapshot · retained primary history and {screen}{truncated}"
+    )
 }
 
 /// A restored SSH workspace surface that deliberately has no live session.
@@ -1685,6 +1702,12 @@ pub enum AppCommand {
     OpenTextEditor {
         path: PathBuf,
     },
+    /// Freezes the active terminal's retained text into a new independent
+    /// editor snapshot.
+    OpenTerminalHistoryInEditor,
+    /// Opens a new independent terminal snapshot and immediately asks where
+    /// to save it.
+    SaveTerminalHistoryAs,
     /// Writes the active editor's document back to its origin.
     SaveTextDocument,
     /// Asks for a destination. The picker is an application overlay, so this
@@ -2954,6 +2977,8 @@ impl AppState {
                     self.open_refusal = Some((path, failure));
                 }
             }
+            AppCommand::OpenTerminalHistoryInEditor => self.open_terminal_history_snapshot(false),
+            AppCommand::SaveTerminalHistoryAs => self.open_terminal_history_snapshot(true),
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
             AppCommand::SaveTextDocument => self.save_active_text_document(),
             AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
@@ -3446,6 +3471,32 @@ impl AppState {
         }
     }
 
+    fn open_terminal_history_snapshot(&mut self, save_as: bool) {
+        let Some((snapshot, label)) = self.active_terminal_history_snapshot() else {
+            return;
+        };
+        let document = self.documents.borrow_mut().create_untitled(
+            TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX,
+            &label,
+            snapshot.text().as_bytes(),
+        );
+        let id = TabId::next();
+        let editor = TextEditorTab::with_options(
+            document,
+            &self.documents,
+            crate::text_editor::EditorViewOptions::from_settings(self.editor),
+        );
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::TextEditor(Box::new(editor)),
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
+        if save_as {
+            self.save_as_requested = true;
+        }
+    }
+
     /// Opens a second view of the document the active editor holds. One
     /// document may have many views (ADR 0034 §1); this is the way to ask for
     /// one, now that Markdown previews in the tab it belongs to rather than
@@ -3467,6 +3518,15 @@ impl AppState {
         });
         self.set_active(id);
         self.workspace_dirty = true;
+    }
+
+    fn active_terminal_history_snapshot(&self) -> Option<(TerminalTextSnapshot, String)> {
+        let TabContent::Session(session) = &self.active_tab().content else {
+            return None;
+        };
+        let snapshot = session.terminal.text_snapshot();
+        let label = terminal_history_snapshot_label(&session.label, &snapshot);
+        Some((snapshot, label))
     }
 
     /// Opens a local Markdown file. It goes to the editor like every other
