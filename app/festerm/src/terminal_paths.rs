@@ -1323,7 +1323,10 @@ mod tests {
     fn local_home_paths_expand() {
         let terminal = terminal_with("vim ~/notes.md\n", 80);
         let action = resolve_context_menu_action(&terminal, target(6, 0), &local_origin()).unwrap();
-        assert_eq!(action.ui_action().preview, "/Users/fes/notes.md");
+        assert_eq!(
+            PathBuf::from(action.ui_action().preview),
+            PathBuf::from("/Users/fes").join("notes.md")
+        );
     }
 
     #[test]
