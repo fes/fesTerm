@@ -3450,7 +3450,7 @@ impl FesTermApp {
                 }
                 ui.label(
                     egui::RichText::new(
-                        "Crash reports and bounded logs stay on this device and exclude terminal contents by default.",
+                        "Crash reports and logs are not uploaded. They may contain sensitive data, including paths or secrets; review before sharing.",
                     )
                     .small()
                     .color(theme::TEXT_MUTED),
@@ -9915,7 +9915,7 @@ mod tests {
         harness.get_by_label("Diagnostics");
         harness.get_by_label("Last exit: No previous run information");
         harness.get_by_label(
-            "Crash reports and bounded logs stay on this device and exclude terminal contents by default.",
+            "Crash reports and logs are not uploaded. They may contain sensitive data, including paths or secrets; review before sharing.",
         );
         harness.get_by_label("Copy Version Information");
         harness.get_by_label("Licenses");

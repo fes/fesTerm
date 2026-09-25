@@ -31,9 +31,16 @@ remembered panic, including after mutex poisoning. Failures in diagnostic
 startup are surfaced without blocking application initialization. A separate
 durable panic flag also covers the narrower race where a worker panics while
 the journal mutex is held after a clean record has already been published.
+Native smoke journals now follow their isolated result paths instead of the
+user's state directory, so evidence collection does not become a false user
+crash or replace the user's exit history.
 
 These are local files, not an upload service or native minidump handler. Hard
 native faults, forced termination, and power loss remain unclean/unknown.
+The metadata-only About summary does not make raw artifacts safe to share:
+panic payloads, backtraces, and ordinary logs can contain paths or secrets.
+The UI and handoff now say that explicitly rather than implying that the
+absence of terminal tracing is comprehensive redaction.
 Packaged GUI teardown, platform presentation, and power-loss evidence are
 still native/manual boundaries; subprocess journal tests do not certify them.
 

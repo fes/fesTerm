@@ -286,6 +286,19 @@ recording terminal content.
   Each run owns its marker, exit intent, final record, at most one 256 KiB Rust
   panic report, and one 2 MiB application log; concurrent processes never rotate
   or overwrite each other's files. No report upload is implemented.
+- The About/Copy Version Information summary uses lifecycle metadata, not raw
+  report/log contents. **Raw panic messages, backtraces, and ordinary tracing
+  logs are not scrubbed and may contain sensitive data, including user paths,
+  terminal-derived values, or secrets from application/dependency errors.**
+  Not intentionally recording terminal traffic is not a guarantee that these
+  files contain no terminal content or secrets. Keep them local and review/redact
+  before sharing; About explicitly warns about this boundary.
+- Native smoke runs instead write beside `FESTERM_NATIVE_SMOKE_RESULT_PATH`,
+  appending `.diagnostics` to that path, so smoke exits and forced runner
+  termination do not contaminate the real user's exit history. Missing/empty
+  smoke result configuration disables durable diagnostics with a warning rather
+  than falling back to the user journal. These isolated files follow the same
+  sensitivity/retention rules; the runner owns their cleanup.
 - An OS-held lifetime lock, not PID existence or age, distinguishes live runs
   from abandoned ones. A permanent `diagnostics/catalog.lock` serializes
   creation, scanning, and retention; never delete lock files while fesTerm is
@@ -314,8 +327,9 @@ recording terminal content.
   content tracing is intentionally not implemented.
 - `FESTERM_CONFIG_PATH` selects a non-empty Unicode configuration-file path
   instead of the native per-user location. It is intended for support and
-  tests; diagnostics intentionally do not reveal the selected path or source
-  TOML.
+  tests; configuration diagnostics intentionally omit the selected path and
+  source TOML. This narrower contract does not sanitize arbitrary panic
+  payloads or other tracing messages.
 - The normal status line is compact; use the **Diagnostics** control to reveal
   lifecycle, queue pressure, bytes, errors, resize, and input-to-paint-
   submission details, plus per-frame render diagnostics (frame time, dirty

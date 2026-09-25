@@ -623,6 +623,7 @@
         "catalog_serializes_same_process_openers_and_incomplete_creation_is_recovered",
         "unreadable_evidence_and_catalog_errors_are_propagated",
         "native_smoke_exit_is_clean_and_finishing_twice_is_idempotent",
+        "native_smoke_diagnostics_never_use_the_user_journal",
         "unavailable_diagnostics_do_not_abort_application_initialization",
         "about_exposes_updates_only_for_a_configured_packaged_build",
         "cancelling_update_restart_consent_keeps_the_update_installable",

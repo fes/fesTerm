@@ -156,7 +156,7 @@ fn init_in(directory: Option<PathBuf>) -> DiagnosticsGuard {
             None,
             None,
             Some(io::Error::other(
-                "the platform did not provide a per-user application data directory",
+                "no diagnostic directory was available from native state or the smoke result path",
             )),
         ),
     };
@@ -249,12 +249,35 @@ pub(crate) fn last_exit_summary() -> Option<String> {
 }
 
 fn diagnostics_directory() -> Option<PathBuf> {
-    ProjectDirs::from("com", "fes", "fesTerm").map(|directories| {
+    let native = ProjectDirs::from("com", "fes", "fesTerm").map(|directories| {
         directories
             .state_dir()
             .unwrap_or_else(|| directories.data_local_dir())
             .join(DIAGNOSTICS_DIRECTORY)
-    })
+    });
+    select_diagnostics_directory(
+        native,
+        crate::native_smoke::NativeWindowSmoke::requested(),
+        crate::native_smoke::NativeWindowSmoke::result_path_from_environment(),
+    )
+}
+
+fn select_diagnostics_directory(
+    native: Option<PathBuf>,
+    smoke_requested: bool,
+    smoke_result: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if smoke_requested {
+        // Missing smoke configuration must not fall back to the user's real
+        // journal. Keep each runner's diagnostics beside its isolated result.
+        smoke_result.map(|result| {
+            let mut directory = result.into_os_string();
+            directory.push(".diagnostics");
+            PathBuf::from(directory)
+        })
+    } else {
+        native
+    }
 }
 
 fn install_panic_hook(directory: &Path) {
@@ -1056,6 +1079,20 @@ mod tests {
         let directory = PathBuf::from(directory);
         let label = std::env::var("FESTERM_DIAGNOSTICS_TEST_LABEL").unwrap();
         let mode = std::env::var("FESTERM_DIAGNOSTICS_TEST_MODE").unwrap();
+        if mode == "smoke-init" || mode == "smoke-missing-result" {
+            let guard = init();
+            if mode == "smoke-init" {
+                let journal = JOURNAL.get().unwrap().lock().unwrap();
+                assert!(journal
+                    .directory
+                    .starts_with(directory.join("result.txt.diagnostics")));
+            } else {
+                assert!(JOURNAL.get().is_none());
+                assert!(last_exit_summary().unwrap().contains("unavailable"));
+            }
+            guard.finish(true);
+            return;
+        }
         if mode == "startup-error" || mode == "catalog-busy" {
             if mode == "startup-error" {
                 fs::create_dir(directory.join(CATALOG_LOCK_FILE)).unwrap();
@@ -1143,21 +1180,30 @@ mod tests {
 
     impl OwnedChild {
         fn spawn(directory: &Path, label: &str, mode: &str) -> Self {
-            Self(
-                std::process::Command::new(std::env::current_exe().unwrap())
-                    .args([
-                        "--exact",
-                        "diagnostics::tests::diagnostics_child_process",
-                        "--nocapture",
-                    ])
-                    .env("FESTERM_DIAGNOSTICS_TEST_ROOT", directory)
-                    .env("FESTERM_DIAGNOSTICS_TEST_LABEL", label)
-                    .env("FESTERM_DIAGNOSTICS_TEST_MODE", mode)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .spawn()
-                    .unwrap(),
-            )
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "diagnostics::tests::diagnostics_child_process",
+                    "--nocapture",
+                ])
+                .env("FESTERM_DIAGNOSTICS_TEST_ROOT", directory)
+                .env("FESTERM_DIAGNOSTICS_TEST_LABEL", label)
+                .env("FESTERM_DIAGNOSTICS_TEST_MODE", mode)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null());
+            if mode == "smoke-init" || mode == "smoke-missing-result" {
+                command.env("FESTERM_NATIVE_WINDOW_SMOKE", "1");
+                if mode == "smoke-init" {
+                    command.env(
+                        "FESTERM_NATIVE_SMOKE_RESULT_PATH",
+                        directory.join("result.txt"),
+                    );
+                } else {
+                    command.env_remove("FESTERM_NATIVE_SMOKE_RESULT_PATH");
+                }
+            }
+            Self(command.spawn().unwrap())
         }
 
         fn wait(&mut self) -> std::process::ExitStatus {
@@ -1279,5 +1325,34 @@ mod tests {
             drop((child, catalog));
             fs::remove_dir_all(directory).unwrap();
         }
+    }
+
+    #[test]
+    fn native_smoke_diagnostics_never_use_the_user_journal() {
+        let directory = temporary_directory("smoke-directory");
+        let native = directory.join("user");
+        let result = directory.join("smoke-result.txt");
+        let smoke =
+            select_diagnostics_directory(Some(native.clone()), true, Some(result.clone())).unwrap();
+        assert_eq!(smoke, directory.join("smoke-result.txt.diagnostics"));
+        let (mut journal, previous) = RunJournal::start_in(smoke, 100).unwrap();
+        assert!(previous.is_none());
+        journal
+            .record_intent(ExitIntent::NativeSmokeComplete, 101)
+            .unwrap();
+        journal.finish(true, 102).unwrap();
+        assert!(!native.exists());
+        assert!(select_diagnostics_directory(Some(native.clone()), true, None).is_none());
+        assert_eq!(
+            select_diagnostics_directory(Some(native.clone()), false, Some(result)),
+            Some(native)
+        );
+        drop(journal);
+        for mode in ["smoke-init", "smoke-missing-result"] {
+            let mut child = OwnedChild::spawn(&directory, "smoke", mode);
+            assert!(child.wait().success());
+            drop(child);
+        }
+        fs::remove_dir_all(directory).unwrap();
     }
 }
