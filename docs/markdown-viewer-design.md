@@ -36,15 +36,28 @@ or take ownership of a terminal viewport.
 - **SFTP:** a selected `.md`/`.markdown` row offers **Preview Markdown**. The
   viewer receives a bounded read-only snapshot through the SFTP/application
   layer; a remote path never becomes a local path.
-- **SSH terminal:** plain terminal text is never inferred to be a path. A
-  future shell integration or explicit OSC 8 file link may offer Preview only
-  after a user action and only when origin semantics are trustworthy.
+- **SSH terminal / text-mode SFTP transcript:** fesTerm may offer **Open in
+  viewer** only after an explicit right-click on one detected path-like target
+  in the frozen terminal snapshot. Detection is bounded to the clicked logical
+  line/cells, never evaluates shell syntax, and opens a remote path only
+  through the same live verified SSH/SFTP transport that produced the text.
+  Relative paths remain disabled unless the session exposes a trustworthy cwd
+  (for example the text-mode SFTP session's own cwd); unknown cwd is reported
+  honestly instead of guessed from prompts or launch directories.
 - **Serial:** has no implied filesystem and therefore no Markdown entry route.
 
 Local and remote sources use typed identities, not display strings. A remote
 viewer is pinned to the SSH connection/profile identity and lifecycle
 generation that supplied it; reconnect cannot silently retarget the document
 to a different host.
+
+Terminal-origin remote reads open a separate SFTP channel on the authenticated
+connection, so session-only host trust and typed-password sessions work without
+re-authentication. Two concurrent reads per connection and four pending opens
+per application window are allowed; reads have a 30-second deadline and the
+document byte cap. Shell input/output and lifecycle commands continue while
+SFTP is pending. Manual or automatic transport replacement invalidates queued
+requests; no late result is relabelled as belonging to the new connection.
 
 ## Viewer layout
 

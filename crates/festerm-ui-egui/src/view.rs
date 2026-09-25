@@ -33,7 +33,7 @@ const TERMINAL_ZOOM_STEP: f32 = 1.0;
 
 /// Application-owned terminal capabilities that affect local viewport
 /// commands without exposing a session backend to the presentation crate.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TerminalViewOptions {
     /// The current session can accept a paste through its ordered input path.
     pub paste_available: bool,
@@ -62,6 +62,9 @@ pub struct TerminalViewOptions {
     /// unaware of `festerm-config`'s `ScrollSpeedPreference` clickstop names
     /// and only sees the resulting multiplier (feature request #67).
     pub scroll_speed_multiplier: f32,
+    /// One application-owned action that belongs to the terminal context
+    /// menu this frame, such as opening a detected path.
+    pub context_menu_action: Option<TerminalContextMenuAction>,
 }
 
 impl Default for TerminalViewOptions {
@@ -72,8 +75,25 @@ impl Default for TerminalViewOptions {
             keyboard_input_enabled: true,
             defer_paste_to_application: false,
             scroll_speed_multiplier: 1.0,
+            context_menu_action: None,
         }
     }
+}
+
+/// One application-owned terminal context-menu action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalContextMenuAction {
+    pub label: String,
+    pub preview: String,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+}
+
+/// Frozen content hit that opened the current context menu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalContextTarget {
+    pub content_position: ContentPosition,
+    pub generation: u64,
 }
 
 /// Diagnostics captured by the UI path without recording terminal content.
@@ -130,6 +150,8 @@ pub struct TerminalView {
     /// Explicit OSC 8 target captured under the pointer when the local menu
     /// opens. It remains stable while the pointer moves through the popup.
     context_link: Option<Arc<str>>,
+    context_target: Option<TerminalContextTarget>,
+    next_context_generation: u64,
     primary_link_gesture: Option<(Arc<str>, CellPosition)>,
     last_rendered_frame: Option<u64>,
     secondary_gesture: SecondaryGestureOwnership,
@@ -143,6 +165,7 @@ pub struct TerminalView {
     pending_paste_requests: VecDeque<String>,
     pending_clipboard_read: bool,
     pending_link_requests: VecDeque<Arc<str>>,
+    pending_context_action_request: bool,
     /// Fractional scroll rows left over from the last wheel event after
     /// applying `scroll_speed_multiplier`, carried into the next event so a
     /// slow clickstop (e.g. "Very slow", well under `1.0`) actually slows
@@ -411,6 +434,14 @@ impl TerminalView {
     /// validation and OS launch policy.
     pub fn take_link_requests(&mut self) -> Vec<Arc<str>> {
         self.pending_link_requests.drain(..).collect()
+    }
+
+    pub fn take_context_action_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_context_action_request)
+    }
+
+    pub const fn context_menu_target(&self) -> Option<TerminalContextTarget> {
+        self.context_target
     }
 
     /// Scrolls history so a terminal-search match becomes visible, used by
@@ -1020,6 +1051,14 @@ impl TerminalView {
         if let Some(position) = local_context_release {
             let snapshot =
                 TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+            self.context_target =
+                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
+                    .and_then(|cell| snapshot.content_position(cell))
+                    .map(|content_position| TerminalContextTarget {
+                        content_position,
+                        generation: self.next_context_generation,
+                    });
+            self.next_context_generation = self.next_context_generation.saturating_add(1);
             self.context_link =
                 cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
                     .and_then(|cell| snapshot.cell(cell.column, cell.row))
@@ -1031,33 +1070,71 @@ impl TerminalView {
         )
         .filter(|text| !text.is_empty());
         let menu_has_items = options.terminal_input_enabled
-            && (self.context_link.is_some() || selected_text.is_some() || options.paste_available);
+            && (self.context_target.is_some()
+                || self.context_link.is_some()
+                || selected_text.is_some()
+                || options.paste_available);
         let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
         let menu = Popup::context_menu(&response)
             .open_memory(set_open)
             .show(|ui| {
                 style_context_menu(ui);
+                let mut rendered_items = false;
+                if let Some(action) = options.context_menu_action.as_ref() {
+                    ui.label(egui::RichText::new(&action.preview).small().monospace())
+                        .on_hover_text(&action.preview);
+                    let clicked = if action.enabled {
+                        ui.button(&action.label).clicked()
+                    } else {
+                        let response = ui
+                            .add_enabled(false, egui::Button::new(&action.label))
+                            .on_hover_text(action.disabled_reason.as_deref().unwrap_or_default());
+                        response.clicked()
+                    };
+                    rendered_items = true;
+                    if action.enabled && clicked {
+                        self.pending_context_action_request = true;
+                        ui.close();
+                    }
+                } else if self.context_target.is_some()
+                    && self.context_link.is_none()
+                    && selected_text.is_none()
+                    && !options.paste_available
+                {
+                    ui.add_enabled(false, egui::Button::new("Resolving path…"));
+                    rendered_items = true;
+                }
                 if let Some(text) = selected_text.clone() {
+                    if rendered_items {
+                        ui.separator();
+                    }
                     if ui.button("Copy").clicked() {
                         ui.ctx().copy_text(text);
                         self.selection.clear();
                         ui.close();
                     }
+                    rendered_items = true;
                 }
-                if options.paste_available && ui.button("Paste").clicked() {
-                    response.request_focus();
-                    if options.defer_paste_to_application {
-                        self.pending_clipboard_read = true;
-                    } else {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                if options.paste_available {
+                    if rendered_items {
+                        ui.separator();
                     }
-                    ui.close();
+                    if ui.button("Paste").clicked() {
+                        response.request_focus();
+                        if options.defer_paste_to_application {
+                            self.pending_clipboard_read = true;
+                        } else {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                        }
+                        ui.close();
+                    }
+                    rendered_items = true;
                 }
                 // Find in terminal belongs immediately above this separator
                 // once search exists. Do not render an inert placeholder.
                 if let Some(link) = self.context_link.clone() {
-                    if selected_text.is_some() || options.paste_available {
+                    if rendered_items {
                         ui.separator();
                     }
                     ui.label(egui::RichText::new(link.as_ref()).small().monospace())
@@ -1073,6 +1150,10 @@ impl TerminalView {
                 }
             });
         let context_menu_open = menu.is_some();
+        if !context_menu_open {
+            self.context_link = None;
+            self.context_target = None;
+        }
         if options.defer_paste_to_application {
             // `response.has_focus()`/`clicked()` each read the egui context
             // themselves (via `Context::input`/`Context::memory`), so they
@@ -2441,6 +2522,7 @@ mod tests {
                             keyboard_input_enabled: true,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
+                            context_menu_action: None,
                         },
                     );
                 },
@@ -2480,6 +2562,7 @@ mod tests {
                             keyboard_input_enabled: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
+                            context_menu_action: None,
                         },
                     );
                 },
@@ -2551,6 +2634,52 @@ mod tests {
         assert!(harness.query_by_label("Copy").is_some());
         assert!(harness.state().view.selection().range().is_some());
         assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_exposes_application_owned_action_requests() {
+        struct State {
+            terminal: Terminal,
+            view: TerminalView,
+            sink: Sink,
+        }
+        let state = State {
+            terminal: terminal(80, 24),
+            view: TerminalView::default(),
+            sink: Sink::default(),
+        };
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            paste_available: false,
+                            context_menu_action: Some(TerminalContextMenuAction {
+                                label: "Open in viewer".to_owned(),
+                                preview: "/tmp/guide.md".to_owned(),
+                                enabled: true,
+                                disabled_reason: None,
+                            }),
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Open in viewer").is_some());
+
+        harness.get_by_label("Open in viewer").click();
+        harness.run();
+
+        assert!(harness.state_mut().view.take_context_action_request());
     }
 
     #[test]

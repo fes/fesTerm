@@ -5234,6 +5234,7 @@ impl FesTermApp {
         let mut deferred_pastes = Vec::new();
         let mut clipboard_read_requested = false;
         let mut deferred_links = Vec::new();
+        let mut deferred_terminal_path_open = None;
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
@@ -5379,6 +5380,7 @@ impl FesTermApp {
                             keyboard_input_enabled: session.accepts_typed_input(),
                             defer_paste_to_application: true,
                             scroll_speed_multiplier,
+                            context_menu_action: session.terminal_context_menu_action(),
                         };
                         session.view.show_with_options(
                             ui,
@@ -5386,9 +5388,15 @@ impl FesTermApp {
                             &mut session.controller,
                             options,
                         );
+                        if session.update_terminal_context_menu() {
+                            ui.ctx().request_repaint();
+                        }
                         deferred_pastes = session.view.take_paste_requests();
                         clipboard_read_requested = session.view.take_clipboard_read_request();
                         deferred_links = session.view.take_link_requests();
+                        if session.view.take_context_action_request() {
+                            deferred_terminal_path_open = Some(active_tab_id);
+                        }
                     }
                     session
                         .controller
@@ -5413,6 +5421,11 @@ impl FesTermApp {
         for command in take_viewer_commands(ui.ctx()) {
             let context = ui.ctx().clone();
             self.state.dispatch(command, &context);
+        }
+        if let Some(tab_id) = deferred_terminal_path_open {
+            let context = ui.ctx().clone();
+            self.state
+                .dispatch(AppCommand::OpenTerminalDetectedPath { tab_id }, &context);
         }
         if search_escape {
             self.close_terminal_search(&ui.ctx().clone());
@@ -5716,6 +5729,7 @@ impl FesTermApp {
             self.show_markdown_file_picker(ui.ctx(), content_rect);
         }
 
+        self.state.update_pending_terminal_path_opens(ui.ctx());
         if let Some((path, failure)) = self.state.take_open_refusal() {
             self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
                 name: path
@@ -5726,6 +5740,10 @@ impl FesTermApp {
                 headline: failure.headline(),
                 detail: failure.detail(),
             });
+            self.overlays.open_refusal_focused = false;
+        }
+        if let Some(notice) = self.state.take_open_refusal_notice() {
+            self.overlays.open_refusal = Some(notice);
             self.overlays.open_refusal_focused = false;
         }
         self.show_open_refusal_notice(ui.ctx(), confirmation_escape);

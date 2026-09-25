@@ -45,7 +45,10 @@ pub use input::{
 };
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
-pub use view::{FrameDiagnostics, TerminalView, TerminalViewOptions};
+pub use view::{
+    FrameDiagnostics, TerminalContextMenuAction, TerminalContextTarget, TerminalView,
+    TerminalViewOptions,
+};
 
 /// A read-only, renderer-facing view of the currently visible terminal grid.
 ///
@@ -120,7 +123,7 @@ impl<'a> TerminalSnapshot<'a> {
         self.absolute_cell(column, self.content_row_for_viewport_row(row)?)
     }
 
-    pub(crate) fn content_position(self, position: CellPosition) -> Option<ContentPosition> {
+    pub fn content_position(self, position: CellPosition) -> Option<ContentPosition> {
         (position.column < self.dimensions().columns() && position.row < self.dimensions().rows())
             .then(|| ContentPosition {
                 column: position.column,
@@ -148,7 +151,7 @@ impl<'a> TerminalSnapshot<'a> {
         })
     }
 
-    pub(crate) fn contains_content_row(self, content_row: u64) -> bool {
+    pub fn contains_content_row(self, content_row: u64) -> bool {
         if self.modes.alternate_screen() {
             return content_row < self.dimensions().rows() as u64;
         }
@@ -164,7 +167,7 @@ impl<'a> TerminalSnapshot<'a> {
                         .saturating_add(self.dimensions().rows() as u64))
     }
 
-    pub(crate) fn next_content_row(self, content_row: u64) -> Option<u64> {
+    pub fn next_content_row(self, content_row: u64) -> Option<u64> {
         if self.modes.alternate_screen() {
             return (content_row + 1 < self.dimensions().rows() as u64).then_some(content_row + 1);
         }
@@ -185,7 +188,7 @@ impl<'a> TerminalSnapshot<'a> {
         }
     }
 
-    pub(crate) fn absolute_cell(self, column: usize, content_row: u64) -> Option<&'a Cell> {
+    pub fn absolute_cell(self, column: usize, content_row: u64) -> Option<&'a Cell> {
         if column >= self.dimensions().columns() {
             return None;
         }
@@ -214,7 +217,7 @@ impl<'a> TerminalSnapshot<'a> {
         )
     }
 
-    pub(crate) fn absolute_row_soft_wrapped(self, content_row: u64) -> Option<bool> {
+    pub fn absolute_row_soft_wrapped(self, content_row: u64) -> Option<bool> {
         if self.modes.alternate_screen() {
             return self
                 .terminal

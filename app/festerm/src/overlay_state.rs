@@ -220,6 +220,7 @@ pub(crate) enum StoredCredentialLaunch {
 /// A file that could not be opened, named so the reader can tell which of
 /// several they picked was refused, with the reason in the words the document
 /// layer already uses.
+#[derive(Debug)]
 pub(crate) struct OpenRefusalNotice {
     pub(crate) name: String,
     pub(crate) path: String,

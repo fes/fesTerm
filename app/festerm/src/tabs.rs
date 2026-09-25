@@ -15,8 +15,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
+    mpsc::{self, Receiver, TryRecvError},
     Arc,
 };
+use std::thread::JoinHandle;
 
 use eframe::egui;
 use festerm_config::{
@@ -27,6 +29,7 @@ use festerm_config::{
     TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
+use festerm_document::{DocumentId, RemoteOrigin, SaveOutcome, TextDocument};
 use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{
     default_local_profile_with_powershell_preference, LocalProfile, LocalPtySession,
@@ -41,10 +44,11 @@ use festerm_session::{
 };
 use festerm_sessiond::{PersistentSession, PersistentSessionError};
 use festerm_ssh::{
-    HostKeyDecisionResolutionError, HostTrustDecision, PasswordDecisionResolutionError,
-    SessionStrategy, SftpTerminalSession, SftpTerminalSessionStartError, SshAuthentication,
-    SshConnectionProfile, SshLivenessCheckError, SshPortForwardRequestError, SshPortForwardSpec,
-    SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
+    HostKeyDecisionResolutionError, HostTrustDecision, LiveRemoteFileRequestor,
+    PasswordDecisionResolutionError, SessionStrategy, SftpTerminalSession,
+    SftpTerminalSessionStartError, SshAuthentication, SshConnectionProfile, SshLivenessCheckError,
+    SshPortForwardRequestError, SshPortForwardSpec, SshReconnectError, SshSession,
+    SshSessionOptions, SshSessionStartError,
 };
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
@@ -53,13 +57,17 @@ use festerm_ui_egui::{
 
 use std::rc::Rc;
 
-use festerm_document::{DocumentId, SaveOutcome};
-
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::markdown_viewer::MarkdownViewerTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 use crate::sftp_file_manager::{
-    SftpFileManagerAuthentication, SftpFileManagerLaunchTarget, SftpFileManagerTab,
+    local_home_directory, SftpFileManagerAuthentication, SftpFileManagerLaunchTarget,
+    SftpFileManagerTab,
+};
+use crate::terminal_paths::{
+    bind_live_remote_request, open_local_command, open_remote_request, resolve_context_menu_action,
+    LocalTerminalOrigin, RemoteTerminalOrigin, TerminalFilesystemOrigin, TerminalPathMenuState,
+    TerminalPathOpenRequest, TerminalPathWorkerResult,
 };
 use crate::text_editor::TextEditorTab;
 
@@ -369,6 +377,26 @@ impl ApplicationSession {
             Self::TestSsh(_) => None,
         }
     }
+
+    pub fn verified_host_key_fingerprint(&self) -> Option<String> {
+        match self {
+            Self::Ssh(session) => session.verified_host_key_fingerprint(),
+            Self::Sftp(session) => session.verified_host_key_fingerprint(),
+            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => None,
+            #[cfg(test)]
+            Self::TestSsh(_) => None,
+        }
+    }
+
+    pub fn live_remote_file_requestor(&self) -> Option<LiveRemoteFileRequestor> {
+        match self {
+            Self::Ssh(session) => Some(session.remote_file_requestor()),
+            Self::Sftp(session) => Some(session.remote_file_requestor()),
+            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => None,
+            #[cfg(test)]
+            Self::TestSsh(_) => None,
+        }
+    }
 }
 
 impl Session for ApplicationSession {
@@ -508,6 +536,7 @@ pub struct SessionTab {
     /// Terminal-content find-bar state (`docs/gui-design.md`
     /// "Terminal-content search"). Never logged or persisted.
     pub search: crate::search::TerminalSearchState,
+    terminal_path: TerminalPathState,
 }
 
 /// Exact per-transport counts of sessions that would lose something by
@@ -627,6 +656,17 @@ pub struct SshPasswordRetryState {
     pub profile_identifier: Option<String>,
     pub options: SshSessionOptions,
     pub attempts: u8,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct TerminalPathState {
+    origin: Option<TerminalFilesystemOrigin>,
+    menu: Option<TerminalPathMenuState>,
+}
+
+struct PendingTerminalPathOpen {
+    receiver: Receiver<TerminalPathWorkerResult>,
+    handle: Option<JoinHandle<()>>,
 }
 
 /// Groups `from_session_result`'s non-outcome parameters so the function
@@ -1096,6 +1136,112 @@ impl SessionTab {
             ssh_password_retry,
             has_new_output_since_active: false,
             search: crate::search::TerminalSearchState::default(),
+            terminal_path: TerminalPathState::default(),
+        }
+    }
+
+    pub(crate) fn terminal_context_menu_action(
+        &self,
+    ) -> Option<festerm_ui_egui::TerminalContextMenuAction> {
+        self.terminal_path
+            .menu
+            .as_ref()
+            .map(TerminalPathMenuState::ui_action)
+    }
+
+    pub(crate) fn update_terminal_context_menu(&mut self) -> bool {
+        self.terminal_path.origin = self.terminal_filesystem_origin();
+        let Some(target) = self.view.context_menu_target() else {
+            let cleared = self.terminal_path.menu.take().is_some();
+            return cleared;
+        };
+        let Some(origin) = self.terminal_path.origin.as_ref() else {
+            let cleared = self.terminal_path.menu.take().is_some();
+            return cleared;
+        };
+        if self
+            .terminal_path
+            .menu
+            .as_ref()
+            .is_some_and(|state| state.generation() == target.generation)
+        {
+            return false;
+        }
+        let next = resolve_context_menu_action(&self.terminal, target, origin);
+        let changed = self.terminal_path.menu != next;
+        self.terminal_path.menu = next;
+        changed
+    }
+
+    fn terminal_path_open_request(&self) -> Option<TerminalPathOpenRequest> {
+        self.terminal_path
+            .menu
+            .as_ref()
+            .and_then(TerminalPathMenuState::open_request)
+    }
+
+    fn live_remote_file_requestor(&self) -> Option<LiveRemoteFileRequestor> {
+        matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running))
+            .then(|| {
+                self.controller
+                    .session()
+                    .and_then(ApplicationSession::live_remote_file_requestor)
+            })
+            .flatten()
+    }
+
+    fn terminal_filesystem_origin(&self) -> Option<TerminalFilesystemOrigin> {
+        let live_transport_available =
+            matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running));
+        let lifecycle_generation = self.live_remote_file_requestor().map_or_else(
+            || self.controller.lifecycle_generation(),
+            |requestor| requestor.transport_generation(),
+        );
+        let verified_host_key_fingerprint = self
+            .controller
+            .session()
+            .and_then(ApplicationSession::verified_host_key_fingerprint);
+        match &self.inspector_transport {
+            InspectorTransport::Local { .. } => {
+                Some(TerminalFilesystemOrigin::Local(LocalTerminalOrigin {
+                    home_directory: Some(local_home_directory()),
+                }))
+            }
+            InspectorTransport::Ssh {
+                username,
+                host,
+                port,
+                ..
+            } => Some(TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                host: host.clone(),
+                port: *port,
+                username: username.clone(),
+                profile_identifier: self.profile_identifier.clone(),
+                lifecycle_generation,
+                verified_host_key_fingerprint,
+                live_transport_available,
+                trusted_working_directory: None,
+            })),
+            InspectorTransport::Sftp {
+                username,
+                host,
+                port,
+                ..
+            } => Some(TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                host: host.clone(),
+                port: *port,
+                username: username.clone(),
+                profile_identifier: self.profile_identifier.clone(),
+                lifecycle_generation,
+                verified_host_key_fingerprint,
+                live_transport_available,
+                trusted_working_directory: self
+                    .controller
+                    .session()
+                    .and_then(ApplicationSession::sftp_working_directories)
+                    .map(|(remote, _)| remote),
+            })),
+            InspectorTransport::Serial { .. } => None,
         }
     }
 
@@ -1572,6 +1718,18 @@ pub enum AppCommand {
         source: RemoteMarkdownSource,
         display_path: String,
         content: Vec<u8>,
+    },
+    /// Opens a remote text snapshot already fetched from a verified SFTP
+    /// origin.
+    OpenRemoteTextSnapshot {
+        origin: RemoteOrigin,
+        text: TextDocument,
+        read_only: bool,
+    },
+    /// Opens the currently frozen terminal path candidate for one session
+    /// tab, if that candidate resolved safely.
+    OpenTerminalDetectedPath {
+        tab_id: TabId,
     },
     /// Opens an explicit terminal hyperlink after application-owned URL
     /// validation. Terminal presentation emits intent only.
@@ -2148,6 +2306,8 @@ pub struct AppState {
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
     open_refusal: Option<(PathBuf, OpenFailure)>,
+    pending_open_refusal_notice: Option<crate::overlay_state::OpenRefusalNotice>,
+    pending_terminal_path_opens: Vec<PendingTerminalPathOpen>,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -2221,6 +2381,8 @@ impl AppState {
             window_open_requested: false,
             save_as_requested: false,
             open_refusal: None,
+            pending_open_refusal_notice: None,
+            pending_terminal_path_opens: Vec::new(),
             pending_tab_move: None,
             pending_profile_create: None,
             pending_profile_usage: None,
@@ -2908,6 +3070,14 @@ impl AppState {
                 display_path,
                 content,
             } => self.open_remote_markdown(source, display_path, content),
+            AppCommand::OpenRemoteTextSnapshot {
+                origin,
+                text,
+                read_only,
+            } => self.open_remote_text(origin, text, read_only),
+            AppCommand::OpenTerminalDetectedPath { tab_id } => {
+                self.open_detected_terminal_path(tab_id, context)
+            }
             AppCommand::OpenExternalLink { target } => {
                 if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
                 {
@@ -3502,13 +3672,7 @@ impl AppState {
         content: Vec<u8>,
     ) {
         if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
-            TabContent::MarkdownViewer(viewer)
-                if viewer.matches_remote_path(
-                    source.host(),
-                    source.port(),
-                    source.remote_path(),
-                ) =>
-            {
+            TabContent::MarkdownViewer(viewer) if viewer.matches_remote_source(&source) => {
                 Some(tab.id)
             }
             _ => None,
@@ -3535,6 +3699,167 @@ impl AppState {
         });
         self.set_active(id);
         self.workspace_dirty = true;
+    }
+
+    fn open_remote_text(&mut self, origin: RemoteOrigin, text: TextDocument, read_only: bool) {
+        let origin = festerm_document::DocumentOrigin::from(origin);
+        let document = self
+            .documents
+            .borrow_mut()
+            .adopt_remote_snapshot(origin, text, read_only);
+        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::TextEditor(editor) if editor.document() == document => Some(tab.id),
+            _ => None,
+        }) {
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return;
+        }
+        let id = TabId::next();
+        let editor = TextEditorTab::with_options(
+            document,
+            &self.documents,
+            crate::text_editor::EditorViewOptions::from_settings(self.editor),
+        );
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::TextEditor(Box::new(editor)),
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
+    }
+
+    fn open_detected_terminal_path(&mut self, tab_id: TabId, context: &egui::Context) {
+        let Some(request) = self
+            .session_tab(tab_id)
+            .and_then(SessionTab::terminal_path_open_request)
+        else {
+            return;
+        };
+        match request {
+            TerminalPathOpenRequest::Local(request) => {
+                self.dispatch(open_local_command(&request), context);
+            }
+            TerminalPathOpenRequest::Remote(request) => {
+                let Some(session) = self.session_tab(tab_id) else {
+                    return;
+                };
+                let generation = session.live_remote_file_requestor().map_or_else(
+                    || session.controller.lifecycle_generation(),
+                    |requestor| requestor.transport_generation(),
+                );
+                if generation != request.lifecycle_generation {
+                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                        name: Path::new(&request.remote_path)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| request.remote_path.clone()),
+                        path: request.display_path.clone(),
+                        headline: "This remote path could not be opened".to_owned(),
+                        detail: "The source SSH/SFTP session has reconnected since this menu opened, so fesTerm will not retarget the path to a different transport generation.".to_owned(),
+                    });
+                    return;
+                }
+                let Some(requestor) = session.live_remote_file_requestor() else {
+                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                        name: Path::new(&request.remote_path)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| request.remote_path.clone()),
+                        path: request.display_path.clone(),
+                        headline: "This remote path could not be opened".to_owned(),
+                        detail: "The source SSH/SFTP session is no longer connected, so fesTerm cannot reuse its live transport to read files.".to_owned(),
+                    });
+                    return;
+                };
+                let request = match bind_live_remote_request(requestor, request) {
+                    Ok(request) => request,
+                    Err(notice) => {
+                        self.pending_open_refusal_notice = Some(notice);
+                        return;
+                    }
+                };
+                let display_path = request.request.display_path.clone();
+                if self.pending_terminal_path_opens.len() >= 4 {
+                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                        name: "remote path".to_owned(),
+                        path: display_path,
+                        headline: "Too many remote files are opening".to_owned(),
+                        detail: "Wait for an existing file request to finish before opening another.".to_owned(),
+                    });
+                    return;
+                }
+                let (sender, receiver) = mpsc::sync_channel(1);
+                let repaint = context.clone();
+                match std::thread::Builder::new()
+                    .name("terminal-path-open".into())
+                    .spawn(move || {
+                        let result = open_remote_request(request);
+                        let _ = sender.send(result);
+                        repaint.request_repaint();
+                    }) {
+                    Ok(handle) => self
+                        .pending_terminal_path_opens
+                        .push(PendingTerminalPathOpen {
+                            receiver,
+                            handle: Some(handle),
+                        }),
+                    Err(error) => {
+                        self.pending_open_refusal_notice =
+                            Some(crate::overlay_state::OpenRefusalNotice {
+                                name: Path::new(&display_path)
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| display_path.clone()),
+                                path: display_path,
+                                headline: "This remote path could not be opened".to_owned(),
+                                detail: format!(
+                                    "The background SFTP worker could not start: {error}"
+                                ),
+                            });
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn update_pending_terminal_path_opens(&mut self, context: &egui::Context) {
+        let mut index = 0usize;
+        while index < self.pending_terminal_path_opens.len() {
+            match self.pending_terminal_path_opens[index].receiver.try_recv() {
+                Ok(TerminalPathWorkerResult::Command(command)) => {
+                    let mut pending = self.pending_terminal_path_opens.remove(index);
+                    if let Some(handle) = pending.handle.take() {
+                        let _ = handle.join();
+                    }
+                    self.dispatch(*command, context);
+                }
+                Ok(TerminalPathWorkerResult::OpenRefusal(notice)) => {
+                    let mut pending = self.pending_terminal_path_opens.remove(index);
+                    if let Some(handle) = pending.handle.take() {
+                        let _ = handle.join();
+                    }
+                    self.pending_open_refusal_notice = Some(notice);
+                }
+                Err(TryRecvError::Empty) => {
+                    index += 1;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    let mut pending = self.pending_terminal_path_opens.remove(index);
+                    if let Some(handle) = pending.handle.take() {
+                        let _ = handle.join();
+                    }
+                    self.pending_open_refusal_notice =
+                        Some(crate::overlay_state::OpenRefusalNotice {
+                            name: "remote path".to_owned(),
+                            path: "remote path".to_owned(),
+                            headline: "This remote path could not be opened".to_owned(),
+                            detail: "The background SFTP worker stopped before returning a result."
+                                .to_owned(),
+                        });
+                }
+            }
+        }
     }
 
     /// Opens (or focuses) the Profiles surface and marks `identifier` to be
@@ -3570,6 +3895,10 @@ impl AppState {
     /// composition root can say why.
     pub fn take_open_refusal(&mut self) -> Option<(PathBuf, OpenFailure)> {
         self.open_refusal.take()
+    }
+
+    pub fn take_open_refusal_notice(&mut self) -> Option<crate::overlay_state::OpenRefusalNotice> {
+        self.pending_open_refusal_notice.take()
     }
 
     /// Whether a Save As destination has been asked for since the last frame.
@@ -4599,6 +4928,7 @@ impl SessionTab {
             ssh_password_retry: None,
             has_new_output_since_active: false,
             search: crate::search::TerminalSearchState::default(),
+            terminal_path: TerminalPathState::default(),
         }
     }
 }
@@ -5331,6 +5661,18 @@ mod tests {
         .expect("valid remote source fields")
     }
 
+    fn test_remote_text_origin(remote_path: &str) -> RemoteOrigin {
+        RemoteOrigin::new(
+            "sftp.example.test",
+            22,
+            festerm_document::RemoteOwner::username("deploy").unwrap(),
+            "SHA256:abc123",
+            remote_path,
+            1,
+        )
+        .expect("valid remote origin fields")
+    }
+
     #[test]
     fn open_remote_markdown_snapshot_opens_a_new_tab() {
         let context = egui::Context::default();
@@ -5351,6 +5693,30 @@ mod tests {
             panic!("expected the new tab to be the Markdown viewer");
         };
         assert_eq!(viewer.display_path(), "/srv/docs/guide.md");
+    }
+
+    #[test]
+    fn open_remote_text_snapshot_opens_a_new_editor_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let tabs_before = state.tabs().len();
+        let text = TextDocument::from_bytes(b"alpha\n", festerm_document::DocumentBounds::DEFAULT)
+            .unwrap();
+
+        state.dispatch(
+            AppCommand::OpenRemoteTextSnapshot {
+                origin: test_remote_text_origin("/srv/docs/notes.txt"),
+                text,
+                read_only: true,
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_before + 1);
+        let TabContent::TextEditor(editor) = &state.active_tab_mut().content else {
+            panic!("expected the new tab to be a text editor");
+        };
+        assert_eq!(editor.title(), "notes.txt");
     }
 
     #[test]
@@ -5382,7 +5748,119 @@ mod tests {
         let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
             panic!("expected the refreshed tab to still be the Markdown viewer");
         };
-        assert!(viewer.matches_remote_path("sftp.example.test", 22, "/srv/docs/guide.md"));
+        assert!(viewer.matches_remote_source(&test_remote_markdown_source("/srv/docs/guide.md")));
+    }
+
+    #[test]
+    fn remote_markdown_snapshots_with_different_identity_open_new_tabs() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source: test_remote_markdown_source("/srv/docs/guide.md"),
+                display_path: "/srv/docs/guide.md".to_owned(),
+                content: b"# Guide v1\n".to_vec(),
+            },
+            &context,
+        );
+        let tabs_after_first_open = state.tabs().len();
+
+        let different_identity = RemoteMarkdownSource::new(
+            "sftp.example.test",
+            22,
+            festerm_markdown::RemoteSourceOwner::profile_identifier("other-profile").unwrap(),
+            "SHA256:different",
+            "/srv/docs/guide.md",
+            2,
+        )
+        .unwrap();
+        state.dispatch(
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source: different_identity,
+                display_path: "/srv/docs/guide.md".to_owned(),
+                content: b"# Guide v2\n".to_vec(),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_after_first_open + 1);
+    }
+
+    #[test]
+    fn reopening_the_same_remote_text_snapshot_refreshes_the_existing_editor_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenRemoteTextSnapshot {
+                origin: test_remote_text_origin("/srv/docs/notes.txt"),
+                text: TextDocument::from_bytes(
+                    b"alpha\n",
+                    festerm_document::DocumentBounds::DEFAULT,
+                )
+                .unwrap(),
+                read_only: true,
+            },
+            &context,
+        );
+        let tab_id = state.active();
+        let tabs_after_first_open = state.tabs().len();
+
+        state.dispatch(
+            AppCommand::OpenRemoteTextSnapshot {
+                origin: test_remote_text_origin("/srv/docs/notes.txt"),
+                text: TextDocument::from_bytes(
+                    b"beta\n",
+                    festerm_document::DocumentBounds::DEFAULT,
+                )
+                .unwrap(),
+                read_only: true,
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_after_first_open);
+        assert_eq!(state.active(), tab_id);
+    }
+
+    #[test]
+    fn terminal_path_open_refuses_a_reconnected_remote_generation() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let session = crate::session_controller::fake::FakeSshSession::new([]);
+        let tab_id =
+            state.replace_active_with_test_ssh_session(session, "deploy", "ssh.example.test", 22);
+        let TabContent::Session(session) = &mut state.active_tab_mut().content else {
+            panic!("expected test SSH session");
+        };
+        session.terminal.ingest(b"/srv/docs/guide.md\n");
+        session.controller.advance_lifecycle_generation();
+        session.terminal_path.menu = resolve_context_menu_action(
+            &session.terminal,
+            festerm_ui_egui::TerminalContextTarget {
+                content_position: festerm_core::ContentPosition {
+                    column: 2,
+                    absolute_row: 0,
+                },
+                generation: 7,
+            },
+            &TerminalFilesystemOrigin::Remote(RemoteTerminalOrigin {
+                host: "ssh.example.test".to_owned(),
+                port: 22,
+                username: "deploy".to_owned(),
+                profile_identifier: None,
+                lifecycle_generation: 0,
+                verified_host_key_fingerprint: Some("SHA256:abc123".to_owned()),
+                live_transport_available: true,
+                trusted_working_directory: None,
+            }),
+        );
+
+        state.dispatch(AppCommand::OpenTerminalDetectedPath { tab_id }, &context);
+
+        let notice = state
+            .take_open_refusal_notice()
+            .expect("generation mismatch should refuse");
+        assert!(notice.detail.contains("different transport generation"));
     }
 
     /// A scratch directory with two Markdown files in it, for the routes that

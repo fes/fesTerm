@@ -262,6 +262,29 @@ impl DocumentRegistry {
         self.insert(origin, text, None, read_only)
     }
 
+    /// Replaces the bytes for an already-open remote document snapshot, or
+    /// adopts it if this is the first view of that verified origin.
+    pub(crate) fn adopt_remote_snapshot(
+        &mut self,
+        origin: DocumentOrigin,
+        text: TextDocument,
+        read_only: bool,
+    ) -> DocumentId {
+        if let Some(id) = self.by_key.get(&origin.key()).copied() {
+            if let Some(document) = self.documents.get_mut(&id) {
+                document.syntax = DocumentSyntax::new(origin.file_name(), text.text());
+                document.origin = origin;
+                document.text = text;
+                document.read_only = read_only;
+                document.availability = Availability::Available;
+                document.last_error = None;
+            }
+            self.retain(id);
+            return id;
+        }
+        self.insert(origin, text, None, read_only)
+    }
+
     fn insert(
         &mut self,
         origin: DocumentOrigin,

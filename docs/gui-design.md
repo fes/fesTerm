@@ -518,12 +518,15 @@ they belong in Settings as the corresponding settings surface matures.
 
 The terminal viewport's local context menu is deliberately about the text and
 target under the pointer, not application or session administration. An
-explicit OSC 8 link contributes **Open link** and **Copy link**. A non-empty
-terminal selection contributes **Copy**. A live session that currently accepts
-input contributes **Paste**. **Find in terminal** remains available in every
-retained terminal viewport, including an exited or disconnected read-only
-history. Unavailable entries are omitted; in particular, Paste is absent for a
-read-only history.
+explicit OSC 8 link contributes **Open link** and **Copy link**. A detected
+file path contributes **Open in viewer** when fesTerm can resolve that target
+honestly; its preview line freezes the local or remote path under the pointer,
+and a disabled button explains when trustworthy cwd, host-key, or credential
+metadata is missing. A non-empty terminal selection contributes **Copy**. A
+live session that currently accepts input contributes **Paste**. **Find in
+terminal** remains available in every retained terminal viewport, including an
+exited or disconnected read-only history. Unavailable entries are omitted; in
+particular, Paste is absent for a read-only history.
 
 Clear, Close session, Disconnect, Reconnect, Settings, and appearance actions
 do not belong in this menu. **Select all** is also omitted initially because it
@@ -972,7 +975,10 @@ process-list guesses. A local file URI may identify a client path. An SSH path
 remains remote metadata and is never opened through the local OS. Runtime
 directories are private in screenshots, notifications, copied diagnostics,
 and workspace metadata and are not persisted as though they were a profile's
-reliable initial directory.
+reliable initial directory. Relative terminal paths stay disabled unless the
+session itself reports a trustworthy current directory (for example a text-mode
+SFTP session's own cwd); launch-profile directories and guessed shell prompts
+do not count.
 
 ### Session-type identity
 
@@ -2601,9 +2607,10 @@ read acknowledgment.
 
 ### Explicit terminal hyperlinks
 
-The initial link implementation supports explicit OSC 8 hyperlinks only.
-Automatic URL and path detection is deferred because punctuation, wrapping,
-and local-versus-remote ownership are ambiguous.
+Explicit OSC 8 hyperlinks and plain-text path opening remain separate
+features. OSC 8 parsing stays restricted to explicit hyperlinks; plain-text
+path detection is bounded by visible terminal cells, frozen when the context
+menu opens, and resolved without shell evaluation.
 
 Explicit links expose their normalized ASCII target in the context menu and
 full tooltip. `Ctrl+click` on Windows/Linux or `Cmd+click` on macOS opens a
@@ -2621,9 +2628,11 @@ reset, terminal reset, or primary/alternate-screen transition, and is capped
 at 4,096 printed cells. This prevents a hostile remote producer from silently
 annotating unrelated later prompts or output.
 
-A future local path action must first verify a client-local existing path. An
-SSH path is remote and must never be passed to the local OS without a separate
-deliberate remote-file workflow.
+Plain-text path opening may route to the existing local text/Markdown surfaces
+or to a verified SSH/SFTP snapshot, but an SSH path is always remote metadata
+and must never be passed to the local OS. Relative paths remain disabled until
+the session reports trustworthy cwd metadata; absent OSC 7 or an application-
+owned SFTP cwd, fesTerm must say cwd is unknown rather than guess.
 
 ### Bell and attention
 

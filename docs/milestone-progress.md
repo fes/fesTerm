@@ -2275,3 +2275,20 @@ inside mouse-aware TUIs. Settings now explains that fixed convention alongside
 Shift+drag, and the routing regression covers the supported tracking modes and
 encodings rather than only the simplest mouse mode. Native secondary-click,
 clipboard, and accessibility acceptance still requires platform evidence.
+
+## Opening paths without interrupting the terminal
+
+The terminal context menu can now resolve bounded filename candidates and open
+local documents or read remote documents through the source session's live
+SSH transport. It does not retain a second password or require users to persist
+a host key merely to use SFTP. Paths and viewer identity remain pinned to the
+verified host, owner, and transport generation, including automatic reconnects.
+Unknown shell working directories and remote home aliases are not guessed.
+
+Review caught an important distinction between background GUI work and
+nonblocking transport work: moving the caller to a thread did not help while
+the SSH worker still awaited SFTP inline. Remote reads now use at most two
+independent channel tasks per transport, with size/deadline limits and shutdown
+cancellation. A real loopback SSH fixture accepts a typed password and
+session-only host trust, stalls or refuses SFTP, and still requires shell
+input/output and shutdown to make progress. The app also bounds pending opens.
