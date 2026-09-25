@@ -286,6 +286,10 @@ recording terminal content.
   Each run owns its marker, exit intent, final record, at most one 256 KiB Rust
   panic report, and one 2 MiB application log; concurrent processes never rotate
   or overwrite each other's files. No report upload is implemented.
+  Future explicit next-start review/consent and first-party Firebase-backed
+  `feslabs.com` intake are tracked separately in
+  [#232](https://github.com/fes/fesTerm/issues/232), including private storage,
+  optional Sentry grouping, retention, idempotency, and abuse controls.
 - The About/Copy Version Information summary uses lifecycle metadata, not raw
   report/log contents. **Raw panic messages, backtraces, and ordinary tracing
   logs are not scrubbed and may contain sensitive data, including user paths,
