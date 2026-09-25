@@ -3379,6 +3379,10 @@ impl FesTermApp {
             information.push_str("\nBuild: ");
             information.push_str(commit);
         }
+        if let Some(last_exit) = crate::diagnostics::last_exit_summary() {
+            information.push_str("\nLast exit: ");
+            information.push_str(&last_exit);
+        }
         information
     }
 
@@ -3436,6 +3440,22 @@ impl FesTermApp {
                 );
                 ui.hyperlink_to("github.com/fes/fesTerm", "https://github.com/fes/fesTerm");
                 ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Diagnostics").strong());
+                if let Some(last_exit) = crate::diagnostics::last_exit_summary() {
+                    ui.label(format!("Last exit: {last_exit}"));
+                } else {
+                    ui.label("Last exit: No previous run information");
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "Crash reports and logs are not uploaded. They may contain sensitive data, including paths or secrets; review before sharing.",
+                    )
+                    .small()
+                    .color(theme::TEXT_MUTED),
+                );
+                ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(4.0);
                 ui.label(egui::RichText::new("Updates").strong());
@@ -4946,6 +4966,11 @@ impl FesTermApp {
             // window's is the composition root's.
             if self.overlays.pending_quit.is_none() {
                 self.window_close_accepted = true;
+                if self.role == WindowRole::Primary && self.native_smoke.is_none() {
+                    crate::diagnostics::record_exit_intent(
+                        crate::diagnostics::ExitIntent::UserQuit,
+                    );
+                }
             }
         }
         self.handle_dropped_files(context);
@@ -5056,6 +5081,7 @@ impl FesTermApp {
         {
             self.update_exit_requested = true;
             self.quit_confirmed = true;
+            crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::UpdateRestart);
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if self.updates.status().is_busy() {
@@ -9886,6 +9912,11 @@ mod tests {
         harness.get_by_label("A compact local, SSH, and serial terminal.");
         harness.get_by_label(AI_AUTHORSHIP_SUMMARY);
         harness.get_by_label(AI_AUTHORSHIP_DETAIL);
+        harness.get_by_label("Diagnostics");
+        harness.get_by_label("Last exit: No previous run information");
+        harness.get_by_label(
+            "Crash reports and logs are not uploaded. They may contain sensitive data, including paths or secrets; review before sharing.",
+        );
         harness.get_by_label("Copy Version Information");
         harness.get_by_label("Licenses");
         harness.state_mut().overlays.about_licenses_open = true;

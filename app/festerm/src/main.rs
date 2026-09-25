@@ -111,7 +111,7 @@ fn primary_viewport_builder(
 }
 
 fn main() -> eframe::Result<()> {
-    diagnostics::init();
+    let diagnostics = diagnostics::init();
     tracing::info!(target: "festerm::app", "starting fesTerm");
     let startup_configuration = load_startup_configuration();
 
@@ -144,7 +144,7 @@ fn main() -> eframe::Result<()> {
         },
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         APPLICATION_TITLE,
         options,
         Box::new(|creation_context| {
@@ -159,7 +159,9 @@ fn main() -> eframe::Result<()> {
             application.restore_windows(&creation_context.egui_ctx);
             Ok(Box::new(application))
         }),
-    )
+    );
+    diagnostics.finish(result.is_ok());
+    result
 }
 
 /// Chooses the wgpu surface present mode, avoiding vsync-locked presentation

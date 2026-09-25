@@ -1936,8 +1936,11 @@ redacted by default. Terminal contents, commands, passwords, tokens, private
 keys, authentication responses, and environment values are excluded by
 default. Any future support bundle follows the same policy and requires a
 separate explicit warning before terminal content is included. A dedicated
-cross-session diagnostics surface is deferred until a support workflow proves
-that it is needed.
+cross-session diagnostics workspace remains deferred. About provides only the
+small application-level support facts that do not belong to a session: whether
+the previous run shut down cleanly, its recorded exit reason, and whether a
+local panic report exists. Bounded logs and panic reports remain on the device
+and exclude terminal contents by default.
 
 ### Reconnect presentation
 

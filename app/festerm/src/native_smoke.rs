@@ -120,7 +120,20 @@ impl NativeWindowSmoke {
     }
 
     pub fn requested() -> bool {
-        Self::kind_from_environment().is_some()
+        [
+            SMOKE_ENV,
+            OS_INPUT_SMOKE_ENV,
+            LIVE_RESIZE_SMOKE_ENV,
+            EMOJI_SMOKE_ENV,
+        ]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+    }
+
+    pub(crate) fn result_path_from_environment() -> Option<PathBuf> {
+        std::env::var_os(RESULT_PATH_ENV)
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
     }
 
     fn kind_from_environment() -> Option<SmokeKind> {
@@ -148,8 +161,7 @@ impl NativeWindowSmoke {
     pub fn from_environment() -> Option<Self> {
         let kind = Self::kind_from_environment()?;
 
-        let result_path = std::env::var_os(RESULT_PATH_ENV)
-            .map(PathBuf::from)
+        let result_path = Self::result_path_from_environment()
             .expect("FESTERM_NATIVE_SMOKE_RESULT_PATH is required in native smoke mode");
         let test_child_path = test_child_path();
         assert!(
@@ -542,6 +554,7 @@ impl NativeWindowSmoke {
     fn finish(&mut self, context: &eframe::egui::Context, status: &str, detail: &str) {
         Self::write_result(&self.result_path, status, detail);
         self.phase = Phase::Finished;
+        crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::NativeSmokeComplete);
         context.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
     }
 

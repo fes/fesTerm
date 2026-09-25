@@ -281,12 +281,59 @@ recording terminal content.
 
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
+- fesTerm keeps local lifecycle metadata and logs under
+  `diagnostics/runs-v2/<run-id>/` in its native per-user state directory.
+  Each run owns its marker, exit intent, final record, at most one 256 KiB Rust
+  panic report, and one 2 MiB application log; concurrent processes never rotate
+  or overwrite each other's files. No report upload is implemented.
+  Future explicit next-start review/consent and first-party Firebase-backed
+  `feslabs.com` intake are tracked separately in
+  [#232](https://github.com/fes/fesTerm/issues/232), including private storage,
+  optional Sentry grouping, retention, idempotency, and abuse controls.
+- The About/Copy Version Information summary uses lifecycle metadata, not raw
+  report/log contents. **Raw panic messages, backtraces, and ordinary tracing
+  logs are not scrubbed and may contain sensitive data, including user paths,
+  terminal-derived values, or secrets from application/dependency errors.**
+  Not intentionally recording terminal traffic is not a guarantee that these
+  files contain no terminal content or secrets. Keep them local and review/redact
+  before sharing; About explicitly warns about this boundary.
+- Native smoke runs instead write beside `FESTERM_NATIVE_SMOKE_RESULT_PATH`,
+  appending `.diagnostics` to that path, so smoke exits and forced runner
+  termination do not contaminate the real user's exit history. Missing/empty
+  smoke result configuration disables durable diagnostics with a warning rather
+  than falling back to the user journal. These isolated files follow the same
+  sensitivity/retention rules; the runner owns their cleanup.
+- An OS-held lifetime lock, not PID existence or age, distinguishes live runs
+  from abandoned ones. A permanent `diagnostics/catalog.lock` serializes
+  creation, scanning, and retention; never delete lock files while fesTerm is
+  running. Catalog acquisition has a two-second deadline. Diagnostic errors
+  are reported through tracing/stderr and a content-free About warning rather
+  than preventing GUI startup. A panic hook uses a nonblocking journal lock;
+  if busy, it warns that the report could not be written. An independently
+  published panic flag preserves the panic even when a concurrent finish has
+  already chosen a clean record.
+- At each startup, retain the five newest inactive failed runs and five newest
+  inactive clean runs, including their logs/reports. Active runs are exempt
+  until a later startup observes their locks released. About reports the
+  newest retained failure, or the newest clean exit if no failure remains;
+  unrelated clean exits cannot hide an unclean run. This startup snapshot is
+  not a live process monitor. A caught worker panic remains a panic even if the
+  event loop later returns normally. Native faults, forced termination, and
+  power loss remain unclean/unknown, not a diagnosed cause.
+- Old experimental shared files directly inside `diagnostics/` are left
+  untouched and excluded from v2 scanning: their markers cannot safely
+  distinguish an older still-running binary from an abandoned run. After all
+  older processes stop, those legacy files can be archived or removed manually.
+  Atomic file replacement avoids deleting valid evidence before a replacement
+  succeeds; Unix parent directories are synced, but this is not a guarantee
+  against every filesystem or hardware power-loss failure.
 - `FESTERM_PROTOCOL_TRACE=1` only reports that tracing was requested; terminal
   content tracing is intentionally not implemented.
 - `FESTERM_CONFIG_PATH` selects a non-empty Unicode configuration-file path
   instead of the native per-user location. It is intended for support and
-  tests; diagnostics intentionally do not reveal the selected path or source
-  TOML.
+  tests; configuration diagnostics intentionally omit the selected path and
+  source TOML. This narrower contract does not sanitize arbitrary panic
+  payloads or other tracing messages.
 - The normal status line is compact; use the **Diagnostics** control to reveal
   lifecycle, queue pressure, bytes, errors, resize, and input-to-paint-
   submission details, plus per-frame render diagnostics (frame time, dirty
