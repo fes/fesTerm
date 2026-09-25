@@ -7693,7 +7693,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.step();
+        harness.run();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8558,7 +8558,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.step();
+        harness.run();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8679,7 +8679,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.step();
+        harness.run();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
