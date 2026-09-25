@@ -522,11 +522,24 @@ explicit OSC 8 link contributes **Open link** and **Copy link**. A detected
 file path contributes **Open in viewer** when fesTerm can resolve that target
 honestly; its preview line freezes the local or remote path under the pointer,
 and a disabled button explains when trustworthy cwd, host-key, or credential
-metadata is missing. A non-empty terminal selection contributes **Copy**. A
-live session that currently accepts input contributes **Paste**. **Find in
-terminal** remains available in every retained terminal viewport, including an
-exited or disconnected read-only history. Unavailable entries are omitted; in
-particular, Paste is absent for a read-only history.
+metadata is missing. A non-empty
+terminal selection contributes **Copy**. A live session that currently accepts
+input contributes **Paste**. **Find in terminal** remains available in every
+retained terminal viewport, including an exited or disconnected read-only
+history. When there is no active selection, the same menu also offers
+**Open Terminal History in Editor** and **Save Terminal History As…**. Both
+freeze the retained primary history plus the currently applicable screen into
+an independent plain-text snapshot with no ANSI/control-sequence export and no
+live link back to the session. **Open Terminal History in Editor** creates an
+untitled dirty editor document; **Save Terminal History As…** opens that same
+snapshot and immediately continues into the normal Save As sheet. The snapshot
+actions stay available for exited or disconnected retained history. If the
+retained text would exceed the editor's honest byte, line, or single-line
+bounds, fesTerm refuses before allocating a document and says so without
+quoting the history itself. Unavailable entries are omitted; in particular,
+Paste is absent for a read-only history, and the history-snapshot actions are
+omitted while a text selection is active so Copy remains the text action in
+that position.
 
 Clear, Close session, Disconnect, Reconnect, Settings, and appearance actions
 do not belong in this menu. **Select all** is also omitted initially because it
@@ -2379,7 +2392,8 @@ The initial command inventory, subject to actual implementation and active-
 surface applicability, is:
 
 - **New Session…** and **Start Local Shell**;
-- **Find in Terminal**, **Manage Port Forwards…** for a live SSH shell session,
+- **Find in Terminal**, **Open Terminal History in Editor**, **Save Terminal
+  History As…**, **Manage Port Forwards…** for a live SSH shell session,
   **Rename Session…**, a capability-backed **Reconnect Session**, and **Close
   Session…**;
 - **Enter Focus Mode** or **Exit Focus Mode**, **Zoom In**, **Zoom Out**, and
@@ -2574,6 +2588,16 @@ have no live-follow state or new-output indicator.
 If bounded scrollback evicts content above the current view, preserve the
 nearest retained position and announce that older history was discarded;
 never display stale rows.
+
+Terminal-history snapshot export uses the same retained-text model. The frozen
+text is the retained primary history plus the currently applicable visible
+screen, rendered as logical plain text: hard line breaks remain line breaks,
+soft wraps do not become synthetic newlines, grapheme clusters stay intact, and
+ANSI/control sequences are never exported. When the alternate screen is active,
+the snapshot still includes retained primary history but only the visible
+alternate screen; it does not fabricate hidden primary rows or off-screen TUI
+content. The resulting snapshot is immutable even if later output arrives or
+the saved copy is edited.
 
 The terminal uses a thin right-edge overlay scrollbar that does not consume a
 grid column. It appears on hover, scroll, selection drag, or whenever the view

@@ -30,7 +30,9 @@ use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAct
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 use festerm_ui_egui::theme;
-use festerm_ui_egui::{TerminalFontFamily, TerminalFontGeneration, TerminalFontSet};
+use festerm_ui_egui::{
+    TerminalFontFamily, TerminalFontGeneration, TerminalFontSet, TerminalHistoryAction,
+};
 
 use crate::configuration_startup::{
     ConfigurationReloader, ConfigurationStartupStatus, StartupConfiguration,
@@ -2335,11 +2337,13 @@ impl FesTermApp {
         const PASTE: u64 = 14;
         const FIND_IN_TERMINAL: u64 = 15;
         const PORT_FORWARD_MANAGER: u64 = 16;
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
         const RELOAD_MARKDOWN: u64 = 18;
         const TOGGLE_MARKDOWN_MODE: u64 = 19;
         const FIND_IN_MARKDOWN: u64 = 20;
         const TOGGLE_MARKDOWN_OUTLINE: u64 = 21;
         const OPEN_SFTP_FILE_MANAGER: u64 = 22;
+        const SAVE_TERMINAL_HISTORY_AS: u64 = 24;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -2419,6 +2423,26 @@ impl FesTermApp {
                     id: FIND_IN_TERMINAL,
                     label: "Find in Terminal…".to_owned(),
                     hint: binding_label(A::Find),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: OPEN_TERMINAL_HISTORY_IN_EDITOR,
+                    label: "Open Terminal History in Editor".to_owned(),
+                    hint: Some(
+                        "Freeze retained terminal text into a new untitled editor snapshot"
+                            .to_owned(),
+                    ),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: SAVE_TERMINAL_HISTORY_AS,
+                    label: "Save Terminal History As…".to_owned(),
+                    hint: Some(
+                        "Freeze retained terminal text and choose where to save a snapshot"
+                            .to_owned(),
+                    ),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2608,6 +2632,9 @@ impl FesTermApp {
             14 => self.paste_into_active_session(context),
             15 => self.open_terminal_search(context),
             16 => self.toggle_port_forward_manager(context),
+            17 => self
+                .state
+                .dispatch(AppCommand::OpenTerminalHistoryInEditor, context),
             22 => {
                 let active = self.state.active();
                 if let Some(target) = self.state.sftp_file_manager_target_for_tab(active) {
@@ -2615,6 +2642,9 @@ impl FesTermApp {
                         .dispatch(AppCommand::OpenSftpFileManager { target }, context);
                 }
             }
+            24 => self
+                .state
+                .dispatch(AppCommand::SaveTerminalHistoryAs, context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -3137,6 +3167,20 @@ impl FesTermApp {
         }
         self.restore_active_terminal_focus();
         context.request_repaint();
+    }
+
+    fn dispatch_terminal_history_action(
+        &mut self,
+        action: TerminalHistoryAction,
+        context: &egui::Context,
+    ) {
+        self.state.dispatch(
+            match action {
+                TerminalHistoryAction::OpenInEditor => AppCommand::OpenTerminalHistoryInEditor,
+                TerminalHistoryAction::SaveAs => AppCommand::SaveTerminalHistoryAs,
+            },
+            context,
+        );
     }
 
     fn paste_into_active_session(&mut self, context: &egui::Context) {
@@ -3789,7 +3833,10 @@ impl FesTermApp {
                 .parent()
                 .map(std::path::Path::to_path_buf)
                 .or_else(|| self.overlays.save_as_directory.clone()),
-            festerm_document::DocumentOrigin::Remote(_) => self.overlays.save_as_directory.clone(),
+            festerm_document::DocumentOrigin::Remote(_)
+            | festerm_document::DocumentOrigin::Untitled(_) => {
+                self.overlays.save_as_directory.clone()
+            }
         }
         .unwrap_or_else(crate::sftp_file_manager::local_home_directory);
         drop(registry);
@@ -3807,6 +3854,24 @@ impl FesTermApp {
         }
         self.restore_active_terminal_focus();
         ctx.request_repaint();
+    }
+
+    fn cancel_active_editor_close_after_save(&mut self) {
+        let tab = self.state.active_tab_mut();
+        if let TabContent::TextEditor(editor) = &mut tab.content {
+            editor.cancel_close_after_save();
+        }
+    }
+
+    fn active_editor_still_dirty(&self) -> bool {
+        let Some(document) = self.state.active_document() else {
+            return false;
+        };
+        self.state
+            .documents()
+            .borrow()
+            .get(document)
+            .is_some_and(|open| open.text().is_dirty())
     }
 
     fn show_save_as_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
@@ -3834,8 +3899,22 @@ impl FesTermApp {
                 self.close_save_as_picker(ctx);
                 self.state
                     .dispatch(AppCommand::SaveTextDocumentTo { path }, ctx);
+                if let Some(pending) = self.overlays.pending_document_close_after_save_as.take() {
+                    if self.state.document_close_consequence(pending.tab).is_none() {
+                        self.state.dispatch(AppCommand::CloseTab(pending.tab), ctx);
+                        self.continue_document_close(pending.then, ctx);
+                    } else {
+                        self.cancel_active_editor_close_after_save();
+                    }
+                } else if self.active_editor_still_dirty() {
+                    self.cancel_active_editor_close_after_save();
+                }
             }
-            Some(crate::save_as::SaveAsOutcome::Cancelled) => self.close_save_as_picker(ctx),
+            Some(crate::save_as::SaveAsOutcome::Cancelled) => {
+                self.overlays.pending_document_close_after_save_as = None;
+                self.cancel_active_editor_close_after_save();
+                self.close_save_as_picker(ctx);
+            }
             Some(crate::save_as::SaveAsOutcome::Pending) | None => {}
         }
     }
@@ -5233,8 +5312,10 @@ impl FesTermApp {
         let paste_was_pending = self.overlays.pending_paste.is_some();
         let mut deferred_pastes = Vec::new();
         let mut clipboard_read_requested = false;
+        let mut deferred_find_request = false;
         let mut deferred_links = Vec::new();
         let mut deferred_terminal_path_open = None;
+        let mut deferred_history_actions = Vec::new();
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
@@ -5381,6 +5462,7 @@ impl FesTermApp {
                             defer_paste_to_application: true,
                             scroll_speed_multiplier,
                             context_menu_action: session.terminal_context_menu_action(),
+                            history_snapshot_actions: true,
                         };
                         session.view.show_with_options(
                             ui,
@@ -5393,10 +5475,12 @@ impl FesTermApp {
                         }
                         deferred_pastes = session.view.take_paste_requests();
                         clipboard_read_requested = session.view.take_clipboard_read_request();
+                        deferred_find_request = session.view.take_find_request();
                         deferred_links = session.view.take_link_requests();
                         if session.view.take_context_action_request() {
                             deferred_terminal_path_open = Some(active_tab_id);
                         }
+                        deferred_history_actions = session.view.take_history_actions();
                     }
                     session
                         .controller
@@ -5440,6 +5524,12 @@ impl FesTermApp {
         // in order above, and explicit terminal reads have identified replies.
         if clipboard_read_requested && terminal_input_target == Some(active_tab_id) {
             self.paste_into_active_session(ui.ctx());
+        }
+        if deferred_find_request {
+            self.open_terminal_search(ui.ctx());
+        }
+        for action in deferred_history_actions {
+            self.dispatch_terminal_history_action(action, ui.ctx());
         }
         for link in deferred_links {
             self.request_external_link(link.as_ref(), ui.ctx());
@@ -5745,6 +5835,12 @@ impl FesTermApp {
         if let Some(notice) = self.state.take_open_refusal_notice() {
             self.overlays.open_refusal = Some(notice);
             self.overlays.open_refusal_focused = false;
+        }
+        if let Some(refusal) = self.state.take_history_snapshot_refusal() {
+            self.overlays.transient_notice = Some((
+                format!("Cannot snapshot terminal history. {}", refusal.detail()),
+                Instant::now() + Duration::from_secs(5),
+            ));
         }
         self.show_open_refusal_notice(ui.ctx(), confirmation_escape);
 
@@ -7597,7 +7693,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -7921,6 +8017,21 @@ mod tests {
             .filter_map(|node| node.accesskit_node().label())
             .find(|label| label.ends_with("chip"))
             .unwrap_or_else(|| panic!("no chip for {file}"))
+    }
+
+    fn active_document_text(app: &FesTermApp) -> String {
+        let document = app
+            .state
+            .active_document()
+            .expect("an editor must be active");
+        let documents = app.state.documents().clone();
+        let registry = documents.borrow();
+        registry
+            .get(document)
+            .expect("active document stays open")
+            .text()
+            .text()
+            .to_owned()
     }
 
     #[test]
@@ -8447,7 +8558,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8568,7 +8679,7 @@ mod tests {
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::Escape);
         harness.step();
@@ -8665,6 +8776,222 @@ mod tests {
         const FIND_IN_TERMINAL: u64 = 15;
         app.dispatch_palette_selection(FIND_IN_TERMINAL, &context);
         assert!(app.state.session_tab_mut(tab).unwrap().search.is_open());
+    }
+
+    #[test]
+    fn open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot() {
+        let context = egui::Context::default();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        {
+            let session = app.state.session_tab_mut(tab).unwrap();
+            session.terminal.ingest("alpha\r\nbeta".as_bytes());
+        }
+
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
+        let expected = app
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .terminal
+            .text_snapshot()
+            .text()
+            .to_owned();
+        app.dispatch_palette_selection(OPEN_TERMINAL_HISTORY_IN_EDITOR, &context);
+
+        assert!(matches!(
+            app.state.active_tab().content,
+            TabContent::TextEditor(_)
+        ));
+        assert_eq!(active_document_text(&app), expected);
+        assert!(
+            transport.sent().is_empty(),
+            "opening a snapshot must not write to the live terminal"
+        );
+
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest(b"\r\ngamma");
+        assert_eq!(
+            active_document_text(&app),
+            expected,
+            "later terminal output must not mutate the frozen snapshot"
+        );
+    }
+
+    #[test]
+    fn save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest("alpha\r\nbeta".as_bytes());
+
+        const SAVE_TERMINAL_HISTORY_AS: u64 = 24;
+        app.dispatch_palette_selection(SAVE_TERMINAL_HISTORY_AS, &context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::TextEditor(_)
+        ));
+        assert!(harness.state().overlays.save_as_picker.is_some());
+        let document = harness
+            .state()
+            .state
+            .active_document()
+            .expect("snapshot editor is active");
+        let documents = harness.state().state.documents().clone();
+        let registry = documents.borrow();
+        let open = registry.get(document).unwrap();
+        assert!(matches!(
+            open.origin(),
+            festerm_document::DocumentOrigin::Untitled(_)
+        ));
+        assert!(open.text().is_dirty());
+    }
+
+    #[test]
+    fn oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest(&vec![b'x'; 65 * 1024 + 1]);
+
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
+        app.dispatch_palette_selection(OPEN_TERMINAL_HISTORY_IN_EDITOR, &context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.step();
+
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+        assert_eq!(harness.state().state.tabs().len(), 1);
+        assert_eq!(harness.state().state.documents().borrow().len(), 0);
+        assert!(harness.state().overlays.save_as_picker.is_none());
+        let notice = harness
+            .state()
+            .overlays
+            .transient_notice
+            .as_ref()
+            .expect("the refusal must be surfaced")
+            .0
+            .clone();
+        assert!(notice.starts_with("Cannot snapshot terminal history."));
+        assert!(notice.contains("64 KB editor limit"));
+    }
+
+    #[test]
+    fn saving_an_untitled_snapshot_from_dirty_close_continues_through_save_as() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        let directory = smoke_artifact_directory("snapshot-close-save");
+        app.overlays.save_as_directory = Some(directory.clone());
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest("alpha\r\nbeta".as_bytes());
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
+        app.dispatch_palette_selection(OPEN_TERMINAL_HISTORY_IN_EDITOR, &context);
+        let snapshot_tab = app.state.active();
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness
+            .state_mut()
+            .request_close_tab(snapshot_tab, &context);
+        harness.run();
+        harness
+            .query_all_by_label("Save")
+            .find(|save| save.is_focused())
+            .expect("the dirty-close Save action should be focused")
+            .click();
+        harness.run();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .pending_document_close_after_save_as
+            .is_some());
+        assert!(harness.state().overlays.save_as_picker.is_some());
+
+        harness
+            .query_all_by_label("Save")
+            .last()
+            .expect("the Save As sheet should expose a Save action")
+            .click();
+        harness.run();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .pending_document_close_after_save_as
+            .is_none());
+        assert!(harness.state().overlays.save_as_picker.is_none());
+        assert_eq!(harness.state().state.active(), tab);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+
+        let entries: Vec<_> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(entries.len(), 1, "the snapshot should be written once");
+        assert_eq!(fs::read_to_string(&entries[0]).unwrap(), "alpha\nbeta");
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn disconnected_terminal_history_can_still_open_in_editor() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        {
+            let session = app.state.session_tab_mut(tab).unwrap();
+            session.terminal.ingest("retained\r\nhistory".as_bytes());
+            session.controller.set_lifecycle_for_test(
+                festerm_session::SessionLifecycle::Disconnected(
+                    festerm_session::SessionError::new(
+                        festerm_session::SessionErrorKind::Output,
+                        "link dropped",
+                    ),
+                ),
+            );
+        }
+
+        app.state
+            .dispatch(AppCommand::OpenTerminalHistoryInEditor, &context);
+
+        assert!(matches!(
+            app.state.active_tab().content,
+            TabContent::TextEditor(_)
+        ));
+        assert!(active_document_text(&app).contains("retained"));
+        assert!(active_document_text(&app).contains("history"));
     }
 
     fn sample_port_forwards() -> Vec<SshPortForwardRuntime> {

@@ -28,7 +28,10 @@ use festerm_config::{
     SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
     TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
-use festerm_core::{Dimensions, Terminal};
+use festerm_core::{
+    Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
+    TerminalTextSnapshotScreen,
+};
 use festerm_document::{DocumentId, RemoteOrigin, SaveOutcome, TextDocument};
 use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{
@@ -70,6 +73,8 @@ use crate::terminal_paths::{
     TerminalPathOpenRequest, TerminalPathWorkerResult,
 };
 use crate::text_editor::TextEditorTab;
+
+const TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX: &str = "terminal-history";
 
 /// Stable application-level tab identifier.
 ///
@@ -612,6 +617,25 @@ fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
         "{} · {}",
         persistence.provider_label, persistence.session_name
     ))
+}
+
+fn terminal_history_snapshot_label(
+    session_label: &str,
+    screen: TerminalTextSnapshotScreen,
+    retained_history_was_evicted: bool,
+) -> String {
+    let screen = match screen {
+        TerminalTextSnapshotScreen::Primary => "current primary screen",
+        TerminalTextSnapshotScreen::Alternate => "current alternate screen",
+    };
+    let truncated = if retained_history_was_evicted {
+        " · older retained history was already discarded"
+    } else {
+        ""
+    };
+    format!(
+        "{session_label} · terminal history snapshot · retained primary history and {screen}{truncated}"
+    )
 }
 
 /// A restored SSH workspace surface that deliberately has no live session.
@@ -1843,6 +1867,12 @@ pub enum AppCommand {
     OpenTextEditor {
         path: PathBuf,
     },
+    /// Freezes the active terminal's retained text into a new independent
+    /// editor snapshot.
+    OpenTerminalHistoryInEditor,
+    /// Opens a new independent terminal snapshot and immediately asks where
+    /// to save it.
+    SaveTerminalHistoryAs,
     /// Writes the active editor's document back to its origin.
     SaveTextDocument,
     /// Asks for a destination. The picker is an application overlay, so this
@@ -2302,6 +2332,9 @@ pub struct AppState {
     /// application overlay rather than tab state, so the application takes
     /// this each frame and opens it.
     save_as_requested: bool,
+    /// A history snapshot that was honestly refused before an editor buffer
+    /// was allocated. Drained by the composition root into a transient notice.
+    history_snapshot_refusal: Option<TerminalTextSnapshotRefusal>,
     /// The last file that could not be opened, waiting to be shown to the
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
@@ -2380,6 +2413,7 @@ impl AppState {
             pending_profile_edit: None,
             window_open_requested: false,
             save_as_requested: false,
+            history_snapshot_refusal: None,
             open_refusal: None,
             pending_open_refusal_notice: None,
             pending_terminal_path_opens: Vec::new(),
@@ -3124,6 +3158,8 @@ impl AppState {
                     self.open_refusal = Some((path, failure));
                 }
             }
+            AppCommand::OpenTerminalHistoryInEditor => self.open_terminal_history_snapshot(false),
+            AppCommand::SaveTerminalHistoryAs => self.open_terminal_history_snapshot(true),
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
             AppCommand::SaveTextDocument => self.save_active_text_document(),
             AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
@@ -3539,6 +3575,13 @@ impl AppState {
         registry.save(document)
     }
 
+    pub(crate) fn document_requires_save_as(&self, document: DocumentId) -> bool {
+        self.documents
+            .borrow()
+            .get(document)
+            .is_some_and(crate::documents::OpenDocument::requires_save_as)
+    }
+
     fn with_active_document(&mut self, action: impl FnOnce(&mut DocumentRegistry, DocumentId)) {
         let Some(id) = self.active_document() else {
             return;
@@ -3549,9 +3592,14 @@ impl AppState {
     }
 
     fn save_active_text_document(&mut self) {
-        self.with_active_document(|registry, id| {
-            registry.save(id);
-        });
+        let Some(document) = self.active_document() else {
+            return;
+        };
+        if self.document_requires_save_as(document) {
+            self.save_as_requested = true;
+            return;
+        }
+        self.documents.borrow_mut().save(document);
     }
 
     /// Writes the active editor's text to `path` and moves that view onto the
@@ -3616,6 +3664,39 @@ impl AppState {
         }
     }
 
+    fn open_terminal_history_snapshot(&mut self, save_as: bool) {
+        let Some((snapshot, label)) = self.active_terminal_history_snapshot() else {
+            return;
+        };
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(refusal) => {
+                self.history_snapshot_refusal = Some(refusal);
+                return;
+            }
+        };
+        let document = self.documents.borrow_mut().create_untitled(
+            TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX,
+            &label,
+            snapshot.text().as_bytes(),
+        );
+        let id = TabId::next();
+        let editor = TextEditorTab::with_options(
+            document,
+            &self.documents,
+            crate::text_editor::EditorViewOptions::from_settings(self.editor),
+        );
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::TextEditor(Box::new(editor)),
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
+        if save_as {
+            self.save_as_requested = true;
+        }
+    }
+
     /// Opens a second view of the document the active editor holds. One
     /// document may have many views (ADR 0034 §1); this is the way to ask for
     /// one, now that Markdown previews in the tab it belongs to rather than
@@ -3637,6 +3718,34 @@ impl AppState {
         });
         self.set_active(id);
         self.workspace_dirty = true;
+    }
+
+    fn active_terminal_history_snapshot(
+        &self,
+    ) -> Option<(
+        Result<TerminalTextSnapshot, TerminalTextSnapshotRefusal>,
+        String,
+    )> {
+        let TabContent::Session(session) = &self.active_tab().content else {
+            return None;
+        };
+        let bounds = self.documents.borrow().bounds();
+        let screen = if session.terminal.modes().alternate_screen() {
+            TerminalTextSnapshotScreen::Alternate
+        } else {
+            TerminalTextSnapshotScreen::Primary
+        };
+        let snapshot = session.terminal.bounded_text_snapshot(
+            bounds.max_bytes(),
+            bounds.max_lines(),
+            bounds.max_line_bytes(),
+        );
+        let label = terminal_history_snapshot_label(
+            &session.label,
+            screen,
+            session.terminal.scrollback_stats().evicted_lines() > 0,
+        );
+        Some((snapshot, label))
     }
 
     /// Opens a local Markdown file. It goes to the editor like every other
@@ -3904,6 +4013,10 @@ impl AppState {
     /// Whether a Save As destination has been asked for since the last frame.
     pub fn take_save_as_request(&mut self) -> bool {
         std::mem::take(&mut self.save_as_requested)
+    }
+
+    pub fn take_history_snapshot_refusal(&mut self) -> Option<TerminalTextSnapshotRefusal> {
+        self.history_snapshot_refusal.take()
     }
 
     pub fn take_window_open_request(&mut self) -> bool {

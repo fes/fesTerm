@@ -71,6 +71,19 @@ fuzzer now share a frame-by-frame CSI/DCS/OSC oracle, with mixed-reply and
 queue-overflow regressions. Valid concatenated replies pass; truncated frames
 anywhere in the stream still fail.
 
+## Freezing terminal history without lying about size
+
+Terminal history snapshots now follow the same rule as ordinary editor files:
+if the retained text would exceed the editor's declared byte, line, or
+single-line limits, fesTerm refuses before allocating an editor buffer instead
+of widening the limits or silently truncating the export. When the retained
+text does fit, the snapshot opens as an untitled dirty document that uses the
+ordinary Save As flow until it is bound to a real path; plain Save and `:w` /
+`:wq` follow that same path, and Auto-save stays unavailable until there is a
+destination to write to. The snapshot remains an immutable freeze of retained
+primary history plus the applicable visible screen even while live terminal
+output continues.
+
 ## Answering honestly, and stopping where the line does (v0.5.0)
 
 Two changes, both about fesTerm telling programs inside it the truth.

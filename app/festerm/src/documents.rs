@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use festerm_document::{
     AutoSaveControl, Availability, DocumentBounds, DocumentId, DocumentKey, DocumentOrigin,
     DocumentStatus, LocalOrigin, OriginError, SaveError, SaveOutcome, SaveProgress, StatusInputs,
-    TextDocument, UnavailableReason,
+    TextDocument, UnavailableReason, UntitledOrigin,
 };
 
 use festerm_syntax::{DocumentSyntax, SyntaxStatus};
@@ -133,8 +133,13 @@ impl OpenDocument {
             auto_save_requested: self.auto_save_requested,
             last_error: self.last_error.clone(),
             remote: self.origin.is_remote(),
+            has_save_target: !matches!(self.origin, DocumentOrigin::Untitled(_)),
             recently_reloaded: self.reloaded.is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
         })
+    }
+
+    pub(crate) const fn requires_save_as(&self) -> bool {
+        matches!(self.origin, DocumentOrigin::Untitled(_))
     }
 
     /// The spans covering `range`, reparsing only if the text has moved on.
@@ -326,6 +331,29 @@ impl DocumentRegistry {
         }
     }
 
+    /// Adds a new untitled document whose bytes are already in memory.
+    ///
+    /// The bounds grow to fit the snapshot being adopted so an export can open
+    /// whatever bounded history the terminal retained without relaxing the
+    /// ordinary file-on-disk editor limits for unrelated documents.
+    pub(crate) fn create_untitled(
+        &mut self,
+        name_prefix: &str,
+        qualified_label: &str,
+        bytes: &[u8],
+    ) -> DocumentId {
+        let next = self.next_id + 1;
+        let key = format!("{name_prefix}-{next}");
+        let file_name = format!("{name_prefix}-{next}.txt");
+        let origin = UntitledOrigin::new(key, file_name, qualified_label)
+            .expect("generated untitled origins are valid");
+        let mut text = TextDocument::from_bytes(bytes, self.bounds)
+            .expect("untitled snapshots are preflighted against editor bounds");
+        text.replace(0..0, "")
+            .expect("a zero-delta untitled transaction preserves the snapshot");
+        self.insert(DocumentOrigin::from(origin), text, None, false)
+    }
+
     /// Records one fewer view. The document is forgotten when the last view
     /// goes, which is also when a watcher would be released.
     ///
@@ -379,6 +407,10 @@ impl DocumentRegistry {
         self.documents.is_empty()
     }
 
+    pub(crate) const fn bounds(&self) -> DocumentBounds {
+        self.bounds
+    }
+
     /// Writes a local document back to its origin, revalidating first.
     ///
     /// A conflict is not an error the user has to interpret: the source's text
@@ -388,6 +420,14 @@ impl DocumentRegistry {
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
         let DocumentOrigin::Local(origin) = &document.origin else {
+            if matches!(document.origin, DocumentOrigin::Untitled(_)) {
+                let error = SaveError::new(
+                    "Choose a destination first",
+                    "This snapshot is not on disk yet. Use Save As to choose where to write it.",
+                );
+                document.last_error = Some(error.clone());
+                return Some(SaveOutcome::Failed(error));
+            }
             // Remote saves travel through the SFTP worker and complete
             // asynchronously; they do not run on this path.
             return None;
@@ -462,17 +502,11 @@ impl DocumentRegistry {
 
         let generation = match document_store::save(path, &bytes, None) {
             Ok(generation) => generation,
-            Err(SaveFailure::Gone) => {
-                return Some((SaveOutcome::Unavailable(UnavailableReason::Missing), None));
-            }
-            Err(SaveFailure::PermissionDenied) => {
-                return Some((
-                    SaveOutcome::Unavailable(UnavailableReason::PermissionDenied),
-                    None,
-                ));
-            }
             Err(failure) => {
                 let error = SaveError::new(failure.headline(), failure.detail());
+                if let Some(document) = self.documents.get_mut(&id) {
+                    document.last_error = Some(error.clone());
+                }
                 return Some((SaveOutcome::Failed(error), None));
             }
         };
@@ -717,6 +751,7 @@ fn conflict_for(path: &Path, bounds: DocumentBounds) -> festerm_document::Confli
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Instant;
 
     use festerm_document::Severity;
 
@@ -961,6 +996,97 @@ mod tests {
             registry.get(existing).unwrap().text().text(),
             "alpha\nbeta\n",
             "and the document already open on it has to show what is now there"
+        );
+    }
+
+    #[test]
+    fn create_untitled_snapshot_starts_dirty_and_saveable() {
+        let mut registry = DocumentRegistry::new();
+
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\nbeta",
+        );
+
+        let document = registry.get(id).unwrap();
+        assert!(matches!(
+            document.origin(),
+            DocumentOrigin::Untitled(origin)
+                if origin.file_name() == "terminal-history-1.txt"
+                    && origin.qualified_label()
+                        == "Local Shell · terminal history snapshot"
+        ));
+        assert_eq!(document.text().text(), "alpha\nbeta");
+        assert!(document.text().is_dirty());
+        assert!(document.status().can_save());
+        assert!(document.status().can_save_as());
+        assert_eq!(document.status().auto_save(), AutoSaveControl::Unavailable);
+    }
+
+    #[test]
+    fn untitled_save_as_failure_preserves_the_snapshot_and_reports_the_error() {
+        let directory = TemporaryDirectory::new("untitled-save-error");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\n",
+        );
+
+        let (outcome, moved) = registry.save_as(id, directory.path.as_path()).unwrap();
+        let error = match outcome {
+            SaveOutcome::Failed(error) => error,
+            other => panic!("expected save failure, got {other:?}"),
+        };
+
+        assert_eq!(moved, None);
+        let document = registry.get(id).unwrap();
+        assert!(matches!(document.origin(), DocumentOrigin::Untitled(_)));
+        assert_eq!(document.text().text(), "alpha\n");
+        assert!(document.text().is_dirty());
+        assert_eq!(document.status().detail(), error.detail());
+    }
+
+    #[test]
+    fn saving_an_untitled_snapshot_requires_save_as_instead_of_succeeding_silently() {
+        let mut registry = DocumentRegistry::new();
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\n",
+        );
+
+        let outcome = registry.save(id).unwrap();
+
+        let error = match outcome {
+            SaveOutcome::Failed(error) => error,
+            other => panic!("expected save failure, got {other:?}"),
+        };
+        assert_eq!(error.headline(), "Choose a destination first");
+        assert_eq!(
+            error.detail(),
+            "This snapshot is not on disk yet. Use Save As to choose where to write it."
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn untitled_snapshots_never_enter_auto_save() {
+        let mut registry = DocumentRegistry::new();
+        let id = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"alpha\n",
+        );
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let start = Instant::now();
+
+        assert!(!registry.get(id).unwrap().auto_save_should_write());
+        assert!(registry.auto_save(start + AUTO_SAVE_IDLE * 4).is_empty());
+        assert_eq!(
+            registry.get(id).unwrap().status().auto_save(),
+            AutoSaveControl::Unavailable
         );
     }
 

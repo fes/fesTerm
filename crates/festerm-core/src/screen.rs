@@ -206,6 +206,11 @@ impl Screen {
             .map_or(0, |row| row + 1)
     }
 
+    pub(crate) fn occupied_row_cells(&self, row: usize) -> &[Cell] {
+        let start = self.physical_row_start(row);
+        &self.cells[start..start + self.occupied_columns[self.physical_row(row)]]
+    }
+
     /// Extracts every row as content trimmed to its occupied extent (no
     /// trailing padding), paired with whether it soft-wraps into the next
     /// row. Mirrors the extraction `scroll_up` performs when a row leaves
