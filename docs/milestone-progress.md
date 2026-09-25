@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Keeping scheduled evidence independent of user defaults
+
+The scheduled suites exposed four automation problems that ordinary CI did
+not exercise. Installing nightly Rust did not override the repository's stable
+toolchain, so fuzzing stopped before running a single input. Linux attempted
+to download packages using stale indexes. A Windows native assertion still
+looked for a bare helper after staging had deliberately moved each release
+into its own directory with its ConPTY sidecar.
+
+The less obvious failure was a six-hour macOS emoji smoke. Workspace restore
+had become the default, so the preceding window smoke could leave a saved
+Launcher for the next invocation. Restoring that workspace took precedence
+over creating the smoke fixture, and without a primary smoke tab the driver
+never ran its own timeout. Smoke startup now owns its controlled session
+independently of saved workspaces and leaves user workspace persistence alone.
+The workflow isolates each GUI invocation, bounds it independently of the UI
+event loop, and preserves result files on failure or cancellation. These are
+repairs to evidence collection, not a reason to retry failures until green
+or to claim the remaining native/manual acceptance work is complete.
+
 ## Answering honestly, and stopping where the line does (v0.5.0)
 
 Two changes, both about fesTerm telling programs inside it the truth.

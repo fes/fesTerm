@@ -731,13 +731,26 @@ impl FesTermApp {
         configuration_status: ConfigurationStartupStatus,
         secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
     ) -> Self {
-        // Workspace restoration is an explicit opt-in
-        // (`docs/gui-design.md` "Workspace restore"), off by default: any
-        // saved tab list is ignored - and dropped from the in-memory
-        // configuration outright, so it can't resurface later just because
-        // an unrelated settings change gets saved - whenever the preference
-        // reads false, regardless of what a previous run (or an earlier
-        // version of fesTerm, before this preference existed) left on disk.
+        Self::with_configuration_status_and_secret_store_and_native_smoke(
+            context,
+            configuration,
+            configuration_status,
+            secret_store,
+            NativeWindowSmoke::from_environment(),
+        )
+    }
+
+    fn with_configuration_status_and_secret_store_and_native_smoke(
+        context: &egui::Context,
+        configuration: Configuration,
+        configuration_status: ConfigurationStartupStatus,
+        secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
+        native_smoke: Option<NativeWindowSmoke>,
+    ) -> Self {
+        // Workspace restoration follows the current user preference. When it
+        // is off, any saved tab list is ignored - and dropped from the
+        // in-memory configuration outright, so it cannot resurface later
+        // through an unrelated settings save.
         let configuration = if configuration.interface_settings().restore_workspace() {
             configuration
         } else {
@@ -761,7 +774,6 @@ impl FesTermApp {
         // commands. Letting egui also process them at end-of-frame would scale
         // application chrome and violate the documented zoom boundary.
         context.options_mut(|options| options.zoom_with_keyboard = false);
-        let native_smoke = NativeWindowSmoke::from_environment();
         let about_icon = load_application_icon(context);
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
@@ -780,7 +792,16 @@ impl FesTermApp {
                 .update_check()
                 .and_then(|record| record.acknowledged_version().map(str::to_owned)),
         );
-        let (state, primary_tab) = if let Some(workspace) = configuration.workspace().cloned() {
+        let (state, primary_tab) = if let Some(smoke_profile) = smoke_profile {
+            // Native smoke is an explicit opt-in deterministic startup mode.
+            // It always drives the repository-owned child instead of letting
+            // any previously saved workspace replace that fixture, and it
+            // deliberately suppresses restored secondary windows so smoke
+            // runs stay isolated from the user's real workspace.
+            let (state, primary_tab) =
+                AppState::with_primary_session(context, Some(smoke_profile), configuration);
+            (state, Some(primary_tab))
+        } else if let Some(workspace) = configuration.workspace().cloned() {
             // The saved workspace's own tabs are this, the primary, window;
             // its additional windows are opened by the composition root once
             // this one exists (ADR 0033).
@@ -792,10 +813,6 @@ impl FesTermApp {
                 AppState::with_restored_workspace(context, configuration, &workspace),
                 None,
             )
-        } else if smoke_profile.is_some() {
-            let (state, primary_tab) =
-                AppState::with_primary_session(context, smoke_profile, configuration);
-            (state, Some(primary_tab))
         } else {
             (AppState::with_launcher(configuration), None)
         };
@@ -1341,7 +1358,7 @@ impl FesTermApp {
         additional_windows: Vec<festerm_config::WorkspaceWindow>,
         next_identifier: &mut usize,
     ) {
-        if self.role == WindowRole::Secondary {
+        if self.role == WindowRole::Secondary || self.native_smoke.is_some() {
             // Every window contributes its tabs, but exactly one write
             // happens, through the same choke point as every other
             // configuration write (ADR 0015).
@@ -1433,9 +1450,13 @@ impl FesTermApp {
     /// and ignores the request when workspace restore is off, exactly as it
     /// does for a tab change.
     fn save_pending_geometry(&mut self) {
-        if self.pending_geometry_save.take().is_some() {
+        if self.pending_geometry_save.take().is_some() && self.workspace_autosave_enabled() {
             self.workspace_save_requested = true;
         }
+    }
+
+    fn workspace_autosave_enabled(&self) -> bool {
+        self.native_smoke.is_none() && self.state.restore_workspace()
     }
 
     /// This window's last reported size, used to size a window detached from
@@ -4976,17 +4997,30 @@ impl FesTermApp {
 
     fn drive_native_smoke(&mut self, context: &egui::Context) {
         if let Some(smoke) = self.native_smoke.as_mut() {
-            if let Some(primary_tab) = self.primary_tab {
-                if let Some(primary) = self.state.session_tab_mut(primary_tab) {
-                    let color_emoji_paints = primary.view.diagnostics().color_emoji_paints;
-                    smoke.drive(
-                        context,
-                        &mut primary.terminal,
-                        &mut primary.controller,
-                        color_emoji_paints,
-                    );
-                }
+            if smoke.finish_if_timed_out(context) {
+                return;
             }
+            let Some(primary_tab) = self.primary_tab else {
+                smoke.fail_startup(
+                    context,
+                    "native smoke primary tab was not created; startup did not select the controlled smoke fixture",
+                );
+                return;
+            };
+            let Some(primary) = self.state.session_tab_mut(primary_tab) else {
+                smoke.fail_startup(
+                    context,
+                    "native smoke primary session is unavailable; smoke driver cannot attach to the controlled fixture",
+                );
+                return;
+            };
+            let color_emoji_paints = primary.view.diagnostics().color_emoji_paints;
+            smoke.drive(
+                context,
+                &mut primary.terminal,
+                &mut primary.controller,
+                color_emoji_paints,
+            );
         }
     }
 
@@ -5679,13 +5713,10 @@ impl FesTermApp {
         self.show_transient_notice(ui.ctx());
 
         // Autosave the workspace exactly once per frame that actually
-        // changed it, but only when the user has explicitly opted into
-        // workspace restore (`docs/gui-design.md` "Workspace restore" -
-        // unlike chip-layout/status-bar preferences, tab contents are not
-        // meant to persist implicitly). `take_workspace_dirty` still runs
-        // every frame regardless, so the flag never piles up while the
-        // preference is off.
-        if self.state.take_workspace_dirty() && self.state.restore_workspace() {
+        // changed it, but only when workspace restore is currently enabled.
+        // `take_workspace_dirty` still runs every frame regardless, so the
+        // flag never piles up while autosave is intentionally inactive.
+        if self.state.take_workspace_dirty() && self.workspace_autosave_enabled() {
             // One workspace covers every window (ADR 0033), so the window
             // that changed only reports it; the composition root gathers the
             // other windows' tabs and performs the single write.
@@ -5901,7 +5932,7 @@ impl FesTermApp {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, thread, time::Duration};
+    use std::{fs, path::PathBuf, thread, time::Duration};
 
     use super::*;
     use crate::overlay_state::{CloseConsequence, QuitConfirmationPurpose};
@@ -5909,6 +5940,24 @@ mod tests {
         kittest::{NodeT, Queryable},
         Harness, SnapshotOptions,
     };
+
+    fn smoke_artifact_directory(name: &str) -> PathBuf {
+        let directory = std::env::current_dir()
+            .unwrap()
+            .join(format!(".festerm-app-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    fn viewport_close_count(output: &egui::FullOutput) -> usize {
+        output
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .filter(|command| matches!(command, egui::ViewportCommand::Close))
+            .count()
+    }
 
     fn keyboard_harness() -> (
         Harness<'static, FesTermApp>,
@@ -7614,6 +7663,66 @@ mod tests {
         app.evaluate_close_request(&context);
 
         assert!(app.overlays.pending_quit.is_none());
+    }
+
+    #[test]
+    fn native_smoke_missing_primary_tab_fails_explicitly_and_closes() {
+        let directory = smoke_artifact_directory("native-smoke-missing-primary");
+        let result_path = directory.join("result.txt");
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.native_smoke = Some(NativeWindowSmoke::running_for_test(result_path.clone()));
+
+        let mut output = context.run_ui(egui::RawInput::default(), |context| {
+            app.drive_native_smoke(context);
+        });
+
+        assert_eq!(viewport_close_count(&output), 1);
+        assert_eq!(
+            fs::read_to_string(&result_path).unwrap(),
+            "status=fail\ndetail=native smoke primary tab was not created; startup did not select the controlled smoke fixture\n"
+        );
+
+        output.textures_delta.clear();
+        let mut repeated_output = context.run_ui(egui::RawInput::default(), |context| {
+            app.drive_native_smoke(context);
+        });
+        assert_eq!(
+            viewport_close_count(&repeated_output),
+            0,
+            "finished smoke must not request a second close"
+        );
+        assert_eq!(
+            fs::read_to_string(&result_path).unwrap(),
+            "status=fail\ndetail=native smoke primary tab was not created; startup did not select the controlled smoke fixture\n"
+        );
+
+        repeated_output.textures_delta.clear();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_smoke_timeout_still_fails_and_closes_when_primary_tab_is_missing() {
+        let directory = smoke_artifact_directory("native-smoke-timeout-without-primary");
+        let result_path = directory.join("result.txt");
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.native_smoke = Some(NativeWindowSmoke::timed_out_for_test(result_path.clone()));
+
+        let mut output = context.run_ui(egui::RawInput::default(), |context| {
+            app.drive_native_smoke(context);
+        });
+
+        assert_eq!(viewport_close_count(&output), 1);
+        let result = fs::read_to_string(&result_path).unwrap();
+        assert!(result.starts_with("status=fail\n"));
+        assert!(
+            result.contains("detail=timeout while in AwaitInitialOutput; focus=false"),
+            "unexpected timeout result: {result}"
+        );
+
+        output.textures_delta.clear();
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -10435,15 +10544,7 @@ mod tests {
             workspace,
         )
         .expect("configuration is valid")
-        // Workspace restore is off by default; this test exercises the
-        // restore path, so it must opt in explicitly.
-        .with_interface_settings(InterfaceSettings::new(
-            festerm_config::ChipLayoutPreference::SingleRowScroll,
-            true,
-            true,
-            true,
-            true,
-        ))
+        .with_interface_settings(InterfaceSettings::DEFAULT)
         .expect("configuration with restore_workspace enabled is valid");
 
         let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
@@ -10482,13 +10583,7 @@ mod tests {
             workspace,
         )
         .expect("configuration is valid")
-        .with_interface_settings(InterfaceSettings::new(
-            festerm_config::ChipLayoutPreference::SingleRowScroll,
-            true,
-            true,
-            true,
-            true,
-        ))
+        .with_interface_settings(InterfaceSettings::DEFAULT)
         .expect("configuration with restore_workspace enabled is valid");
 
         let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
@@ -10510,6 +10605,49 @@ mod tests {
             app.state.active_tab().content,
             TabContent::Launcher
         ));
+    }
+
+    #[test]
+    fn native_smoke_startup_uses_the_controlled_fixture_instead_of_restoring_workspace() {
+        let workspace =
+            festerm_config::WorkspaceConfiguration::with_windows(
+                vec![festerm_config::WorkspaceTab::settings("settings")
+                    .expect("settings tab is valid")],
+                Some("settings".to_owned()),
+                vec![festerm_config::WorkspaceWindow::new(
+                    vec![festerm_config::WorkspaceTab::launcher("launcher")
+                        .expect("launcher tab is valid")],
+                    Some("launcher".to_owned()),
+                    None,
+                )],
+            )
+            .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(Vec::new(), workspace.clone())
+            .expect("configuration is valid")
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .expect("configuration with restore_workspace enabled is valid");
+        let context = egui::Context::default();
+        let mut app = FesTermApp::with_configuration_status_and_secret_store_and_native_smoke(
+            &context,
+            configuration,
+            ConfigurationStartupStatus::Loaded,
+            Ok(std::sync::Arc::new(MemorySecretStore::new())),
+            Some(NativeWindowSmoke::running_for_test(
+                std::env::current_dir()
+                    .unwrap()
+                    .join(".festerm-native-smoke-startup-result-unused"),
+            )),
+        );
+
+        assert_eq!(app.primary_tab, Some(app.state.active()));
+        assert_eq!(app.state.tabs().len(), 1);
+        assert!(app.take_restored_windows().is_empty());
+        assert!(app.state.restore_workspace());
+        assert_eq!(app.state.configuration().workspace(), Some(&workspace));
+        match &app.state.active_tab().content {
+            TabContent::Session(session) => assert_eq!(session.profile_identifier, None),
+            _ => panic!("native smoke must start its controlled session"),
+        }
     }
 
     #[test]
@@ -10566,13 +10704,7 @@ mod tests {
             .expect("workspace is valid");
         let configuration = Configuration::new_with_workspace(Vec::new(), workspace)
             .expect("configuration is valid")
-            .with_interface_settings(InterfaceSettings::new(
-                festerm_config::ChipLayoutPreference::SingleRowScroll,
-                true,
-                true,
-                true,
-                true,
-            ))
+            .with_interface_settings(InterfaceSettings::DEFAULT)
             .expect("configuration with restore_workspace enabled is valid");
         let mut app = FesTermApp::for_test_with_configuration(configuration);
         let directory = std::env::current_dir().unwrap().join(format!(
@@ -10595,6 +10727,55 @@ mod tests {
         let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
         assert!(!saved.workspace_enabled());
         assert!(saved.workspace().is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_smoke_does_not_request_or_write_workspace_persistence() {
+        let workspace =
+            festerm_config::WorkspaceConfiguration::new(
+                vec![festerm_config::WorkspaceTab::launcher("launcher")
+                    .expect("launcher tab is valid")],
+                Some("launcher".to_owned()),
+            )
+            .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(Vec::new(), workspace.clone())
+            .expect("configuration is valid")
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .expect("configuration with restore_workspace enabled is valid");
+        let directory = smoke_artifact_directory("native-smoke-workspace-persistence");
+        let path = directory.join("config.toml");
+        configuration.save_to_path(&path).unwrap();
+        let context = egui::Context::default();
+        let mut app = FesTermApp::with_configuration_status_and_secret_store_and_native_smoke(
+            &context,
+            configuration.clone(),
+            ConfigurationStartupStatus::Loaded,
+            Ok(std::sync::Arc::new(MemorySecretStore::new())),
+            Some(NativeWindowSmoke::running_for_test(
+                directory.join("result.txt"),
+            )),
+        );
+        app.set_reloader_for_test(ConfigurationReloader::from_path_for_test(path.clone()));
+
+        report_window_rect(
+            &context,
+            egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(900.0, 600.0)),
+        );
+        app.frame_logic(&context);
+        app.expire_geometry_debounce_for_test();
+        app.frame_logic(&context);
+
+        assert!(
+            !app.take_workspace_save_request(),
+            "native smoke must not ask the composition root to save a Launcher-only workspace"
+        );
+
+        app.save_workspace(Vec::new(), &mut 1);
+
+        let saved = Configuration::load_from_path(&path).unwrap();
+        assert_eq!(saved.workspace(), Some(&workspace));
+        assert_eq!(saved, configuration);
         fs::remove_dir_all(directory).unwrap();
     }
 

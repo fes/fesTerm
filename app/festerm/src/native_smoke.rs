@@ -96,6 +96,29 @@ impl NativeWindowSmoke {
         }
     }
 
+    #[cfg(test)]
+    pub fn running_for_test(result_path: PathBuf) -> Self {
+        let mut smoke = Self::finished_for_test();
+        smoke.result_path = result_path;
+        smoke.test_child_path = std::env::current_dir()
+            .expect("current working directory is available for tests")
+            .join(format!(
+                ".festerm-native-smoke-missing-test-child-{}",
+                std::process::id()
+            ));
+        smoke.started = Instant::now();
+        smoke.phase = Phase::AwaitInitialOutput;
+        smoke.phase_started = Instant::now();
+        smoke
+    }
+
+    #[cfg(test)]
+    pub fn timed_out_for_test(result_path: PathBuf) -> Self {
+        let mut smoke = Self::running_for_test(result_path);
+        smoke.started = Instant::now() - TIMEOUT - Duration::from_millis(1);
+        smoke
+    }
+
     pub fn from_environment() -> Option<Self> {
         let kind = match (
             std::env::var_os(SMOKE_ENV).is_some(),
@@ -189,15 +212,9 @@ impl NativeWindowSmoke {
         }
     }
 
-    pub fn drive<S: Session>(
-        &mut self,
-        context: &eframe::egui::Context,
-        terminal: &mut Terminal,
-        controller: &mut SessionController<S>,
-        color_emoji_paints: usize,
-    ) {
+    pub fn finish_if_timed_out(&mut self, context: &eframe::egui::Context) -> bool {
         if self.phase == Phase::Finished {
-            return;
+            return true;
         }
         if self.started.elapsed() > TIMEOUT {
             self.finish(
@@ -208,6 +225,25 @@ impl NativeWindowSmoke {
                     self.phase, self.focus_observed
                 ),
             );
+            return true;
+        }
+        false
+    }
+
+    pub fn fail_startup(&mut self, context: &eframe::egui::Context, detail: &str) {
+        if self.phase != Phase::Finished {
+            self.finish(context, "fail", detail);
+        }
+    }
+
+    pub fn drive<S: Session>(
+        &mut self,
+        context: &eframe::egui::Context,
+        terminal: &mut Terminal,
+        controller: &mut SessionController<S>,
+        color_emoji_paints: usize,
+    ) {
+        if self.finish_if_timed_out(context) {
             return;
         }
 

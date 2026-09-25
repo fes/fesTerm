@@ -37,22 +37,30 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       # cargo-fuzz needs a nightly toolchain: it builds the target with
-      # `-Z sanitizer=address`, which stable does not accept.
+      # `-Z sanitizer=address`, which stable does not accept. Explicitly select
+      # nightly below because rust-toolchain.toml overrides rustup's default.
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo +nightly install cargo-fuzz --locked
 
       - name: Seed the corpus from the capture fixtures
         run: ./scripts/seed-fuzz-corpus.sh
 
       - name: Fuzz
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+          FUZZ_DURATION: ${{ inputs.duration || '900' }}
         run: |
-          cargo fuzz run ${{ matrix.target }} \
-            -- -max_total_time=${{ github.event.inputs.duration || '900' }} \
+          if [[ ! "$FUZZ_DURATION" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::duration must be a positive number of seconds"
+            exit 1
+          fi
+          cargo +nightly fuzz run "$FUZZ_TARGET" \
+            -- "-max_total_time=$FUZZ_DURATION" \
                -max_len=8192 \
                -print_final_stats=1
 

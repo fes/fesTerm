@@ -95,6 +95,24 @@ PTY/session tests plus the opt-in `FESTERM_NATIVE_WINDOW_SMOKE=1` application
 flow. The latter writes a content-free `status=pass` or `status=fail` result
 file; the workflow treats a missing or non-passing result as a failure.
 
+### Isolation and deadlines
+
+Each native-window and native-emoji workflow step selects a separate temporary
+`FESTERM_CONFIG_PATH`. Smoke startup always selects its controlled PTY fixture,
+not a saved workspace, and must not save smoke state into an existing user
+workspace. This also protects local/VM optional runs that already have a
+configuration: enabling workspace restoration by default must not replace the
+fixture with a restored Launcher.
+
+The in-app smoke deadline is 20 seconds, including a missing smoke session.
+Each GUI workflow step also has an independent two-minute deadline, so an
+event-loop or startup stall cannot defeat the in-app deadline and consume the
+runner's six-hour limit. Jobs are bounded to 45 minutes including compilation.
+Failures and cancellations attempt to upload both content-free smoke result
+files alongside the existing native artifacts and any enabled daemon trace;
+runner loss or job-level cancellation can still prevent artifact collection.
+Neither deadline retries a failed smoke.
+
 ## Flaky failure policy
 
 **No silent retries.**
