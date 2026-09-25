@@ -23,6 +23,13 @@ event loop, and preserves result files on failure or cancellation. These are
 repairs to evidence collection, not a reason to retry failures until green
 or to claim the remaining native/manual acceptance work is complete.
 
+Once fuzzing could actually run, it exposed another assumption in the test
+oracle: a drain that began with a DCS reply was required to end with its string
+terminator, even when a complete CSI reply followed it. Property tests and the
+fuzzer now share a frame-by-frame CSI/DCS/OSC oracle, with mixed-reply and
+queue-overflow regressions. Valid concatenated replies pass; truncated frames
+anywhere in the stream still fail.
+
 ## Answering honestly, and stopping where the line does (v0.5.0)
 
 Two changes, both about fesTerm telling programs inside it the truth.

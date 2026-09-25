@@ -20,6 +20,9 @@ libfuzzer-sys = "0.4"
 [dependencies.festerm-core]
 path = "../crates/festerm-core"
 
+[dependencies.festerm-test-support]
+path = "../crates/festerm-test-support"
+
 [[bin]]
 name = "parser"
 path = "fuzz_targets/parser.rs"

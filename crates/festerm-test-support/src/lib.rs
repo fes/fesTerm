@@ -1,6 +1,7 @@
 //! Repository-owned golden-fixture support for terminal behavior.
 
 pub mod captures;
+pub mod replies;
 
 use std::{
     error::Error,
