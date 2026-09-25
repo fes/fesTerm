@@ -3185,7 +3185,6 @@ mod tests {
         client_io_loop(stream, generation, Vec::new(), input, output, stolen, None)
     }
 
-    #[cfg(unix)]
     fn read_recovery_terminal<S: Read>(stream: &mut S) -> Terminal {
         let mut header = [0u8; 12];
         stream.read_exact(&mut header).unwrap();
@@ -3197,7 +3196,6 @@ mod tests {
         bincode::deserialize(&payload).unwrap()
     }
 
-    #[cfg(unix)]
     fn acknowledge_recovery(writer: &mut impl Write) {
         write_client_frame(writer, CLIENT_FRAME_RECOVERY_ADOPTED, &[]).unwrap();
     }
@@ -4575,15 +4573,36 @@ mod tests {
                 now_ms()
             );
             let listener = create_secure_pipe_listener(&name, true).unwrap();
-            let _nonreading_client =
+            let mut client =
                 Pipe::connect(&name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
             let mut server = listener.accept(&AtomicBool::new(false)).unwrap();
-            server.write_all(b"unread output before takeover").unwrap();
+            client.set_read_timeout(Duration::from_secs(5));
+            client.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+            server.set_read_timeout(CLIENT_POLL_INTERVAL);
+            server.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+            let adoption = thread::spawn(move || {
+                read_recovery_terminal(&mut client);
+                acknowledge_recovery(&mut client);
+                client
+            });
             let (input, _commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
             let mut active = None;
             let mut retired = Vec::new();
             let terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
             replace_active(&mut active, &mut retired, server, &terminal, input, &mut 1).unwrap();
+            let mut nonreading_client = adoption.join().unwrap();
+            active
+                .as_ref()
+                .unwrap()
+                .output
+                .send(ClientOutput::Data(vec![b'x'; MAX_CLIENT_FRAME_BYTES]))
+                .unwrap();
+            // Reading only the frame header proves delivery started while
+            // leaving the entire output payload undrained during retirement.
+            let mut header = [0; 9];
+            nonreading_client.read_exact(&mut header).unwrap();
+            assert_eq!(&header[..4], b"FSO1");
+            assert_eq!(header[4], 1);
             retire_active(&mut active, &mut retired, true);
             assert!(wait_for_thread(&retired[0], WORKER_JOIN_TIMEOUT));
             reap_client_threads(&mut retired).unwrap();
