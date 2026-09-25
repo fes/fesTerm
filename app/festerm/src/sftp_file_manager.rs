@@ -7551,6 +7551,80 @@ mod tests {
         assert!(picker.pending_file.is_none());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn markdown_file_picker_parent_navigation_follows_the_symlink_target() {
+        let dir =
+            std::env::temp_dir().join(format!("festerm-picker-symlink-{}", std::process::id()));
+        fs::create_dir_all(dir.join("target/child")).unwrap();
+        let dir = fs::canonicalize(dir).unwrap();
+        std::os::unix::fs::symlink(dir.join("target/child"), dir.join("alias")).unwrap();
+        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        picker.entered_path = "alias/..".to_owned();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.current_directory(), Some(dir.join("target")));
+        assert_eq!(
+            breadcrumb_segments(&picker.pane.current_path)
+                .last()
+                .unwrap()
+                .label,
+            "target"
+        );
+        drop(picker);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn markdown_file_picker_path_focus_shortcut_and_cancel_own_pending_results() {
+        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 650.0))
+            .build_ui_state(
+                |ui, (picker, outcomes): &mut (MarkdownFilePicker, Vec<MarkdownPickerOutcome>)| {
+                    let outcome = picker.ui(ui);
+                    if !matches!(outcome, MarkdownPickerOutcome::Pending) {
+                        outcomes.push(outcome);
+                    }
+                },
+                (picker, Vec::new()),
+            );
+        harness.run();
+        harness.event(egui::Event::Key {
+            key: Key::L,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.run();
+        harness.event(egui::Event::Paste("focused.txt".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().0.entered_path, "focused.txt");
+        harness.state_mut().0.local_loader = LocalDirectoryLoader::paused_for_test();
+        harness.state_mut().0.submit_path();
+        let request_id = harness.state().0.pane.pending_request_id;
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().1.as_slice(),
+            [MarkdownPickerOutcome::Cancelled]
+        ));
+        harness
+            .state()
+            .0
+            .event_sender
+            .send(MarkdownPickerEvent::PathResolved {
+                request_id,
+                result: Ok((std::env::temp_dir().join("must-not-open.txt"), false)),
+            })
+            .unwrap();
+        harness.state_mut().0.poll();
+        assert!(harness.state().0.pending_file.is_none());
+    }
+
     #[test]
     fn markdown_file_picker_path_paste_and_enter_do_not_activate_the_selected_row() {
         let dir = std::env::temp_dir().join(format!("festerm-picker-paste-{}", std::process::id()));

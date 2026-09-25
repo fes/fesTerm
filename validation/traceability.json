@@ -1932,6 +1932,8 @@
         "markdown_file_picker_resolves_literal_paths_against_its_directory",
         "markdown_file_picker_typed_paths_open_files_navigate_folders_and_preserve_errors",
         "markdown_file_picker_stale_path_results_cannot_open_after_edit_or_navigation",
+        "markdown_file_picker_parent_navigation_follows_the_symlink_target",
+        "markdown_file_picker_path_focus_shortcut_and_cancel_own_pending_results",
         "markdown_file_picker_path_paste_and_enter_do_not_activate_the_selected_row",
         "local_relative_images_load_without_the_reader_asking",
         "absolute_url_images_are_never_loaded_automatically",
