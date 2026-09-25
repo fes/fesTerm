@@ -1416,6 +1416,21 @@ fn daemon_command(executable: &Path, runtime_root: &Path) -> Command {
     command
 }
 
+fn native_test_runtime_leaf(pid: u32, index: usize, millis: u128) -> String {
+    format!("f{pid:x}-{index:x}-{millis:x}")
+}
+
+#[cfg(unix)]
+#[test]
+fn native_test_runtime_leaf_fits_macos_ci_socket_paths() {
+    let leaf = native_test_runtime_leaf(u32::MAX, 255, 9_999_999_999_999);
+    let probe = PathBuf::from("/Users/runner/work/fesTerm/.f")
+        .join(leaf)
+        .join("festerm/sessiond/4294967295-9999999999999.sock");
+    assert!(probe.as_os_str().as_encoded_bytes().len() < 104);
+    std::os::unix::net::SocketAddr::from_pathname(probe).unwrap();
+}
+
 fn short_runtime_root(_suffix: &str) -> PathBuf {
     static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let index = NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1431,13 +1446,13 @@ fn short_runtime_root(_suffix: &str) -> PathBuf {
                 .and_then(Path::parent)
                 .expect("crate lives under /Users/fes/src workspace during native tests")
                 .join(".f"),
-            format!(
-                "fsd-{}-{index}-{:x}",
+            native_test_runtime_leaf(
                 std::process::id(),
+                index,
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_millis(),
             ),
         ),
     };

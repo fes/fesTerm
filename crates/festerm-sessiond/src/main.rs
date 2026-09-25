@@ -3788,7 +3788,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn saturated_output_preserves_control_resize_and_exit_order() {
         let (output, received) = mpsc::sync_channel(1);
@@ -3853,6 +3852,7 @@ mod tests {
         active.take().unwrap().thread.join().unwrap().unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn recovery_sync_commands_update_the_snapshot_used_for_takeover() {
         use festerm_core::{ColorScheme, Rgb, TerminalModes};
