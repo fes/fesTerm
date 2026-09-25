@@ -1160,9 +1160,9 @@ fn accept_unix_clients(
     }
 }
 
-#[cfg(unix)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClientLoopEvent {
+    #[cfg(unix)]
     ClientAttached,
     OutputBuffered,
 }
@@ -4995,18 +4995,48 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         let mut spawned = spawn_shell(
             &ShellSpec {
-                executable: "/bin/pwd".to_owned(),
-                arguments: Vec::new(),
+                executable: "/bin/sh".to_owned(),
+                arguments: vec!["-c".to_owned(), "pwd; read -r acknowledgement".to_owned()],
                 working_directory: Some(directory.to_string_lossy().into_owned()),
             },
             80,
             24,
         )
         .unwrap();
-        let mut reader = spawned.master().unwrap().try_clone_reader().unwrap();
-        let mut output = String::new();
-        reader.read_to_string(&mut output).unwrap();
-        let status = spawned.child.wait().unwrap();
+        let reader = spawned.master().unwrap().try_clone_reader().unwrap();
+        let mut writer = spawned.master().unwrap().take_writer().unwrap();
+        let (output_tx, output_rx) = mpsc::sync_channel(1);
+        let reader_thread = thread::spawn(move || {
+            let mut reader = io::BufReader::new(reader);
+            let mut output = String::new();
+            let result = io::BufRead::read_line(&mut reader, &mut output).map(|_| output);
+            let _ = output_tx.send(result);
+            io::copy(&mut reader, &mut io::sink()).map(|_| ())
+        });
+        let output = output_rx.recv_timeout(Duration::from_secs(5));
+        // Keep the slave alive until its output is read; macOS may discard
+        // unread PTY bytes when a short-lived child exits.
+        if matches!(&output, Ok(Ok(_))) {
+            writer.write_all(b"\n").unwrap();
+            writer.flush().unwrap();
+        } else {
+            spawned.child.kill().unwrap();
+        }
+        let exit_deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = spawned.child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= exit_deadline {
+                spawned.child.kill().unwrap();
+                break spawned.child.wait().unwrap();
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        reader_thread.join().unwrap().unwrap();
+        let output = output
+            .expect("working-directory output before deadline")
+            .unwrap();
         assert!(status.success());
         assert_eq!(
             Path::new(output.trim()),

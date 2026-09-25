@@ -850,33 +850,12 @@ fn is_unc_path(candidate: &str) -> bool {
     candidate.starts_with("\\\\") || candidate.starts_with("//")
 }
 
-fn normalize_posix_path(candidate: &str) -> String {
-    let mut components = Vec::new();
-    for component in candidate.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                let _ = components.pop();
-            }
-            other => components.push(other),
-        }
-    }
-    if components.is_empty() {
-        "/".to_owned()
-    } else {
-        format!("/{}", components.join("/"))
-    }
-}
-
 fn resolve_remote_path(base: &str, relative: &str) -> String {
-    let trimmed = relative.trim();
-    if trimmed.starts_with('/') {
-        return normalize_posix_path(trimmed);
-    }
-    if base == "/" {
-        normalize_posix_path(&format!("/{trimmed}"))
+    if relative.starts_with('/') {
+        relative.to_owned()
     } else {
-        normalize_posix_path(&format!("{base}/{trimmed}"))
+        // Only the server can resolve parent components after a symlink.
+        format!("{}/{relative}", base.trim_end_matches('/'))
     }
 }
 
@@ -1192,7 +1171,7 @@ mod tests {
         assert!(action.ui_action().enabled);
         assert_eq!(
             action.ui_action().preview,
-            "deploy@ssh.example.test · /srv/docs/guide.md"
+            "deploy@ssh.example.test · /srv/app/../docs/guide.md"
         );
     }
 

@@ -23,6 +23,7 @@ enum SubsystemBehavior {
 }
 
 const FIXTURE_PATH: &str = "/notes-\u{03bb}.md";
+const FIXTURE_PARENT_PATH: &str = "/link/../notes-\u{03bb}.md";
 const FIXTURE_CONTENT: &[u8] = b"# remote document\n\nExact snapshot bytes.\n";
 
 struct MemoryFiles;
@@ -44,7 +45,7 @@ impl russh_sftp::server::Handler for MemoryFiles {
 
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let permissions = match path.as_str() {
-            FIXTURE_PATH => 0o100644,
+            FIXTURE_PATH | FIXTURE_PARENT_PATH => 0o100644,
             "/" => 0o040755,
             _ => return Err(StatusCode::NoSuchFile),
         };
@@ -69,7 +70,10 @@ impl russh_sftp::server::Handler for MemoryFiles {
         flags: OpenFlags,
         _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
-        assert_eq!(filename, FIXTURE_PATH);
+        assert!(matches!(
+            filename.as_str(),
+            FIXTURE_PATH | FIXTURE_PARENT_PATH
+        ));
         assert_eq!(flags.bits(), OpenFlags::READ.bits());
         Ok(Handle {
             id,
@@ -84,7 +88,10 @@ impl russh_sftp::server::Handler for MemoryFiles {
         offset: u64,
         len: u32,
     ) -> Result<Data, Self::Error> {
-        assert_eq!(handle, FIXTURE_PATH);
+        assert!(matches!(
+            handle.as_str(),
+            FIXTURE_PATH | FIXTURE_PARENT_PATH
+        ));
         let start = usize::try_from(offset).unwrap();
         if start >= FIXTURE_CONTENT.len() {
             return Err(StatusCode::Eof);
@@ -97,7 +104,10 @@ impl russh_sftp::server::Handler for MemoryFiles {
     }
 
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
-        assert_eq!(handle, FIXTURE_PATH);
+        assert!(matches!(
+            handle.as_str(),
+            FIXTURE_PATH | FIXTURE_PARENT_PATH
+        ));
         Ok(Status {
             id,
             status_code: StatusCode::Ok,
@@ -370,6 +380,15 @@ fn live_remote_file_read_returns_exact_bytes_and_honest_bounds() {
         .read_remote_file_snapshot(FIXTURE_PATH, FIXTURE_CONTENT.len())
         .unwrap();
     assert_eq!(snapshot.bytes(), FIXTURE_CONTENT);
+    let literal = requestor
+        .read_remote_file_snapshot(FIXTURE_PARENT_PATH, FIXTURE_CONTENT.len())
+        .unwrap();
+    assert_eq!(literal.metadata().path.display(), FIXTURE_PARENT_PATH);
+    assert_eq!(literal.bytes(), FIXTURE_CONTENT);
+    assert!(matches!(
+        requestor.read_remote_file_snapshot("relative.txt", 1024),
+        Err(RemoteFileReadError::InvalidRequest),
+    ));
     assert!(matches!(
         requestor.read_remote_file_snapshot(FIXTURE_PATH, FIXTURE_CONTENT.len() - 1),
         Err(RemoteFileReadError::Sftp(

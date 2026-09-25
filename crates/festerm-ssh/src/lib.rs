@@ -2744,7 +2744,12 @@ impl LiveRemoteFileRequestor {
             return Err(RemoteFileReadError::NotRunning);
         }
         let path = path.into();
-        if path.len() > 32 * 1024 || max_bytes == 0 || max_bytes > 4 * 1024 * 1024 {
+        if !path.starts_with('/')
+            || path.contains('\0')
+            || path.len() > 32 * 1024
+            || max_bytes == 0
+            || max_bytes > 4 * 1024 * 1024
+        {
             return Err(RemoteFileReadError::InvalidRequest);
         }
         let (result_sender, result_receiver) = mpsc::sync_channel(1);
@@ -5929,7 +5934,7 @@ async fn read_remote_file_snapshot_from_session(
     max_bytes: usize,
 ) -> Result<RemoteFileSnapshot, RemoteFileReadError> {
     let Some(metadata) = session
-        .remote_path_metadata(path)
+        .remote_path_metadata_exact(path)
         .await
         .map_err(RemoteFileReadError::Sftp)?
     else {
@@ -5944,7 +5949,7 @@ async fn read_remote_file_snapshot_from_session(
         });
     }
     let bytes = session
-        .read_markdown_snapshot(path, max_bytes)
+        .read_file_snapshot_exact(path, max_bytes)
         .await
         .map_err(RemoteFileReadError::Sftp)?;
     Ok(RemoteFileSnapshot { metadata, bytes })

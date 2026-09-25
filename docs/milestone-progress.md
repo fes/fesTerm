@@ -1741,6 +1741,13 @@ Regression coverage compares repeated recovery with continuous execution
 through wrapping, alternate-screen transitions, resizing, hyperlinks, and
 history eviction; recovery after trimming is covered too.
 
+Final stress runs caught an intermittent macOS PTY fixture race: a short-lived
+`pwd` process could exit before its output was captured. The fixture now
+acknowledges receipt while continuing to drain the PTY, with bounded waits.
+Terminal-origin SFTP reads also preserve literal parent components through
+metadata and file open, leaving symlink resolution to the server without
+changing the existing SFTP browser's navigation policy.
+
 Review also found two Windows-only waits hidden inside the old `named_pipe`
 dependency: connecting to a busy pipe could ignore the reconnect cancellation,
 and dropping a server endpoint flushed output until its peer read it. The
