@@ -2219,31 +2219,44 @@ mod tests {
 
     #[test]
     fn shift_right_click_overrides_tui_mouse_reporting_without_leaking_bytes() {
-        let mut state = HeadlessViewState::new();
-        state.terminal.ingest(b"\x1b[?1000h");
-        let mut harness = Harness::builder()
-            .with_size(Vec2::new(800.0, 600.0))
-            .build_ui_state(
-                |ui, state: &mut HeadlessViewState| {
-                    state.view.show(ui, &mut state.terminal, &mut state.sink);
-                },
-                state,
-            );
-        harness.run();
+        for mode in [b"\x1b[?1000h".as_slice(), b"\x1b[?1002h", b"\x1b[?1003h"] {
+            for encoding in [b"".as_slice(), b"\x1b[?1006h", b"\x1b[?1015h"] {
+                let mut state = HeadlessViewState::new();
+                state.terminal.ingest(mode);
+                state.terminal.ingest(encoding);
+                let mut harness = Harness::builder()
+                    .with_size(Vec2::new(800.0, 600.0))
+                    .build_ui_state(
+                        |ui, state: &mut HeadlessViewState| {
+                            state.view.show(ui, &mut state.terminal, &mut state.sink);
+                        },
+                        state,
+                    );
+                harness.run();
 
-        harness.get_by_label("Terminal viewport").click_secondary();
-        harness.run();
-        assert!(harness.query_by_label("Paste").is_none());
-        assert!(!harness.state().sink.0.is_empty());
-        let reports_before_override = harness.state().sink.0.len();
+                harness.get_by_label("Terminal viewport").click_secondary();
+                harness.run();
+                assert!(harness.query_by_label("Paste").is_none());
+                assert!(!harness.state().sink.0.is_empty());
+                let reports_before_override = harness.state().sink.0.len();
 
-        harness
-            .get_by_label("Terminal viewport")
-            .click_button_modifiers(egui::PointerButton::Secondary, egui::Modifiers::SHIFT);
-        harness.run();
+                let pos = harness.get_by_label("Terminal viewport").rect().center();
+                // Avoid synthesizing an unmodified move before the press: any-motion
+                // tracking legitimately forwards that separate event.
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::SHIFT,
+                    });
+                }
+                harness.run();
 
-        assert!(harness.query_by_label("Paste").is_some());
-        assert_eq!(harness.state().sink.0.len(), reports_before_override);
+                assert!(harness.query_by_label("Paste").is_some());
+                assert_eq!(harness.state().sink.0.len(), reports_before_override);
+            }
+        }
     }
 
     #[test]

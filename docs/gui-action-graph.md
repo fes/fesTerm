@@ -264,7 +264,19 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 | `KEY-02` | Any → Settings → customized | Open keyboard editor, filter by scope/customized/unbound, search title and description, select rows, type and **Record shortcut** chords, unbind/reset; restart with isolated config. | Actions stay grouped by scope; only one inline editor is open; row keycaps, gutter dots, **Customized** badges, effective defaults/scopes and hints agree; captured keys are not dispatched; overlapping/invalid chords retain error feedback; save/reload preserves unrelated settings; Ctrl+Shift+F12 remains recovery. | Reset keyboard bindings only. | P,H,V,N; partial |
 | `KEY-03` | Terminal → recording → stopped | Record input routing in Inspector, exercise keyboard/copy/mouse, stop/clear/copy report. | Off by default; bounded RAM-only, content-free report; actual core/queue and local-selection decisions correlated without invented OS IDs or frame-level “both”; deferred queue settlement retains original event/session identity, never revives cleared/evicted records; no input side effects. | Stop and clear recording. | P,H,N,privacy; partial |
 
+`LAUNCH-11` also accepts a typed/pasted **File or folder path**: absolute paths,
+`~/...`, or paths relative to the displayed picker folder. Enter/**Open path**
+opens regular files (text or Markdown) and navigates directories. Ctrl+L
+(Command+L on macOS) focuses the field; editing/navigation cancels stale
+asynchronous path results. Input and useful errors remain on failure, and
+field-owned Enter cannot also activate a selected row or reach the terminal.
+
 ## I. Terminal viewport input, context menu, selection, links, and IME
+
+The fixed **Shift+right-click** local-menu override is documented in Settings'
+**Terminal mouse** card and the keyboard/mouse guide. It remains available
+regardless of supported TUI mouse-reporting mode/encoding; ordinary clicks
+still belong to a mouse-aware TUI. The full press/release pair has one owner.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |

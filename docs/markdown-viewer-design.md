@@ -24,8 +24,13 @@ or take ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
-- **Local:** More actions **Open File…** opens the native file picker, which
-  lists text and Markdown files. A Markdown file lands here; anything else
+- **Local:** More actions **Open File…** opens the application file picker, which
+  lists text and Markdown files. Its **File or folder path** field accepts pasted
+  absolute paths, `~/...`, and paths relative to the displayed folder. Enter or
+  **Open path** opens a regular file or navigates into a directory; invalid paths
+  retain the input and show the error. Ctrl+L (Command+L on macOS) focuses the
+  field. Metadata lookup shares the bounded background directory loader, and
+  edits/navigation invalidate stale lookup results. A Markdown file lands here; anything else
   opens in the text editor, which has nothing to render it as. An explicitly activated local `file:` link may offer **Preview
   Markdown** when it resolves to a readable Markdown file.
 - **SFTP:** a selected `.md`/`.markdown` row offers **Preview Markdown**. The

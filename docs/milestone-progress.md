@@ -2260,3 +2260,18 @@ The one change with the clearest expected return is not a model choice at all:
 `app/festerm/src/text_editor.rs` is 4,000 lines, and every phase after B paid
 to re-read it. Splitting it would reduce the cost of the next comparable
 effort more than any routing decision available.
+
+## Direct paths and a discoverable mouse override
+
+The Open File picker no longer requires navigating every parent directory.
+Its path field accepts absolute paths, the user's home shorthand, and names
+relative to the displayed folder, while leaving shell syntax as literal text.
+File/directory checks use the existing bounded background loader; editing or
+navigating invalidates earlier requests so a late completion cannot open the
+wrong file. Paste/Enter and error-preservation regressions cover the new route.
+
+Shift+right-click was already the terminal's local-menu escape hatch, including
+inside mouse-aware TUIs. Settings now explains that fixed convention alongside
+Shift+drag, and the routing regression covers the supported tracking modes and
+encodings rather than only the simplest mouse mode. Native secondary-click,
+clipboard, and accessibility acceptance still requires platform evidence.

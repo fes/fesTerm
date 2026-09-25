@@ -333,6 +333,19 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
 
                         ui.add_space(12.0);
 
+                        settings_card(ui, "Terminal mouse", |ui| {
+                            ui.label("Shift+right-click opens the fesTerm menu");
+                            ssh_paragraph(
+                                ui,
+                                "Use Shift+right-click for fesTerm's Copy/Paste menu even \
+                                 when a terminal program handles mouse input. Plain right-click \
+                                 stays with that program. Shift+drag selects terminal text. \
+                                 These overrides work in local and SSH sessions.",
+                            );
+                        });
+
+                        ui.add_space(12.0);
+
                         settings_card(ui, "Scrolling", |ui| {
                             if let Some(selected) = settings_segmented_row(
                                 ui,
@@ -1027,6 +1040,19 @@ mod tests {
 
         assert!(harness.query_by_label("Configuration").is_none());
         assert!(harness.query_by_label("Native secure storage").is_none());
+    }
+
+    #[test]
+    fn settings_explains_the_fixed_terminal_mouse_override() {
+        let mut harness = wide_settings_harness();
+        harness.run();
+        assert!(harness
+            .query_by_label("Shift+right-click opens the fesTerm menu")
+            .is_some());
+        assert!(
+            harness.state().command.is_none(),
+            "help must not change settings"
+        );
     }
 
     #[test]
