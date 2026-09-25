@@ -1,0 +1,36 @@
+# esctest2 tests excluded from `--everything` surveys only, with the reason
+# for each. One reason per line, so every exclusion is an admission rather
+# than a silence.
+#
+# This file does not affect the gate. The gate runs `esctest2-allow.txt` minus
+# `esctest2-skip.txt`, and nothing here is on the allowlist. It exists because
+# a survey is a measuring instrument, and these tests break the instrument
+# rather than merely failing it.
+#
+# The mechanism, recorded once because it will recur (#226): esctest2 reads
+# replies from a shared pty and has no per-test drain. A test that asks two
+# questions, reads one answer, and then aborts on a mismatch leaves the second
+# answer unread. The next test's reset() reads those leftover bytes instead of
+# the reply it expected and dies with an InternalError, and every test after
+# it inherits the desync. So a handful of honest failures become hundreds of
+# meaningless ones: the survey reported 67 passes instead of 414.
+#
+# The rule this implies: any family where fesTerm answers a *query* but
+# declines the matching *set* will orphan replies the same way, and belongs
+# here until the set form is implemented or the family is declared out of
+# scope.
+#
+# Entries are Python regexes matched against the full test name, exactly as in
+# the other two files.
+
+# --- Colour: query answered, set deliberately ignored (ADR 0036) ---
+# These set a colour and then read it back. fesTerm ignores the set and
+# answers the query with the colour it actually paints, so the comparison
+# fails - correctly, and by design - and the surplus replies from the
+# multi-query forms poison everything that follows. #220 tracks whether to
+# implement the set forms, which would remove the need for this block.
+ChangeColorTests
+ChangeDynamicColorTests
+ChangeSpecialColorTests
+ResetColorTests
+ResetSpecialColorTests
