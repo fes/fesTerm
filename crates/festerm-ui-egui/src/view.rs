@@ -2836,6 +2836,7 @@ mod tests {
                                 enabled: true,
                                 disabled_reason: None,
                             }),
+                            history_snapshot_actions: true,
                             ..TerminalViewOptions::default()
                         },
                     );
@@ -2852,6 +2853,21 @@ mod tests {
         harness.run();
 
         assert!(harness.state_mut().view.take_context_action_request());
+        assert!(harness.state_mut().view.take_history_actions().is_empty());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        harness
+            .get_by_label("Open Terminal History in Editor")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().view.take_history_actions(),
+            vec![TerminalHistoryAction::OpenInEditor]
+        );
+        assert!(!harness.state_mut().view.take_context_action_request());
+        assert!(harness.state().sink.0.is_empty());
     }
 
     #[test]
