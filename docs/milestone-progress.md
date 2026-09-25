@@ -2313,3 +2313,12 @@ reject directories and special destinations before creating a temporary file,
 and the Windows fallback rechecks its destination before moving anything.
 The regression preserves a sentinel inside the refused directory and requires
 the untitled document to stay dirty and unchanged.
+
+The final CI review also caught an intermittent Linux diagnostics failure:
+after a clean run ended, a concurrent process spawn could temporarily keep an
+inherited `flock` descriptor open until exec. Closing the parent descriptor did
+not release that shared lock, so the next startup mistook completed evidence
+for an active run. A duplicated-descriptor regression reproduces the failure
+without relying on scheduling. Diagnostic lock guards now explicitly unlock
+when their last real owner finishes; log writers still retain lifetime
+ownership, and catalog/probe locks use the same release rule.

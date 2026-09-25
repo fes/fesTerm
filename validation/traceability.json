@@ -613,6 +613,7 @@
         "clean_exit_records_the_requested_reason_and_clears_the_run_marker",
         "next_start_reports_a_missing_clean_shutdown_and_preserves_exit_intent",
         "next_start_reuses_the_last_clean_exit_when_no_run_was_abandoned",
+        "inherited_lock_descriptor_does_not_hide_a_completed_run",
         "first_exit_intent_wins_when_framework_close_delivery_follows_it",
         "bounded_log_never_grows_past_its_per_run_limit",
         "startup_bounds_inactive_runs_but_protects_active_runs_and_failure_evidence",
