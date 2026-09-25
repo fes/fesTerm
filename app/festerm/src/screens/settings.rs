@@ -1617,9 +1617,11 @@ mod tests {
         // The height has to track the content: this fixture is only 520
         // wide, and once `settings_segmented_row` began reserving its
         // buttons' real width the descriptions beside them wrap one line
-        // further at that width, making the whole surface taller.
+        // further at that width, making the whole surface taller. Match
+        // the full-content fixture above so the extra Windows controls and
+        // fixed mouse-gesture help do not put this widget below the fold.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 2600.0))
+            .with_size(egui::vec2(520.0, 5200.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
