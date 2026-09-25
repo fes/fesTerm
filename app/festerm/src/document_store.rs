@@ -178,6 +178,7 @@ pub enum SaveFailure {
     Gone,
     PermissionDenied,
     NoDirectory,
+    NotAFile,
     Interrupted,
 }
 
@@ -188,6 +189,7 @@ impl SaveFailure {
             Self::Gone => "This file is no longer there",
             Self::PermissionDenied => "This file could not be written",
             Self::NoDirectory => "This folder is no longer there",
+            Self::NotAFile => "This destination is not a regular file",
             Self::Interrupted => "Saving did not complete",
         }
     }
@@ -202,6 +204,7 @@ impl SaveFailure {
                 "Your account does not have permission to replace it. Use Save As… to write it somewhere else."
             }
             Self::NoDirectory => "Nothing was written. Use Save As… to write it somewhere else.",
+            Self::NotAFile => "Nothing was written. Choose a file, not a folder or special device.",
             Self::Interrupted => {
                 "The previous contents are unchanged. Try saving again, or use Save As…."
             }
@@ -278,7 +281,12 @@ pub fn save(
     }
 
     let parent = parent_directory(path)?;
-    let original = fs::metadata(path).ok();
+    let original = match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => Some(metadata),
+        Ok(_) => return Err(SaveFailure::NotAFile),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(classify_write_error(error)),
+    };
 
     let mut temporary = TemporaryFile::create(parent)?;
     write_all_durably(temporary.file_mut(), bytes)?;
@@ -417,6 +425,12 @@ fn replace_existing_windows_file(
     target: &Path,
     permission: bool,
 ) -> Result<(), SaveFailure> {
+    if !fs::metadata(target)
+        .map_err(classify_write_error)?
+        .is_file()
+    {
+        return Err(SaveFailure::NotAFile);
+    }
     let parent = parent_directory(target)?;
     let previous = temporary_path(parent).with_extension("previous");
     if fs::rename(target, &previous).is_err() {
@@ -677,6 +691,19 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
         assert_eq!(generation.size(), 4);
+    }
+
+    #[test]
+    fn save_as_never_moves_or_replaces_a_directory() {
+        let directory = TemporaryDirectory::new("directory-saveas");
+        let folder = directory.path.join("folder");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("sentinel.txt"), b"unchanged").unwrap();
+
+        assert_eq!(save(&folder, b"snapshot", None), Err(SaveFailure::NotAFile));
+        assert!(folder.is_dir());
+        assert_eq!(fs::read(folder.join("sentinel.txt")).unwrap(), b"unchanged");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
     #[test]

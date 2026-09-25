@@ -2305,3 +2305,11 @@ independent channel tasks per transport, with size/deadline limits and shutdown
 cancellation. A real loopback SSH fixture accepts a typed password and
 session-only host trust, stalls or refuses SFTP, and still requires shell
 input/output and shutdown to make progress. The app also bounds pending opens.
+
+The history snapshot Save As failure scenario exposed a real Windows bug,
+not just a platform-sensitive assertion: the replacement fallback could move a
+directory aside as though it were a file and then report success. Saves now
+reject directories and special destinations before creating a temporary file,
+and the Windows fallback rechecks its destination before moving anything.
+The regression preserves a sentinel inside the refused directory and requires
+the untitled document to stay dirty and unchanged.

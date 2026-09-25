@@ -1259,6 +1259,7 @@
         "saving_an_untitled_snapshot_requires_save_as_instead_of_succeeding_silently",
         "untitled_snapshots_never_enter_auto_save",
         "untitled_save_as_failure_preserves_the_snapshot_and_reports_the_error",
+        "save_as_never_moves_or_replaces_a_directory",
         "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
         "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
         "saving_an_untitled_snapshot_from_dirty_close_continues_through_save_as",
