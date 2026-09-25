@@ -3185,6 +3185,7 @@ mod tests {
         client_io_loop(stream, generation, Vec::new(), input, output, stolen, None)
     }
 
+    #[cfg(unix)]
     fn read_recovery_terminal<S: Read>(stream: &mut S) -> Terminal {
         let mut header = [0u8; 12];
         stream.read_exact(&mut header).unwrap();
@@ -3196,10 +3197,12 @@ mod tests {
         bincode::deserialize(&payload).unwrap()
     }
 
+    #[cfg(unix)]
     fn acknowledge_recovery(writer: &mut impl Write) {
         write_client_frame(writer, CLIENT_FRAME_RECOVERY_ADOPTED, &[]).unwrap();
     }
 
+    #[cfg(unix)]
     fn read_server_output(reader: &mut impl Read, expected_len: usize) -> Vec<u8> {
         let mut header = [0u8; 9];
         reader.read_exact(&mut header).unwrap();
@@ -3212,12 +3215,14 @@ mod tests {
         payload
     }
 
+    #[cfg(unix)]
     fn read_server_stolen(reader: &mut impl Read) {
         let mut frame = vec![0; festerm_sessiond::encode_server_stolen_frame().len()];
         reader.read_exact(&mut frame).unwrap();
         assert_eq!(frame, festerm_sessiond::encode_server_stolen_frame());
     }
 
+    #[cfg(unix)]
     fn read_server_recovery_sync(reader: &mut impl Read) -> Vec<u8> {
         let mut header = [0u8; 9];
         reader.read_exact(&mut header).unwrap();
@@ -3229,6 +3234,7 @@ mod tests {
         payload
     }
 
+    #[cfg(unix)]
     fn read_server_resize_applied(reader: &mut impl Read) {
         let mut header = [0u8; 9];
         reader.read_exact(&mut header).unwrap();
@@ -3240,12 +3246,14 @@ mod tests {
         reader.read_exact(&mut payload).unwrap();
     }
 
+    #[cfg(unix)]
     fn read_server_exited(reader: &mut impl Read) {
         let mut frame = vec![0; festerm_sessiond::encode_server_exited_frame().len()];
         reader.read_exact(&mut frame).unwrap();
         assert_eq!(frame, festerm_sessiond::encode_server_exited_frame());
     }
 
+    #[cfg(unix)]
     fn write_recovery_sync_frame(
         writer: &mut impl Write,
         command: festerm_sessiond::RecoverySyncCommand,
@@ -3254,6 +3262,7 @@ mod tests {
         write_client_frame(writer, CLIENT_FRAME_RECOVERY_SYNC, &payload).unwrap();
     }
 
+    #[cfg(unix)]
     fn first_row_text(terminal: &Terminal) -> String {
         let mut text = String::new();
         for column in 0..terminal.dimensions().columns() {
