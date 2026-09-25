@@ -1,12 +1,13 @@
 use std::{collections::VecDeque, mem::size_of};
 
 use crate::{cell::CellWidth, screen::ScreenRow, Cell};
+use serde::{Deserialize, Serialize};
 
 /// Default retained primary-screen payload budget: 64 MiB per terminal.
 pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Content-free measurements for bounded primary-screen history.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ScrollbackStats {
     limit_bytes: usize,
     charged_bytes: usize,
@@ -48,11 +49,13 @@ impl ScrollbackStats {
 }
 
 /// One retained logical line. Cell content remains terminal-owned and in memory.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LogicalLine {
     id: u64,
     cells: Vec<Cell>,
+    cell_capacity: usize,
     row_ends: Vec<usize>,
+    row_end_capacity: usize,
     physical_rows: usize,
     hard_break: bool,
     charged_bytes: usize,
@@ -68,7 +71,7 @@ pub struct LogicalLine {
     trimmed_offset: usize,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct LogicalAnchor {
     line_id: u64,
     offset: usize,
@@ -136,6 +139,8 @@ impl LogicalLine {
         }
         self.cells.shrink_to_fit();
         self.row_ends.shrink_to_fit();
+        self.cell_capacity = self.cells.capacity();
+        self.row_end_capacity = self.row_ends.capacity();
         self.physical_rows = self.physical_rows.saturating_sub(rows_to_drop);
         self.trimmed_offset = self.trimmed_offset.saturating_add(cells_to_drop);
         self.cell_owned_bytes = self.cell_owned_bytes.saturating_sub(removed_owned_bytes);
@@ -235,18 +240,19 @@ impl LogicalLine {
         }
         self.physical_rows = row_ends.len();
         self.row_ends = row_ends;
+        self.row_end_capacity = self.row_ends.capacity();
         self.recalculate_charge();
     }
 
     fn recalculate_charge(&mut self) {
         self.charged_bytes = size_of::<Self>()
-            .saturating_add(size_of::<Cell>().saturating_mul(self.cells.capacity()))
+            .saturating_add(size_of::<Cell>().saturating_mul(self.cell_capacity))
             .saturating_add(self.cell_owned_bytes)
-            .saturating_add(size_of::<usize>().saturating_mul(self.row_ends.capacity()));
+            .saturating_add(size_of::<usize>().saturating_mul(self.row_end_capacity));
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Scrollback {
     limit_bytes: usize,
     charged_bytes: usize,
@@ -288,6 +294,76 @@ impl Scrollback {
             line_row_starts: VecDeque::new(),
             #[cfg(test)]
             trim_compactions: 0,
+        }
+    }
+
+    pub(crate) fn validate_recovery_state(&self, columns: usize) -> Result<(), String> {
+        if self.line_row_starts.len() != self.lines.len() {
+            return Err(format!(
+                "scrollback stores {} row origins for {} logical lines",
+                self.line_row_starts.len(),
+                self.lines.len()
+            ));
+        }
+        let mut expected_starts = VecDeque::with_capacity(self.lines.len());
+        let mut cursor = self.content_row_origin;
+        let mut total_charged = 0usize;
+        let mut active_line = None;
+        for line in &self.lines {
+            line.validate_recovery_state(columns)?;
+            expected_starts.push_back(cursor);
+            cursor = cursor.saturating_add(line.physical_rows as u64);
+            total_charged = total_charged.saturating_add(line.charged_bytes);
+            if Some(line.id) == self.active_oversize_line.map(|(id, _)| id) {
+                active_line = Some(line);
+            }
+        }
+        if self.line_row_starts != expected_starts {
+            return Err("scrollback row origins do not match the retained line layout".to_owned());
+        }
+        if self.screen_row_origin != cursor {
+            return Err(format!(
+                "scrollback ends at row {} but the retained lines end at row {}",
+                self.screen_row_origin, cursor
+            ));
+        }
+        if self.charged_bytes != total_charged {
+            return Err(format!(
+                "scrollback records {} charged bytes but retains {} bytes",
+                self.charged_bytes, total_charged
+            ));
+        }
+        if self.charged_bytes > self.limit_bytes {
+            return Err(format!(
+                "scrollback records {} charged bytes above the {}-byte limit",
+                self.charged_bytes, self.limit_bytes
+            ));
+        }
+        if self.lines.is_empty() && self.active_oversize_line.is_some() {
+            return Err(
+                "scrollback tracks an active oversize line without any retained history".to_owned(),
+            );
+        }
+        if let Some((line_id, trimmed_offset)) = self.active_oversize_line {
+            let Some(line) = active_line else {
+                return Err(format!(
+                    "scrollback tracks active oversize line {line_id}, but that line is not retained"
+                ));
+            };
+            if trimmed_offset != line.trimmed_offset {
+                return Err(format!(
+                    "scrollback tracks active oversize line {line_id} at trimmed offset {trimmed_offset}, \
+                     but the retained line stores {}",
+                    line.trimmed_offset
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_recovery_allocations(&mut self) {
+        for line in &mut self.lines {
+            line.restore_recovery_allocations();
         }
     }
 
@@ -338,7 +414,9 @@ impl Scrollback {
             self.lines.push_back(LogicalLine {
                 id,
                 cells: Vec::new(),
+                cell_capacity: 0,
                 row_ends: Vec::new(),
+                row_end_capacity: 0,
                 physical_rows: 0,
                 hard_break: false,
                 charged_bytes: size_of::<LogicalLine>(),
@@ -359,7 +437,9 @@ impl Scrollback {
                 .fold(0usize, usize::saturating_add),
         );
         line.cells.extend(row.cells);
+        line.cell_capacity = line.cells.capacity();
         line.row_ends.push(line.cells.len());
+        line.row_end_capacity = line.row_ends.capacity();
         line.physical_rows += 1;
         line.hard_break = ends_line;
         line.recalculate_charge();
@@ -375,6 +455,8 @@ impl Scrollback {
             // batched trimming supplies its own allocation headroom.
             line.cells.shrink_to_fit();
             line.row_ends.shrink_to_fit();
+            line.cell_capacity = line.cells.capacity();
+            line.row_end_capacity = line.row_ends.capacity();
             line.recalculate_charge();
         }
         self.charged_bytes = self
@@ -626,6 +708,8 @@ impl Scrollback {
                 // retained prefix billed for the removed live-screen tail.
                 line.cells.shrink_to_fit();
                 line.row_ends.shrink_to_fit();
+                line.cell_capacity = line.cells.capacity();
+                line.row_end_capacity = line.row_ends.capacity();
                 line.physical_rows = keep_rows;
                 line.hard_break = false;
                 line.cell_owned_bytes = line.cell_owned_bytes.saturating_sub(removed_owned_bytes);
@@ -742,16 +826,153 @@ impl Scrollback {
 }
 
 fn cell_owned_charge(cell: &Cell) -> usize {
-    cell.text
-        .capacity()
+    cell.text_owned_charge()
         .saturating_add(cell.hyperlink.as_ref().map_or(0, |target| target.len()))
 }
 
-fn compact_line_charge(cell_count: usize, row_count: usize, cell_owned_bytes: usize) -> usize {
+impl LogicalLine {
+    fn restore_recovery_allocations(&mut self) {
+        if self.cell_capacity > self.cells.capacity() {
+            self.cells
+                .reserve_exact(self.cell_capacity.saturating_sub(self.cells.len()));
+        }
+        if self.cells.capacity() > self.cell_capacity {
+            self.cells.shrink_to(self.cell_capacity);
+        }
+        if self.row_end_capacity > self.row_ends.capacity() {
+            self.row_ends
+                .reserve_exact(self.row_end_capacity.saturating_sub(self.row_ends.len()));
+        }
+        if self.row_ends.capacity() > self.row_end_capacity {
+            self.row_ends.shrink_to(self.row_end_capacity);
+        }
+        for cell in &mut self.cells {
+            cell.restore_recovery_allocation();
+        }
+    }
+
+    fn validate_recovery_state(&self, columns: usize) -> Result<(), String> {
+        if self.physical_rows == 0 {
+            return Err(format!(
+                "logical line {} stores zero physical rows",
+                self.id
+            ));
+        }
+        if self.row_ends.len() != self.physical_rows {
+            return Err(format!(
+                "logical line {} stores {} row ends for {} physical rows",
+                self.id,
+                self.row_ends.len(),
+                self.physical_rows
+            ));
+        }
+        if self.cell_capacity < self.cells.len() {
+            return Err(format!(
+                "logical line {} records cell capacity {} below {} retained cells",
+                self.id,
+                self.cell_capacity,
+                self.cells.len()
+            ));
+        }
+        if self.row_end_capacity < self.row_ends.len() {
+            return Err(format!(
+                "logical line {} records row-end capacity {} below {} retained row ends",
+                self.id,
+                self.row_end_capacity,
+                self.row_ends.len()
+            ));
+        }
+        if self.row_ends.last().copied().unwrap_or(0) != self.cells.len() {
+            return Err(format!(
+                "logical line {} ends at cell {} but retains {} cells",
+                self.id,
+                self.row_ends.last().copied().unwrap_or(0),
+                self.cells.len()
+            ));
+        }
+        let mut previous_end = 0usize;
+        for (row, &row_end) in self.row_ends.iter().enumerate() {
+            if row_end < previous_end || row_end > self.cells.len() {
+                return Err(format!(
+                    "logical line {} row {} ends at invalid cell index {}",
+                    self.id, row, row_end
+                ));
+            }
+            let mut used_columns = 0usize;
+            for (offset, cell) in self.cells[previous_end..row_end].iter().enumerate() {
+                cell.validate_recovery_state().map_err(|error| {
+                    format!(
+                        "logical line {} row {} cell {} is invalid: {error}",
+                        self.id,
+                        row,
+                        previous_end + offset
+                    )
+                })?;
+                match cell.width() {
+                    CellWidth::Single => used_columns += 1,
+                    CellWidth::Double => {
+                        used_columns += 2;
+                        if previous_end + offset + 1 >= row_end
+                            || self.cells[previous_end + offset + 1].width()
+                                != CellWidth::Continuation
+                        {
+                            return Err(format!(
+                                "logical line {} row {} contains an unterminated double-width cell",
+                                self.id, row
+                            ));
+                        }
+                    }
+                    CellWidth::Continuation => {
+                        if offset == 0
+                            || self.cells[previous_end + offset - 1].width() != CellWidth::Double
+                        {
+                            return Err(format!(
+                                "logical line {} row {} contains an orphaned continuation cell",
+                                self.id, row
+                            ));
+                        }
+                    }
+                }
+            }
+            if used_columns > columns {
+                return Err(format!(
+                    "logical line {} row {} occupies {} columns in a {}-column grid",
+                    self.id, row, used_columns, columns
+                ));
+            }
+            previous_end = row_end;
+        }
+        let owned_bytes: usize = self.cells.iter().map(cell_owned_charge).sum();
+        if self.cell_owned_bytes != owned_bytes {
+            return Err(format!(
+                "logical line {} records {} owned cell bytes but retains {}",
+                self.id, self.cell_owned_bytes, owned_bytes
+            ));
+        }
+        let expected_charge = compact_line_charge(
+            self.cell_capacity,
+            self.row_end_capacity,
+            self.cell_owned_bytes,
+        );
+        if self.charged_bytes != expected_charge {
+            return Err(format!(
+                "logical line {} records {} charged bytes but retains {}",
+                self.id, self.charged_bytes, expected_charge
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn compact_line_charge(
+    cell_capacity: usize,
+    row_end_capacity: usize,
+    cell_owned_bytes: usize,
+) -> usize {
     size_of::<LogicalLine>()
-        .saturating_add(size_of::<Cell>().saturating_mul(cell_count))
+        .saturating_add(size_of::<Cell>().saturating_mul(cell_capacity))
         .saturating_add(cell_owned_bytes)
-        .saturating_add(size_of::<usize>().saturating_mul(row_count))
+        .saturating_add(size_of::<usize>().saturating_mul(row_end_capacity))
 }
 
 #[cfg(test)]

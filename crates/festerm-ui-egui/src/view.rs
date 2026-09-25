@@ -5,7 +5,7 @@ use std::{
 };
 
 use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
-use festerm_core::{ContentPosition, InputEventOutcome, MouseTrackingMode, Terminal};
+use festerm_core::{ContentPosition, Dimensions, InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
@@ -500,6 +500,77 @@ impl TerminalView {
         self.show_with_options(ui, terminal, sink, TerminalViewOptions::default());
     }
 
+    pub fn reset_recovery_layout(&mut self) {
+        self.resize = ResizeTracker::default();
+        self.selection.clear();
+        self.pointer = TerminalPointerState::default();
+        self.primary_link_gesture = None;
+    }
+
+    pub fn apply_terminal_resize(
+        &mut self,
+        terminal: &mut Terminal,
+        dimensions: Dimensions,
+    ) -> ResizeOutcome {
+        let stats = terminal.scrollback_stats();
+        let history_rows = stats.physical_rows();
+        let alternate = terminal.modes().alternate_screen();
+        let first_row = stats
+            .content_row_origin()
+            .saturating_add(history_rows.saturating_sub(self.history.offset_rows) as u64);
+        let mut positions = Vec::new();
+        let top = (!alternate && self.history.offset_rows > 0).then(|| {
+            positions.push(ContentPosition {
+                column: 0,
+                absolute_row: first_row,
+            });
+            positions.len() - 1
+        });
+        let selection = (!alternate)
+            .then(|| self.selection.content_endpoints())
+            .flatten()
+            .map(|(anchor, head, active)| {
+                let index = positions.len();
+                positions.extend([anchor, head]);
+                (index, active)
+            });
+        let (outcome, mapped) = self
+            .resize
+            .apply_dimensions_with_content_positions(terminal, dimensions, &positions);
+        if matches!(outcome, ResizeOutcome::Resized(_)) {
+            self.pointer = TerminalPointerState::default();
+            self.primary_link_gesture = None;
+            let mapped_top = top
+                .and_then(|index| mapped.get(index).copied().flatten())
+                .and_then(|position| {
+                    position
+                        .absolute_row
+                        .checked_sub(terminal.scrollback_stats().content_row_origin())
+                        .and_then(|row| usize::try_from(row).ok())
+                });
+            self.history.reflowed(
+                history_rows,
+                terminal.scrollback_stats().physical_rows(),
+                mapped_top,
+            );
+            if alternate {
+                self.selection.clamp_rectangular(terminal.dimensions());
+            } else if let Some((index, active)) = selection {
+                if let Some((anchor, head)) = mapped
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .zip(mapped.get(index + 1).copied().flatten())
+                {
+                    self.selection.remap_content(anchor, head, active);
+                } else {
+                    self.selection.clear();
+                }
+            }
+        }
+        outcome
+    }
+
     pub fn show_with_options(
         &mut self,
         ui: &mut Ui,
@@ -586,70 +657,19 @@ impl TerminalView {
         };
         let calculated = dimensions_from_viewport(viewport, metrics);
         self.diagnostics.calculated_dimensions = calculated;
-        let stats_before_resize = terminal.scrollback_stats();
-        let history_rows_before_resize = stats_before_resize.physical_rows();
-        let alternate_screen = terminal.modes().alternate_screen();
-        let old_first_content_row = stats_before_resize.content_row_origin().saturating_add(
-            history_rows_before_resize.saturating_sub(self.history.offset_rows) as u64,
-        );
-        let mut positions = Vec::new();
-        let top_position_index = (!alternate_screen && self.history.offset_rows > 0).then(|| {
-            positions.push(ContentPosition {
-                column: 0,
-                absolute_row: old_first_content_row,
-            });
-            positions.len() - 1
-        });
-        let selection_position_indices = (!alternate_screen)
-            .then(|| self.selection.content_endpoints())
-            .flatten()
-            .map(|(anchor, head, active)| {
-                let anchor_index = positions.len();
-                positions.push(anchor);
-                let head_index = positions.len();
-                positions.push(head);
-                (anchor_index, head_index, active)
-            });
-        let (resize_outcome, mapped_positions) = self
-            .resize
-            .apply_viewport_with_content_positions(terminal, viewport, metrics, &positions);
-        if matches!(resize_outcome, ResizeOutcome::Resized(_)) {
-            self.pointer = TerminalPointerState::default();
-            self.primary_link_gesture = None;
-            let mapped_top_content_row = top_position_index
-                .and_then(|index| mapped_positions.get(index).copied().flatten())
-                .and_then(|position| {
-                    let origin = terminal.scrollback_stats().content_row_origin();
-                    position
-                        .absolute_row
-                        .checked_sub(origin)
-                        .and_then(|row| usize::try_from(row).ok())
-                });
-            self.history.reflowed(
-                history_rows_before_resize,
-                terminal.scrollback_stats().physical_rows(),
-                mapped_top_content_row,
-            );
-            if alternate_screen {
-                self.selection.clamp_rectangular(terminal.dimensions());
-            } else if let Some((anchor_index, head_index, active)) = selection_position_indices {
-                let mapped = mapped_positions
-                    .get(anchor_index)
-                    .copied()
-                    .flatten()
-                    .zip(mapped_positions.get(head_index).copied().flatten());
-                if let Some((anchor, head)) = mapped {
-                    self.selection.remap_content(anchor, head, active);
-                } else {
-                    self.selection.clear();
-                }
+        if let Some(dimensions) = calculated {
+            let requested = if sink.terminal_resizes_owned_by_backend() {
+                self.resize.request(dimensions)
+            } else {
+                matches!(
+                    self.apply_terminal_resize(terminal, dimensions),
+                    ResizeOutcome::Resized(_)
+                )
+            };
+            if requested {
+                sink.record_terminal_resize(dimensions);
+                ui.ctx().request_repaint_after(TERMINAL_RESIZE_DEBOUNCE);
             }
-            sink.record_terminal_resize(terminal.dimensions());
-            // Guarantees the sink's debounced resize (see
-            // `TERMINAL_RESIZE_DEBOUNCE`) actually gets flushed even if the
-            // window then sits idle and nothing else would otherwise
-            // schedule a later frame.
-            ui.ctx().request_repaint_after(TERMINAL_RESIZE_DEBOUNCE);
         }
 
         let (viewport_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
@@ -1759,6 +1779,46 @@ mod tests {
         assert!(first.reset_zoom());
         assert_eq!(first.font_size_points(), 14.0);
         assert!(!first.reset_zoom());
+    }
+
+    #[test]
+    fn backend_owned_resize_waits_for_acknowledgement_and_does_not_repeat_requests() {
+        #[derive(Default)]
+        struct BackendSink(Vec<Dimensions>);
+        impl EncodedInputSink for BackendSink {
+            fn record_encoded_input(&mut self, _: &[u8]) {}
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+            fn record_terminal_resize(&mut self, dimensions: Dimensions) {
+                self.0.push(dimensions);
+            }
+        }
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, (view, terminal, sink): &mut (TerminalView, Terminal, BackendSink)| {
+                    view.show(ui, terminal, sink);
+                },
+                (
+                    TerminalView::default(),
+                    terminal(20, 6),
+                    BackendSink::default(),
+                ),
+            );
+        harness.run();
+        let (view, terminal, sink) = harness.state_mut();
+        let requested = sink.0[0];
+        assert_ne!(requested, terminal.dimensions());
+        assert_eq!(terminal.dimensions(), Dimensions::new(20, 6).unwrap());
+        assert_eq!(sink.0.len(), 1);
+        assert!(matches!(
+            view.apply_terminal_resize(terminal, requested),
+            ResizeOutcome::Resized(_)
+        ));
+        harness.run();
+        assert_eq!(harness.state().1.dimensions(), requested);
+        assert_eq!(harness.state().2 .0.len(), 1);
     }
 
     #[test]

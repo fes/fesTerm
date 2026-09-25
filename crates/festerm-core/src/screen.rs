@@ -1,4 +1,5 @@
 use compact_str::CompactString;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth},
@@ -14,7 +15,7 @@ use crate::{
 /// newline scrolls by one row once the cursor reaches the last row) is
 /// therefore an O(n) rotation of `top` plus clearing the rows it reveals,
 /// instead of an O(rows*columns) clone of the entire grid on every line.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Screen {
     dimensions: Dimensions,
     /// Physical row index holding logical row 0.
@@ -52,7 +53,7 @@ impl PartialEq for Screen {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ScreenRow {
     pub(crate) cells: Vec<Cell>,
     pub(crate) soft_wrapped: bool,
@@ -64,14 +65,14 @@ pub(crate) struct ScreenRow {
 /// the overwhelmingly common case and the only one that can take the ring's
 /// rotation fast path, so the span is carried explicitly rather than read
 /// from the screen: it makes the full-width case checkable in one place.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ColumnSpan {
     pub(crate) left: usize,
     pub(crate) right: usize,
 }
 
 /// An absolute, already-clipped rectangle of the screen.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Rectangle {
     pub(crate) top: usize,
     pub(crate) left: usize,
@@ -196,6 +197,10 @@ impl Screen {
             .collect()
     }
 
+    pub(crate) fn mark_all_dirty(&mut self) {
+        self.dirty_rows.fill(true);
+    }
+
     /// One past the last row with any occupied content, or `0` if the
     /// screen is entirely blank. Used to trim wholly-blank trailing rows
     /// before folding the screen into a [`Scrollback`](crate::history) for
@@ -302,8 +307,11 @@ impl Screen {
             let continuation = self
                 .cell_index(column + 1, row)
                 .expect("wide terminal character must fit in the screen");
+            let text = CompactString::const_new("");
+            let text_capacity_bytes = text.capacity();
             self.cells[continuation] = Cell {
-                text: CompactString::const_new(""),
+                text,
+                text_capacity_bytes,
                 width: CellWidth::Continuation,
                 foreground,
                 background,
@@ -840,10 +848,6 @@ impl Screen {
         self.dirty_rows[first..=last].fill(true);
     }
 
-    pub(crate) fn mark_all_dirty(&mut self) {
-        self.dirty_rows.fill(true);
-    }
-
     fn repair_wide_cells(&mut self) {
         for row in 0..self.dimensions.rows() {
             self.repair_row(row);
@@ -896,6 +900,121 @@ impl Screen {
             .iter()
             .rposition(|occupied| *occupied)
             .map_or(0, |column| column + 1);
+    }
+
+    pub(crate) fn validate_recovery_state(&self) -> Result<(), String> {
+        let expected_dimensions =
+            Dimensions::new(self.dimensions.columns(), self.dimensions.rows())
+                .map_err(|error| format!("screen stores invalid dimensions: {error}"))?;
+        if expected_dimensions != self.dimensions {
+            return Err("screen dimensions cache does not match its row/column counts".to_owned());
+        }
+        if self.top >= self.dimensions.rows() {
+            return Err(format!(
+                "screen top row {} exceeds the {} visible rows",
+                self.top,
+                self.dimensions.rows()
+            ));
+        }
+        let expected_cells = self.dimensions.cell_count();
+        if self.cells.len() != expected_cells {
+            return Err(format!(
+                "screen stores {} cells for a {}-cell grid",
+                self.cells.len(),
+                expected_cells
+            ));
+        }
+        if self.occupied_cells.len() != expected_cells {
+            return Err(format!(
+                "screen stores {} occupied markers for a {}-cell grid",
+                self.occupied_cells.len(),
+                expected_cells
+            ));
+        }
+        if self.dirty_rows.len() != self.dimensions.rows() {
+            return Err(format!(
+                "screen stores {} dirty-row markers for {} rows",
+                self.dirty_rows.len(),
+                self.dimensions.rows()
+            ));
+        }
+        if self.soft_wrapped_rows.len() != self.dimensions.rows() {
+            return Err(format!(
+                "screen stores {} soft-wrap markers for {} rows",
+                self.soft_wrapped_rows.len(),
+                self.dimensions.rows()
+            ));
+        }
+        if self.occupied_columns.len() != self.dimensions.rows() {
+            return Err(format!(
+                "screen stores {} occupied-column counters for {} rows",
+                self.occupied_columns.len(),
+                self.dimensions.rows()
+            ));
+        }
+        let columns = self.dimensions.columns();
+        for row in 0..self.dimensions.rows() {
+            let physical_row = self.physical_row(row);
+            let start = self.physical_row_start(row);
+            let end = start + columns;
+            let occupied_columns = self.occupied_columns[physical_row];
+            if occupied_columns > columns {
+                return Err(format!(
+                    "screen row {} records {} occupied columns in a {}-column grid",
+                    row, occupied_columns, columns
+                ));
+            }
+            let expected_occupied = self.occupied_cells[start..end]
+                .iter()
+                .rposition(|occupied| *occupied)
+                .map_or(0, |column| column + 1);
+            if occupied_columns != expected_occupied {
+                return Err(format!(
+                    "screen row {} records {} occupied columns but contains {} occupied cells",
+                    row, occupied_columns, expected_occupied
+                ));
+            }
+            for column in 0..columns {
+                self.cells[start + column]
+                    .validate_recovery_state()
+                    .map_err(|error| {
+                        format!("screen row {row} column {column} stores invalid cell: {error}")
+                    })?;
+                match self.cells[start + column].width {
+                    CellWidth::Continuation => {
+                        if column == 0
+                            || !matches!(self.cells[start + column - 1].width, CellWidth::Double)
+                        {
+                            return Err(format!(
+                                "screen row {} column {} contains an orphaned continuation cell",
+                                row, column
+                            ));
+                        }
+                    }
+                    CellWidth::Double => {
+                        if column + 1 >= columns
+                            || !matches!(
+                                self.cells[start + column + 1].width,
+                                CellWidth::Continuation
+                            )
+                        {
+                            return Err(format!(
+                                "screen row {} column {} contains an unterminated double-width cell",
+                                row, column
+                            ));
+                        }
+                    }
+                    CellWidth::Single => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_recovery_allocations(&mut self) {
+        for cell in &mut self.cells {
+            cell.restore_recovery_allocation();
+        }
     }
 }
 

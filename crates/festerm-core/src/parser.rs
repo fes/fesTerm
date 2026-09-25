@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{MAX_CSI_INTERMEDIATES, MAX_CSI_PARAMETERS, MAX_STRING_BYTES};
 
 /// A device-control string this parser understands.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum DcsAction {
     /// `DCS $ q <selector> ST` (DECRQSS): report the setting the selector
     /// names. The selector is the final control function's own bytes, e.g.
@@ -19,7 +21,7 @@ fn parse_dcs(payload: Vec<u8>) -> Option<DcsAction> {
     Some(DcsAction::RequestStatusString(selector.to_vec()))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum OscAction {
     SetTitle(String),
     SetHyperlink(Option<Arc<str>>),
@@ -35,7 +37,7 @@ pub(crate) enum OscAction {
 }
 
 /// A single color a program asked the terminal to describe.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum ColorQuery {
     /// `OSC 4 ; <index> ; ?`
     Palette(u8),
@@ -52,7 +54,7 @@ pub(crate) enum ColorQuery {
 /// A reply mirrors the terminator of its request, as xterm does: a program
 /// that speaks `BEL` is usually reading until `BEL`, and answering with `ST`
 /// leaves it blocked.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum StringTerminator {
     #[default]
     String,
@@ -182,7 +184,7 @@ fn parse_osc8(data: &[u8]) -> Option<Option<Arc<str>>> {
 }
 
 /// The separator preceding a retained CSI parameter.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ParameterSeparator {
     Start,
     Semicolon,
@@ -190,7 +192,7 @@ pub enum ParameterSeparator {
 }
 
 /// Bounded CSI parameters, including their semicolon/colon structure.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CsiParameters {
     values: [u16; MAX_CSI_PARAMETERS],
     separators: [ParameterSeparator; MAX_CSI_PARAMETERS],
@@ -268,10 +270,20 @@ impl CsiParameters {
         self.values[index] = value;
         true
     }
+
+    pub(crate) fn validate_recovery_state(&self) -> Result<(), String> {
+        if self.length > MAX_CSI_PARAMETERS {
+            return Err(format!(
+                "parser stores {} CSI parameters, exceeding the {}-parameter maximum",
+                self.length, MAX_CSI_PARAMETERS
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// A typed operation emitted by [`Parser`] and applied by [`crate::Terminal`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum TerminalOp {
     Print(char),
     CarriageReturn,
@@ -374,7 +386,7 @@ pub enum TerminalOp {
     Ignored,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum StringKind {
     Osc,
     /// `ESC P` (DCS). Buffered like an OSC because DECRQSS has to be read,
@@ -385,7 +397,7 @@ enum StringKind {
 
 /// Which `G` graphic character set slot a `ESC (` / `ESC )` designation
 /// targets (ISO 2022; VT100 only implements `G0`/`G1`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum CharsetSlot {
     G0,
     G1,
@@ -394,14 +406,14 @@ enum CharsetSlot {
 /// A designatable graphic character set. `Other` covers every VT100
 /// designation this parser does not special-case (e.g. UK `A`), which all
 /// behave like `Ascii` for printable 7-bit bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 enum Charset {
     #[default]
     Ascii,
     DecSpecialGraphics,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ParserState {
     Ground,
     Escape,
@@ -424,7 +436,7 @@ enum ParserState {
 }
 
 /// A bounded state-machine parser for ESC and CSI input.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Parser {
     state: ParserState,
     parameters: CsiParameters,
@@ -950,6 +962,47 @@ impl Parser {
         self.private = false;
         self.secondary = false;
         self.intermediate_length = 0;
+    }
+
+    pub(crate) fn validate_recovery_state(&self) -> Result<(), String> {
+        self.parameters.validate_recovery_state()?;
+        if self.parameter_digits > 5 {
+            return Err(format!(
+                "parser stores {} pending CSI digits, exceeding the 5-digit maximum",
+                self.parameter_digits
+            ));
+        }
+        if self.intermediate_length > MAX_CSI_INTERMEDIATES {
+            return Err(format!(
+                "parser stores {} CSI intermediates, exceeding the {}-byte maximum",
+                self.intermediate_length, MAX_CSI_INTERMEDIATES
+            ));
+        }
+        if self.string_payload.len() > MAX_STRING_BYTES {
+            return Err(format!(
+                "parser stores a {}-byte string payload, exceeding the {}-byte maximum",
+                self.string_payload.len(),
+                MAX_STRING_BYTES
+            ));
+        }
+        if let ParserState::String { bytes, .. } | ParserState::StringEscape { bytes, .. } =
+            self.state
+        {
+            if bytes > MAX_STRING_BYTES {
+                return Err(format!(
+                    "parser expects a {}-byte string payload, exceeding the {}-byte maximum",
+                    bytes, MAX_STRING_BYTES
+                ));
+            }
+            if self.string_payload.len() > bytes {
+                return Err(format!(
+                    "parser buffered {} string bytes for a {}-byte string",
+                    self.string_payload.len(),
+                    bytes
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

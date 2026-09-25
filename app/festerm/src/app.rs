@@ -49,8 +49,8 @@ use crate::sftp_file_manager::{
     self, local_home_directory, MarkdownFilePicker, MarkdownPickerOutcome,
 };
 use crate::tabs::{
-    AppCommand, AppState, ExternalLinkTarget, HostKeyTrustDecision, InspectorTransport, TabContent,
-    TabId,
+    AppCommand, AppState, ApplicationSession, ExternalLinkTarget, HostKeyTrustDecision,
+    InspectorTransport, TabContent, TabId,
 };
 use crate::updates::{UpdateController, UpdateStatus};
 
@@ -2125,8 +2125,13 @@ impl FesTermApp {
     fn pump_all_sessions(&mut self, context: &egui::Context) {
         let mut needs_repaint = false;
         let active = self.state.active();
+        let scrollback_limit = self.state.scrollback_limit();
         for (id, session) in self.state.session_tabs_with_id_mut() {
-            let hit_limit = session.controller.pump_events(&mut session.terminal);
+            if session.adopt_recovered_terminal() {
+                session.apply_frontend_terminal_configuration(scrollback_limit);
+                needs_repaint = true;
+            }
+            let hit_limit = session.pump_session_events();
             // `hit_limit` alone only reports whether the bounded per-frame
             // drain was exhausted (backpressure) - a normal, modest burst of
             // output drains well under the per-frame cap and reports
@@ -3111,7 +3116,18 @@ impl FesTermApp {
         let Some(session) = self.state.session_tab_mut(active) else {
             return;
         };
-        session.terminal.reset_to_initial_state();
+        let authoritative = session
+            .controller
+            .session()
+            .is_some_and(ApplicationSession::recovery_protocol_is_authoritative);
+        if let Err(error) = session.sync_recovery_reset() {
+            session
+                .controller
+                .record_operation_error("terminal reset", error);
+            return;
+        } else if !authoritative {
+            session.terminal.reset_to_initial_state();
+        }
         self.overlays.transient_notice = Some((
             "Terminal reset".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
@@ -3130,7 +3146,18 @@ impl FesTermApp {
         let Some(session) = self.state.session_tab_mut(active) else {
             return;
         };
-        session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
+        let authoritative = session
+            .controller
+            .session()
+            .is_some_and(ApplicationSession::recovery_protocol_is_authoritative);
+        if let Err(error) = session.sync_recovery_clear() {
+            session
+                .controller
+                .record_operation_error("terminal clear", error);
+            return;
+        } else if !authoritative {
+            session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
+        }
         self.overlays.transient_notice = Some((
             "Terminal cleared".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
@@ -5321,6 +5348,7 @@ impl FesTermApp {
         let secure_storage_status = self.secure_storage_status_message();
         let active_tab_id = self.state.active();
         let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
+        let scrollback_limit = self.state.scrollback_limit();
         let terminal_font_set = self.terminal_font_set();
         let sftp_pane_order = self.state.sftp_pane_order();
         // Matches the guard used above when the bar is actually drawn.
@@ -5437,6 +5465,10 @@ impl FesTermApp {
                     screen_command = tab.show(ui, active_tab_id);
                 }
                 TabContent::Session(session) => {
+                    if session.adopt_recovered_terminal() {
+                        session.apply_frontend_terminal_configuration(scrollback_limit);
+                        ui.ctx().request_repaint();
+                    }
                     session.view.set_font_set(terminal_font_set);
                     let host_key_prompt = session.host_key_prompt().cloned();
                     let password_prompt = host_key_prompt
@@ -5490,7 +5522,7 @@ impl FesTermApp {
                         .forward_terminal_replies(&mut session.terminal);
                     session.controller.flush_pending_writes();
                     session.controller.flush_pending_resize();
-                    session.controller.pump_events(&mut session.terminal);
+                    session.pump_session_events();
                     if session.controller.last_pump_output_received() {
                         ui.ctx().request_repaint();
                     }

@@ -226,6 +226,24 @@ impl std::fmt::Display for SessionReconnectError {
 }
 
 impl ApplicationSession {
+    pub fn take_recovered_terminal(&self) -> Option<Terminal> {
+        match self {
+            Self::Persistent(session) => session.take_recovered_terminal(),
+            Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
+            #[cfg(test)]
+            Self::TestSsh(_) => None,
+        }
+    }
+
+    pub fn recovery_protocol_is_authoritative(&self) -> bool {
+        match self {
+            Self::Persistent(session) => session.recovery_protocol_is_authoritative(),
+            Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
+            #[cfg(test)]
+            Self::TestSsh(_) => false,
+        }
+    }
+
     /// Resolves a host-key prompt through an SSH session without exposing its
     /// resolver to GUI code or allowing persistent acceptance.
     pub fn resolve_host_key_prompt(
@@ -405,6 +423,10 @@ impl ApplicationSession {
 }
 
 impl Session for ApplicationSession {
+    fn terminal_replies_owned_by_backend(&self) -> bool {
+        self.recovery_protocol_is_authoritative()
+    }
+
     fn id(&self) -> SessionId {
         match self {
             Self::Local(session) => session.id(),
@@ -708,7 +730,87 @@ struct SessionResultMeta<'a> {
 
 impl SessionTab {
     fn set_scrollback_limit(&mut self, preference: ScrollbackLimitPreference) {
-        self.terminal.set_scrollback_limit(preference.bytes());
+        let authoritative = self
+            .controller
+            .session()
+            .is_some_and(ApplicationSession::recovery_protocol_is_authoritative);
+        if let Some(ApplicationSession::Persistent(session)) = self.controller.session() {
+            if let Err(error) = session.sync_recovery_scrollback_limit(preference.bytes()) {
+                tracing::warn!(
+                    target: "festerm::session",
+                    %error,
+                    "could not sync persistent-session scrollback limit for recovery"
+                );
+            }
+        }
+        if !authoritative {
+            self.terminal.set_scrollback_limit(preference.bytes());
+        }
+    }
+
+    fn apply_color_scheme(&mut self) {
+        let scheme = festerm_ui_egui::terminal_color_scheme();
+        let authoritative = self
+            .controller
+            .session()
+            .is_some_and(ApplicationSession::recovery_protocol_is_authoritative);
+        if let Some(ApplicationSession::Persistent(session)) = self.controller.session() {
+            if let Err(error) = session.sync_recovery_color_scheme(scheme) {
+                tracing::warn!(
+                    target: "festerm::session",
+                    %error,
+                    "could not sync persistent-session color scheme for recovery"
+                );
+            }
+        }
+        if !authoritative {
+            self.terminal.set_color_scheme(scheme);
+        }
+    }
+
+    pub fn apply_frontend_terminal_configuration(&mut self, preference: ScrollbackLimitPreference) {
+        self.set_scrollback_limit(preference);
+        self.apply_color_scheme();
+    }
+
+    pub fn sync_recovery_clear(&self) -> Result<(), PersistentSessionError> {
+        match self.controller.session() {
+            Some(ApplicationSession::Persistent(session)) => {
+                session.sync_recovery_bytes(b"\x1b[2J\x1b[3J\x1b[H")
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub fn sync_recovery_reset(&self) -> Result<(), PersistentSessionError> {
+        match self.controller.session() {
+            Some(ApplicationSession::Persistent(session)) => session.sync_recovery_reset(),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn adopt_recovered_terminal(&mut self) -> bool {
+        let Some(recovered) = self
+            .controller
+            .session()
+            .and_then(ApplicationSession::take_recovered_terminal)
+        else {
+            return false;
+        };
+        self.terminal = recovered;
+        self.view.reset_recovery_layout();
+        true
+    }
+
+    pub fn pump_session_events(&mut self) -> bool {
+        let view = &mut self.view;
+        self.controller
+            .pump_events_with_resize(&mut self.terminal, |terminal, dimensions| {
+                !matches!(
+                    view.apply_terminal_resize(terminal, dimensions),
+                    festerm_ui_egui::ResizeOutcome::Rejected
+                )
+            })
     }
 
     /// Starts a fresh default local session. `window_dimensions`, when
@@ -798,6 +900,7 @@ impl SessionTab {
         persistence: Option<&PersistenceConfiguration>,
         context: &egui::Context,
         window_dimensions: Option<Dimensions>,
+        scrollback_limit: ScrollbackLimitPreference,
     ) -> Self {
         let profile = crate::environment::with_corrected_local_path(profile);
         let dimensions = window_dimensions
@@ -816,6 +919,7 @@ impl SessionTab {
                     persistence.session_name(),
                     &profile,
                     size,
+                    scrollback_limit.bytes(),
                     make_notifier(context),
                 )
                 .map(ApplicationSession::Persistent)
@@ -2514,6 +2618,7 @@ impl AppState {
                         local.persistence(),
                         context,
                         None,
+                        configuration.interface_settings().scrollback_limit(),
                     )))
                 }
                 WorkspaceTab::SshSession(tab) => {
@@ -3372,7 +3477,7 @@ impl AppState {
                     };
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
                     loop {
-                        tab.controller.pump_events(&mut tab.terminal);
+                        tab.pump_session_events();
                         if !matches!(
                             tab.controller.session().map(Session::lifecycle),
                             Some(SessionLifecycle::Starting | SessionLifecycle::Running)
@@ -4240,6 +4345,7 @@ impl AppState {
             local.persistence(),
             context,
             dimensions,
+            self.scrollback_limit,
         ));
     }
 
@@ -4730,7 +4836,7 @@ impl AppState {
     }
 
     fn place_session(&mut self, mut session: SessionTab) {
-        session.set_scrollback_limit(self.scrollback_limit);
+        session.apply_frontend_terminal_configuration(self.scrollback_limit);
         self.workspace_dirty = true;
         // Starting a session from the active Launcher or restored
         // authentication-required tab replaces that surface in place (same
@@ -4778,7 +4884,7 @@ impl AppState {
     fn apply_scrollback_limit_to_sessions(&mut self) {
         for tab in &mut self.tabs {
             if let TabContent::Session(session) = &mut tab.content {
-                session.set_scrollback_limit(self.scrollback_limit);
+                session.apply_frontend_terminal_configuration(self.scrollback_limit);
             }
         }
     }
@@ -4839,7 +4945,7 @@ impl AppState {
                 0,
                 context,
             );
-            restarted.set_scrollback_limit(self.scrollback_limit);
+            restarted.apply_frontend_terminal_configuration(self.scrollback_limit);
             if let Some(tab) = self.tabs.get_mut(index) {
                 tab.content = TabContent::Session(Box::new(restarted));
             }

@@ -151,7 +151,8 @@
       ],
       "decisions": [
         "ADR-0018",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0038"
       ],
       "automated_tests": [
         "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
@@ -198,6 +199,17 @@
         "pruning_removes_dead_generation_artifacts_but_not_live_sessions",
         "native_start_reports_socket_depth_without_starting_a_shell",
         "cursor_query_guard_replies_once_to_fragmented_queries",
+        "protocol_v2_delivers_a_recovered_terminal_before_live_output",
+        "native_daemon_snapshot_matches_fresh_terminal_after_large_output",
+        "maximum_output_frame_can_share_a_read_with_the_following_frame",
+        "recovered_terminal_keeps_bounded_history_snapshot_semantics",
+        "recovered_terminal_preserves_history_accounting_after_future_growth",
+        "repeated_recovery_preserves_history_during_bounded_terminal_churn",
+        "saturated_output_preserves_control_resize_and_exit_order",
+        "cli_v2_acknowledges_recovery_and_consumes_frames_without_forwarding_queries",
+        "authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies",
+        "malformed_authoritative_control_is_reported",
+        "backend_owned_resize_waits_for_acknowledgement_and_does_not_repeat_requests",
         "isolated_multiplexer_discovery_churn"
       ],
       "manual_scenarios": [
@@ -1537,7 +1549,8 @@
       ],
       "decisions": [
         "ADR-0002",
-        "ADR-0025"
+        "ADR-0025",
+        "ADR-0038"
       ],
       "automated_tests": [
         "open_profiles_is_a_singleton_and_reactivates_the_existing_tab",
@@ -1557,6 +1570,7 @@
         "native_persistence_is_local_only_and_preserves_the_shell_profile",
         "session_backend_forwards_input_resize_output_and_takeover",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
+        "native_daemon_snapshot_matches_fresh_terminal_after_large_output",
         "native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable",
         "native_windows_versioned_helper_installs_beside_a_live_legacy_daemon",
         "windows_packaged_helper_prefers_the_immutable_release_name",

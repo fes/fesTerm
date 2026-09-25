@@ -34,13 +34,13 @@ Dependencies should point inward toward stable domain logic:
 festerm-app
   |-- festerm-ui-egui
   |-- festerm-pty -----> festerm-session
-  |-- festerm-sessiond -> festerm-session and festerm-pty
+  |-- festerm-sessiond -> festerm-core, festerm-session and festerm-pty
   |-- festerm-config
   |-- festerm-ssh -----> festerm-session
 
 festerm-ui-egui ------> festerm-core
 festerm-pty ----------> festerm-session
-festerm-sessiond -----> festerm-session
+festerm-sessiond -----> festerm-core and festerm-session
 festerm-ssh ----------> festerm-session
 festerm-test-support -> festerm-core and session implementations
 festerm-document -----> (no workspace dependencies)
@@ -180,12 +180,36 @@ explicit and safe.
 ### `festerm-sessiond`
 
 Implements ADR-0025's opt-in persistent local-session backend. Its packaged
-standalone executable owns one detached PTY/ConPTY and a bounded replay
-buffer. The crate's library target implements `festerm-session::Session`
-directly over owner-scoped Unix-domain sockets or Windows named pipes, with
-bounded input/resize commands and single-client steal-on-reconnect semantics.
-Closing the application session detaches from the daemon rather than
-terminating its shell.
+standalone executable owns one detached PTY/ConPTY plus an authoritative
+`festerm-core::Terminal` recovery mirror. PTY output, accepted resizes, and
+frontend-owned terminal controls that affect recovery (`scrollback_limit`,
+color-scheme reporting, clear, and reset) are applied to that mirror in order.
+New protocol-v2 clients attach by reading one bounded recovery snapshot,
+adopting it explicitly, and only then receiving framed live output, ordered
+daemon-applied controls, resize acknowledgements, exit/takeover notices, and
+terminal-query ownership. Older protocol-v1 helpers remain attachable through
+their legacy byte-stream path. The crate's library target implements
+`festerm-session::Session` directly over owner-scoped Unix-domain sockets or
+Windows named pipes, with bounded input/resize/control commands, explicit
+snapshot-schema negotiation/rejection for incompatible helpers, validation of
+decoded `Terminal` invariants before adoption, and a reconnect-time resize
+gate so the frontend cannot overwrite detached geometry or encode input before
+it has adopted the daemon's snapshot. The app still flushes the actual current
+viewport after adoption, so recovered state and the live frontend converge
+without a race while preserving single-client steal-on-reconnect semantics.
+The old client is retired only after candidate adoption; a failed candidate
+leaves it usable. The daemon quiesces PTY/input processing for this handshake,
+bounded by a 15-second adoption deadline. Full output queues retain controls,
+resizes, and exit notices in order rather than dropping them. The frontend
+applies confirmed geometry with its normal history/selection reflow, not
+optimistically. CLI v2 attach renders a text projection of the mirror instead
+of forwarding raw query-producing escapes to the host terminal; it is not a
+full-fidelity graphical or styled terminal renderer.
+Closing the application session
+detaches from the daemon rather than terminating its shell, and the daemon
+answers terminal queries exactly once for protocol-v2 sessions instead of
+dropping or replaying queued replies, clipboard actions, or stale user input
+across reattach.
 
 Platform-sensitive Windows DACL manipulation remains isolated in
 `festerm-windows-security`: each named-pipe instance is created while the

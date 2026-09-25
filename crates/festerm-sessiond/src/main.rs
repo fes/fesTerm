@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use festerm_core::{Dimensions, Terminal};
 #[cfg(unix)]
 use std::os::unix::{
     fs::PermissionsExt,
@@ -96,8 +97,11 @@ const CLIENT_FRAME_HEADER_BYTES: usize = 9;
 const CLIENT_FRAME_MAGIC: &[u8; 4] = b"FSD1";
 const CLIENT_FRAME_INPUT: u8 = 1;
 const CLIENT_FRAME_RESIZE: u8 = 2;
+const CLIENT_FRAME_RECOVERY_SYNC: u8 = 3;
+const CLIENT_FRAME_RECOVERY_ADOPTED: u8 = 4;
 const MAX_CLIENT_FRAME_BYTES: usize = 64 * 1024;
-const REPLAY_CAPACITY_BYTES: usize = 1024 * 1024;
+const ATTACH_RECOVERY_DEADLINE: Duration = Duration::from_secs(15);
+const PTY_EVENT_CHANNEL_CAPACITY: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionRecord {
@@ -111,17 +115,29 @@ struct SessionRecord {
     working_directory: Option<String>,
     cols: u16,
     rows: u16,
+    #[serde(default = "default_scrollback_limit_bytes")]
+    scrollback_limit_bytes: usize,
     created_at_unix_ms: u128,
     #[serde(default)]
     attached: bool,
     #[serde(default = "legacy_protocol_version")]
     protocol_version: u16,
+    #[serde(default = "legacy_recovery_snapshot_schema_version")]
+    snapshot_schema_version: u16,
     #[serde(default)]
     helper_identity: Option<String>,
 }
 
 const fn legacy_protocol_version() -> u16 {
     1
+}
+
+const fn legacy_recovery_snapshot_schema_version() -> u16 {
+    0
+}
+
+const fn default_scrollback_limit_bytes() -> usize {
+    festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -184,12 +200,14 @@ enum CommandSpec {
         shell: ShellSpec,
         cols: u16,
         rows: u16,
+        scrollback_limit_bytes: usize,
     },
     Daemon {
         name: String,
         shell: ShellSpec,
         cols: u16,
         rows: u16,
+        scrollback_limit_bytes: usize,
     },
     List,
     Kill {
@@ -198,6 +216,14 @@ enum CommandSpec {
     Attach {
         name: String,
     },
+}
+
+struct ParsedSessionOptions {
+    name: String,
+    shell: ShellSpec,
+    cols: u16,
+    rows: u16,
+    scrollback_limit_bytes: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -273,6 +299,47 @@ fn resize_master(
     }
 }
 
+fn resize_shadow_terminal(terminal: &mut Terminal, size: PtySize) -> io::Result<()> {
+    let dimensions = Dimensions::new(size.cols as usize, size.rows as usize)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    terminal
+        .resize(dimensions)
+        .map_err(|error| io::Error::other(error.to_string()))
+}
+
+fn mirror_terminal_output(terminal: &mut Terminal, bytes: &[u8]) -> Vec<u8> {
+    terminal.ingest(bytes);
+    let replies = terminal.drain_replies();
+    let _ = terminal.drain_input();
+    let _ = terminal.take_reply_queue_overflowed();
+    let _ = terminal.take_input_queue_overflowed();
+    replies
+}
+
+fn apply_recovery_sync_command(
+    terminal: &mut Terminal,
+    command: &festerm_sessiond::RecoverySyncCommand,
+) {
+    match command {
+        festerm_sessiond::RecoverySyncCommand::SetScrollbackLimit { limit_bytes } => {
+            terminal.set_scrollback_limit(*limit_bytes);
+        }
+        festerm_sessiond::RecoverySyncCommand::SetColorScheme(scheme) => {
+            terminal.set_color_scheme(*scheme);
+        }
+        festerm_sessiond::RecoverySyncCommand::MirrorBytes(bytes) => {
+            let _ = mirror_terminal_output(terminal, bytes);
+        }
+        festerm_sessiond::RecoverySyncCommand::ResetToInitialState => {
+            terminal.reset_to_initial_state();
+            let _ = terminal.drain_replies();
+            let _ = terminal.drain_input();
+            let _ = terminal.take_reply_queue_overflowed();
+            let _ = terminal.take_input_queue_overflowed();
+        }
+    }
+}
+
 fn main() {
     if let Err(error) = festerm_sessiond::cleanup_superseded_package_helpers() {
         eprintln!("festerm-sessiond: could not clean up superseded helpers: {error}");
@@ -291,13 +358,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             shell,
             cols,
             rows,
-        } => run_start(name, shell, cols, rows),
+            scrollback_limit_bytes,
+        } => run_start(name, shell, cols, rows, scrollback_limit_bytes),
         CommandSpec::Daemon {
             name,
             shell,
             cols,
             rows,
-        } => run_daemon(name, shell, cols, rows),
+            scrollback_limit_bytes,
+        } => run_daemon(name, shell, cols, rows, scrollback_limit_bytes),
         CommandSpec::List => run_list(),
         CommandSpec::Kill { name } => run_kill(name),
         CommandSpec::Attach { name } => run_attach(name),
@@ -331,22 +400,36 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
 }
 
 fn parse_start(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Error>> {
-    let (name, shell, cols, rows) = parse_session_options(args, "start")?;
+    let ParsedSessionOptions {
+        name,
+        shell,
+        cols,
+        rows,
+        scrollback_limit_bytes,
+    } = parse_session_options(args, "start")?;
     Ok(CommandSpec::Start {
         name,
         shell,
         cols,
         rows,
+        scrollback_limit_bytes,
     })
 }
 
 fn parse_daemon(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Error>> {
-    let (name, shell, cols, rows) = parse_session_options(args, "daemon")?;
+    let ParsedSessionOptions {
+        name,
+        shell,
+        cols,
+        rows,
+        scrollback_limit_bytes,
+    } = parse_session_options(args, "daemon")?;
     Ok(CommandSpec::Daemon {
         name,
         shell,
         cols,
         rows,
+        scrollback_limit_bytes,
     })
 }
 
@@ -362,13 +445,14 @@ fn parse_name_only(args: &[String], command: &str) -> Result<String, Box<dyn std
 fn parse_session_options(
     args: &[String],
     command: &str,
-) -> Result<(String, ShellSpec, u16, u16), Box<dyn std::error::Error>> {
+) -> Result<ParsedSessionOptions, Box<dyn std::error::Error>> {
     let mut name = None;
     let mut shell = None;
     let mut shell_arguments = Vec::new();
     let mut working_directory = None;
     let mut cols = None;
     let mut rows = None;
+    let mut scrollback_limit_bytes = None;
     let mut index = 0;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -392,13 +476,19 @@ fn parse_session_options(
                     .map_err(|_| format!("{command} requires a valid u16 for {flag}"))?;
                 set_once(&mut rows, value, command, flag)?;
             }
+            "--scrollback-limit-bytes" => {
+                let value = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("{command} requires a valid usize for {flag}"))?;
+                set_once(&mut scrollback_limit_bytes, value, command, flag)?;
+            }
             other => return Err(format!("{command} does not recognize {other}").into()),
         }
         index += 2;
     }
-    Ok((
-        name.ok_or_else(|| format!("{command} requires --name <value>"))?,
-        match shell {
+    Ok(ParsedSessionOptions {
+        name: name.ok_or_else(|| format!("{command} requires --name <value>"))?,
+        shell: match shell {
             Some(executable) => ShellSpec {
                 executable,
                 arguments: shell_arguments,
@@ -411,9 +501,11 @@ fn parse_session_options(
                 default_shell()
             }
         },
-        cols.unwrap_or(80),
-        rows.unwrap_or(24),
-    ))
+        cols: cols.unwrap_or(80),
+        rows: rows.unwrap_or(24),
+        scrollback_limit_bytes: scrollback_limit_bytes
+            .unwrap_or(festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES),
+    })
 }
 
 fn set_once<T>(
@@ -466,6 +558,7 @@ fn run_start(
     shell: ShellSpec,
     cols: u16,
     rows: u16,
+    scrollback_limit_bytes: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let runtime_root = festerm_sessiond::runtime_root()?;
@@ -500,6 +593,18 @@ fn run_start(
                     )
                     .into());
                 }
+                if record.protocol_version >= 2
+                    && !festerm_sessiond::snapshot_schema_is_supported(
+                        record.snapshot_schema_version,
+                    )
+                {
+                    return Err(format!(
+                        "session '{name}' uses recovery snapshot schema {}, but this helper supports {}",
+                        record.snapshot_schema_version,
+                        festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+                    )
+                    .into());
+                }
                 return Err(format!("session '{name}' is already running").into());
             }
             cleanup_dead_generation(&runtime_root, record, true)?;
@@ -531,6 +636,8 @@ fn run_start(
             .arg(cols.to_string())
             .arg("--rows")
             .arg(rows.to_string())
+            .arg("--scrollback-limit-bytes")
+            .arg(scrollback_limit_bytes.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -586,6 +693,8 @@ fn run_start(
                 .arg(cols.to_string())
                 .arg("--rows")
                 .arg(rows.to_string())
+                .arg("--scrollback-limit-bytes")
+                .arg(scrollback_limit_bytes.to_string())
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -646,12 +755,15 @@ fn run_start(
         Err(error) => {
             let record = generation_record(
                 &runtime_root,
-                name.clone(),
-                daemon_pid,
-                generation,
-                &shell,
-                cols,
-                rows,
+                GenerationRecordSpec {
+                    name: name.clone(),
+                    pid: daemon_pid,
+                    generation,
+                    shell: &shell,
+                    cols,
+                    rows,
+                    scrollback_limit_bytes,
+                },
             )?;
             let cleanup = cleanup_failed_start(&runtime_root, &mut daemon, &record);
             return combine_cleanup_result(Err(error), cleanup);
@@ -671,6 +783,7 @@ fn run_daemon(
     shell: ShellSpec,
     cols: u16,
     rows: u16,
+    scrollback_limit_bytes: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     nix::unistd::setsid()?;
@@ -686,12 +799,15 @@ fn run_daemon(
     };
     let record = generation_record(
         &runtime_root,
-        name.clone(),
-        process::id(),
-        generation,
-        &shell,
-        cols,
-        rows,
+        GenerationRecordSpec {
+            name: name.clone(),
+            pid: process::id(),
+            generation,
+            shell: &shell,
+            cols,
+            rows,
+            scrollback_limit_bytes,
+        },
     )?;
     #[cfg(unix)]
     session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
@@ -703,10 +819,14 @@ fn run_daemon(
             *socket_owned = true;
             set_file_mode(socket_path, 0o600)?;
             let mut spawned = spawn_shell(&shell, cols, rows)?;
+            let mut terminal = Terminal::with_scrollback_limit(
+                Dimensions::new(cols as usize, rows as usize)?,
+                scrollback_limit_bytes,
+            )?;
             save_registry_record(record.clone())?;
             let reader = spawned.master()?.try_clone_reader()?;
             let writer = spawned.master()?.take_writer()?;
-            daemon_client_loop(listener, reader, writer, &mut spawned, &name)?;
+            daemon_client_loop(listener, reader, writer, &mut spawned, &name, &mut terminal)?;
         }
 
         #[cfg(windows)]
@@ -714,6 +834,10 @@ fn run_daemon(
             let _ = socket_owned;
             let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
             let mut spawned = spawn_shell(&shell, cols, rows)?;
+            let mut terminal = Terminal::with_scrollback_limit(
+                Dimensions::new(cols as usize, rows as usize)?,
+                scrollback_limit_bytes,
+            )?;
             save_registry_record(record.clone())?;
             let reader = spawned.master()?.try_clone_reader()?;
             let writer = spawned.master()?.take_writer()?;
@@ -724,21 +848,36 @@ fn run_daemon(
                 writer,
                 &mut spawned,
                 &name,
+                &mut terminal,
             )?;
         }
         Ok(())
     })
 }
 
-fn generation_record(
-    root: &Path,
+struct GenerationRecordSpec<'a> {
     name: String,
     pid: u32,
     generation: u128,
-    shell: &ShellSpec,
+    shell: &'a ShellSpec,
     cols: u16,
     rows: u16,
+    scrollback_limit_bytes: usize,
+}
+
+fn generation_record(
+    root: &Path,
+    spec: GenerationRecordSpec<'_>,
 ) -> Result<SessionRecord, Box<dyn std::error::Error>> {
+    let GenerationRecordSpec {
+        name,
+        pid,
+        generation,
+        shell,
+        cols,
+        rows,
+        scrollback_limit_bytes,
+    } = spec;
     let identity = format!("{pid}-{generation}");
     #[cfg(unix)]
     let socket = root
@@ -759,9 +898,11 @@ fn generation_record(
         working_directory: shell.working_directory.clone(),
         cols,
         rows,
+        scrollback_limit_bytes,
         created_at_unix_ms: generation,
         attached: false,
         protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+        snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
         helper_identity: env::current_exe().ok().and_then(|path| {
             path.file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -821,6 +962,7 @@ fn daemon_client_loop<R: Read + Send + 'static>(
     mut writer: Box<dyn Write + Send>,
     spawned: &mut SpawnedShell,
     name: &str,
+    terminal: &mut Terminal,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pid = process::id();
     let name_owned = name.to_owned();
@@ -836,11 +978,13 @@ fn daemon_client_loop<R: Read + Send + 'static>(
             |command| match command {
                 ClientCommand::Input(data) => writer.write_all(&data).and_then(|()| writer.flush()),
                 ClientCommand::Resize(size) => resize_master(master, size),
+                ClientCommand::RecoverySync(_) | ClientCommand::RecoveryAdopted => Ok(()),
             },
             || {
                 let _ = child.kill();
             },
             attachment_reporter(name_owned, pid),
+            terminal,
         )
     };
     spawned.terminate();
@@ -856,6 +1000,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     mut handle_client_command: impl FnMut(ClientCommand) -> io::Result<()>,
     mut shutdown: impl FnMut(),
     mut on_attach_changed: impl FnMut(bool) -> bool,
+    terminal: &mut Terminal,
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
@@ -863,7 +1008,6 @@ fn session_client_loop<R: Read + Send + 'static>(
     let mut active: Option<ActiveClient> = None;
     let mut retired_clients = Vec::new();
     let mut next_generation = 1u64;
-    let mut replay = ReplayBuffer::default();
     let mut attached_reported = false;
     let mut pending = PendingOutput::default();
     let result = loop {
@@ -872,26 +1016,11 @@ fn session_client_loop<R: Read + Send + 'static>(
             break Err(error);
         }
         retire_active_if_finished(&mut active, &mut retired_clients);
-        if let Err(error) = accept_unix_clients(
-            &listener,
-            &mut active,
-            &mut retired_clients,
-            &replay,
-            observer.as_ref(),
-            &client_input_tx,
-            &mut next_generation,
-        ) {
-            shutdown();
-            break Err(error);
-        }
-        report_attach_state_change(
-            active.is_some(),
-            &mut attached_reported,
-            &mut on_attach_changed,
-        );
         if let Err(error) = handle_pending_client_input(
             &client_input_rx,
             active.as_ref(),
+            terminal,
+            &mut pending,
             &mut handle_client_command,
         ) {
             shutdown();
@@ -900,30 +1029,54 @@ fn session_client_loop<R: Read + Send + 'static>(
         // Output the client has not taken yet must be delivered before any more
         // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
+        if let Err(error) = accept_unix_clients(
+            &listener,
+            &mut active,
+            &mut retired_clients,
+            terminal,
+            observer.as_ref(),
+            &client_input_tx,
+            &mut next_generation,
+        ) {
+            shutdown();
+            break Err(error);
+        }
+        flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if pending.is_pending() {
             thread::sleep(CLIENT_POLL_INTERVAL);
             continue;
         }
+        match drain_ready_pty_output(
+            &pty_rx,
+            terminal,
+            observer.as_ref(),
+            &mut active,
+            &mut retired_clients,
+            &mut pending,
+            &mut handle_client_command,
+        ) {
+            Ok(Some(())) => break Ok(()),
+            Err(error) => {
+                shutdown();
+                break Err(error);
+            }
+            Ok(None) => {}
+        }
+        if pending.is_pending() {
+            thread::sleep(CLIENT_POLL_INTERVAL);
+            continue;
+        }
+        report_attach_state_change(
+            active.is_some(),
+            &mut attached_reported,
+            &mut on_attach_changed,
+        );
         match pty_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(PtyEvent::Data(data)) => {
-                if let Err(error) = accept_unix_clients(
-                    &listener,
-                    &mut active,
-                    &mut retired_clients,
-                    &replay,
-                    observer.as_ref(),
-                    &client_input_tx,
-                    &mut next_generation,
-                ) {
-                    shutdown();
-                    break Err(error);
+                let replies = mirror_terminal_output(terminal, &data);
+                if !replies.is_empty() {
+                    handle_client_command(ClientCommand::Input(replies))?;
                 }
-                report_attach_state_change(
-                    active.is_some(),
-                    &mut attached_reported,
-                    &mut on_attach_changed,
-                );
-                replay.push(&data);
                 if let Some(observer) = observer.as_ref() {
                     let _ = observer.send(ClientLoopEvent::OutputBuffered);
                 }
@@ -935,11 +1088,11 @@ fn session_client_loop<R: Read + Send + 'static>(
                 );
             }
             Ok(PtyEvent::Eof) => {
-                send_to_active(
+                send_control_to_active(
                     &mut active,
                     &mut retired_clients,
                     &mut pending,
-                    EXITED_NOTICE_BYTES.to_vec(),
+                    ClientOutput::Exited,
                 );
                 break Ok(());
             }
@@ -949,6 +1102,8 @@ fn session_client_loop<R: Read + Send + 'static>(
         }
     };
 
+    let result = result
+        .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
     retire_active(&mut active, &mut retired_clients, false);
     report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
     for client in retired_clients {
@@ -973,7 +1128,7 @@ fn accept_unix_clients(
     listener: &UnixListener,
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
-    replay: &ReplayBuffer,
+    terminal: &Terminal,
     observer: Option<&mpsc::Sender<ClientLoopEvent>>,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
@@ -983,14 +1138,17 @@ fn accept_unix_clients(
             Ok((stream, _)) => {
                 stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
                 stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
-                replace_active(
+                if let Err(error) = replace_active(
                     active,
                     retired_clients,
                     stream,
-                    replay,
+                    terminal,
                     client_input_tx.clone(),
                     next_generation,
-                )?;
+                ) {
+                    eprintln!("fesTerm rejected a replacement session client: {error}");
+                    return Ok(());
+                }
                 if let Some(observer) = observer {
                     let _ = observer.send(ClientLoopEvent::ClientAttached);
                 }
@@ -1049,6 +1207,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     mut writer: Box<dyn Write + Send>,
     spawned: &mut SpawnedShell,
     name: &str,
+    terminal: &mut Terminal,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (accept_tx, accept_rx) = mpsc::channel::<io::Result<Pipe>>();
     let pipe_name = pipe_name.to_owned();
@@ -1100,7 +1259,6 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut active: Option<ActiveClient> = None;
     let mut retired_clients = Vec::new();
     let mut next_generation = 1u64;
-    let mut replay = ReplayBuffer::default();
     let mut attached_reported = false;
     let pid = process::id();
     let name_owned = name.to_owned();
@@ -1124,11 +1282,11 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             }
         }
         if shell_exited_at.is_some_and(|exited_at| exited_at.elapsed() >= SHELL_EXIT_DRAIN) {
-            send_to_active(
+            send_control_to_active(
                 &mut active,
                 &mut retired_clients,
                 &mut pending,
-                EXITED_NOTICE_BYTES.to_vec(),
+                ClientOutput::Exited,
             );
             break Ok(());
         }
@@ -1137,61 +1295,73 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             break Err(error);
         }
         retire_active_if_finished(&mut active, &mut retired_clients);
+        if let Err(error) = handle_pending_client_input(
+            &client_input_rx,
+            active.as_ref(),
+            terminal,
+            &mut pending,
+            &mut |command| match command {
+                ClientCommand::Input(data) => writer.write_all(&data).and_then(|()| writer.flush()),
+                ClientCommand::Resize(size) => resize_master(spawned.master.as_deref(), size),
+                ClientCommand::RecoverySync(_) | ClientCommand::RecoveryAdopted => Ok(()),
+            },
+        ) {
+            let _ = spawned.child.kill();
+            break Err(error);
+        }
+        // Accept before checking backpressure so a stalled client can be replaced.
         if let Err(error) = accept_windows_clients(
             &accept_rx,
             &mut active,
             &mut retired_clients,
-            &replay,
+            terminal,
             &client_input_tx,
             &mut next_generation,
         ) {
             let _ = spawned.child.kill();
             break Err(error);
         }
-        report_attach_state_change(
-            active.is_some(),
-            &mut attached_reported,
-            &mut on_attach_changed,
-        );
-        if let Err(error) =
-            handle_pending_client_input(&client_input_rx, active.as_ref(), &mut |command| {
-                match command {
-                    ClientCommand::Input(data) => {
-                        writer.write_all(&data).and_then(|()| writer.flush())
-                    }
-                    ClientCommand::Resize(size) => resize_master(spawned.master.as_deref(), size),
-                }
-            })
-        {
-            let _ = spawned.child.kill();
-            break Err(error);
-        }
-        // Output the client has not taken yet must be delivered before any more
-        // is consumed from the reader channel, so delivery stays ordered.
+        // Deliver parked output before consuming more from the reader channel.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if pending.is_pending() {
             thread::sleep(CLIENT_POLL_INTERVAL);
             continue;
         }
+        match drain_ready_pty_output(
+            &pty_rx,
+            terminal,
+            None,
+            &mut active,
+            &mut retired_clients,
+            &mut pending,
+            &mut |command| match command {
+                ClientCommand::Input(data) => writer.write_all(&data).and_then(|()| writer.flush()),
+                ClientCommand::Resize(size) => resize_master(spawned.master.as_deref(), size),
+                ClientCommand::RecoverySync(_) | ClientCommand::RecoveryAdopted => Ok(()),
+            },
+        ) {
+            Ok(Some(())) => break Ok(()),
+            Err(error) => {
+                let _ = spawned.child.kill();
+                break Err(error);
+            }
+            Ok(None) => {}
+        }
+        if pending.is_pending() {
+            thread::sleep(CLIENT_POLL_INTERVAL);
+            continue;
+        }
+        report_attach_state_change(
+            active.is_some(),
+            &mut attached_reported,
+            &mut on_attach_changed,
+        );
         match pty_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(PtyEvent::Data(data)) => {
-                if let Err(error) = accept_windows_clients(
-                    &accept_rx,
-                    &mut active,
-                    &mut retired_clients,
-                    &replay,
-                    &client_input_tx,
-                    &mut next_generation,
-                ) {
-                    let _ = spawned.child.kill();
-                    break Err(error);
+                let replies = mirror_terminal_output(terminal, &data);
+                if !replies.is_empty() {
+                    writer.write_all(&replies).and_then(|()| writer.flush())?;
                 }
-                report_attach_state_change(
-                    active.is_some(),
-                    &mut attached_reported,
-                    &mut on_attach_changed,
-                );
-                replay.push(&data);
                 send_to_active(&mut active, &mut retired_clients, &mut pending, data);
                 report_attach_state_change(
                     active.is_some(),
@@ -1200,11 +1370,11 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                 );
             }
             Ok(PtyEvent::Eof) => {
-                send_to_active(
+                send_control_to_active(
                     &mut active,
                     &mut retired_clients,
                     &mut pending,
-                    EXITED_NOTICE_BYTES.to_vec(),
+                    ClientOutput::Exited,
                 );
                 break Ok(());
             }
@@ -1216,6 +1386,8 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
 
     accept_cancelled.store(true, Ordering::Release);
     sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
+    let result = result
+        .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
     retire_active(&mut active, &mut retired_clients, false);
     report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
     // The shell must not outlive the daemon that owns its pseudoterminal, and
@@ -1248,26 +1420,25 @@ fn accept_windows_clients(
     accept_rx: &mpsc::Receiver<io::Result<Pipe>>,
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
-    replay: &ReplayBuffer,
+    terminal: &Terminal,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
 ) -> io::Result<()> {
     for stream in accept_rx.try_iter() {
         let mut stream = stream?;
-        sessiond_trace(format_args!(
-            "accept_windows_clients: new client, replay_empty={}",
-            replay.is_empty()
-        ));
+        sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
-        replace_active(
+        if let Err(error) = replace_active(
             active,
             retired_clients,
             stream,
-            replay,
+            terminal,
             client_input_tx.clone(),
             next_generation,
-        )?;
+        ) {
+            eprintln!("fesTerm rejected a replacement session client: {error}");
+        }
     }
     Ok(())
 }
@@ -1275,7 +1446,7 @@ fn accept_windows_clients(
 fn spawn_pty_reader<R: Read + Send + 'static>(
     mut reader: R,
 ) -> (mpsc::Receiver<PtyEvent>, thread::JoinHandle<io::Result<()>>) {
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(PTY_EVENT_CHANNEL_CAPACITY);
     let thread = thread::spawn(move || {
         let mut buffer = [0u8; 4096];
         loop {
@@ -1312,6 +1483,8 @@ fn spawn_pty_reader<R: Read + Send + 'static>(
 enum ClientCommand {
     Input(Vec<u8>),
     Resize(PtySize),
+    RecoverySync(festerm_sessiond::RecoverySyncCommand),
+    RecoveryAdopted,
 }
 
 #[derive(Debug)]
@@ -1323,6 +1496,9 @@ struct ClientInput {
 #[derive(Debug, PartialEq, Eq)]
 enum ClientOutput {
     Data(Vec<u8>),
+    RecoverySync(Vec<u8>),
+    ResizeApplied(PtySize),
+    Exited,
 }
 
 struct ActiveClient {
@@ -1336,25 +1512,30 @@ fn replace_active<S: Read + Write + Send + 'static>(
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     replacement: S,
-    replay: &ReplayBuffer,
+    terminal: &Terminal,
     input: mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
 ) -> io::Result<()> {
-    retire_active(active, retired_clients, true);
-
+    let recovery = festerm_sessiond::encode_recovery_snapshot(terminal)
+        .map_err(|error| io::Error::other(error.to_string()))?;
     let generation = *next_generation;
-    *next_generation = next_generation.wrapping_add(1);
-    sessiond_trace(format_args!(
-        "replace_active: generation={generation} replay_empty={}",
-        replay.is_empty()
-    ));
+    sessiond_trace(format_args!("replace_active: generation={generation}"));
     let (output, output_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+    let (adopted_tx, adopted_rx) = mpsc::sync_channel(1);
     let stolen = Arc::new(AtomicBool::new(false));
     let worker_stolen = Arc::clone(&stolen);
     let thread = thread::Builder::new()
         .name(format!("festerm-sessiond-client-{generation}"))
         .spawn(move || {
-            let result = client_io_loop(replacement, generation, input, output_rx, worker_stolen);
+            let result = client_io_loop(
+                replacement,
+                generation,
+                recovery,
+                input,
+                output_rx,
+                worker_stolen,
+                Some(adopted_tx),
+            );
             if let Err(error) = &result {
                 sessiond_trace(format_args!(
                     "client_io_loop[{generation}]: worker exited with error: {error}"
@@ -1362,26 +1543,23 @@ fn replace_active<S: Read + Write + Send + 'static>(
             }
             result
         })?;
+    if let Err(error) = adopted_rx.recv_timeout(ATTACH_RECOVERY_DEADLINE) {
+        stolen.store(true, Ordering::Release);
+        drop(output);
+        retired_clients.push(thread);
+        return Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            format!("replacement did not adopt its recovery snapshot: {error}"),
+        ));
+    }
+    retire_active(active, retired_clients, true);
+    *next_generation = next_generation.wrapping_add(1);
     let client = ActiveClient {
         generation,
         output,
         stolen,
         thread,
     };
-    if !replay.is_empty()
-        && client
-            .output
-            .try_send(ClientOutput::Data(replay.to_vec()))
-            .is_err()
-    {
-        client.stolen.store(false, Ordering::Release);
-        drop(client.output);
-        join_io_thread(client.thread)?;
-        return Err(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            "new session client could not accept replay",
-        ));
-    }
     *active = Some(client);
     Ok(())
 }
@@ -1443,6 +1621,16 @@ fn send_to_active(
     flush_pending_output(active, retired_clients, pending);
 }
 
+fn send_control_to_active(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
+    output: ClientOutput,
+) {
+    pending.hold_output(active.as_ref().map(|client| client.generation), output);
+    flush_pending_output(active, retired_clients, pending);
+}
+
 /// Output that has been read from the pseudoterminal but not yet accepted by
 /// the attached client.
 ///
@@ -1451,33 +1639,38 @@ fn send_to_active(
 /// (or a burst larger than the queue) is enough. Dropping the client there
 /// turned ordinary backpressure into a lost session, so the main loop parks
 /// the chunk here instead and stops consuming its reader channel until the
-/// client takes it. The separate PTY-reader channel is still unbounded; this
-/// limits client delivery, not the daemon's total buffered PTY output.
+/// client takes it. The PTY-reader channel is also bounded, so a slow client
+/// eventually backpressures the pseudoterminal rather than growing an
+/// unbounded in-memory backlog.
 #[derive(Default)]
 struct PendingOutput {
     /// The chunk awaiting delivery, and the client generation it was produced
     /// for. Output parked for a client that has since been replaced is dropped
-    /// rather than delivered, because the replacement already received the
-    /// replay buffer containing it.
-    held: Option<(u64, Vec<u8>)>,
+    /// rather than delivered, because the replacement already received a fresh
+    /// recovery snapshot that includes it.
+    held: VecDeque<(u64, ClientOutput)>,
 }
 
 impl PendingOutput {
     fn is_pending(&self) -> bool {
-        self.held.is_some()
+        !self.held.is_empty()
     }
 
     fn hold(&mut self, generation: Option<u64>, data: Vec<u8>) {
+        self.hold_output(generation, ClientOutput::Data(data));
+    }
+
+    fn hold_output(&mut self, generation: Option<u64>, output: ClientOutput) {
         let Some(generation) = generation else {
-            // With no client attached the replay buffer already holds this
-            // output, so there is nothing to deliver.
+            // With no client attached the authoritative recovery terminal
+            // already reflects this output, so there is nothing to deliver.
             return;
         };
-        debug_assert!(
-            self.held.is_none(),
-            "the daemon must not read more pseudoterminal output while a chunk is still pending"
+        assert!(
+            self.held.len() <= CLIENT_QUEUE_CAPACITY,
+            "bounded pending output overflow"
         );
-        self.held = Some((generation, data));
+        self.held.push_back((generation, output));
     }
 }
 
@@ -1490,34 +1683,117 @@ fn flush_pending_output(
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     pending: &mut PendingOutput,
 ) {
-    let Some((generation, data)) = pending.held.take() else {
-        return;
-    };
-    let Some(client) = active.as_ref() else {
-        return;
-    };
-    if client.generation != generation {
-        return;
-    }
-    match client.output.try_send(ClientOutput::Data(data)) {
-        Ok(()) => {}
-        Err(mpsc::TrySendError::Full(ClientOutput::Data(data))) => {
-            pending.held = Some((generation, data));
+    while let Some((generation, output)) = pending.held.pop_front() {
+        let Some(client) = active.as_ref() else {
+            continue;
+        };
+        if client.generation != generation {
+            continue;
         }
-        Err(mpsc::TrySendError::Disconnected(_)) => {
-            retire_active(active, retired_clients, false);
+        match client.output.try_send(output) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(output)) => {
+                pending.held.push_front((generation, output));
+                break;
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                retire_active(active, retired_clients, false);
+            }
         }
     }
+}
+
+fn finish_pending_output(
+    active: &mut Option<ActiveClient>,
+    retired: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
+) -> io::Result<()> {
+    let deadline = Instant::now() + WORKER_JOIN_TIMEOUT;
+    while pending.is_pending() {
+        flush_pending_output(active, retired, pending);
+        if pending.is_pending() {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "final session output remained blocked",
+                ));
+            }
+            thread::sleep(CLIENT_POLL_INTERVAL);
+        }
+    }
+    Ok(())
+}
+
+fn drain_ready_pty_output(
+    pty_rx: &mpsc::Receiver<PtyEvent>,
+    terminal: &mut Terminal,
+    observer: Option<&mpsc::Sender<ClientLoopEvent>>,
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
+    handle: &mut impl FnMut(ClientCommand) -> io::Result<()>,
+) -> io::Result<Option<()>> {
+    while !pending.is_pending() {
+        match pty_rx.try_recv() {
+            Ok(PtyEvent::Data(data)) => {
+                let replies = mirror_terminal_output(terminal, &data);
+                if !replies.is_empty() {
+                    handle(ClientCommand::Input(replies))?;
+                }
+                if let Some(observer) = observer {
+                    let _ = observer.send(ClientLoopEvent::OutputBuffered);
+                }
+                send_to_active(active, retired_clients, pending, data);
+            }
+            Ok(PtyEvent::Eof) => {
+                send_control_to_active(active, retired_clients, pending, ClientOutput::Exited);
+                return Ok(Some(()));
+            }
+            Ok(PtyEvent::Error(error)) => return Err(error),
+            Err(mpsc::TryRecvError::Empty) => return Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => return Ok(Some(())),
+        }
+    }
+    Ok(None)
 }
 
 fn handle_pending_client_input(
     input: &mpsc::Receiver<ClientInput>,
     active: Option<&ActiveClient>,
+    terminal: &mut Terminal,
+    pending: &mut PendingOutput,
     handle: &mut impl FnMut(ClientCommand) -> io::Result<()>,
 ) -> io::Result<()> {
-    for input in input.try_iter().take(CLIENT_QUEUE_CAPACITY) {
-        if active.is_some_and(|client| client.generation == input.generation) {
-            handle(input.command)?;
+    for input in input
+        .try_iter()
+        .take(CLIENT_QUEUE_CAPACITY.saturating_sub(pending.held.len()))
+    {
+        if active.is_some_and(|client| client.generation == input.generation)
+            || matches!(&input.command, ClientCommand::RecoverySync(_))
+        {
+            match input.command {
+                ClientCommand::Input(data) => handle(ClientCommand::Input(data))?,
+                ClientCommand::Resize(size) => {
+                    handle(ClientCommand::Resize(size))?;
+                    resize_shadow_terminal(terminal, size)?;
+                    pending.hold_output(
+                        active.map(|client| client.generation),
+                        ClientOutput::ResizeApplied(size),
+                    );
+                }
+                ClientCommand::RecoverySync(command) => {
+                    apply_recovery_sync_command(terminal, &command);
+                    if let Some(active) = active {
+                        let payload = festerm_sessiond::encode_recovery_sync_command(&command)
+                            .map_err(|error| io::Error::other(error.to_string()))?;
+                        pending.hold_output(
+                            Some(active.generation),
+                            ClientOutput::RecoverySync(payload),
+                        );
+                    }
+                }
+                ClientCommand::RecoveryAdopted => {}
+            }
         }
     }
     Ok(())
@@ -1571,7 +1847,7 @@ fn is_retryable_client_write(error: &io::Error) -> bool {
 }
 
 fn write_stolen_notice<S: Write>(stream: &mut S) -> io::Result<()> {
-    stream.write_all(STOLEN_NOTICE_BYTES)?;
+    stream.write_all(&festerm_sessiond::encode_server_stolen_frame())?;
     #[cfg(not(windows))]
     stream.flush()?;
     Ok(())
@@ -1583,7 +1859,7 @@ fn write_stolen_notice<S: Write>(stream: &mut S) -> io::Result<()> {
 /// that passed its `stolen` check microseconds before the takeover observes the
 /// disconnect rather than the flag. Re-checking here keeps the invariant that a
 /// stolen client is owed exactly one notice, while an ordinary daemon shutdown
-/// (flag clear, as in the failed-replay path of [`replace_active`]) still exits
+/// (flag clear, as in the failed-attach path of [`replace_active`]) still exits
 /// silently instead of fabricating one.
 fn finish_disconnected_client<S: Write>(stream: &mut S, stolen: &AtomicBool) -> io::Result<()> {
     if !stolen.load(Ordering::Acquire) {
@@ -1621,17 +1897,27 @@ fn before_output_poll() {
 fn client_io_loop<S: Read + Write>(
     mut stream: S,
     generation: u64,
+    recovery: Vec<u8>,
     input: mpsc::SyncSender<ClientInput>,
     output: mpsc::Receiver<ClientOutput>,
     stolen: Arc<AtomicBool>,
+    mut adoption: Option<mpsc::SyncSender<()>>,
 ) -> io::Result<()> {
     let mut parser = ClientFrameParser::default();
     let mut pending_input = None;
-    let mut pending_output = None;
+    let mut pending_output = (!recovery.is_empty()).then_some((recovery, 0));
+    let mut recovery_adopted = pending_output.is_none();
+    let adoption_deadline = Instant::now() + ATTACH_RECOVERY_DEADLINE;
     let mut buffer = [0u8; 4096];
     'client: loop {
         if stolen.load(Ordering::Acquire) {
             return write_stolen_notice(&mut stream);
+        }
+        if !recovery_adopted && Instant::now() >= adoption_deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "recovery adoption timed out",
+            ));
         }
         loop {
             if stolen.load(Ordering::Acquire) {
@@ -1648,6 +1934,34 @@ fn client_io_loop<S: Read + Write>(
                     None => break,
                 },
             };
+            if !recovery_adopted {
+                match command.command {
+                    ClientCommand::RecoveryAdopted => {
+                        if pending_output.is_some() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "recovery acknowledged before snapshot delivery",
+                            ));
+                        }
+                        recovery_adopted = true;
+                        if let Some(adoption) = adoption.take() {
+                            adoption.send(()).map_err(|_| {
+                                io::Error::new(
+                                    io::ErrorKind::BrokenPipe,
+                                    "recovery candidate cancelled",
+                                )
+                            })?;
+                        }
+                        continue;
+                    }
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "session client sent commands before adopting recovery state",
+                        ))
+                    }
+                }
+            }
             match input.try_send(command) {
                 Ok(()) => {
                     if retrying {
@@ -1677,7 +1991,7 @@ fn client_io_loop<S: Read + Write>(
             if stolen.load(Ordering::Acquire) {
                 continue 'client;
             }
-            if pending_output.is_none() {
+            if recovery_adopted && pending_output.is_none() {
                 before_output_poll();
                 match output.try_recv() {
                     Ok(ClientOutput::Data(data)) => {
@@ -1685,13 +1999,36 @@ fn client_io_loop<S: Read + Write>(
                             "client_io_loop[{generation}]: writing {} bytes to client",
                             data.len()
                         ));
-                        pending_output = Some((data, 0));
+                        pending_output =
+                            Some((festerm_sessiond::encode_server_output_frame(&data), 0));
+                    }
+                    Ok(ClientOutput::RecoverySync(payload)) => {
+                        pending_output = Some((
+                            festerm_sessiond::encode_server_recovery_sync_frame(&payload),
+                            0,
+                        ));
+                    }
+                    Ok(ClientOutput::ResizeApplied(size)) => {
+                        let mut payload = Vec::with_capacity(8);
+                        for value in [size.cols, size.rows, size.pixel_width, size.pixel_height] {
+                            payload.extend_from_slice(&value.to_be_bytes());
+                        }
+                        pending_output = Some((
+                            festerm_sessiond::encode_server_resize_applied_frame(&payload),
+                            0,
+                        ));
+                    }
+                    Ok(ClientOutput::Exited) => {
+                        pending_output = Some((festerm_sessiond::encode_server_exited_frame(), 0));
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
                         return finish_disconnected_client(&mut stream, &stolen)
                     }
                 }
+            }
+            if pending_output.is_none() {
+                break;
             }
             let (data, written) = pending_output
                 .as_mut()
@@ -1772,6 +2109,16 @@ impl ClientFrameParser {
         let command = match kind {
             CLIENT_FRAME_INPUT => ClientCommand::Input(payload.to_vec()),
             CLIENT_FRAME_RESIZE => ClientCommand::Resize(parse_resize_frame(payload)?),
+            CLIENT_FRAME_RECOVERY_SYNC => {
+                let command = bincode::deserialize(payload).map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("session client recovery-sync payload is invalid: {error}"),
+                    )
+                })?;
+                ClientCommand::RecoverySync(command)
+            }
+            CLIENT_FRAME_RECOVERY_ADOPTED if payload.is_empty() => ClientCommand::RecoveryAdopted,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -1869,51 +2216,6 @@ fn reap_client_threads(clients: &mut Vec<thread::JoinHandle<io::Result<()>>>) ->
         }
     }
     Ok(())
-}
-
-#[derive(Debug)]
-struct ReplayBuffer {
-    bytes: VecDeque<u8>,
-    capacity: usize,
-}
-
-impl Default for ReplayBuffer {
-    fn default() -> Self {
-        Self {
-            bytes: VecDeque::with_capacity(REPLAY_CAPACITY_BYTES),
-            capacity: REPLAY_CAPACITY_BYTES,
-        }
-    }
-}
-
-impl ReplayBuffer {
-    fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    fn to_vec(&self) -> Vec<u8> {
-        self.bytes.iter().copied().collect()
-    }
-
-    fn push(&mut self, data: &[u8]) {
-        if data.len() >= self.capacity {
-            self.bytes.clear();
-            self.bytes.extend(
-                data[data.len().saturating_sub(self.capacity)..]
-                    .iter()
-                    .copied(),
-            );
-            return;
-        }
-
-        let overflow = self
-            .bytes
-            .len()
-            .saturating_add(data.len())
-            .saturating_sub(self.capacity);
-        self.bytes.drain(..overflow);
-        self.bytes.extend(data.iter().copied());
-    }
 }
 
 #[derive(Debug)]
@@ -2091,6 +2393,42 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+fn write_attach_recovery<W: Write>(
+    terminal: &Terminal,
+    output: &mut W,
+    include_history: bool,
+) -> io::Result<()> {
+    let mut line = Vec::new();
+    if include_history && !terminal.modes().alternate_screen() {
+        for row in 0..terminal.scrollback_stats().physical_rows() {
+            line.clear();
+            for cell in terminal.scrollback_physical_row(row).into_iter().flatten() {
+                line.extend_from_slice(cell.text().as_bytes());
+            }
+            output.write_all(&line)?;
+            output.write_all(b"\r\n")?;
+        }
+    }
+    output.write_all(b"\x1b[H\x1b[2J")?;
+    for row in 0..terminal.dimensions().rows() {
+        write!(output, "\x1b[{};1H", row + 1)?;
+        line.clear();
+        for column in 0..terminal.dimensions().columns() {
+            if let Some(cell) = terminal.cell_ref(column, row) {
+                line.extend_from_slice(cell.text().as_bytes());
+            }
+        }
+        output.write_all(&line)?;
+    }
+    write!(
+        output,
+        "\x1b[{};{}H",
+        terminal.cursor().row() + 1,
+        terminal.cursor().column() + 1,
+    )?;
+    output.flush()
+}
+
 fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let registry = load_registry()?;
@@ -2113,13 +2451,28 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    if record.protocol_version >= 2
+        && !festerm_sessiond::snapshot_schema_is_supported(record.snapshot_schema_version)
+    {
+        return Err(format!(
+            "session '{name}' uses recovery snapshot schema {}, but this helper supports {}",
+            record.snapshot_schema_version,
+            festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        )
+        .into());
+    }
 
     #[cfg(unix)]
     let outcome = {
         let mut stream = UnixStream::connect(&record.socket)?;
         stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
-        forward_attach_duplex(&mut stream, &mut io::stdout())?
+        forward_attach_duplex(
+            &mut stream,
+            record.protocol_version,
+            record.snapshot_schema_version,
+            &mut io::stdout(),
+        )?
     };
 
     #[cfg(windows)]
@@ -2128,7 +2481,12 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
             Pipe::connect(&record.socket, WORKER_JOIN_TIMEOUT, &AtomicBool::new(false))?;
         stream.set_read_timeout(CLIENT_POLL_INTERVAL);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
-        forward_attach_duplex(&mut stream, &mut io::stdout())?
+        forward_attach_duplex(
+            &mut stream,
+            record.protocol_version,
+            record.snapshot_schema_version,
+            &mut io::stdout(),
+        )?
     };
 
     if outcome == AttachOutcome::Stolen {
@@ -2142,6 +2500,8 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
 
 fn forward_attach_duplex<S: Read + Write, W: Write>(
     stream: &mut S,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
     output: &mut W,
 ) -> io::Result<AttachOutcome> {
     let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(CLIENT_QUEUE_CAPACITY);
@@ -2164,15 +2524,81 @@ fn forward_attach_duplex<S: Read + Write, W: Write>(
             }
         })?;
 
+    forward_attach_with_input(
+        stream,
+        protocol_version,
+        snapshot_schema_version,
+        output,
+        &input_rx,
+    )
+}
+
+fn forward_attach_with_input<S: Read + Write, W: Write>(
+    stream: &mut S,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
+    output: &mut W,
+    input_rx: &mpsc::Receiver<Vec<u8>>,
+) -> io::Result<AttachOutcome> {
     let mut scanner = AttachOutputScanner::default();
+    let mut recovered = festerm_sessiond::read_attach_recovery_terminal(
+        stream,
+        protocol_version,
+        snapshot_schema_version,
+        Instant::now() + ATTACH_RECOVERY_DEADLINE,
+    )?;
+    if let Some(terminal) = &recovered {
+        write_attach_recovery(terminal, output, true)?;
+        write_client_frame(stream, CLIENT_FRAME_RECOVERY_ADOPTED, &[])?;
+    }
+    let mut frames = festerm_sessiond::ServerFrameParser::default();
     let mut buffer = [0u8; 4096];
     loop {
         for input in input_rx.try_iter() {
             write_client_frame(stream, CLIENT_FRAME_INPUT, &input)?;
         }
         match stream.read(&mut buffer) {
+            Ok(0) if protocol_version >= 2 => {
+                frames.close()?;
+                return Ok(AttachOutcome::Closed);
+            }
             Ok(0) => return scanner.close(output),
             Ok(count) => {
+                if let Some(terminal) = &mut recovered {
+                    frames.push(&buffer[..count])?;
+                    while let Some(event) = frames.next_event()? {
+                        match event {
+                            festerm_sessiond::ServerFrameEvent::Output(bytes) => {
+                                let _ = mirror_terminal_output(terminal, &bytes);
+                            }
+                            festerm_sessiond::ServerFrameEvent::RecoverySync(payload) => {
+                                let command =
+                                    festerm_sessiond::decode_recovery_sync_command(&payload)
+                                        .map_err(io::Error::other)?;
+                                apply_recovery_sync_command(terminal, &command);
+                            }
+                            festerm_sessiond::ServerFrameEvent::ResizeApplied(size) => {
+                                terminal
+                                    .resize(
+                                        Dimensions::new(
+                                            usize::from(size.columns()),
+                                            usize::from(size.rows()),
+                                        )
+                                        .map_err(io::Error::other)?,
+                                    )
+                                    .map_err(io::Error::other)?;
+                            }
+                            festerm_sessiond::ServerFrameEvent::Stolen => {
+                                return Ok(AttachOutcome::Stolen)
+                            }
+                            festerm_sessiond::ServerFrameEvent::Exited => {
+                                return Ok(AttachOutcome::Exited)
+                            }
+                        }
+                        write_attach_recovery(terminal, output, false)?;
+                    }
+                    continue;
+                }
                 if let Some(outcome) = scanner.push(&buffer[..count], output)? {
                     return Ok(outcome);
                 }
@@ -2184,7 +2610,11 @@ fn forward_attach_duplex<S: Read + Write, W: Write>(
                 ) => {}
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
-                return scanner.close(output)
+                if protocol_version >= 2 {
+                    frames.close()?;
+                    return Ok(AttachOutcome::Closed);
+                }
+                return scanner.close(output);
             }
             Err(error) => return Err(error),
         }
@@ -2745,6 +3175,95 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
+    fn client_io_loop_test<S: Read + Write>(
+        stream: S,
+        generation: u64,
+        input: mpsc::SyncSender<ClientInput>,
+        output: mpsc::Receiver<ClientOutput>,
+        stolen: Arc<AtomicBool>,
+    ) -> io::Result<()> {
+        client_io_loop(stream, generation, Vec::new(), input, output, stolen, None)
+    }
+
+    fn read_recovery_terminal<S: Read>(stream: &mut S) -> Terminal {
+        let mut header = [0u8; 12];
+        stream.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..4], b"FSD2");
+        let length =
+            usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
+        let mut payload = vec![0; length];
+        stream.read_exact(&mut payload).unwrap();
+        bincode::deserialize(&payload).unwrap()
+    }
+
+    fn acknowledge_recovery(writer: &mut impl Write) {
+        write_client_frame(writer, CLIENT_FRAME_RECOVERY_ADOPTED, &[]).unwrap();
+    }
+
+    fn read_server_output(reader: &mut impl Read, expected_len: usize) -> Vec<u8> {
+        let mut header = [0u8; 9];
+        reader.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..4], b"FSO1");
+        assert_eq!(header[4], 1);
+        let length = u32::from_be_bytes(header[5..9].try_into().unwrap()) as usize;
+        assert_eq!(length, expected_len);
+        let mut payload = vec![0; length];
+        reader.read_exact(&mut payload).unwrap();
+        payload
+    }
+
+    fn read_server_stolen(reader: &mut impl Read) {
+        let mut frame = vec![0; festerm_sessiond::encode_server_stolen_frame().len()];
+        reader.read_exact(&mut frame).unwrap();
+        assert_eq!(frame, festerm_sessiond::encode_server_stolen_frame());
+    }
+
+    fn read_server_recovery_sync(reader: &mut impl Read) -> Vec<u8> {
+        let mut header = [0u8; 9];
+        reader.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..4], b"FSO1");
+        assert_eq!(header[4], 2);
+        let length = u32::from_be_bytes(header[5..9].try_into().unwrap()) as usize;
+        let mut payload = vec![0; length];
+        reader.read_exact(&mut payload).unwrap();
+        payload
+    }
+
+    fn read_server_resize_applied(reader: &mut impl Read) {
+        let mut header = [0u8; 9];
+        reader.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..4], b"FSO1");
+        assert_eq!(header[4], 5);
+        let length = u32::from_be_bytes(header[5..9].try_into().unwrap()) as usize;
+        assert_eq!(length, 8);
+        let mut payload = [0u8; 8];
+        reader.read_exact(&mut payload).unwrap();
+    }
+
+    fn read_server_exited(reader: &mut impl Read) {
+        let mut frame = vec![0; festerm_sessiond::encode_server_exited_frame().len()];
+        reader.read_exact(&mut frame).unwrap();
+        assert_eq!(frame, festerm_sessiond::encode_server_exited_frame());
+    }
+
+    fn write_recovery_sync_frame(
+        writer: &mut impl Write,
+        command: festerm_sessiond::RecoverySyncCommand,
+    ) {
+        let payload = bincode::serialize(&command).unwrap();
+        write_client_frame(writer, CLIENT_FRAME_RECOVERY_SYNC, &payload).unwrap();
+    }
+
+    fn first_row_text(terminal: &Terminal) -> String {
+        let mut text = String::new();
+        for column in 0..terminal.dimensions().columns() {
+            if let Some(cell) = terminal.cell_ref(column, 0) {
+                text.push_str(cell.text());
+            }
+        }
+        text.trim_end().to_owned()
+    }
+
     struct ClientTestStream<F> {
         input: io::Cursor<Vec<u8>>,
         reads: Rc<Cell<usize>>,
@@ -2810,7 +3329,7 @@ mod tests {
             },
         };
 
-        client_io_loop(
+        client_io_loop_test(
             stream,
             7,
             input,
@@ -2819,7 +3338,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(written, b"duplex output");
+        assert_eq!(
+            written,
+            festerm_sessiond::encode_server_output_frame(b"duplex output")
+        );
         accepted.extend(commands.try_iter());
         assert_eq!(accepted.len(), count, "no command may be lost");
         for (index, input) in accepted.into_iter().enumerate() {
@@ -2835,6 +3357,12 @@ mod tests {
                     assert_eq!(size.rows, 24);
                     assert_eq!(size.pixel_width, 800);
                     assert_eq!(size.pixel_height, 600);
+                }
+                ClientCommand::RecoverySync(command) => {
+                    panic!("unexpected recovery sync command in duplex burst test: {command:?}")
+                }
+                ClientCommand::RecoveryAdopted => {
+                    panic!("unexpected recovery adoption command in duplex burst test")
                 }
             }
         }
@@ -2869,7 +3397,7 @@ mod tests {
         let stolen = Arc::new(AtomicBool::new(false));
         let worker_stolen = Arc::clone(&stolen);
         let worker = thread::spawn(move || {
-            client_io_loop(worker_socket, 7, input, received_output, worker_stolen)
+            client_io_loop_test(worker_socket, 7, input, received_output, worker_stolen)
         });
         let expect_input = |expected: &[u8]| {
             let input = commands.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -2884,8 +3412,7 @@ mod tests {
         // client, so a blocking send cannot masquerade as successful retry.
         let duplex = b"output while input is queued";
         output.send(ClientOutput::Data(duplex.to_vec())).unwrap();
-        let mut received = vec![0; duplex.len()];
-        client.read_exact(&mut received).unwrap();
+        let received = read_server_output(&mut client, duplex.len());
         assert_eq!(received, duplex);
         for _ in 1..256 {
             expect_input(b"x");
@@ -2895,9 +3422,7 @@ mod tests {
         write_client_frame(&mut client, CLIENT_FRAME_INPUT, b"still attached").unwrap();
         expect_input(b"still attached");
         stolen.store(true, Ordering::Release);
-        let mut notice = vec![0; STOLEN_NOTICE_BYTES.len()];
-        client.read_exact(&mut notice).unwrap();
-        assert_eq!(notice, STOLEN_NOTICE_BYTES);
+        read_server_stolen(&mut client);
         assert!(wait_for_thread(&worker, Duration::from_secs(2)));
         worker.join().unwrap().unwrap();
     }
@@ -2966,7 +3491,7 @@ mod tests {
             stalled_writes: 0,
             input_received: false,
         };
-        client_io_loop(
+        client_io_loop_test(
             &mut stream,
             7,
             input,
@@ -2974,7 +3499,10 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
-        assert_eq!(stream.written, b"uninterrupted output");
+        assert_eq!(
+            stream.written,
+            festerm_sessiond::encode_server_output_frame(b"uninterrupted output")
+        );
         assert!(stream.input_received);
     }
 
@@ -2996,12 +3524,19 @@ mod tests {
             thread: thread::spawn(|| Ok(())),
         };
         let mut handled = 0;
-        handle_pending_client_input(&commands, Some(&active), &mut |_| {
-            handled += 1;
-            assert!(handled <= CLIENT_QUEUE_CAPACITY);
-            input.try_send(command()).unwrap();
-            Ok(())
-        })
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        handle_pending_client_input(
+            &commands,
+            Some(&active),
+            &mut terminal,
+            &mut PendingOutput::default(),
+            &mut |_| {
+                handled += 1;
+                assert!(handled <= CLIENT_QUEUE_CAPACITY);
+                input.try_send(command()).unwrap();
+                Ok(())
+            },
+        )
         .unwrap();
         assert_eq!(handled, CLIENT_QUEUE_CAPACITY);
         assert_eq!(commands.try_iter().count(), CLIENT_QUEUE_CAPACITY);
@@ -3039,11 +3574,15 @@ mod tests {
             },
         };
 
-        client_io_loop(stream, 7, input, received_output, Arc::clone(&stolen)).unwrap();
+        client_io_loop_test(stream, 7, input, received_output, Arc::clone(&stolen)).unwrap();
 
         assert_eq!(
             written,
-            [b"duplex output".as_slice(), STOLEN_NOTICE_BYTES].concat()
+            [
+                festerm_sessiond::encode_server_output_frame(b"duplex output"),
+                festerm_sessiond::encode_server_stolen_frame()
+            ]
+            .concat()
         );
         assert_eq!(commands.try_iter().count(), CLIENT_QUEUE_CAPACITY);
     }
@@ -3075,7 +3614,7 @@ mod tests {
                 },
             };
 
-            client_io_loop(
+            client_io_loop_test(
                 stream,
                 7,
                 input,
@@ -3084,7 +3623,10 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(written, b"duplex output");
+            assert_eq!(
+                written,
+                festerm_sessiond::encode_server_output_frame(b"duplex output")
+            );
             assert_eq!(reads.get(), 1);
         }
     }
@@ -3115,9 +3657,9 @@ mod tests {
             on_write: |bytes: &[u8]| written.extend_from_slice(bytes),
         };
 
-        client_io_loop(stream, 7, input, received_output, Arc::clone(&stolen)).unwrap();
+        client_io_loop_test(stream, 7, input, received_output, Arc::clone(&stolen)).unwrap();
 
-        assert_eq!(written, STOLEN_NOTICE_BYTES);
+        assert_eq!(written, festerm_sessiond::encode_server_stolen_frame());
     }
 
     #[test]
@@ -3153,7 +3695,7 @@ mod tests {
             },
         };
 
-        client_io_loop(
+        client_io_loop_test(
             stream,
             7,
             input,
@@ -3175,7 +3717,7 @@ mod tests {
         let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
         let (_output, received_output) = mpsc::sync_channel(1);
 
-        client_io_loop(
+        client_io_loop_test(
             io::Cursor::new(frames),
             7,
             input,
@@ -3248,6 +3790,190 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn saturated_output_preserves_control_resize_and_exit_order() {
+        let (output, received) = mpsc::sync_channel(1);
+        output.send(ClientOutput::Data(b"first".to_vec())).unwrap();
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            output,
+            stolen: Arc::new(AtomicBool::new(false)),
+            thread: thread::spawn(|| Ok(())),
+        });
+        let mut retired = Vec::new();
+        let mut pending = PendingOutput::default();
+        pending.hold(Some(1), b"second".to_vec());
+        let command = festerm_sessiond::RecoverySyncCommand::ResetToInitialState;
+        let payload = festerm_sessiond::encode_recovery_sync_command(&command).unwrap();
+        let size = PtySize {
+            rows: 4,
+            cols: 12,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let (input, commands) = mpsc::sync_channel(2);
+        input
+            .send(ClientInput {
+                generation: 1,
+                command: ClientCommand::RecoverySync(command),
+            })
+            .unwrap();
+        input
+            .send(ClientInput {
+                generation: 1,
+                command: ClientCommand::Resize(size),
+            })
+            .unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
+        handle_pending_client_input(
+            &commands,
+            active.as_ref(),
+            &mut terminal,
+            &mut pending,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+        send_control_to_active(
+            &mut active,
+            &mut retired,
+            &mut pending,
+            ClientOutput::Exited,
+        );
+        for expected in [
+            ClientOutput::Data(b"first".to_vec()),
+            ClientOutput::Data(b"second".to_vec()),
+            ClientOutput::RecoverySync(payload),
+            ClientOutput::ResizeApplied(size),
+            ClientOutput::Exited,
+        ] {
+            assert_eq!(received.try_recv().unwrap(), expected);
+            flush_pending_output(&mut active, &mut retired, &mut pending);
+        }
+        assert!(!pending.is_pending());
+        assert_eq!(terminal.dimensions(), Dimensions::new(12, 4).unwrap());
+        active.take().unwrap().thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn recovery_sync_commands_update_the_snapshot_used_for_takeover() {
+        use festerm_core::{ColorScheme, Rgb, TerminalModes};
+        use std::{
+            io::{self, Read},
+            os::unix::net::{UnixListener, UnixStream},
+            sync::mpsc::{self, Receiver},
+        };
+
+        struct ChannelReader {
+            receiver: Receiver<Vec<u8>>,
+            pending: Vec<u8>,
+        }
+
+        impl Read for ChannelReader {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                if self.pending.is_empty() {
+                    match self.receiver.recv() {
+                        Ok(data) => self.pending = data,
+                        Err(_) => return Ok(0),
+                    }
+                }
+                if self.pending.is_empty() {
+                    return Ok(0);
+                }
+                let count = output.len().min(self.pending.len());
+                output[..count].copy_from_slice(&self.pending[..count]);
+                self.pending.drain(..count);
+                Ok(count)
+            }
+        }
+
+        fn send_and_receive(
+            pty_sender: &mpsc::Sender<Vec<u8>>,
+            client: &mut UnixStream,
+            bytes: &[u8],
+        ) -> Vec<u8> {
+            pty_sender.send(bytes.to_vec()).unwrap();
+            read_server_output(client, bytes.len())
+        }
+
+        let directory = unique_test_directory("rsync");
+        fs::create_dir_all(&directory).unwrap();
+        let socket_path = directory.join("sessiond.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let (pty_sender, pty_receiver) = mpsc::channel::<Vec<u8>>();
+        let mut terminal = Terminal::new(Dimensions::new(16, 1).unwrap()).unwrap();
+        let service = thread::spawn(move || {
+            session_client_loop(
+                listener,
+                ChannelReader {
+                    receiver: pty_receiver,
+                    pending: Vec::new(),
+                },
+                None,
+                |_command| Ok(()),
+                || {},
+                |_attached| true,
+                &mut terminal,
+            )
+        });
+
+        let mut first = UnixStream::connect(&socket_path).unwrap();
+        let _ = read_recovery_terminal(&mut first);
+        acknowledge_recovery(&mut first);
+
+        let scheme = ColorScheme::new(
+            Rgb::new(1, 2, 3),
+            Rgb::new(4, 5, 6),
+            Rgb::new(7, 8, 9),
+            [Rgb::new(10, 11, 12); 16],
+        );
+        write_recovery_sync_frame(
+            &mut first,
+            festerm_sessiond::RecoverySyncCommand::SetScrollbackLimit { limit_bytes: 1024 },
+        );
+        write_recovery_sync_frame(
+            &mut first,
+            festerm_sessiond::RecoverySyncCommand::SetColorScheme(scheme),
+        );
+        write_recovery_sync_frame(
+            &mut first,
+            festerm_sessiond::RecoverySyncCommand::MirrorBytes(b"\x1b[2J\x1b[3J\x1b[H".to_vec()),
+        );
+        for _ in 0..3 {
+            let _ = read_server_recovery_sync(&mut first);
+        }
+        assert_eq!(
+            send_and_receive(
+                &pty_sender,
+                &mut first,
+                b"after-clear-1\r\nafter-clear-2\r\nnext",
+            ),
+            b"after-clear-1\r\nafter-clear-2\r\nnext"
+        );
+        write_recovery_sync_frame(
+            &mut first,
+            festerm_sessiond::RecoverySyncCommand::ResetToInitialState,
+        );
+        let _ = read_server_recovery_sync(&mut first);
+
+        let mut second = UnixStream::connect(&socket_path).unwrap();
+        let recovered = read_recovery_terminal(&mut second);
+        acknowledge_recovery(&mut second);
+        read_server_stolen(&mut first);
+        assert_eq!(recovered.scrollback_stats().limit_bytes(), 1024);
+        assert_eq!(recovered.color_scheme(), &scheme);
+        assert_eq!(first_row_text(&recovered), "");
+        assert_eq!(recovered.title(), "");
+        assert_eq!(recovered.cursor().column(), 0);
+        assert_eq!(recovered.cursor().row(), 0);
+        assert_eq!(recovered.modes(), TerminalModes::default());
+
+        drop(pty_sender);
+        read_server_exited(&mut second);
+        service.join().unwrap().unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn second_client_replaces_first_client_and_first_receives_stolen_notice() {
         use std::{
             io::{self, Read},
@@ -3284,9 +4010,7 @@ mod tests {
             data: &[u8],
         ) -> Vec<u8> {
             pty.send(data.to_vec()).unwrap();
-            let mut received = vec![0; data.len()];
-            client.read_exact(&mut received).unwrap();
-            received
+            read_server_output(client, data.len())
         }
 
         let directory = unique_test_directory("steal");
@@ -3297,6 +4021,7 @@ mod tests {
         let (event_sender, event_receiver) = mpsc::channel();
         let (command_sender, command_receiver) = mpsc::channel();
         let service = thread::spawn(move || {
+            let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
             session_client_loop(
                 listener,
                 ChannelReader {
@@ -3311,6 +4036,7 @@ mod tests {
                 },
                 || {},
                 |_attached| true,
+                &mut terminal,
             )
         });
 
@@ -3321,13 +4047,16 @@ mod tests {
         );
 
         let mut first = UnixStream::connect(&socket_path).unwrap();
+        first
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let first_terminal = read_recovery_terminal(&mut first);
+        assert_eq!(first_row_text(&first_terminal), "detached");
+        acknowledge_recovery(&mut first);
         assert_eq!(
             event_receiver.recv().unwrap(),
             ClientLoopEvent::ClientAttached
         );
-        let mut replayed = [0u8; 8];
-        first.read_exact(&mut replayed).unwrap();
-        assert_eq!(&replayed, b"detached");
         write_client_frame(&mut first, CLIENT_FRAME_INPUT, b"typed").unwrap();
         match command_receiver.recv().unwrap() {
             ClientCommand::Input(data) => assert_eq!(data, b"typed"),
@@ -3343,20 +4072,36 @@ mod tests {
             ClientLoopEvent::OutputBuffered
         );
 
+        let mut rejected = UnixStream::connect(&socket_path).unwrap();
+        rejected
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let _ = read_recovery_terminal(&mut rejected);
+        drop(rejected);
+        write_client_frame(&mut first, CLIENT_FRAME_INPUT, b"survived failed takeover").unwrap();
+        match command_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+        {
+            ClientCommand::Input(data) => assert_eq!(data, b"survived failed takeover"),
+            command => panic!("unexpected command: {command:?}"),
+        }
+
         let mut second = UnixStream::connect(&socket_path).unwrap();
+        second
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let second_terminal = read_recovery_terminal(&mut second);
+        assert_eq!(first_row_text(&second_terminal), "detachedfirst");
+        acknowledge_recovery(&mut second);
         assert_eq!(
             event_receiver.recv().unwrap(),
             ClientLoopEvent::ClientAttached
         );
-        let mut stolen = vec![0; STOLEN_NOTICE_BYTES.len()];
-        first.read_exact(&mut stolen).unwrap();
-        assert_eq!(stolen, STOLEN_NOTICE_BYTES);
+        read_server_stolen(&mut first);
         let mut eof = [0u8; 1];
         assert_eq!(first.read(&mut eof).unwrap(), 0);
 
-        let mut second_replay = [0u8; 13];
-        second.read_exact(&mut second_replay).unwrap();
-        assert_eq!(&second_replay, b"detachedfirst");
         let mut resize = Vec::new();
         for value in [120u16, 40, 1200, 800] {
             resize.extend_from_slice(&value.to_be_bytes());
@@ -3372,8 +4117,24 @@ mod tests {
             command => panic!("expected resize command, received {command:?}"),
         }
 
+        let mut third = UnixStream::connect(&socket_path).unwrap();
+        third
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let third_terminal = read_recovery_terminal(&mut third);
+        acknowledge_recovery(&mut third);
         assert_eq!(
-            send_and_receive(&pty_sender, &mut second, b"second"),
+            event_receiver.recv().unwrap(),
+            ClientLoopEvent::ClientAttached
+        );
+        read_server_resize_applied(&mut second);
+        read_server_stolen(&mut second);
+        assert_eq!(third_terminal.dimensions().columns(), 120);
+        assert_eq!(third_terminal.dimensions().rows(), 40);
+        assert_eq!(first_row_text(&third_terminal), "detachedfirst");
+
+        assert_eq!(
+            send_and_receive(&pty_sender, &mut third, b"second"),
             b"second"
         );
         assert_eq!(
@@ -3382,10 +4143,8 @@ mod tests {
         );
 
         drop(pty_sender);
-        let mut exited = vec![0; EXITED_NOTICE_BYTES.len()];
-        second.read_exact(&mut exited).unwrap();
-        assert_eq!(exited, EXITED_NOTICE_BYTES);
-        assert_eq!(second.read(&mut eof).unwrap(), 0);
+        read_server_exited(&mut third);
+        assert_eq!(third.read(&mut eof).unwrap(), 0);
         service.join().unwrap().unwrap();
         let _ = fs::remove_dir_all(directory);
     }
@@ -3428,6 +4187,7 @@ mod tests {
         }
 
         let service = thread::spawn(move || {
+            let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
             session_client_loop(
                 listener,
                 ChannelReader {
@@ -3440,10 +4200,13 @@ mod tests {
                     attach_events_clone.lock().unwrap().push(attached);
                     true
                 },
+                &mut terminal,
             )
         });
 
-        let client = UnixStream::connect(&socket_path).unwrap();
+        let mut client = UnixStream::connect(&socket_path).unwrap();
+        let _ = read_recovery_terminal(&mut client);
+        acknowledge_recovery(&mut client);
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while attach_events.lock().unwrap().as_slice() != [true] {
             if std::time::Instant::now() > deadline {
@@ -3471,6 +4234,59 @@ mod tests {
         drop(_pty_sender);
         service.join().unwrap().unwrap();
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn cli_v2_acknowledges_recovery_and_consumes_frames_without_forwarding_queries() {
+        struct Duplex {
+            read: io::Cursor<Vec<u8>>,
+            written: Vec<u8>,
+        }
+        impl Read for Duplex {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.read.read(buffer)
+            }
+        }
+        impl Write for Duplex {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.written.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+        terminal.ingest(b"recovered");
+        let mut wire = festerm_sessiond::encode_recovery_snapshot(&terminal).unwrap();
+        wire.extend(festerm_sessiond::encode_server_output_frame(
+            b"\r\nlive\x1b[6n",
+        ));
+        wire.extend(festerm_sessiond::encode_server_exited_frame());
+        let mut stream = Duplex {
+            read: io::Cursor::new(wire),
+            written: Vec::new(),
+        };
+        let (_input, incoming) = mpsc::sync_channel(1);
+        let mut output = Vec::new();
+        assert_eq!(
+            forward_attach_with_input(
+                &mut stream,
+                2,
+                festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                &mut output,
+                &incoming,
+            )
+            .unwrap(),
+            AttachOutcome::Exited,
+        );
+        let mut expected = Vec::new();
+        write_client_frame(&mut expected, CLIENT_FRAME_RECOVERY_ADOPTED, &[]).unwrap();
+        assert_eq!(stream.written, expected);
+        assert!(find_bytes(&output, b"recovered").is_some());
+        assert!(find_bytes(&output, b"live").is_some());
+        assert!(find_bytes(&output, b"\x1b[6n").is_none());
+        assert!(find_bytes(&output, b"FSO1").is_none());
     }
 
     #[test]
@@ -3569,9 +4385,11 @@ mod tests {
                     working_directory: None,
                     cols: 80,
                     rows: 24,
+                    scrollback_limit_bytes: 1024,
                     created_at_unix_ms: 2,
                     attached: false,
                     protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+                    snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                     helper_identity: None,
                 },
             )]),
@@ -3585,19 +4403,6 @@ mod tests {
         assert_eq!(registry.sessions["demo"].pid, 22);
         remove_registry_record_if_generation_matches(&mut registry, &replacement);
         assert!(!registry.sessions.contains_key("demo"));
-    }
-
-    #[test]
-    fn replay_buffer_keeps_only_its_newest_bytes() {
-        let mut replay = ReplayBuffer {
-            bytes: VecDeque::new(),
-            capacity: 5,
-        };
-        replay.push(b"abc");
-        replay.push(b"defg");
-        assert_eq!(replay.bytes.iter().copied().collect::<Vec<_>>(), b"cdefg");
-        replay.push(b"1234567");
-        assert_eq!(replay.bytes.iter().copied().collect::<Vec<_>>(), b"34567");
     }
 
     /// A client that is gone must be retired so its worker can be joined.
@@ -3665,7 +4470,7 @@ mod tests {
     }
 
     /// Output parked for a client that has since been replaced must be dropped:
-    /// the replacement is sent the replay buffer, which already contains it.
+    /// the replacement receives a fresh recovery snapshot instead.
     #[test]
     fn output_parked_for_a_replaced_client_is_not_delivered_twice() {
         let (output, receiver) = mpsc::sync_channel(1);
@@ -3768,15 +4573,8 @@ mod tests {
             let (input, _commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
             let mut active = None;
             let mut retired = Vec::new();
-            replace_active(
-                &mut active,
-                &mut retired,
-                server,
-                &ReplayBuffer::default(),
-                input,
-                &mut 1,
-            )
-            .unwrap();
+            let terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+            replace_active(&mut active, &mut retired, server, &terminal, input, &mut 1).unwrap();
             retire_active(&mut active, &mut retired, true);
             assert!(wait_for_thread(&retired[0], WORKER_JOIN_TIMEOUT));
             reap_client_threads(&mut retired).unwrap();
@@ -3981,16 +4779,19 @@ mod tests {
         fn record(&self, name: &str, generation: u128) -> SessionRecord {
             generation_record(
                 &self.0,
-                name.into(),
-                process::id(),
-                generation,
-                &ShellSpec {
-                    executable: "owned-test-shell".into(),
-                    arguments: Vec::new(),
-                    working_directory: None,
+                GenerationRecordSpec {
+                    name: name.into(),
+                    pid: process::id(),
+                    generation,
+                    shell: &ShellSpec {
+                        executable: "owned-test-shell".into(),
+                        arguments: Vec::new(),
+                        working_directory: None,
+                    },
+                    cols: 80,
+                    rows: 24,
+                    scrollback_limit_bytes: 1024,
                 },
-                80,
-                24,
             )
             .unwrap()
         }
@@ -4107,9 +4908,11 @@ mod tests {
             working_directory: Some("/tmp".to_owned()),
             cols: 80,
             rows: 24,
+            scrollback_limit_bytes: 1024,
             created_at_unix_ms: 1_700_000_000_000,
             attached: true,
             protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+            snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
         };
         let registry = SessionRegistry {
@@ -4147,9 +4950,11 @@ mod tests {
                 working_directory: None,
                 cols: 80,
                 rows: 24,
+                scrollback_limit_bytes: 1024,
                 created_at_unix_ms: 1,
                 attached: false,
                 protocol_version: festerm_sessiond::PROTOCOL_VERSION,
+                snapshot_schema_version: festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                 helper_identity: None,
             },
         );

@@ -12,6 +12,8 @@
 //! | Command | Action |
 //! |---------|--------|
 //! | `emit:TEXT` | Write `TEXT\n` to stdout. |
+//! | `emit-bytes-hex:HEX` | Write the exact bytes encoded by even-length hexadecimal `HEX`. |
+//! | `emit-repeat:COUNT:TEXT` | Write `TEXT` to stdout `COUNT` times, with no extra newline. |
 //! | `emit-frames:COUNT:MILLIS` | Write `FRAME:00` through `FRAME:COUNT-1`, pausing `MILLIS` between lines. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
@@ -29,6 +31,22 @@ use std::{
 
 use terminal_size::{terminal_size, Height, Width};
 
+fn decode_hex_bytes(specification: &str) -> Vec<u8> {
+    assert!(
+        specification.len().is_multiple_of(2),
+        "emit-bytes-hex argument must contain an even number of hex digits, got {specification:?}"
+    );
+    specification
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).expect("hex digits are valid UTF-8");
+            u8::from_str_radix(pair, 16)
+                .unwrap_or_else(|_| panic!("emit-bytes-hex contains non-hex digits: {pair:?}"))
+        })
+        .collect()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut last_line = String::new();
@@ -42,6 +60,25 @@ fn main() {
                 .expect("emit: stdout write succeeds");
             out.write_all(b"\n").expect("emit: stdout newline succeeds");
             out.flush().expect("emit: stdout flush succeeds");
+        } else if let Some(specification) = arg.strip_prefix("emit-bytes-hex:") {
+            let bytes = decode_hex_bytes(specification);
+            let mut out = stdout.lock();
+            out.write_all(&bytes)
+                .expect("emit-bytes-hex: stdout write succeeds");
+            out.flush().expect("emit-bytes-hex: stdout flush succeeds");
+        } else if let Some(specification) = arg.strip_prefix("emit-repeat:") {
+            let (count, text) = specification
+                .split_once(':')
+                .and_then(|(count, text)| Some((count.parse::<usize>().ok()?, text)))
+                .unwrap_or_else(|| {
+                    panic!("emit-repeat argument must be emit-repeat:COUNT:TEXT, got {arg:?}")
+                });
+            let mut out = stdout.lock();
+            for _ in 0..count {
+                out.write_all(text.as_bytes())
+                    .expect("emit-repeat: stdout write succeeds");
+            }
+            out.flush().expect("emit-repeat: stdout flush succeeds");
         } else if let Some(specification) = arg.strip_prefix("emit-frames:") {
             let (count, interval_millis) = specification
                 .split_once(':')

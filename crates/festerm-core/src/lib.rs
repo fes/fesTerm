@@ -5,6 +5,7 @@
 //! Raw C1 bytes are deliberately not controls: treating them as such would
 //! make UTF-8 continuation bytes ambiguous.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 mod cell;
@@ -52,7 +53,7 @@ pub fn normalize_external_web_url(target: &str) -> Option<String> {
     .then(|| parsed.to_string())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Dimensions {
     columns: usize,
     rows: usize,
@@ -133,7 +134,7 @@ impl fmt::Display for DimensionsError {
 
 impl std::error::Error for DimensionsError {}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Cursor {
     column: usize,
     row: usize,
@@ -1860,6 +1861,43 @@ mod tests {
         assert!(terminal.take_reply_queue_overflowed());
         assert!(!terminal.take_reply_queue_overflowed());
         assert_eq!(terminal.drain_replies(), reply_fill);
+    }
+
+    #[test]
+    fn recovery_snapshots_validate_terminal_state_before_adoption() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1b[?1049hRECOVERED");
+        assert!(terminal
+            .recovery_clone()
+            .validate_recovery_snapshot()
+            .is_ok());
+
+        let mut invalid = terminal.recovery_clone();
+        invalid.set_tab_stops_for_test(Vec::new());
+        let error = invalid
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("tab stops"));
+    }
+
+    #[test]
+    fn recovery_snapshots_reject_queued_replies_and_input() {
+        let mut invalid_reply = terminal(8, 2).recovery_clone();
+        invalid_reply.set_transport_queues_for_test(vec![1, 2, 3], Vec::new());
+        assert!(invalid_reply
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("queued replies or input"));
+
+        let mut invalid_input = terminal(8, 2).recovery_clone();
+        invalid_input.set_transport_queues_for_test(Vec::new(), vec![4]);
+        assert!(invalid_input
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("queued replies or input"));
     }
 
     #[test]

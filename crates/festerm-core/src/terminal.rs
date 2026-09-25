@@ -1,6 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use compact_str::CompactString;
+use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
@@ -108,6 +109,12 @@ impl TerminalError {
     pub(crate) fn allocation(resource: &str, error: std::collections::TryReserveError) -> Self {
         Self {
             message: format!("unable to allocate {resource}: {error}"),
+        }
+    }
+
+    pub(crate) fn invalid_snapshot(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
         }
     }
 }
@@ -295,13 +302,13 @@ fn describe_bytes(bytes: usize) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ActiveScreen {
     Primary,
     Alternate,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct BufferState {
     screen: Screen,
     cursor: Cursor,
@@ -604,9 +611,43 @@ impl BufferState {
             saved.cursor.row = saved.cursor.row.min(dimensions.rows() - 1);
         }
     }
+
+    fn validate_recovery_state(&self) -> Result<(), String> {
+        self.screen.validate_recovery_state()?;
+        validate_cursor(self.cursor, self.screen.dimensions(), "buffer cursor")?;
+        validate_scroll_region(
+            self.scroll_top,
+            self.scroll_bottom,
+            self.screen.dimensions().rows(),
+            "buffer vertical scroll region",
+        )?;
+        validate_scroll_region(
+            self.scroll_left,
+            self.scroll_right,
+            self.screen.dimensions().columns(),
+            "buffer horizontal scroll region",
+        )?;
+        if self.pending_wrap && self.cursor.column + 1 != self.screen.dimensions().columns() {
+            return Err("buffer stores pending wrap away from the last column".to_owned());
+        }
+        if let Some(anchor) = self.grapheme_anchor {
+            validate_cursor(anchor, self.screen.dimensions(), "buffer grapheme anchor")?;
+        }
+        if let Some(saved) = self.dec_saved {
+            validate_cursor(saved.cursor, self.screen.dimensions(), "saved DEC cursor")?;
+        }
+        if let Some(saved) = self.ansi_saved {
+            validate_cursor(saved.cursor, self.screen.dimensions(), "saved ANSI cursor")?;
+        }
+        Ok(())
+    }
+
+    fn restore_recovery_allocations(&mut self) {
+        self.screen.restore_recovery_allocations();
+    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct SavedDecState {
     cursor: Cursor,
     pending_wrap: bool,
@@ -618,7 +659,7 @@ struct SavedDecState {
     protection: ProtectionSource,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct SavedAnsiCursor {
     cursor: Cursor,
     protected: bool,
@@ -626,7 +667,7 @@ struct SavedAnsiCursor {
 }
 
 /// GUI-independent terminal state. The terminal owns one logical writer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Terminal {
     parser: Parser,
     utf8: Utf8Decoder,
@@ -704,6 +745,94 @@ impl Terminal {
 
     pub const fn dimensions(&self) -> Dimensions {
         self.primary.screen.dimensions()
+    }
+
+    pub fn validate_recovery_snapshot(&self) -> Result<(), TerminalError> {
+        self.parser
+            .validate_recovery_state()
+            .map_err(TerminalError::invalid_snapshot)?;
+        self.utf8
+            .validate_recovery_state()
+            .map_err(TerminalError::invalid_snapshot)?;
+        self.primary
+            .validate_recovery_state()
+            .map_err(TerminalError::invalid_snapshot)?;
+        let dimensions = self.primary.screen.dimensions();
+        if self.active_screen == ActiveScreen::Alternate && self.alternate.is_none() {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal selects the alternate screen without storing one",
+            ));
+        }
+        if let Some(alternate) = &self.alternate {
+            alternate
+                .validate_recovery_state()
+                .map_err(TerminalError::invalid_snapshot)?;
+            if alternate.screen.dimensions() != dimensions {
+                return Err(TerminalError::invalid_snapshot(
+                    "alternate screen dimensions do not match the primary screen",
+                ));
+            }
+        }
+        if self.tab_stops.len() != dimensions.columns() {
+            return Err(TerminalError::invalid_snapshot(format!(
+                "terminal stores {} tab stops for a {}-column grid",
+                self.tab_stops.len(),
+                dimensions.columns()
+            )));
+        }
+        if self.title.len() > 256 || self.title.chars().any(char::is_control) {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal stores an invalid OSC title",
+            ));
+        }
+        if self.current_hyperlink.is_none() && self.current_hyperlink_cells_remaining != 0 {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal stores hyperlink cell credits without an active hyperlink",
+            ));
+        }
+        if self.reply_queue_overflowed
+            || self.input_queue_overflowed
+            || !self.reply_queue.is_empty()
+            || !self.input_queue.is_empty()
+        {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal recovery snapshots must not retain queued replies or input",
+            ));
+        }
+        self.scrollback
+            .validate_recovery_state(dimensions.columns())
+            .map_err(TerminalError::invalid_snapshot)?;
+        Ok(())
+    }
+
+    /// Rehydrates allocation capacities recorded in a validated recovery snapshot.
+    ///
+    /// Recovery accounting records logical capacities so validation can reject
+    /// malformed charges before trusting allocator state. After validation, the
+    /// session daemon calls this before handing the terminal to a frontend so
+    /// later appends and reflows follow the same capacity-based eviction path
+    /// as the continuously running mirror.
+    pub fn restore_recovery_snapshot_allocations(&mut self) {
+        self.primary.restore_recovery_allocations();
+        if let Some(alternate) = &mut self.alternate {
+            alternate.restore_recovery_allocations();
+        }
+        self.scrollback.restore_recovery_allocations();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tab_stops_for_test(&mut self, tab_stops: Vec<bool>) {
+        self.tab_stops = tab_stops;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_transport_queues_for_test(
+        &mut self,
+        reply_queue: Vec<u8>,
+        input_queue: Vec<u8>,
+    ) {
+        self.reply_queue = reply_queue;
+        self.input_queue = input_queue;
     }
 
     pub const fn cursor(&self) -> Cursor {
@@ -988,6 +1117,26 @@ impl Terminal {
 
     pub fn take_dirty_rows(&mut self) -> Vec<usize> {
         self.active_buffer_mut().screen.take_dirty_rows()
+    }
+
+    /// Returns a transport-queue-free clone suitable for durable recovery.
+    ///
+    /// The clone preserves parser, UTF-8, screen, history, modes, and
+    /// geometry state exactly, but it deliberately drops queued input/reply
+    /// bytes and marks every visible row dirty so a newly attached frontend
+    /// performs a full redraw from the recovered state instead of depending
+    /// on stale prior-frame caches.
+    pub fn recovery_clone(&self) -> Self {
+        let mut clone = self.clone();
+        clone.input_queue.clear();
+        clone.reply_queue.clear();
+        clone.input_queue_overflowed = false;
+        clone.reply_queue_overflowed = false;
+        clone.primary.screen.mark_all_dirty();
+        if let Some(alternate) = clone.alternate.as_mut() {
+            alternate.screen.mark_all_dirty();
+        }
+        clone
     }
 
     /// Queues an atomic input write for the session transport.
@@ -1349,8 +1498,11 @@ impl Terminal {
     }
 
     fn erase_cell(&self) -> Cell {
+        let text = CompactString::const_new(" ");
+        let text_capacity_bytes = text.capacity();
         Cell {
-            text: CompactString::const_new(" "),
+            text,
+            text_capacity_bytes,
             width: CellWidth::Single,
             foreground: self.current_foreground,
             background: self.current_background,
@@ -1432,15 +1584,15 @@ impl Terminal {
             }
         }
         let buffer = self.active_buffer_mut();
+        let mut text = CompactString::const_new("");
+        text.push(character);
+        let text_capacity_bytes = text.capacity();
         buffer.screen.replace_cluster(
             cursor.column,
             cursor.row,
             Cell {
-                text: {
-                    let mut text = CompactString::const_new("");
-                    text.push(character);
-                    text
-                },
+                text,
+                text_capacity_bytes,
                 width: if width == 2 {
                     CellWidth::Double
                 } else {
@@ -1484,6 +1636,7 @@ impl Terminal {
         if cell.text().len().saturating_add(character.len_utf8()) > MAX_GRAPHEME_BYTES {
             cell.text.clear();
             cell.text.push(char::REPLACEMENT_CHARACTER);
+            cell.refresh_text_capacity_charge();
             cell.width = CellWidth::Single;
             let (wrap_limit, _) = self.wrap_geometry();
             let auto_wrap = self.modes.auto_wrap;
@@ -1497,6 +1650,7 @@ impl Terminal {
             return true;
         }
         cell.text.push(character);
+        cell.refresh_text_capacity_charge();
         let old_width = cell.width.columns();
         let new_width = grapheme_width(cell.text());
         if new_width == 0 {
@@ -1515,6 +1669,7 @@ impl Terminal {
             if !auto_wrap {
                 cell.text.clear();
                 cell.text.push(char::REPLACEMENT_CHARACTER);
+                cell.refresh_text_capacity_charge();
                 cell.width = CellWidth::Single;
                 let buffer = self.active_buffer_mut();
                 buffer
@@ -2091,6 +2246,7 @@ impl Terminal {
         };
         let mut cell = self.erase_cell();
         cell.text = CompactString::from(character.to_string());
+        cell.refresh_text_capacity_charge();
         self.active_buffer_mut()
             .screen
             .fill_rectangle(rectangle, cell, false);
@@ -3176,8 +3332,10 @@ impl Terminal {
             bottom: dimensions.rows() - 1,
             right: dimensions.columns() - 1,
         };
+        let text = CompactString::const_new("E");
         let cell = Cell {
-            text: CompactString::const_new("E"),
+            text_capacity_bytes: text.capacity(),
+            text,
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
@@ -3311,7 +3469,7 @@ fn color_report(color: Color, background: bool) -> Option<String> {
 }
 
 /// Which family of sequences last set or cleared character protection.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ProtectionSource {
     None,
     /// `DECSCA`. Only `DECSED` and `DECSEL` honour it.
@@ -3327,6 +3485,34 @@ const SET: u8 = 1;
 const RESET: u8 = 2;
 const PERMANENTLY_SET: u8 = 3;
 const PERMANENTLY_RESET: u8 = 4;
+
+fn validate_cursor(cursor: Cursor, dimensions: Dimensions, label: &str) -> Result<(), String> {
+    if cursor.column >= dimensions.columns() || cursor.row >= dimensions.rows() {
+        return Err(format!(
+            "{label} ({}, {}) exceeds the {}x{} screen",
+            cursor.column,
+            cursor.row,
+            dimensions.columns(),
+            dimensions.rows()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_scroll_region(
+    start: usize,
+    end: usize,
+    limit: usize,
+    label: &str,
+) -> Result<(), String> {
+    if start >= limit || end >= limit || start > end {
+        return Err(format!(
+            "{label} [{start}, {end}] exceeds the 0..{} range",
+            limit.saturating_sub(1)
+        ));
+    }
+    Ok(())
+}
 
 fn default_tab_stops(dimensions: Dimensions) -> Vec<bool> {
     (0..dimensions.columns())
