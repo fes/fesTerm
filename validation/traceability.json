@@ -1550,7 +1550,11 @@
       ],
       "automated_tests": [
         "workspace_restoration_recreates_ordered_fresh_local_tabs_and_focus",
-        "workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions"
+        "workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions",
+        "native_smoke_startup_uses_the_controlled_fixture_instead_of_restoring_workspace",
+        "native_smoke_does_not_request_or_write_workspace_persistence",
+        "native_smoke_ignores_saved_window_geometry",
+        "native_smoke_secondary_window_ignores_process_smoke_environment"
       ],
       "manual_scenarios": [
         "CP-02"
@@ -1592,6 +1596,8 @@
         "owned_monochrome_chain_covers_unicode_15_1_rgi_scalars",
         "every_unicode_15_1_rgi_emoji_classifies_and_rasterizes",
         "native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii",
+        "native_smoke_missing_primary_tab_fails_explicitly_and_closes",
+        "native_smoke_timeout_still_fails_and_closes_when_primary_tab_is_missing",
         "every_default_color_emoji_scalar_rasterizes_from_the_pinned_font",
         "every_emoji_property_scalar_rasterizes_with_explicit_emoji_presentation",
         "color_emoji_paint_reuses_textures_and_honors_concealment",

@@ -16,6 +16,7 @@
 //! never reaches the parameter handling that is actually delicate.
 
 use festerm_core::{Color, Dimensions, Terminal};
+use festerm_test_support::replies::terminal_replies_are_complete;
 use proptest::prelude::*;
 
 const COLUMNS: usize = 24;
@@ -179,6 +180,15 @@ fn fragment() -> impl Strategy<Value = Vec<u8>> {
         1 => string_sequence(),
         1 => oversized_string(),
         1 => invalid_utf8(),
+        2 => prop_oneof![
+            Just(b"\x1bP$qm\x1b\\".to_vec()),
+            Just(b"\x1b[5n".to_vec()),
+            Just(b"\x1b[6n".to_vec()),
+            Just(b"\x1b[c".to_vec()),
+            Just(b"\x1b[?25$p".to_vec()),
+            Just(b"\x1b]10;?\x07".to_vec()),
+            Just(b"\x1b]11;?\x1b\\".to_vec()),
+        ],
         1 => proptest::collection::vec(any::<u8>(), 1..8),
         // The single-byte controls that have to be honoured mid-sequence.
         1 => prop_oneof![
@@ -284,21 +294,10 @@ proptest! {
         terminal.ingest(&input);
 
         let replies = terminal.drain_replies();
-        if replies.is_empty() {
-            return Ok(());
-        }
         prop_assert!(
-            replies.iter().all(|byte| *byte != 0),
-            "a reply contained a NUL: {replies:?}"
+            terminal_replies_are_complete(&replies),
+            "an incomplete or malformed reply was emitted: {replies:?}"
         );
-        // Every reply this terminal can emit either starts with ESC or is a
-        // bare control answer; none of them may be left unterminated.
-        if replies.starts_with(b"\x1bP") {
-            prop_assert!(
-                replies.ends_with(b"\x1b\\"),
-                "a device-control reply was left unterminated: {replies:?}"
-            );
-        }
     }
 
     /// An over-long string sequence has to leave the terminal usable. fesTerm
@@ -374,6 +373,32 @@ proptest! {
             "an abandoned payload was applied as a title"
         );
     }
+}
+
+#[test]
+fn a_dcs_reply_followed_by_csi_is_still_complete() {
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"\x1bP$qm\x1b\\\x1b[5n", b"\x1bP1$r0m\x1b\\\x1b[0n"),
+        (b"\x1bP$qx\x1b\\\x1b[6n", b"\x1bP0$r\x1b\\\x1b[1;1R"),
+    ];
+    for (input, expected) in cases {
+        let mut terminal = terminal();
+        terminal.ingest(input);
+        let replies = terminal.drain_replies();
+        assert_eq!(replies, *expected);
+        assert!(terminal_replies_are_complete(&replies));
+    }
+}
+
+#[test]
+fn mixed_reply_frames_remain_complete_when_the_queue_overflows() {
+    let mut terminal = terminal();
+    terminal.ingest(&b"\x1bP$qm\x1b\\\x1b[6n\x1b]10;?\x07".repeat(4096));
+    assert!(terminal.take_reply_queue_overflowed());
+    let replies = terminal.drain_replies();
+    assert!(!replies.is_empty());
+    assert!(replies.len() <= festerm_core::TRANSPORT_QUEUE_HIGH_WATERMARK);
+    assert!(terminal_replies_are_complete(&replies));
 }
 
 /// A round trip through the terminal's own report: set a pen, ask what the pen

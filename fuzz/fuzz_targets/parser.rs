@@ -13,6 +13,7 @@
 #![no_main]
 
 use festerm_core::{Dimensions, Terminal};
+use festerm_test_support::replies::terminal_replies_are_complete;
 use libfuzzer_sys::fuzz_target;
 
 const COLUMNS: usize = 24;
@@ -44,10 +45,8 @@ fuzz_target!(|data: &[u8]| {
     // A half-written report leaves the program that asked for it waiting
     // forever, so anything we say back has to be complete.
     let replies = terminal.drain_replies();
-    if replies.starts_with(b"\x1bP") {
-        assert!(
-            replies.ends_with(b"\x1b\\"),
-            "a device-control reply was left unterminated"
-        );
-    }
+    assert!(
+        terminal_replies_are_complete(&replies),
+        "an incomplete or malformed reply was emitted: {replies:?}"
+    );
 });
