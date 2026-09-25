@@ -11,11 +11,107 @@ use festerm_ssh::{
     HostIdentity, HostTrustDecision, RemoteFileReadError, SshAuthentication, SshConnectionProfile,
     SshSession,
 };
+use russh_sftp::protocol::{
+    Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
+};
+
+#[derive(Clone, Copy)]
+enum SubsystemBehavior {
+    Stall,
+    Reject,
+    ServeFiles,
+}
+
+const FIXTURE_PATH: &str = "/notes-\u{03bb}.md";
+const FIXTURE_CONTENT: &[u8] = b"# remote document\n\nExact snapshot bytes.\n";
+
+struct MemoryFiles;
+
+impl russh_sftp::server::Handler for MemoryFiles {
+    type Error = StatusCode;
+
+    fn unimplemented(&self) -> Self::Error {
+        StatusCode::OpUnsupported
+    }
+
+    async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
+        assert_eq!(path, ".");
+        Ok(Name {
+            id,
+            files: vec![File::dummy("/")],
+        })
+    }
+
+    async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        let permissions = match path.as_str() {
+            FIXTURE_PATH => 0o100644,
+            "/" => 0o040755,
+            _ => return Err(StatusCode::NoSuchFile),
+        };
+        Ok(Attrs {
+            id,
+            attrs: FileAttributes {
+                size: Some(FIXTURE_CONTENT.len() as u64),
+                permissions: Some(permissions),
+                ..Default::default()
+            },
+        })
+    }
+
+    async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        self.stat(id, path).await
+    }
+
+    async fn open(
+        &mut self,
+        id: u32,
+        filename: String,
+        flags: OpenFlags,
+        _attrs: FileAttributes,
+    ) -> Result<Handle, Self::Error> {
+        assert_eq!(filename, FIXTURE_PATH);
+        assert_eq!(flags.bits(), OpenFlags::READ.bits());
+        Ok(Handle {
+            id,
+            handle: filename,
+        })
+    }
+
+    async fn read(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        len: u32,
+    ) -> Result<Data, Self::Error> {
+        assert_eq!(handle, FIXTURE_PATH);
+        let start = usize::try_from(offset).unwrap();
+        if start >= FIXTURE_CONTENT.len() {
+            return Err(StatusCode::Eof);
+        }
+        let end = (start + len as usize).min(FIXTURE_CONTENT.len());
+        Ok(Data {
+            id,
+            data: FIXTURE_CONTENT[start..end].to_vec(),
+        })
+    }
+
+    async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
+        assert_eq!(handle, FIXTURE_PATH);
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: String::new(),
+            language_tag: String::new(),
+        })
+    }
+}
 
 struct TestServer {
     channels: Vec<russh::Channel<russh::server::Msg>>,
     subsystem_started: mpsc::Sender<()>,
-    reject_subsystem: bool,
+    behavior: SubsystemBehavior,
+    subsystems: tokio::task::JoinSet<()>,
 }
 
 impl russh::server::Handler for TestServer {
@@ -75,11 +171,20 @@ impl russh::server::Handler for TestServer {
         session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
         assert_eq!(name, "sftp");
-        if self.reject_subsystem {
-            session.channel_failure(channel)?;
-        } else {
-            // Accept the channel but deliberately never answer SFTP initialization.
-            session.channel_success(channel)?;
+        match self.behavior {
+            SubsystemBehavior::Reject => session.channel_failure(channel)?,
+            SubsystemBehavior::Stall => session.channel_success(channel)?,
+            SubsystemBehavior::ServeFiles => {
+                session.channel_success(channel)?;
+                let index = self
+                    .channels
+                    .iter()
+                    .position(|item| item.id() == channel)
+                    .unwrap();
+                let stream = self.channels.remove(index).into_stream();
+                self.subsystems
+                    .spawn(russh_sftp::server::run(stream, MemoryFiles));
+            }
         }
         self.subsystem_started.send(()).unwrap();
         Ok(())
@@ -115,7 +220,7 @@ impl Drop for OwnedServer {
     }
 }
 
-fn start_server(reject_subsystem: bool) -> (OwnedServer, u16, mpsc::Receiver<()>) {
+fn start_server(behavior: SubsystemBehavior) -> (OwnedServer, u16, mpsc::Receiver<()>) {
     let (port_sender, port_receiver) = mpsc::channel();
     let (subsystem_started, subsystem_receiver) = mpsc::channel();
     let (stop, stop_receiver) = tokio::sync::oneshot::channel();
@@ -139,7 +244,8 @@ fn start_server(reject_subsystem: bool) -> (OwnedServer, u16, mpsc::Receiver<()>
                 let session = russh::server::run_stream(Arc::new(config), stream, TestServer {
                     channels: Vec::new(),
                     subsystem_started,
-                    reject_subsystem,
+                    behavior,
+                    subsystems: tokio::task::JoinSet::new(),
                 }).await.unwrap();
                 let _ = session.await;
             };
@@ -164,34 +270,12 @@ fn start_server(reject_subsystem: bool) -> (OwnedServer, u16, mpsc::Receiver<()>
 #[test]
 fn live_remote_file_read_keeps_password_accept_once_shell_responsive() {
     for reject_subsystem in [false, true] {
-        let (_server, port, subsystem_started) = start_server(reject_subsystem);
-        let profile = SshConnectionProfile::new(
-            HostIdentity::new("127.0.0.1", port).unwrap(),
-            "fixture",
-            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
-            TerminalSize::new(80, 24).unwrap(),
-        )
-        .unwrap();
-        let session =
-            SshSession::start(profile, SshAuthentication::password("fixture-password")).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            match session.try_recv_event() {
-                Ok(SessionEvent::HostKeyVerification(prompt)) => {
-                    session
-                        .host_key_decision_resolver()
-                        .resolve(&prompt, HostTrustDecision::AcceptOnce)
-                        .unwrap();
-                }
-                Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => break,
-                Ok(SessionEvent::Error(error)) => panic!("fixture connection failed: {error}"),
-                Ok(_) | Err(SessionTryReceiveError::Empty) => {
-                    assert!(Instant::now() < deadline, "session never started");
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Err(SessionTryReceiveError::Closed) => panic!("fixture connection closed"),
-            }
-        }
+        let (_server, port, subsystem_started) = start_server(if reject_subsystem {
+            SubsystemBehavior::Reject
+        } else {
+            SubsystemBehavior::Stall
+        });
+        let session = connect_session(port);
         let requestor = session.remote_file_requestor();
         assert!(requestor.verified_host_key_fingerprint().is_some());
         let read = thread::spawn(move || requestor.read_remote_file_snapshot("/fixture.txt", 4096));
@@ -244,4 +328,62 @@ fn live_remote_file_read_keeps_password_accept_once_shell_responsive() {
             ));
         }
     }
+}
+
+fn connect_session(port: u16) -> SshSession {
+    let profile = SshConnectionProfile::new(
+        HostIdentity::new("127.0.0.1", port).unwrap(),
+        "fixture",
+        SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+        TerminalSize::new(80, 24).unwrap(),
+    )
+    .unwrap();
+    let session =
+        SshSession::start(profile, SshAuthentication::password("fixture-password")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => {
+                session
+                    .host_key_decision_resolver()
+                    .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                    .unwrap();
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => break,
+            Ok(SessionEvent::Error(error)) => panic!("fixture connection failed: {error}"),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                assert!(Instant::now() < deadline, "session never started");
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(SessionTryReceiveError::Closed) => panic!("fixture connection closed"),
+        }
+    }
+    session
+}
+
+#[test]
+fn live_remote_file_read_returns_exact_bytes_and_honest_bounds() {
+    let (_server, port, _subsystems) = start_server(SubsystemBehavior::ServeFiles);
+    let session = connect_session(port);
+    let requestor = session.remote_file_requestor();
+    let snapshot = requestor
+        .read_remote_file_snapshot(FIXTURE_PATH, FIXTURE_CONTENT.len())
+        .unwrap();
+    assert_eq!(snapshot.bytes(), FIXTURE_CONTENT);
+    assert!(matches!(
+        requestor.read_remote_file_snapshot(FIXTURE_PATH, FIXTURE_CONTENT.len() - 1),
+        Err(RemoteFileReadError::Sftp(
+            festerm_ssh::SftpSessionError::RemoteFileTooLarge { .. }
+        ))
+    ));
+    assert!(matches!(
+        requestor.read_remote_file_snapshot("/", 1024),
+        Err(RemoteFileReadError::NotFile { .. })
+    ));
+    assert!(matches!(
+        requestor.read_remote_file_snapshot("/missing.txt", 1024),
+        Err(RemoteFileReadError::Missing { .. })
+    ));
+    assert_eq!(session.lifecycle(), SessionLifecycle::Running);
+    session.shutdown(Duration::from_secs(3)).unwrap();
 }

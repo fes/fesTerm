@@ -1,6 +1,6 @@
 use std::{
     ops::Range,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use festerm_core::{ContentPosition, Terminal};
@@ -448,6 +448,17 @@ fn normalize_candidate_text(raw: &str) -> Option<String> {
         candidate = stripped;
     }
 
+    if let Some(unquoted) = unquote(&candidate) {
+        let literal =
+            candidate.starts_with('\'') || is_windows_absolute(&unquoted) || is_unc_path(&unquoted);
+        let text = if literal {
+            unquoted
+        } else {
+            unescape_shellish(&unquoted)
+        };
+        return (!text.is_empty()).then_some(text);
+    }
+
     candidate = strip_edge_punctuation(candidate);
     if candidate.is_empty() {
         return None;
@@ -456,7 +467,9 @@ fn normalize_candidate_text(raw: &str) -> Option<String> {
     if let Some(unquoted) = unquote(&candidate) {
         candidate = unquoted;
     }
-    candidate = unescape_shellish(&candidate);
+    if !is_windows_absolute(&candidate) && !is_unc_path(&candidate) {
+        candidate = unescape_shellish(&candidate);
+    }
     candidate = strip_edge_punctuation(candidate);
 
     let candidate = candidate.trim().to_owned();
@@ -576,6 +589,11 @@ fn resolve_local_candidate(
                         candidate.to_owned(),
                         "This file URI names another host, so fesTerm will not open it as a local file.",
                     );
+                }
+            }
+            if cfg!(windows) {
+                if let Some(path) = uri.path.strip_prefix('/').filter(|path| is_windows_absolute(path)) {
+                    return enabled_local_action(PathBuf::from(path));
                 }
             }
             resolve_local_candidate(&uri.path, origin)
@@ -763,14 +781,10 @@ fn parse_candidate_reference(
         return Ok(ParsedPathReference::HomeRelative(suffix.to_owned()));
     }
     if candidate.starts_with('/') {
-        return Ok(ParsedPathReference::AbsolutePosix(normalize_posix_path(
-            candidate,
-        )));
+        return Ok(ParsedPathReference::AbsolutePosix(candidate.to_owned()));
     }
     if is_windows_absolute(candidate) || is_unc_path(candidate) {
-        return Ok(ParsedPathReference::AbsoluteWindows(
-            normalize_windows_like_path(candidate),
-        ));
+        return Ok(ParsedPathReference::AbsoluteWindows(candidate.to_owned()));
     }
     Ok(ParsedPathReference::Relative(candidate.to_owned()))
 }
@@ -802,7 +816,8 @@ fn percent_decode(path: &str) -> Result<String, PathReferenceParseError> {
             if index + 2 >= bytes.len() {
                 return Err(PathReferenceParseError::InvalidFileUriEncoding);
             }
-            let hex = &path[index + 1..index + 3];
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                .map_err(|_| PathReferenceParseError::InvalidFileUriEncoding)?;
             match u8::from_str_radix(hex, 16) {
                 Ok(value) => {
                     decoded.push(value);
@@ -833,22 +848,6 @@ fn is_windows_absolute(candidate: &str) -> bool {
 
 fn is_unc_path(candidate: &str) -> bool {
     candidate.starts_with("\\\\") || candidate.starts_with("//")
-}
-
-fn normalize_windows_like_path(candidate: &str) -> String {
-    let mut normalized = PathBuf::new();
-    for component in Path::new(candidate).components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(std::path::MAIN_SEPARATOR.to_string()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let _ = normalized.pop();
-            }
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-    normalized.to_string_lossy().into_owned()
 }
 
 fn normalize_posix_path(candidate: &str) -> String {
@@ -895,19 +894,7 @@ fn join_home(home: &Path, suffix: &str) -> PathBuf {
     if suffix.is_empty() {
         home.to_path_buf()
     } else {
-        let mut path = home.to_path_buf();
-        for part in Path::new(suffix).components() {
-            match part {
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    let _ = path.pop();
-                }
-                Component::Normal(part) => path.push(part),
-                Component::Prefix(prefix) => path.push(prefix.as_os_str()),
-                Component::RootDir => {}
-            }
-        }
-        path
+        home.join(suffix.trim_start_matches(std::path::is_separator))
     }
 }
 
@@ -1317,6 +1304,65 @@ mod tests {
             .disabled_reason
             .unwrap()
             .contains("control characters"));
+    }
+
+    #[test]
+    fn malformed_percent_encoding_with_multibyte_text_is_refused_without_panicking() {
+        for path in ["file:///tmp/%\u{1f916}.md", "file:///tmp/%a\u{03bb}.md"] {
+            assert_eq!(
+                parse_file_uri(path),
+                Err(PathReferenceParseError::InvalidFileUriEncoding)
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_and_unc_paths_preserve_literal_filename_characters() {
+        assert_eq!(
+            normalize_candidate_text("'/tmp/name!.md '").as_deref(),
+            Some("/tmp/name!.md ")
+        );
+        assert_eq!(
+            normalize_candidate_text(r"'C:\Users\Name\File.md'").as_deref(),
+            Some(r"C:\Users\Name\File.md")
+        );
+        assert_eq!(
+            normalize_candidate_text(r"\\server\share\file.md").as_deref(),
+            Some(r"\\server\share\file.md")
+        );
+        assert_eq!(
+            normalize_candidate_text(r"'/tmp/a\\b.md'").as_deref(),
+            Some(r"/tmp/a\\b.md")
+        );
+    }
+
+    #[test]
+    fn local_paths_leave_parent_traversal_for_the_filesystem() {
+        let TerminalFilesystemOrigin::Local(origin) = local_origin() else {
+            panic!("expected local fixture");
+        };
+        let action = resolve_local_candidate("/tmp/link/../notes.md", &origin);
+        let Some(TerminalPathOpenRequest::Local(request)) = action.request else {
+            panic!("expected local path action");
+        };
+        assert_eq!(request.path, PathBuf::from("/tmp/link/../notes.md"));
+        assert_eq!(
+            join_home(Path::new("/tmp/home"), "link/../notes.md"),
+            Path::new("/tmp/home").join("link/../notes.md")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_file_uris_resolve_windows_drive_paths() {
+        let TerminalFilesystemOrigin::Local(origin) = local_origin() else {
+            panic!("expected local fixture");
+        };
+        let action = resolve_local_candidate("file:///C:/Users/Dev/notes.md", &origin);
+        let Some(TerminalPathOpenRequest::Local(request)) = action.request else {
+            panic!("expected local drive path action");
+        };
+        assert_eq!(request.path, PathBuf::from("C:/Users/Dev/notes.md"));
     }
 
     #[test]
