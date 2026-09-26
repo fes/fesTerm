@@ -25,6 +25,28 @@ decoupling still needs the architectural and native qualification tracked in
 [#248](https://github.com/fes/fesTerm/issues/248), rather than silently
 replacing the ownership tradeoff accepted by ADR-0032.
 
+## When an idle UI was still rasterizing
+
+The #242 follow-up captured the Windows CPU burst while it was happening.
+The application and PTY threads were waiting, but WARP workers were executing
+generated pixel shaders. A stopped GUI frame counter did not mean previously
+submitted GPU work had completed. The two large rounded Launcher panel fills
+were a major source of that work; removing just those fills in a diagnostic
+experiment sharply reduced it.
+
+The fix keeps the appearance instead of removing the panels. Windows DX12 CPU
+adapters now draw their original egui-tessellated geometry through a textureless
+color pipeline. Rounded edges, clipping, dithering and widget ordering match
+the ordinary renderer pixel-for-pixel. Hardware and unsupported surfaces keep
+the existing path; the Direct2D experiment and earlier #239/#240 fixes remain
+independent.
+
+An input-free comparison against unchanged #240 used about 71% less process
+CPU with equal final GUI counters. The candidate then passed the unchanged
+native idle and sparse-output budgets. The evidence and opt-in large-panel
+replay are in `validation/windows-warp/README.md`; older failures and
+input-contaminated runs are retained rather than retrospectively rewritten.
+
 ## Measuring the application window, not its event broker
 
 The #242 investigation exposed a flaw in the Windows native evidence harness.

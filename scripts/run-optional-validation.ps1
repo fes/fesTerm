@@ -274,6 +274,21 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=skipped reason=experimental-opt-in"
     }
+    if ($env:FESTERM_RUN_WARP_PANEL_PROBE -eq '1') {
+        try {
+            Invoke-NativeCommand {
+                cargo test -p festerm replay_large_warp_panels -- --ignored --nocapture
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'WARP panel replay failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=warp-panel-replay status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=warp-panel-replay status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=warp-panel-replay status=skipped reason=explicit-opt-in"
+    }
 }
 
 Add-Content -Path $ResultPath -Value "`nstatus=$status"
