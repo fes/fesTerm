@@ -25,6 +25,13 @@ reduced motion automatically without changing the persisted setting.
 Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
+The native CPU oracle for these edges and `TERM-01` must identify the real
+PID-owned application window, not winit's visible event-target tool window.
+Warmup or sample input invalidates a controlled measurement; loss of window
+identity, foreground activation or responsiveness fails qualification. Keep
+failed samples rather than retrying until green. These are validation guards,
+not changes to production scheduling or rendering.
+
 For `TERM-01`, software-rendered terminal backgrounds may use the native
 solid-color path, but text, colors, clipping, opacity and input behavior must
 remain identical. `CP-17` pairs a native CPU ceiling with a minimum GUI

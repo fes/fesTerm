@@ -3,6 +3,38 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Measuring the application window, not its event broker
+
+The #242 investigation exposed a flaw in the Windows native evidence harness.
+`Process.MainWindowHandle` could select "Winit Thread Event Target": a window
+marked visible for event delivery but styled as a transparent, non-activating
+tool. Maximizing it did not maximize the fesTerm UI. Low CPU and unsuccessful
+close requests therefore did not prove the intended scenario.
+
+The CPU and OS-input probes now share explicit PID/visibility/owner/style
+selection, reject ambiguous candidates, and retain the selected HWND instead
+of rediscovering a different "main" window during the run. Native tests exercise
+the helper-window trap without changing the desktop. CPU evidence now includes
+identity, responsiveness, foreground state, input contamination and interval
+CPU/frame counts. Warmup and budgets are unchanged; input-contaminated samples
+fail rather than waiting for a convenient quiet interval.
+
+Exercising the shared selector also exposed an OS-input smoke false positive:
+startup/resize output could satisfy its old byte-count oracle before the driver
+sent input. The controlled child now acknowledges only a complete line with
+the expected token, and the driver terminates on window/activation failures.
+Deterministic tests reject startup-only output and missing/wrong/incomplete
+input. This is an evidence correction, not a production input-policy change.
+
+An unchanged #240 build and current main both produced low-CPU, zero-frame idle
+samples on verified application windows. A later 10.638% background sample,
+however, failed without new GUI frames or input during that sample. Its
+post-sample stacks were already idle, so neither an immediate repaint loop nor
+queued startup rendering is established as the cause. The failed result is
+retained and #242 remains open; no speculative production renderer change is
+justified by this probe correction. The refreshed Direct2D evidence distinguishes
+the dense-output benefit from that unresolved idle failure.
+
 ## Yielding to reattachment during continuous PTY output
 
 A post-integration macOS native run timed out waiting for a recovery header
