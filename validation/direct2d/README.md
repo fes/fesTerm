@@ -153,6 +153,12 @@ remain unmeasured.
 
 ## Visual evidence and implementation lessons
 
+![Integrated egui-wgpu and Direct2D framebuffer comparison](framebuffer-comparison.png)
+
+This side-by-side image comes from the integrated composition test at 125%
+scale with clipping enabled. It is documentation evidence, not a golden-test
+baseline; the test regenerates and compares both actual framebuffers.
+
 Fifteen framebuffer pairs cover five scenes at 100%, 125%, and 200% scale.
 Every pixel is compared, including alpha; a single pixel exceeding two levels
 in any 8-bit channel fails. Current pairs have maximum channel differences of
