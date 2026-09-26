@@ -278,6 +278,14 @@ same-frame fallback with unchanged pixels. Surface-ownership tests retain an
 older frame while rendering the next. These checks do not replace CP-18's
 native-window, hardware, or presentation-latency evidence.
 
+The Windows WARP Launcher fill path reuses egui's rounded/feathered geometry
+with a textureless shader. Paired framebuffer tests require exact RGBA equality
+at 100%, 125% and 200% scale, with clipping and dithering on/off, and assert that
+the native draw actually executed. Opacity, stroke and sRGB cases retain the
+ordinary path. Adapter-policy coverage excludes hardware and other backends.
+The ignored large-panel replay is a draw/readback diagnostic, not an idle CPU
+budget or presentation-rate substitute.
+
 Windows native probes must exclude visible event-broker/tool HWNDs rather
 than trusting `Process.MainWindowHandle`. The Win32 selector regression creates
 small offscreen fixtures without activating windows or sending input. CPU

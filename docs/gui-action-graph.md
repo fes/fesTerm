@@ -25,6 +25,12 @@ reduced motion automatically without changing the persisted setting.
 Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
+For the large Launcher panel backgrounds, Windows DX12 CPU adapters may use
+the textureless fill pipeline while retaining egui's layout, rounded geometry
+and clipping. Hardware and unsupported surfaces retain standard painting.
+Pixel-equivalence and adapter-policy tests accompany CP-16's native evidence;
+no discovery, unread-state or command-routing semantics change.
+
 The native CPU oracle for these edges and `TERM-01` must identify the real
 PID-owned application window, not winit's visible event-target tool window.
 Warmup or sample input invalidates a controlled measurement; loss of window

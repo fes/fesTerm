@@ -496,6 +496,15 @@ these tests. A replacement handshake can pause daemon processing for up to
 | CP-16 | On a Windows software-rendered desktop, leave a maximized Launcher with unchanged Running Sessions idle, then leave a second maximized window on Launcher with an idle background PowerShell tab that has unread startup output. Confirm low CPU, preserved session discovery, and a visible static ring-and-dot unread cue. On an accelerated display, confirm the slow pulse, focus-loss static cue, and immediate clearing on tab activation. Compare chrome, text, and window geometry before/after at ordinary and high DPI. | Native performance + visual + usability | `scripts/check-windows-idle-rendering.ps1` (also in the opt-in Windows suite) measures both cases with isolated configurations and a default 5% total-machine CPU ceiling; `-RequireSoftwareRenderer` rejects hardware-only evidence. Deterministic tests assert pulse cadence, fixed-time color/geometry, and reduced-motion/static markers. Native readability, smoothness, mixed-DPI appearance, and accelerated-device behavior still require visual review. Sustained-output rendering cost is covered separately by CP-17, not this idle budget. |
 | CP-17 | On a Windows software-rendered desktop, run the controlled 10 Hz foreground-output fixture in a maximized window without interacting with it. Confirm reduced CPU while output keeps updating and the terminal background, text, cursor, clipping, overlays and window transparency remain correct. Repeat moving between DPI scales and opening another window. | Native performance + visual | `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -RequireSoftwareRenderer` measures CPU and GUI frame construction (defaults: at most 30% total CPU and at least 5 GUI frames/s). Headless GPU readback compares native and ordinary painting pixel-for-pixel, with a visible colored-text oracle, at 100%, 125% and 200% scale, clipped/unclipped and enabled/disabled, including a translucent overlay. sRGB/other formats retain the ordinary path. Native multi-window/mixed-DPI interaction and dense-output workloads remain additional evidence; the frame counter is not an OS presentation-latency measurement. |
 
+The #242 hot-stack follow-up identified WARP pixel-rasterization work continuing
+after GUI construction stopped. The two large Launcher panels now have a
+textureless fill path on Windows DX12 CPU adapters, using the same rounded
+geometry, clipping and dithering. Full pixel comparisons and backend/fallback
+policy tests cover this path; the opt-in `replay_large_warp_panels` test
+reproduces its draw cost without desktop input. Native measurements and their
+limits are in `validation/windows-warp/README.md`. This does not replace CP-16's
+accelerated-device, mixed-DPI or usability review.
+
 ### Experimental Direct2D qualification
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes
@@ -515,8 +524,11 @@ has been relaxed. Forced cleanup after a pending close is reported explicitly.
 Earlier native results did not record this window identity and are not
 complete maximized-window qualification. Fresh observations are recorded in
 `validation/direct2d/README.md`. A verified-window 10.638% background-idle
-failure remains unresolved under #242; correcting the probe is not a claim
-that the rendering issue is fixed.
+failure was unresolved at the probe-correction stage; correcting the probe
+alone was not a rendering fix. The later hot-stack investigation and Launcher
+rasterization mitigation are documented separately in
+`validation/windows-warp/README.md`, without retroactively classifying that
+older sample.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

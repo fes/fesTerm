@@ -136,6 +136,12 @@ the run with `invalid-input`. The shared window selector has a deterministic
 native Win32 regression in Windows CI. These changes correct the evidence
 harness, not the production rendering policy.
 
+The subsequent [WARP rasterization follow-up](../windows-warp/README.md)
+captured hot pixel-shader work and reduced the cost of the two large Launcher
+panel fills with a separate textureless pipeline. It does not enable Direct2D
+or replace #239/#240. Its new evidence is kept separate from the historical
+samples above.
+
 ## Review of the earlier CPU fixes
 
 **Keep #239 and #240; neither is superseded.** #239 bounds discovery-driven

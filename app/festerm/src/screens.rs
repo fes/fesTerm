@@ -3975,11 +3975,13 @@ fn show_saved_profiles_panel(
     ui.scope_builder(
         egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            egui::Frame::new()
-                .fill(theme::SURFACE_PANEL)
-                .corner_radius(LAUNCHER_PANEL_CORNER)
-                .inner_margin(egui::Margin::symmetric(0, LAUNCHER_PANEL_TOP_MARGIN))
-                .show(ui, |ui| {
+            crate::software_background::show_frame(
+                ui,
+                egui::Frame::new()
+                    .fill(theme::SURFACE_PANEL)
+                    .corner_radius(LAUNCHER_PANEL_CORNER)
+                    .inner_margin(egui::Margin::symmetric(0, LAUNCHER_PANEL_TOP_MARGIN)),
+                |ui| {
                     ui.set_width(width);
                     if let Some(height) = height {
                         ui.set_min_height(
@@ -4148,7 +4150,8 @@ fn show_saved_profiles_panel(
                             );
                         });
                     });
-                });
+                },
+            );
         },
     );
 }
@@ -4197,11 +4200,13 @@ fn show_running_sessions_panel(
     ui.scope_builder(
         egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            egui::Frame::new()
-                .fill(theme::SURFACE_PANEL)
-                .corner_radius(LAUNCHER_PANEL_CORNER)
-                .inner_margin(egui::Margin::same(LAUNCHER_PANEL_TOP_MARGIN))
-                .show(ui, |ui| {
+            crate::software_background::show_frame(
+                ui,
+                egui::Frame::new()
+                    .fill(theme::SURFACE_PANEL)
+                    .corner_radius(LAUNCHER_PANEL_CORNER)
+                    .inner_margin(egui::Margin::same(LAUNCHER_PANEL_TOP_MARGIN)),
+                |ui| {
                     ui.set_width(inner_width);
                     if let Some(height) = height {
                         ui.set_min_height(
@@ -4297,7 +4302,8 @@ fn show_running_sessions_panel(
                         state.tmux_group_expanded,
                         state.screen_group_expanded,
                     ] = expanded;
-                });
+                },
+            );
         },
     );
 }
