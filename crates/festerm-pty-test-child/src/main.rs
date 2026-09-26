@@ -16,6 +16,7 @@
 //! | `emit-repeat:COUNT:TEXT` | Write `TEXT` to stdout `COUNT` times, with no extra newline. |
 //! | `emit-frames:COUNT:MILLIS` | Write `FRAME:00` through `FRAME:COUNT-1`, pausing `MILLIS` between lines. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
+//! | `expect-line-suffix:TEXT` | Fail unless the last complete input line ends with `TEXT`. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
 //! | `report-pid` | Write `PID:{pid}:END\n` for process-continuity assertions. |
@@ -52,6 +53,7 @@ fn decode_hex_bytes(specification: &str) -> Vec<u8> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut last_line = String::new();
+    let mut last_line_complete = false;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
 
@@ -102,9 +104,15 @@ fn main() {
                 .lock()
                 .read_line(&mut last_line)
                 .expect("read-line: stdin read succeeds");
+            last_line_complete = last_line.ends_with(['\r', '\n']);
             // Strip any trailing CR or LF so echo output is clean.
             let trimmed = last_line.trim_end_matches(['\r', '\n']);
             last_line = trimmed.to_owned();
+        } else if let Some(suffix) = arg.strip_prefix("expect-line-suffix:") {
+            assert!(
+                last_line_complete && last_line.ends_with(suffix),
+                "expect-line-suffix: controlled input did not match"
+            );
         } else if let Some(prefix) = arg.strip_prefix("echo:") {
             let mut out = stdout.lock();
             writeln!(out, "{prefix}:{last_line}").expect("echo: stdout write succeeds");

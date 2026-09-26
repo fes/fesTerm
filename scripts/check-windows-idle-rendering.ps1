@@ -10,6 +10,7 @@ param(
     [switch] $IncludeSustainedOutput,
     [switch] $DenseOutput,
     [switch] $RequireDirect2D,
+    [string] $DebuggerPath,
     [ValidateRange(0.1, 100)]
     [double] $MaximumOutputCpuPercent = 30,
     [ValidateRange(1, 120)]
@@ -29,9 +30,11 @@ if ($RequireDirect2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
 }
 
 $root = Split-Path -Parent $PSScriptRoot
+. "$PSScriptRoot\windows-application-window.ps1"
 if (-not [IO.Path]::IsPathRooted($Executable)) { $Executable = Join-Path $root $Executable }
 if (-not [IO.Path]::IsPathRooted($ResultPath)) { $ResultPath = Join-Path $root $ResultPath }
 $Executable = (Resolve-Path -LiteralPath $Executable).Path
+if ($DebuggerPath) { $DebuggerPath = (Resolve-Path -LiteralPath $DebuggerPath).Path }
 $ResultPath = [IO.Path]::GetFullPath($ResultPath)
 New-Item -ItemType Directory -Force -Path (Split-Path $ResultPath) | Out-Null
 $isolation = Join-Path ([IO.Path]::GetTempPath()) ("festerm-idle-" + [Guid]::NewGuid().ToString('N'))
@@ -135,26 +138,34 @@ pulse_new_output_dot = true
         $stderr = "$ResultPath.$scenario.stderr.log"
         $process = Start-Process -FilePath $Executable -WorkingDirectory $root -PassThru -NoNewWindow `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $window = [IntPtr]::Zero
         try {
             $deadline = [DateTime]::UtcNow.AddSeconds(20)
             do {
                 Start-Sleep -Milliseconds 100
                 $process.Refresh()
-            } while (-not $process.HasExited -and $process.MainWindowHandle -eq [IntPtr]::Zero `
+                $window = [FesTermApplicationWindow]::Find($process.Id)
+            } while (-not $process.HasExited -and $window -eq [IntPtr]::Zero `
                 -and [DateTime]::UtcNow -lt $deadline)
-            if ($process.HasExited -or $process.MainWindowHandle -eq [IntPtr]::Zero) {
-                throw "$scenario did not create a window; inspect $stdout"
+            if ($process.HasExited -or $window -eq [IntPtr]::Zero) {
+                throw "$scenario did not create an application window; inspect $stdout"
             }
+            $warmupInput = [FesTermApplicationWindow]::LastInputTick()
             Start-Sleep -Seconds 3
             $process.Refresh()
-            [void] [FesTermIdleRenderingNative]::ShowWindow($process.MainWindowHandle, 3)
+            [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+            [void] [FesTermIdleRenderingNative]::ShowWindow($window, 3)
+            [FesTermApplicationWindow]::Activate($window, $process.Id)
             Start-Sleep -Seconds 15
+            $warmupInputChanged = [FesTermApplicationWindow]::LastInputTick() -ne $warmupInput
             $process.Refresh()
             if ($process.HasExited) { throw "$scenario exited during warmup." }
-            if (-not [FesTermIdleRenderingNative]::IsZoomed($process.MainWindowHandle)) {
-                throw "$scenario did not remain maximized."
+            [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+            if (-not [FesTermIdleRenderingNative]::IsZoomed($window) -or
+                [FesTermApplicationWindow]::GetForegroundWindow() -ne $window) {
+                throw "$scenario did not remain maximized and foreground."
             }
-            $windowMetrics = [FesTermIdleRenderingNative]::ClientMetrics($process.MainWindowHandle)
+            $windowMetrics = [FesTermIdleRenderingNative]::ClientMetrics($window)
             if ($RequireSoftwareRenderer -and
                 -not (Select-String -LiteralPath $stdout, $stderr -Pattern 'device_type=Cpu' -List)) {
                 throw "$scenario did not select a software renderer."
@@ -163,28 +174,49 @@ pulse_new_output_dot = true
                 -not (Get-CimInstance Win32_Process -Filter "ParentProcessId=$($process.Id) AND Name='pwsh.exe'")) {
                 throw 'The PowerShell fixture did not start.'
             }
-            $firstFrame = if ($sustained) { Get-FrameNumber $stdout $stderr 'gui_frame_number' } else { 0 }
+            $firstFrame = Get-FrameNumber $stdout $stderr 'gui_frame_number'
             $firstNativeFrame = if ($sustained -and $RequireDirect2D) {
                 Get-FrameNumber $stdout $stderr 'direct2d_frame_number'
             } else { 0 }
             $before = $process.TotalProcessorTime.TotalSeconds
+            $inputBefore = [FesTermApplicationWindow]::LastInputTick()
+            $sampleStarted = [DateTime]::UtcNow
             $clock = [Diagnostics.Stopwatch]::StartNew()
-            Start-Sleep -Seconds $SampleSeconds
-            $process.Refresh()
-            if ($process.HasExited) { throw "$scenario exited during measurement." }
-            $elapsed = $clock.Elapsed.TotalSeconds
-            $cpu = 100 * ($process.TotalProcessorTime.TotalSeconds - $before) /
+            $intervals = [Collections.Generic.List[object]]::new()
+            $previousCpu = $before
+            $previousElapsed = 0.0
+            $previousFrame = $firstFrame
+            do {
+                $remaining = $SampleSeconds - $clock.Elapsed.TotalSeconds
+                Start-Sleep -Milliseconds ([int][Math]::Max(1, [Math]::Min(1000, $remaining * 1000)))
+                $process.Refresh()
+                if ($process.HasExited) { throw "$scenario exited during measurement." }
+                $elapsed = $clock.Elapsed.TotalSeconds
+                $currentCpu = $process.TotalProcessorTime.TotalSeconds
+                $currentFrame = Get-FrameNumber $stdout $stderr 'gui_frame_number'
+                $intervals.Add([pscustomobject]@{
+                    elapsed_seconds = $elapsed
+                    cpu_percent = [Math]::Round(100 * ($currentCpu - $previousCpu) /
+                        ($elapsed - $previousElapsed) / [Environment]::ProcessorCount, 3)
+                    gui_frames = $currentFrame - $previousFrame
+                })
+                $previousCpu = $currentCpu
+                $previousElapsed = $elapsed
+                $previousFrame = $currentFrame
+            } while ($elapsed -lt $SampleSeconds)
+            $cpu = 100 * ($currentCpu - $before) /
                 $elapsed / [Environment]::ProcessorCount
-            if (-not [FesTermIdleRenderingNative]::IsZoomed($process.MainWindowHandle)) {
-                throw "$scenario did not remain maximized during measurement."
+            $inputChanged = [FesTermApplicationWindow]::LastInputTick() -ne $inputBefore
+            [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+            if (-not [FesTermIdleRenderingNative]::IsZoomed($window) -or
+                [FesTermApplicationWindow]::GetForegroundWindow() -ne $window) {
+                throw "$scenario did not remain maximized and foreground during measurement."
             }
             if (($windowMetrics -join ',') -ne
-                ([FesTermIdleRenderingNative]::ClientMetrics($process.MainWindowHandle) -join ',')) {
+                ([FesTermIdleRenderingNative]::ClientMetrics($window) -join ',')) {
                 throw "$scenario changed physical size or DPI during measurement."
             }
-            $framesPerSecond = if ($sustained) {
-                ((Get-FrameNumber $stdout $stderr 'gui_frame_number') - $firstFrame) / $elapsed
-            } else { $null }
+            $framesPerSecond = ($currentFrame - $firstFrame) / $elapsed
             $nativeFramesPerSecond = if ($sustained -and $RequireDirect2D) {
                 ((Get-FrameNumber $stdout $stderr 'direct2d_frame_number') - $firstNativeFrame) / $elapsed
             } else { $null }
@@ -196,33 +228,57 @@ pulse_new_output_dot = true
                 throw 'The Direct2D fixture fell back; inspect its logs.'
             }
             $budget = if ($sustained) { $MaximumOutputCpuPercent } else { $MaximumCpuPercent }
-            $passed = $cpu -le $budget -and
+            $passed = -not ($inputChanged -or $warmupInputChanged) -and $cpu -le $budget -and
                 (-not $sustained -or $framesPerSecond -ge $MinimumOutputFramesPerSecond)
             $results.Add([pscustomobject]@{
                 scenario = $scenario
+                process_id = $process.Id
+                window_handle = $window.ToInt64()
+                window_class = [FesTermApplicationWindow]::ClassName($window)
+                foreground = $true
+                input_during_sample = $inputChanged
+                input_during_warmup = $warmupInputChanged
                 cpu_percent = [Math]::Round($cpu, 3)
                 elapsed_seconds = $elapsed
+                sample_started_utc = $sampleStarted.ToString('o')
                 client_width_pixels = $windowMetrics[0]
                 client_height_pixels = $windowMetrics[1]
                 window_dpi = $windowMetrics[2]
                 maximum_cpu_percent = $budget
                 gui_frames_per_second = $framesPerSecond
+                intervals = $intervals.ToArray()
                 direct2d_frames_per_second = $nativeFramesPerSecond
                 working_set_bytes = $process.WorkingSet64
                 private_bytes = $process.PrivateMemorySize64
                 minimum_gui_frames_per_second = if ($sustained) { $MinimumOutputFramesPerSecond } else { $null }
-                status = if ($passed) { 'pass' } else { 'fail' }
+                status = if ($inputChanged -or $warmupInputChanged) { 'invalid-input' } elseif ($passed) { 'pass' } else { 'fail' }
             })
+            if ($inputChanged -or $warmupInputChanged) {
+                Write-Warning "$scenario received desktop input during warmup or measurement; its sample is invalid."
+            }
+            if (-not $passed -and $DebuggerPath) {
+                & $DebuggerPath -pv -p $process.Id -c '!runaway 7;~* k 30;lm;q' `
+                    *> "$ResultPath.$scenario.stacks.log"
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failure stack capture failed; inspect $ResultPath.$scenario.stacks.log"
+                }
+            }
         } finally {
             $process.Refresh()
             if (-not $process.HasExited) {
-                [void] $process.CloseMainWindow()
-                if (-not $process.WaitForExit(10000)) { Stop-Process -Id $process.Id -Force }
+                if ($window -ne [IntPtr]::Zero -and
+                    [FesTermApplicationWindow]::Matches($window, $process.Id)) {
+                    [FesTermApplicationWindow]::Close($window, $process.Id)
+                }
+                if (-not $process.WaitForExit(10000)) {
+                    Write-Warning "$scenario did not exit after WM_CLOSE; terminating the isolated process."
+                    Stop-Process -Id $process.Id -Force
+                }
             }
             $process.Dispose()
         }
     }
-    if (@($results | Where-Object status -eq 'fail').Count -eq 0) { $status = 'pass' }
+    if (@($results | Where-Object status -ne 'pass').Count -eq 0) { $status = 'pass' }
 } finally {
     $env:FESTERM_CONFIG_PATH = $previousConfig
     $env:RUST_LOG = $previousLog
@@ -231,8 +287,8 @@ pulse_new_output_dot = true
         logical_processors = [Environment]::ProcessorCount
         output_workload = if ($DenseOutput) { '80x24-dense' } else { 'sparse-line' }
         scenarios = $results.ToArray()
-    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ResultPath -Encoding utf8
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ResultPath -Encoding utf8
     Remove-Item -LiteralPath $isolation -Recurse -Force
 }
 $results | Format-Table scenario, cpu_percent, gui_frames_per_second, direct2d_frames_per_second, status -AutoSize
-if ($status -ne 'pass') { throw "Rendering CPU or GUI frame-rate budget failed; see $ResultPath" }
+if ($status -ne 'pass') { throw "Rendering measurement invalid or CPU/GUI frame-rate budget failed; see $ResultPath" }

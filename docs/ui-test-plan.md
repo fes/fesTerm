@@ -278,6 +278,19 @@ same-frame fallback with unchanged pixels. Surface-ownership tests retain an
 older frame while rendering the next. These checks do not replace CP-18's
 native-window, hardware, or presentation-latency evidence.
 
+Windows native probes must exclude visible event-broker/tool HWNDs rather
+than trusting `Process.MainWindowHandle`. The Win32 selector regression creates
+small offscreen fixtures without activating windows or sending input. CPU
+qualification separately verifies the real process/window identity, foreground
+activation, responsiveness, stable geometry and absence of input during warmup
+and sampling. Per-interval CPU/frame evidence and failed results remain visible;
+this is not a quiet-until-pass loop.
+
+Basic native OS-input evidence requires the controlled child's acknowledgment
+of a complete line with the expected token, not merely increased output bytes.
+Tests cover startup/focus/resize output, missing/wrong/incomplete input, and
+preservation of the optional keyboard-mode palette and exact-input gates.
+
 - Keep snapshots small and deterministic; use a fixed theme, scale factor,
   dimensions, renderer configuration, and bundled/test font. Record those
   choices with the snapshot harness; do not rely on an installed user font or
