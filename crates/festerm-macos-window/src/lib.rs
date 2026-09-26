@@ -19,6 +19,7 @@ pub enum NativeMenuCommand {
 }
 
 /// Accelerator metadata only; application policy remains in the composition root.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeShortcut {
     pub command: NativeMenuCommand,
     pub key: String,
@@ -85,6 +86,65 @@ const fn native_menu_state(
         } else {
             "Show Session Inspector"
         },
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedNativeMenuState {
+    close_label: String,
+    inspector_enabled: bool,
+    inspector_label: &'static str,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl From<NativeMenuState<'_>> for OwnedNativeMenuState {
+    fn from(state: NativeMenuState<'_>) -> Self {
+        Self {
+            close_label: state.close_label.to_owned(),
+            inspector_enabled: state.inspector_enabled,
+            inspector_label: state.inspector_label,
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug)]
+struct NativeMenuSync<T> {
+    applied: Option<T>,
+    pending: bool,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl<T: Clone + Eq> NativeMenuSync<T> {
+    fn pending() -> Self {
+        Self {
+            applied: None,
+            pending: true,
+        }
+    }
+
+    fn should_apply(&self, requested: &T) -> bool {
+        self.pending || self.applied.as_ref() != Some(requested)
+    }
+
+    fn mark_pending(&mut self) {
+        self.pending = true;
+    }
+
+    fn mark_applied(&mut self, requested: T) {
+        self.applied = Some(requested);
+        self.pending = false;
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl<T> Default for NativeMenuSync<T> {
+    fn default() -> Self {
+        Self {
+            applied: None,
+            pending: false,
+        }
     }
 }
 
@@ -202,7 +262,10 @@ mod menu {
     use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
     use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 
-    use super::{native_menu_state, NativeMenuAction, NativeMenuCommand};
+    use super::{
+        native_menu_state, NativeMenuAction, NativeMenuCommand, NativeMenuSync, NativeShortcut,
+        OwnedNativeMenuState,
+    };
 
     struct MenuTargetIvars {
         sender: mpsc::Sender<NativeMenuCommand>,
@@ -303,6 +366,35 @@ mod menu {
         }
     }
 
+    struct ShortcutItem {
+        command: NativeMenuCommand,
+        item: Retained<NSMenuItem>,
+    }
+
+    fn command_for_selector(selector: objc2::runtime::Sel) -> Option<NativeMenuCommand> {
+        if selector == sel!(newSession:) {
+            Some(NativeMenuCommand::NewSession)
+        } else if selector == sel!(newWindow:) {
+            Some(NativeMenuCommand::NewWindow)
+        } else if selector == sel!(startLocalShell:) {
+            Some(NativeMenuCommand::StartLocalShell)
+        } else if selector == sel!(openSettings:) {
+            Some(NativeMenuCommand::OpenSettings)
+        } else if selector == sel!(closeActiveSurface:) {
+            Some(NativeMenuCommand::CloseActiveSurface)
+        } else if selector == sel!(toggleCommandPalette:) {
+            Some(NativeMenuCommand::ToggleCommandPalette)
+        } else if selector == sel!(clearTerminal:) {
+            Some(NativeMenuCommand::ClearTerminal)
+        } else if selector == sel!(resetTerminal:) {
+            Some(NativeMenuCommand::ResetTerminal)
+        } else if selector == sel!(toggleFocusMode:) {
+            Some(NativeMenuCommand::ToggleFocusMode)
+        } else {
+            None
+        }
+    }
+
     pub struct NativeMenu {
         main: Option<Retained<NSMenu>>,
         receiver: Option<mpsc::Receiver<NativeMenuCommand>>,
@@ -310,6 +402,9 @@ mod menu {
         _target: Option<Retained<MenuTarget>>,
         close_item: Option<Retained<NSMenuItem>>,
         inspector_item: Option<Retained<NSMenuItem>>,
+        shortcut_items: Vec<ShortcutItem>,
+        state_sync: NativeMenuSync<OwnedNativeMenuState>,
+        shortcut_sync: NativeMenuSync<Vec<NativeShortcut>>,
     }
 
     impl NativeMenu {
@@ -320,6 +415,9 @@ mod menu {
                 _target: None,
                 close_item: None,
                 inspector_item: None,
+                shortcut_items: Vec::new(),
+                state_sync: NativeMenuSync::default(),
+                shortcut_sync: NativeMenuSync::default(),
             }
         }
 
@@ -329,75 +427,115 @@ mod menu {
                 .and_then(|receiver| receiver.try_recv().ok())
         }
 
-        pub fn update(&self, close_label: &str, inspector_enabled: bool, inspector_open: bool) {
-            let state = native_menu_state(close_label, inspector_enabled, inspector_open);
-            if let Some(close_item) = &self.close_item {
-                close_item.setTitle(&NSString::from_str(state.close_label));
-            }
-            if let Some(inspector_item) = &self.inspector_item {
-                inspector_item.setEnabled(state.inspector_enabled);
-                inspector_item.setTitle(&NSString::from_str(state.inspector_label));
-            }
+        pub fn shortcuts_need_update(&self) -> bool {
+            self.shortcut_sync.pending
         }
 
-        pub fn update_shortcuts(&self, shortcuts: &[super::NativeShortcut]) {
-            let Some(main) = &self.main else { return };
+        pub fn update(&mut self, close_label: &str, inspector_enabled: bool, inspector_open: bool) {
+            let requested = OwnedNativeMenuState::from(native_menu_state(
+                close_label,
+                inspector_enabled,
+                inspector_open,
+            ));
+            if !self.state_sync.should_apply(&requested) {
+                return;
+            }
+            self.ensure_bound_items();
+            let (Some(close_item), Some(inspector_item)) = (&self.close_item, &self.inspector_item)
+            else {
+                self.state_sync.mark_pending();
+                return;
+            };
+            close_item.setTitle(&NSString::from_str(&requested.close_label));
+            inspector_item.setEnabled(requested.inspector_enabled);
+            inspector_item.setTitle(&NSString::from_str(requested.inspector_label));
+            self.state_sync.mark_applied(requested);
+        }
+
+        pub fn update_shortcuts(&mut self, shortcuts: &[NativeShortcut]) {
+            let requested = shortcuts.to_vec();
+            if !self.shortcut_sync.should_apply(&requested) {
+                return;
+            }
+            self.ensure_bound_items();
+            if self.shortcut_items.is_empty() {
+                self.shortcut_sync.mark_pending();
+                return;
+            }
+            for shortcut_item in &self.shortcut_items {
+                let binding = requested
+                    .iter()
+                    .find(|binding| binding.command == shortcut_item.command);
+                shortcut_item.item.setKeyEquivalent(&NSString::from_str(
+                    binding.map_or("", |binding| binding.key.as_str()),
+                ));
+                let mut flags = NSEventModifierFlags::empty();
+                if let Some(binding) = binding {
+                    if binding.control {
+                        flags |= NSEventModifierFlags::Control;
+                    }
+                    if binding.command_modifier {
+                        flags |= NSEventModifierFlags::Command;
+                    }
+                    if binding.option {
+                        flags |= NSEventModifierFlags::Option;
+                    }
+                    if binding.shift {
+                        flags |= NSEventModifierFlags::Shift;
+                    }
+                }
+                shortcut_item.item.setKeyEquivalentModifierMask(flags);
+            }
+            self.shortcut_sync.mark_applied(requested);
+        }
+
+        fn ensure_bound_items(&mut self) {
+            if self.close_item.is_some()
+                && self.inspector_item.is_some()
+                && !self.shortcut_items.is_empty()
+            {
+                return;
+            }
+            if self.main.is_none() && self.receiver.is_none() && self._target.is_none() {
+                return;
+            }
+            let fallback_main = self.main.is_none().then(|| {
+                let mtm = MainThreadMarker::new()
+                    .expect("native menu synchronization requires main thread");
+                NSApplication::sharedApplication(mtm).mainMenu()
+            });
+            let main = match self.main.as_ref() {
+                Some(main) => Some(main),
+                None => fallback_main.as_ref().and_then(|main| main.as_ref()),
+            };
+            let Some(main) = main else {
+                return;
+            };
+            let mut close_item = None;
+            let mut inspector_item = None;
+            let mut shortcut_items = Vec::new();
             for root in main.itemArray() {
                 let Some(menu) = root.submenu() else { continue };
                 for item in menu.itemArray() {
                     let Some(selector) = item.action() else {
                         continue;
                     };
-                    let command = if selector == sel!(newSession:) {
-                        Some(NativeMenuCommand::NewSession)
-                    } else if selector == sel!(newWindow:) {
-                        Some(NativeMenuCommand::NewWindow)
-                    } else if selector == sel!(startLocalShell:) {
-                        Some(NativeMenuCommand::StartLocalShell)
-                    } else if selector == sel!(openSettings:) {
-                        Some(NativeMenuCommand::OpenSettings)
-                    } else if selector == sel!(closeActiveSurface:) {
-                        Some(NativeMenuCommand::CloseActiveSurface)
-                    } else if selector == sel!(toggleCommandPalette:) {
-                        Some(NativeMenuCommand::ToggleCommandPalette)
-                    } else if selector == sel!(clearTerminal:) {
-                        Some(NativeMenuCommand::ClearTerminal)
-                    } else if selector == sel!(resetTerminal:) {
-                        Some(NativeMenuCommand::ResetTerminal)
-                    } else if selector == sel!(toggleFocusMode:) {
-                        Some(NativeMenuCommand::ToggleFocusMode)
-                    } else {
-                        None
-                    };
-                    if let Some(command) = command {
-                        let binding = shortcuts.iter().find(|binding| binding.command == command);
-                        item.setKeyEquivalent(&NSString::from_str(
-                            binding.map_or("", |binding| binding.key.as_str()),
-                        ));
-                        let mut flags = NSEventModifierFlags::empty();
-                        if let Some(binding) = binding {
-                            if binding.control {
-                                flags |= NSEventModifierFlags::Control;
-                            }
-                            if binding.command_modifier {
-                                flags |= NSEventModifierFlags::Command;
-                            }
-                            if binding.option {
-                                flags |= NSEventModifierFlags::Option;
-                            }
-                            if binding.shift {
-                                flags |= NSEventModifierFlags::Shift;
-                            }
-                        }
-                        item.setKeyEquivalentModifierMask(flags);
+                    if selector == sel!(closeActiveSurface:) {
+                        close_item = Some(item.clone());
+                    } else if selector == sel!(toggleSessionInspector:) {
+                        inspector_item = Some(item.clone());
                     }
-                    // Keyboard clipboard is routed by the application with
-                    // native-event provenance. Menu clicks retain responder intent.
-                    if selector == sel!(copy:) || selector == sel!(paste:) {
-                        item.setKeyEquivalent(&NSString::from_str(""));
+                    if let Some(command) = command_for_selector(selector) {
+                        shortcut_items.push(ShortcutItem {
+                            command,
+                            item: item.clone(),
+                        });
                     }
                 }
             }
+            self.close_item = close_item;
+            self.inspector_item = inspector_item;
+            self.shortcut_items = shortcut_items;
         }
     }
 
@@ -484,7 +622,7 @@ mod menu {
 
         let edit = menu(mtm, "Edit");
         main.addItem(&submenu_root(mtm, "Edit", &edit));
-        edit.addItem(&responder_item(mtm, "Copy", "c", sel!(copy:)));
+        edit.addItem(&responder_item(mtm, "Copy", "", sel!(copy:)));
         edit.addItem(&custom_item(
             mtm,
             "Paste",
@@ -559,8 +697,60 @@ mod menu {
             main: Some(main),
             receiver: Some(receiver),
             _target: Some(target),
-            close_item: Some(close_item),
+            close_item: Some(close_item.clone()),
             inspector_item: Some(inspector_item),
+            shortcut_items: vec![
+                ShortcutItem {
+                    command: NativeMenuCommand::NewSession,
+                    item: file.itemAtIndex(0).expect("new session menu item").clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::NewWindow,
+                    item: file.itemAtIndex(1).expect("new window menu item").clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::StartLocalShell,
+                    item: file
+                        .itemAtIndex(2)
+                        .expect("start local shell menu item")
+                        .clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::CloseActiveSurface,
+                    item: close_item.clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::OpenSettings,
+                    item: app_menu.itemAtIndex(0).expect("settings menu item").clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::ClearTerminal,
+                    item: edit
+                        .itemAtIndex(3)
+                        .expect("clear terminal menu item")
+                        .clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::ResetTerminal,
+                    item: shell
+                        .itemAtIndex(0)
+                        .expect("reset terminal menu item")
+                        .clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::ToggleCommandPalette,
+                    item: palette.clone(),
+                },
+                ShortcutItem {
+                    command: NativeMenuCommand::ToggleFocusMode,
+                    item: view
+                        .itemAtIndex(1)
+                        .expect("toggle focus mode menu item")
+                        .clone(),
+                },
+            ],
+            state_sync: NativeMenuSync::pending(),
+            shortcut_sync: NativeMenuSync::pending(),
         }
     }
 
@@ -629,8 +819,12 @@ impl NativeMenu {
         None
     }
 
-    pub fn update(&self, _: &str, _: bool, _: bool) {}
-    pub fn update_shortcuts(&self, _: &[NativeShortcut]) {}
+    pub const fn shortcuts_need_update(&self) -> bool {
+        false
+    }
+
+    pub fn update(&mut self, _: &str, _: bool, _: bool) {}
+    pub fn update_shortcuts(&mut self, _: &[NativeShortcut]) {}
 }
 
 #[cfg(target_os = "macos")]
@@ -785,7 +979,7 @@ pub fn reclaim_first_responder(_: ()) {}
 mod tests {
     use super::{
         native_menu_state, traffic_light_origin_y, NativeMenuAction, NativeMenuCommand,
-        NativeMenuState,
+        NativeMenuState, NativeMenuSync, OwnedNativeMenuState,
     };
 
     #[test]
@@ -850,6 +1044,29 @@ mod tests {
                 inspector_enabled: true,
                 inspector_label: "Hide Session Inspector",
             }
+        );
+    }
+
+    #[test]
+    fn native_menu_sync_skips_repeated_updates_but_retries_pending_work() {
+        let mut sync = NativeMenuSync::pending();
+        let requested = OwnedNativeMenuState {
+            close_label: "Close Session".to_owned(),
+            inspector_enabled: true,
+            inspector_label: "Show Session Inspector",
+        };
+        assert!(sync.should_apply(&requested));
+
+        sync.mark_applied(requested.clone());
+        assert!(
+            !sync.should_apply(&requested),
+            "an unchanged applied state should not be re-sent"
+        );
+
+        sync.mark_pending();
+        assert!(
+            sync.should_apply(&requested),
+            "a deferred startup update must retry even when the request is unchanged"
         );
     }
 
