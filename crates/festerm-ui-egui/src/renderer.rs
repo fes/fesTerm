@@ -91,28 +91,43 @@ impl FontSettings {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct GlyphKey {
-    text: String,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct GlyphStyle {
     foreground: Color32,
     attributes: u16,
     font_size_bits: u32,
     layout_width_bits: u32,
-    font_generation: crate::TerminalFontGeneration,
+    pixels_per_point_bits: u32,
+    font_set: TerminalFontSet,
+}
+
+struct StyledGlyphs {
+    style: GlyphStyle,
+    layouts: HashMap<String, Arc<egui::Galley>>,
 }
 
 /// Cache laid-out cell glyphs. `egui` owns the underlying font atlas; this
 /// cache avoids rebuilding a one-cell layout job for unchanged text styling.
 #[derive(Default)]
 pub(crate) struct GlyphCache {
-    layouts: HashMap<GlyphKey, Arc<egui::Galley>>,
+    styles: HashMap<GlyphStyle, usize>,
+    layouts: Vec<StyledGlyphs>,
+    last_style: Option<usize>,
+    layout_count: usize,
     color_emoji: ColorEmojiCache,
 }
 
 impl GlyphCache {
     pub(crate) fn clear(&mut self) {
-        self.layouts.clear();
+        self.clear_layouts();
         self.color_emoji.clear();
+    }
+
+    fn clear_layouts(&mut self) {
+        self.styles.clear();
+        self.layouts.clear();
+        self.last_style = None;
+        self.layout_count = 0;
     }
 
     pub(crate) fn layout(
@@ -124,19 +139,29 @@ impl GlyphCache {
         font: &FontSettings,
         layout_width: f32,
     ) -> Arc<egui::Galley> {
-        let key = GlyphKey {
-            text: text.to_owned(),
+        let style = GlyphStyle {
             foreground,
             attributes: attributes.bits(),
             font_size_bits: font.size_points.to_bits(),
             layout_width_bits: layout_width.to_bits(),
-            font_generation: font.font_set().generation(),
+            pixels_per_point_bits: painter.pixels_per_point().to_bits(),
+            font_set: font.font_set(),
         };
-        if let Some(layout) = self.layouts.get(&key) {
-            return layout.clone();
+        // Adjacent cells usually share a style. Only hash that style when it
+        // changes, and borrow the text key so warm hits never allocate a String.
+        let mut style_index = self
+            .last_style
+            .filter(|&index| self.layouts[index].style == style)
+            .or_else(|| self.styles.get(&style).copied());
+        if let Some(index) = style_index {
+            self.last_style = Some(index);
+            if let Some(layout) = self.layouts[index].layouts.get(text) {
+                return layout.clone();
+            }
         }
-        if self.layouts.len() >= GLYPH_CACHE_CAPACITY {
-            self.layouts.clear();
+        if self.layout_count >= GLYPH_CACHE_CAPACITY {
+            self.clear_layouts();
+            style_index = None;
         }
 
         let mut job = LayoutJob::default();
@@ -155,7 +180,20 @@ impl GlyphCache {
             },
         );
         let layout = painter.layout_job(job);
-        self.layouts.insert(key, layout.clone());
+        let index = style_index.unwrap_or_else(|| {
+            let index = self.layouts.len();
+            self.layouts.push(StyledGlyphs {
+                style,
+                layouts: HashMap::new(),
+            });
+            self.styles.insert(style, index);
+            index
+        });
+        self.layouts[index]
+            .layouts
+            .insert(text.to_owned(), layout.clone());
+        self.layout_count += 1;
+        self.last_style = Some(index);
         layout
     }
 
@@ -673,7 +711,7 @@ pub(crate) fn paint_grid(
                     },
                 );
             }
-            if !paint.shape_cell_runs && !cell.text.is_empty() {
+            if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
                 // Clip to this cell's rect. Some glyphs (notably box-drawing
                 // corners/dots in certain bundled faces) can measure taller
                 // than the "M"-derived cell height, so an unclipped paint can
@@ -741,7 +779,7 @@ pub(crate) fn paint_grid(
         }
         if paint.shape_cell_runs {
             for run in glyph_runs(cells, row, dimensions, selection_range) {
-                if run.text.is_empty() {
+                if !has_glyph_ink(&run.text) {
                     continue;
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
@@ -838,6 +876,12 @@ pub(crate) fn paint_grid(
         native.finish(&painter);
     }
     stats
+}
+
+fn has_glyph_ink(text: &str) -> bool {
+    // ASCII spaces have no ink in the bundled faces. Their backgrounds and
+    // decorations still paint above; other Unicode whitespace is not assumed.
+    text.bytes().any(|byte| byte != b' ')
 }
 
 fn paint_cursor(
@@ -1017,6 +1061,214 @@ mod tests {
         ResizeTracker, TerminalRenderCache, TerminalSnapshot, TerminalView, ViewSize,
         DEFAULT_BACKGROUND,
     };
+
+    #[test]
+    fn glyph_cache_reuses_borrowed_text_and_distinguishes_layout_styles() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter();
+            let first = cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            let key_address = cache.layouts[0]
+                .layouts
+                .get_key_value("A")
+                .unwrap()
+                .0
+                .as_ptr();
+            for text in ["A", "B", "A", "界", "e\u{301}", "A"] {
+                let layout = cache.layout(
+                    painter,
+                    text,
+                    Attributes::NONE,
+                    DEFAULT_FOREGROUND,
+                    &font,
+                    20.0,
+                );
+                if text == "A" {
+                    assert!(Arc::ptr_eq(&first, &layout));
+                }
+            }
+            assert_eq!(cache.layout_count, 4);
+            assert_eq!(cache.styles.len(), 1);
+            assert_eq!(
+                cache.layouts[0]
+                    .layouts
+                    .get_key_value("A")
+                    .unwrap()
+                    .0
+                    .as_ptr(),
+                key_address
+            );
+
+            cache.layout(
+                painter,
+                "A",
+                Attributes::BOLD,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            cache.layout(
+                painter,
+                "A",
+                Attributes::ITALIC,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            cache.layout(painter, "A", Attributes::NONE, Color32::RED, &font, 20.0);
+            cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                40.0,
+            );
+            let mut larger = font.clone();
+            larger.size_points += 2.0;
+            cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &larger,
+                20.0,
+            );
+            let mut ligatures = font.clone();
+            ligatures.set_font_set(TerminalFontSet::new(
+                crate::TerminalFontFamily::JetBrainsMono,
+                true,
+                font.font_set().generation(),
+            ));
+            cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &ligatures,
+                20.0,
+            );
+            assert_eq!(cache.layout_count, 10);
+            assert_eq!(cache.styles.len(), 7);
+            let restored = cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            assert!(Arc::ptr_eq(&first, &restored));
+            assert_eq!(cache.last_style, Some(0));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn glyph_cache_separates_dpi_and_font_installations() {
+        let context = egui::Context::default();
+        let mut font = FontSettings::default();
+        let mut cache = GlyphCache::default();
+        for (family, pixels_per_point) in [
+            (crate::TerminalFontFamily::JetBrainsMono, 1.0),
+            (crate::TerminalFontFamily::JuliaMono, 1.0),
+            (crate::TerminalFontFamily::JetBrainsMono, 2.0),
+        ] {
+            let generation = crate::install_terminal_font_family(&context, family);
+            font.set_font_set(TerminalFontSet::new(family, false, generation));
+            context.set_pixels_per_point(pixels_per_point);
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                cache.layout(
+                    ui.painter(),
+                    "A",
+                    Attributes::NONE,
+                    DEFAULT_FOREGROUND,
+                    &font,
+                    20.0,
+                );
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(cache.styles.len(), 3);
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+        });
+        output.textures_delta.clear();
+        assert_eq!(cache.layout_count, 3);
+        context.set_pixels_per_point(1.0);
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+        });
+        output.textures_delta.clear();
+        assert_eq!(cache.layout_count, 4);
+    }
+
+    #[test]
+    fn glyph_cache_capacity_is_global_across_styles_and_clear_resets_indices() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            for index in 0..GLYPH_CACHE_CAPACITY {
+                let color = Color32::from_rgb(index as u8, (index >> 8) as u8, 0);
+                cache.layout(ui.painter(), "A", Attributes::NONE, color, &font, 20.0);
+            }
+            assert_eq!(cache.layout_count, GLYPH_CACHE_CAPACITY);
+            assert_eq!(cache.styles.len(), GLYPH_CACHE_CAPACITY);
+            cache.layout(
+                ui.painter(),
+                "B",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layout_count, 1);
+            assert_eq!(cache.layouts.len(), 1);
+            assert_eq!(cache.styles.len(), 1);
+            assert_eq!(cache.last_style, Some(0));
+            cache.clear();
+            assert_eq!(cache.layout_count, 0);
+            assert!(cache.layouts.is_empty());
+            assert!(cache.styles.is_empty());
+            assert_eq!(cache.last_style, None);
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layout_count, 1);
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn terminal_attributes_select_real_bundled_faces() {
@@ -1470,6 +1722,93 @@ mod tests {
             ),
             dimensions: Dimensions::new(columns, rows).expect("valid test size"),
             metrics: CellMetrics::new(10.0, 20.0).expect("valid test cell metrics"),
+        }
+    }
+
+    #[test]
+    fn blank_cells_keep_backgrounds_and_decorations_without_glyph_work() {
+        for shape_cell_runs in [false, true] {
+            let context = egui::Context::default();
+            crate::install_terminal_fonts(&context);
+            let mut terminal = terminal(4, 2);
+            terminal.ingest(b"\x1b[?25l\x1b[4;9m \x1b[21m \x1b[7m ");
+            let snapshot = TerminalSnapshot::from_terminal(&terminal);
+            let mut cache = TerminalRenderCache::default();
+            cache.update(snapshot, &[]);
+            let mut glyphs = GlyphCache::default();
+            let mut output = context.run_ui(Default::default(), |ui| {
+                let stats = paint_grid(
+                    ui.painter().clone(),
+                    GridPaint {
+                        cache: &cache,
+                        snapshot,
+                        layout: grid_layout(4, 2),
+                        selection: &Selection::default(),
+                        fonts: &FontSettings::default(),
+                        focused: true,
+                        shape_cell_runs,
+                    },
+                    &mut glyphs,
+                );
+                assert_eq!(stats, GridPaintStats::default());
+            });
+            assert!(output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::LineSegment { .. })));
+            assert!(output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::Rect(_))));
+            assert_eq!(glyphs.layout_count, 0);
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn bundled_spaces_have_no_ink_in_any_style_or_ligature_policy() {
+        for family in [
+            crate::TerminalFontFamily::JetBrainsMono,
+            crate::TerminalFontFamily::IosevkaTerm,
+            crate::TerminalFontFamily::JuliaMono,
+            crate::TerminalFontFamily::MapleMono,
+        ] {
+            let context = egui::Context::default();
+            let generation = crate::install_terminal_font_family(&context, family);
+            let mut glyphs = GlyphCache::default();
+            let mut output = context.run_ui(Default::default(), |ui| {
+                for ligatures in [false, true] {
+                    let mut font = FontSettings::default();
+                    font.set_font_set(TerminalFontSet::new(family, ligatures, generation));
+                    for attributes in [
+                        Attributes::NONE,
+                        Attributes::BOLD,
+                        Attributes::ITALIC,
+                        Attributes::from_bits(Attributes::BOLD.bits() | Attributes::ITALIC.bits()),
+                    ] {
+                        for text in [" ", "    "] {
+                            let galley = glyphs.layout(
+                                ui.painter(),
+                                text,
+                                attributes,
+                                Color32::WHITE,
+                                &font,
+                                80.0,
+                            );
+                            assert!(
+                                galley.rows.iter().all(|row| row.visuals.mesh.is_empty()),
+                                "{family:?} {ligatures} {attributes:?}"
+                            );
+                        }
+                    }
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert!(!has_glyph_ink(""));
+        assert!(!has_glyph_ink("   "));
+        for text in [" A ", "\u{a0}", "\u{2003}", "界"] {
+            assert!(has_glyph_ink(text));
         }
     }
 

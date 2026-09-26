@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing work from warm terminal frames
+
+A rendering profile found that cache hits were not cheap: every visible cell
+allocated a temporary glyph key and repeatedly hashed its full style, while
+plain ASCII still reached Unicode emoji classification. Glyph lookups now
+borrow text within bounded style buckets and reuse the last style between
+adjacent cells. Font policy, installation generation, layout width and DPI
+remain part of the cache identity. ASCII bypasses emoji classification, and
+spaces skip glyph submission without skipping their backgrounds, selection
+or decorations; tests verify that all bundled faces paint no space ink.
+
+The benchmark suite now includes sparse content, interleaved styles,
+above-capacity truecolor churn and CPU tessellation. These are separate from
+native GPU presentation and idle-CPU evidence. Multi-window repaint
+decoupling still needs the architectural and native qualification tracked in
+[#248](https://github.com/fes/fesTerm/issues/248), rather than silently
+replacing the ownership tradeoff accepted by ADR-0032.
+
 ## Yielding to reattachment during continuous PTY output
 
 A post-integration macOS native run timed out waiting for a recovery header
