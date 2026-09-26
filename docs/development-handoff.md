@@ -282,7 +282,7 @@ recording terminal content.
 - For idle-rendering CPU regressions on a Windows desktop, build the workspace,
   set `FESTERM_RUN_OPTIONAL_VALIDATION=1`, and run
   `pwsh -NoProfile -File scripts\check-windows-idle-rendering.ps1`.
-  The optional Windows suite also runs it. It opens two isolated-config
+  It opens two isolated-config
   windows in sequence: maximized Launcher discovery and an idle background
   PowerShell tab with unread output. Each must average at most 5% of total
   machine CPU after warmup. Run without competing builds, and do not interact
@@ -291,8 +291,18 @@ recording terminal content.
   treating a hardware-GPU run as software-renderer evidence. Results and
   local logs go under `target`; `-Executable` and `-ResultPath` support
   before/after comparisons. Logs retain the sensitivity boundary below.
-  Software adapters use static unread indicators; sustained terminal output
-  can still be expensive to rasterize and is a separate performance concern.
+  Add `-IncludeSustainedOutput` to measure a third window with a foreground
+  PowerShell fixture updating a short line at 10 Hz. This case defaults to a
+  30% CPU ceiling and at least five GUI frames built per second; override with
+  `-MaximumOutputCpuPercent` and `-MinimumOutputFramesPerSecond` for a recorded
+  machine-specific budget. The optional Windows suite includes this case.
+  Frame counts come from content-free `festerm::rendering=debug` events and
+  measure UI paint construction, not completed OS presentations. The script
+  sets and restores its log filter. GPU pixel comparisons and native visual
+  review remain separate oracles; Windows `PrintWindow` can return a stale
+  startup image for GPU-rendered windows.
+  The native solid-background path does not eliminate the cost of dense text,
+  colored cells, or full-frame rendering.
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
 - fesTerm keeps local lifecycle metadata and logs under

@@ -25,6 +25,12 @@ reduced motion automatically without changing the persisted setting.
 Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
+For `TERM-01`, software-rendered terminal backgrounds may use the native
+solid-color path, but text, colors, clipping, opacity and input behavior must
+remain identical. `CP-17` pairs a native CPU ceiling with a minimum GUI
+frame-building rate under controlled output; neither is a production frame
+limit or a claim about OS presentation latency.
+
 ## How to use the graph
 
 Each test run starts at a named checkpoint, follows one or more edges, asserts

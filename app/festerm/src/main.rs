@@ -29,6 +29,7 @@ mod screens;
 mod search;
 pub mod session_controller;
 mod sftp_file_manager;
+mod software_background;
 mod tabs;
 mod terminal_paths;
 mod text_compare;
@@ -211,6 +212,7 @@ fn log_wgpu_adapter(creation_context: &eframe::CreationContext<'_>) {
         Some(render_state) => {
             let info = render_state.adapter.get_info();
             configure_renderer_animations(&creation_context.egui_ctx, info.device_type);
+            software_background::install(&creation_context.egui_ctx, render_state);
             tracing::info!(
                 target: "festerm::app",
                 adapter_name = %info.name,

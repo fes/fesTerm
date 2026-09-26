@@ -216,7 +216,10 @@ surfacing, terminal-only typography, keyboard quick-switch overlays, and
 scrollback scroll speed. Unread-output pulses are rate-limited; an unfocused
 window or reduced-motion style uses a static ring-and-dot marker instead.
 Software rendering adapters automatically select reduced motion for the
-current process without changing the saved preference. Running Sessions
+current process without changing the saved preference. They also use a
+solid-color fast path for opaque default terminal backgrounds on supported
+eight-bit gamma framebuffers. No saved setting, output throttling, or
+resolution reduction is involved. Running Sessions
 discovery continues in the background without redrawing unchanged inventory.
 By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.
