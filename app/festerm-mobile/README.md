@@ -49,7 +49,7 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 
 - Shared terminal fixture with ANSI colors, combining/wide glyph coverage and
   emoji; scrollback limited to 256 KiB, resize handled by the existing view.
-- A docked Esc/Tab/Ctrl/Alt/arrow row and persistent native keyboard request
+- A docked Esc/Tab/Ctrl/Alt row and persistent native keyboard request
   use the same vertical arrangement on iPhone and iPad, including landscape
   and Split View. A UIKit keyboard-layout guide measures available space;
   hardware-keyboard use reclaims system-keyboard space but retains the row.
@@ -58,8 +58,13 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 - Native resume/suspend/memory-warning counters. No rendering while suspended;
   the next frame after a memory warning rebuilds view caches. OS termination
   starts a new fixture, with no restoration claim.
+- Hold the terminal for 450 ms, then drag to send arrows. A temporary helper
+  highlights direction; dragging farther selects one of three repeat speeds.
+  Return to the center to pause; release to dismiss. There are no permanent
+  arrow buttons. Early drags reach the shared renderer; cancellation stops
+  repeats without leaking mouse reports. Native gesture feel remains unverified.
 - Standard renderer selection/scrolling is exposed for native testing. No
-  advanced mobile gesture remapping, native selection handles,
+  pinch zoom, double-tap Tab, native selection handles,
   paste/link handling, SSH, SFTP, profiles, secrets or background sockets yet.
 - No product-level performance or accessibility claim. Safe areas, rotation,
   touch behavior, software keyboard feasibility, foreground Metal recovery,

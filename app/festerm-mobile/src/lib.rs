@@ -1,5 +1,7 @@
 //! Phase 1 iOS feasibility host. No transport, credentials, or persistence.
 
+mod arrow_gesture;
+
 use eframe::egui;
 use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
 use festerm_ui_egui::{
@@ -93,6 +95,7 @@ pub struct MobileApp {
     control: bool,
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
+    arrows: arrow_gesture::ArrowGesture,
 }
 
 impl MobileApp {
@@ -108,6 +111,7 @@ impl MobileApp {
             control: false,
             alt: false,
             toolbar_rect: None,
+            arrows: arrow_gesture::ArrowGesture::default(),
         }
     }
 
@@ -183,11 +187,13 @@ impl MobileApp {
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
         if lifecycle.suspensions != self.observed_suspensions {
+            self.arrows.cancel();
             self.control = false;
             self.alt = false;
             self.observed_suspensions = lifecycle.suspensions;
         }
         if lifecycle.memory_warnings != self.observed_memory_warnings {
+            self.arrows.cancel();
             // Preserve grid/history and discard only reconstructible view caches.
             self.view = TerminalView::default();
             self.observed_memory_warnings = lifecycle.memory_warnings;
@@ -204,6 +210,7 @@ impl MobileApp {
             ));
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Reset fixture").clicked() {
+                    self.arrows.cancel();
                     self.terminal = fixture_terminal();
                     self.view = TerminalView::default();
                     self.sink = ProbeSink::default();
@@ -225,14 +232,7 @@ impl MobileApp {
                             if ui.selectable_label(self.alt, "Alt").clicked() {
                                 self.alt = !self.alt;
                             }
-                            for (label, key) in [
-                                ("Esc", Key::Escape),
-                                ("Tab", Key::Tab),
-                                ("←", Key::ArrowLeft),
-                                ("↓", Key::ArrowDown),
-                                ("↑", Key::ArrowUp),
-                                ("→", Key::ArrowRight),
-                            ] {
+                            for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
                                 if ui.button(label).clicked() {
                                     self.send_key(key);
                                 }
@@ -247,19 +247,37 @@ impl MobileApp {
             self.view.request_focus_on_next_frame();
         }
         let terminal_rect = ui.available_rect_before_wrap();
+        let gesture = ui.input_mut(|input| {
+            let any_touches = input.any_touches();
+            self.arrows.update(
+                &mut input.events,
+                input.time,
+                terminal_rect,
+                any_touches,
+                lifecycle.active && input.focused,
+            )
+        });
+        if let Some(key) = gesture.key {
+            self.send_key(key);
+        }
+        if let Some(delay) = gesture.repaint_after {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(delay));
+        }
         self.view.show_with_options(
             ui,
             &mut self.terminal,
             &mut self.sink,
             TerminalViewOptions {
                 paste_available: false,
-                terminal_input_enabled: lifecycle.active,
+                terminal_input_enabled: lifecycle.active && !gesture.block_pointer,
                 keyboard_input_enabled: lifecycle.active,
                 // No clipboard/paste policy is implemented by this probe.
                 defer_paste_to_application: true,
                 ..Default::default()
             },
         );
+        self.arrows.paint_helper(ui, terminal_rect);
         if lifecycle.active {
             // Persistent request for the system keyboard, independent of egui
             // focus on the accessory buttons. UIKit owns keyboard presentation.
@@ -293,6 +311,91 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports() {
+        for (width, height) in [(390.0, 844.0), (834.0, 1194.0), (1194.0, 834.0)] {
+            let lifecycle = Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            }));
+            let mut app = MobileApp::new(lifecycle);
+            app.terminal.ingest(b"\x1b[?1000h\x1b[?1006h");
+            let ctx = egui::Context::default();
+            let render = |app: &mut MobileApp, time, events| {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, height),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| app.show_with_occlusion(ui, 0.35),
+                );
+                let ime = output.platform_output.ime.is_some();
+                output.drop_without_applying_deltas();
+                assert!(ime);
+            };
+            render(&mut app, 0.0, vec![]);
+            render(&mut app, 0.01, vec![]);
+            let origin = app.view.diagnostics().grid_rect.unwrap().center();
+            let moved = origin + egui::vec2(30.0, 0.0);
+            let touch = |phase, pos| egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(1),
+                phase,
+                pos,
+                force: None,
+            };
+            let mouse = |pressed, pos| egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            render(
+                &mut app,
+                0.1,
+                vec![
+                    touch(egui::TouchPhase::Start, origin),
+                    egui::Event::PointerMoved(origin),
+                    mouse(true, origin),
+                ],
+            );
+            render(&mut app, 0.56, vec![]);
+            assert_eq!(app.arrows.helper(), Some(None));
+            assert_eq!(app.sink.diagnostics.byte_count, 0);
+            render(
+                &mut app,
+                0.6,
+                vec![
+                    touch(egui::TouchPhase::Move, moved),
+                    egui::Event::PointerMoved(moved),
+                ],
+            );
+            assert_eq!(app.sink.diagnostics.byte_count, 3);
+            assert_eq!(
+                app.arrows.helper(),
+                Some(Some(arrow_gesture::Direction::Right))
+            );
+            render(
+                &mut app,
+                0.61,
+                vec![
+                    touch(egui::TouchPhase::End, moved),
+                    mouse(false, moved),
+                    egui::Event::PointerGone,
+                ],
+            );
+            render(&mut app, 2.0, vec![]);
+            assert_eq!(app.sink.diagnostics.byte_count, 3);
+            assert!(app.arrows.helper().is_none());
+            assert!(app.terminal.queued_input().is_empty());
+        }
+    }
 
     #[test]
     fn mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard() {

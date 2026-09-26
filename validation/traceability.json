@@ -2156,6 +2156,10 @@
         "mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning",
         "mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard",
         "mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries",
+        "mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release",
+        "mobile_arrow_tap_and_early_drag_reach_existing_pointer_routing",
+        "mobile_arrow_multitouch_resize_and_background_cancel_without_keys",
+        "mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports",
         "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically"
       ],
       "manual_scenarios": [

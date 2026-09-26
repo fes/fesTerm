@@ -63,6 +63,13 @@ latches to text/IME commits and preserves composition completion events without
 sending the text twice. Existing unmodified desktop dispatch is unchanged.
 Native keyboard appearance, frame animation and IME remain qualification gates.
 
+The owner-requested arrow interaction lives in the mobile adapter: stationary
+hold then directional drag, transient helper and three repeat speeds. It emits
+core key intents, consumes synthesized pointer duplicates while captured, and
+cancels on release, multitouch, geometry/focus/lifecycle changes. Ordinary early
+drags retain shared renderer routing. Native selection handles, pinch zoom,
+spacebar gestures and extended key configuration remain Phase 2.
+
 ## Alternatives considered
 
 - Feature-gate the entire desktop root: much wider work than needed for the
@@ -97,6 +104,10 @@ feasibility evidence are required before moving beyond this experiment.
   `mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard`,
   `mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries`,
   `explicit_modifiers_encode_control_meta_and_cursor_chords_atomically`;
+  `mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release`,
+  `mobile_arrow_tap_and_early_drag_reach_existing_pointer_routing`,
+  `mobile_arrow_multitouch_resize_and_background_cancel_without_keys`,
+  `mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link.
 - **Native/manual evidence required:** `MOB-01` through `MOB-03` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.

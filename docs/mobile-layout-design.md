@@ -40,7 +40,7 @@ is no persisted "device mode" setting to get out of sync with reality.
 - The terminal view fills all remaining space above the input region.
 - The native system keyboard is requested persistently while the terminal
   surface is active, including after touching the extra-keys row or scrolling.
-  The terminal sits above the docked Esc/Tab/Ctrl/Alt/arrow row and keyboard.
+  The terminal sits above the docked Esc/Tab/Ctrl/Alt row and keyboard.
   Ctrl and Alt are one-shot latches. This replaces the earlier focus-only
   dismissal design at the owner's explicit request.
 - The same vertical arrangement applies to iPad portrait, landscape and
@@ -48,6 +48,45 @@ is no persisted "device mode" setting to get out of sync with reality.
   UIKit owns hardware/floating keyboard presentation. With no docked keyboard,
   the terminal reclaims that region while the terminal-key row stays available.
   Never reserve a guessed device-specific keyboard height.
+
+## Touch navigation and Termius conventions
+
+The owner selected terminal long-press/drag with a temporary directional helper
+on both iPhone and iPad (2026-09-26). Permanent arrow buttons are removed from
+the default accessory row. The Phase 1 host implements a 450 ms stationary
+hold, a 12-point neutral zone and dominant-axis navigation. Repeat intervals
+are 180/100/55 ms at 12/40/80 points of displacement. These are initial tuning
+values, subject to native usability evidence. Each wake sends at most one key;
+returning to neutral stops repeats. The helper highlights the active direction
+and disappears on release/cancellation. Rotation, keyboard geometry changes,
+backgrounding, focus loss, Escape and a second touch cancel navigation.
+An early drag passes through to the existing renderer; touch-generated mouse
+events are consumed during arrow navigation. No terminal bytes are encoded
+in this adapter. Keyboard layout and one-shot Ctrl/Alt remain unchanged.
+
+Reviewed [Termius mobile-terminal documentation](https://docs.termius.com/terminal/mobile-terminal)
+on 2026-09-26. Adopt the following conventions in Phase 2, after the native
+feasibility gate; these are design direction, not implemented features:
+
+- **Selection:** hold and release without directional input selects a word;
+  native handles and Copy/Paste follow. A directional drag commits to arrow
+  navigation and must never also select or paste. The spike currently ends a
+  neutral hold without selection. Clipboard policy remains app-owned.
+- **Font size:** two-finger pinch adjusts the existing font-size preference;
+  it must cancel arrow navigation before zooming and produce one coherent resize.
+- **Extended keys:** a customizable compact row plus an optional panel for
+  Shift-Tab, function keys and navigation. Put the panel beside the terminal
+  when width permits, above the keyboard when narrow; iPad Split View follows
+  measured space. Include explicit arrows there for accessibility/discovery.
+- **Tab shortcut:** consider configurable double-tap Tab after resolving its
+  conflict with word selection and remote mouse reporting. Retain visible Tab.
+- **Keyboard control:** keep the requested persistent default, with an explicit
+  hide/show action in Phase 2. Preserve hardware keyboard/IME support and test
+  Option-as-Meta. Spacebar dragging needs a proven UIKit input seam first.
+
+Volume-button remapping, snippets/history, AI, and file-paste uploads are not
+part of this input slice. File/share-sheet integration belongs with mobile
+SFTP; stored command history needs its own persistence/privacy design.
 
 ## Phone: SFTP layout
 
@@ -84,7 +123,7 @@ preference's rendering logic, not add a second preference.
   because it is a "mobile OS" device.
 - Keep the same terminal-key row on iPad, including with a hardware/Bluetooth
   keyboard. The native system keyboard can then disappear under UIKit policy
-  without hiding the Ctrl/Alt/Esc/Tab/arrow affordances.
+  without hiding the Ctrl/Alt/Esc/Tab affordances.
 - Only drop to **Compact** or **Minimal** tier in genuinely narrow
   multitasking contexts: iPad Split View at a narrow width, or Slide Over.
   The same width/height breakpoints used for phone apply here; iPad does

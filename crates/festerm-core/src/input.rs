@@ -213,45 +213,6 @@ pub(crate) fn encode_modified_key(
     Some(bytes)
 }
 
-#[cfg(test)]
-mod modified_key_tests {
-    use super::*;
-    use crate::{Dimensions, Terminal};
-
-    #[test]
-    fn explicit_modifiers_encode_control_meta_and_cursor_chords_atomically() {
-        let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
-        for (key, modifiers, expected) in [
-            (Key::Character('c'), Modifiers::CONTROL, b"\x03".as_slice()),
-            (Key::Character('x'), Modifiers::ALT, b"\x1bx".as_slice()),
-            (
-                Key::Character('c'),
-                Modifiers::ALT.with(Modifiers::CONTROL),
-                b"\x1b\x03".as_slice(),
-            ),
-            (Key::ArrowUp, Modifiers::CONTROL, b"\x1b[1;5A".as_slice()),
-            (Key::ArrowLeft, Modifiers::ALT, b"\x1b[1;3D".as_slice()),
-        ] {
-            assert_eq!(
-                terminal.handle_input(InputEvent::ModifiedKey { key, modifiers }),
-                InputEventOutcome::Encoded {
-                    bytes: expected.len()
-                }
-            );
-            assert_eq!(terminal.drain_input(), expected);
-        }
-        terminal.ingest(b"\x1b[2h"); // KAM locks the whole chord, including Meta's prefix.
-        assert_eq!(
-            terminal.handle_input(InputEvent::ModifiedKey {
-                key: Key::Character('x'),
-                modifiers: Modifiers::ALT,
-            }),
-            InputEventOutcome::Rejected
-        );
-        assert!(terminal.drain_input().is_empty());
-    }
-}
-
 /// Maps a Ctrl-chord's base `character` to the C0/C1 control byte xterm
 /// sends for it: for a letter, its position in the alphabet (`Ctrl+A` is
 /// `0x01` through `Ctrl+Z` is `0x1a`); a few punctuation keys conventionally
@@ -404,4 +365,43 @@ pub(crate) fn encode_legacy_mouse(event: MouseEvent) -> Option<Vec<u8>> {
         event.column as u8 + 33,
         event.row as u8 + 33,
     ])
+}
+
+#[cfg(test)]
+mod modified_key_tests {
+    use super::*;
+    use crate::{Dimensions, Terminal};
+
+    #[test]
+    fn explicit_modifiers_encode_control_meta_and_cursor_chords_atomically() {
+        let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+        for (key, modifiers, expected) in [
+            (Key::Character('c'), Modifiers::CONTROL, b"\x03".as_slice()),
+            (Key::Character('x'), Modifiers::ALT, b"\x1bx".as_slice()),
+            (
+                Key::Character('c'),
+                Modifiers::ALT.with(Modifiers::CONTROL),
+                b"\x1b\x03".as_slice(),
+            ),
+            (Key::ArrowUp, Modifiers::CONTROL, b"\x1b[1;5A".as_slice()),
+            (Key::ArrowLeft, Modifiers::ALT, b"\x1b[1;3D".as_slice()),
+        ] {
+            assert_eq!(
+                terminal.handle_input(InputEvent::ModifiedKey { key, modifiers }),
+                InputEventOutcome::Encoded {
+                    bytes: expected.len()
+                }
+            );
+            assert_eq!(terminal.drain_input(), expected);
+        }
+        terminal.ingest(b"\x1b[2h"); // KAM locks the whole chord, including Meta's prefix.
+        assert_eq!(
+            terminal.handle_input(InputEvent::ModifiedKey {
+                key: Key::Character('x'),
+                modifiers: Modifiers::ALT,
+            }),
+            InputEventOutcome::Rejected
+        );
+        assert!(terminal.drain_input().is_empty());
+    }
 }
