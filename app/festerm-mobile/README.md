@@ -56,19 +56,25 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   One-shot Ctrl/Alt chords and ordinary hardware input use the core encoder. Counters
   retain no typed text; nothing executes. Reset returns to a known fixture.
 - Native resume/suspend/memory-warning counters. No rendering while suspended;
-  the next frame after a memory warning rebuilds view caches. OS termination
+  the next frame after a memory warning rebuilds view caches while preserving
+  text size. OS termination
   starts a new fixture, with no restoration claim.
 - Hold the terminal for 450 ms, then drag to send arrows. A temporary helper
   highlights direction; dragging farther selects one of three repeat speeds.
   Return to the center to pause; release to dismiss. There are no permanent
   arrow buttons. Early drags reach the shared renderer; cancellation stops
   repeats without leaking mouse reports. Native gesture feel remains unverified.
+- Place two fingers on the terminal and pinch to resize its text (8–32 points).
+  Chrome and keyboard stay the same size. A second finger takes over a pending
+  hold or arrow gesture; after either finger lifts, input stays captured until
+  both are up. An ordinary drag already in progress retains ownership: lift
+  first, then start the pinch. Reset fixture restores the default text size.
 - Standard renderer selection/scrolling is exposed for native testing. No
-  pinch zoom, double-tap Tab, native selection handles,
+  double-tap Tab, native selection handles,
   paste/link handling, SSH, SFTP, profiles, secrets or background sockets yet.
 - No product-level performance or accessibility claim. Safe areas, rotation,
   touch behavior, software keyboard feasibility, foreground Metal recovery,
-  memory pressure and process death need native evidence under `MOB-01`–`03`.
+  memory pressure and process death need native evidence under `MOB-01`–`04`.
 
 `.github/workflows/ios-spike.yml` checks device compilation and builds the
 Simulator bundle. Build success is not a passed native interaction gate. Use

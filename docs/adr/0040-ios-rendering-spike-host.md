@@ -67,8 +67,15 @@ The owner-requested arrow interaction lives in the mobile adapter: stationary
 hold then directional drag, transient helper and three repeat speeds. It emits
 core key intents, consumes synthesized pointer duplicates while captured, and
 cancels on release, multitouch, geometry/focus/lifecycle changes. Ordinary early
-drags retain shared renderer routing. Native selection handles, pinch zoom,
-spacebar gestures and extended key configuration remain Phase 2.
+drags retain shared renderer routing. Following the owner's request to continue,
+the same input experiment includes pinch/arrow arbitration: a second terminal
+touch takes over pending hold/arrow navigation, scales the existing session-local
+zoom through a bounded renderer API, and captures remaining fingers until all
+lift. A drag already delivered to the renderer keeps ownership. Memory-warning
+cache reconstruction preserves the chosen text size. This tests the mobile
+input seam without accepting native feasibility or starting mobile sessions.
+Native selection handles, spacebar gestures and extended key configuration
+remain Phase 2.
 
 ## Alternatives considered
 
@@ -96,7 +103,8 @@ feasibility evidence are required before moving beyond this experiment.
 - **Invariants introduced or changed:** additive mobile composition root;
   shared core/renderer and single writer preserved; no desktop session backend
   or updater in the iOS normal/build graph; no retained user input.
-- **GUI/action edges affected:** `MOB-01`, `MOB-02`, `MOB-03` (isolated spike).
+- **GUI/action edges affected:** `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04` (isolated spike);
+  `ZOOM-02` shares the existing size bounds.
 - **Automated tests required:**
   `mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend`,
   `mobile_probe_uses_core_encoding_without_echoing_or_retaining_input`,
@@ -108,7 +116,11 @@ feasibility evidence are required before moving beyond this experiment.
   `mobile_arrow_tap_and_early_drag_reach_existing_pointer_routing`,
   `mobile_arrow_multitouch_resize_and_background_cancel_without_keys`,
   `mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports`;
+  `mobile_pinch_takes_over_arrows_and_quarantines_remaining_finger`,
+  `mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected`,
+  `mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning`,
+  `terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link.
-- **Native/manual evidence required:** `MOB-01` through `MOB-03` in
+- **Native/manual evidence required:** `MOB-01` through `MOB-04` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.
 - **Coverage superseded:** None; desktop acceptance is unchanged.

@@ -1,6 +1,6 @@
 //! Phase 1 iOS feasibility host. No transport, credentials, or persistence.
 
-mod arrow_gesture;
+mod terminal_gesture;
 
 use eframe::egui;
 use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
@@ -95,7 +95,7 @@ pub struct MobileApp {
     control: bool,
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
-    arrows: arrow_gesture::ArrowGesture,
+    gestures: terminal_gesture::TerminalGesture,
 }
 
 impl MobileApp {
@@ -111,7 +111,7 @@ impl MobileApp {
             control: false,
             alt: false,
             toolbar_rect: None,
-            arrows: arrow_gesture::ArrowGesture::default(),
+            gestures: terminal_gesture::TerminalGesture::default(),
         }
     }
 
@@ -187,15 +187,18 @@ impl MobileApp {
     fn show_content(&mut self, ui: &mut egui::Ui) {
         let lifecycle = self.lifecycle.get();
         if lifecycle.suspensions != self.observed_suspensions {
-            self.arrows.cancel();
+            self.gestures.cancel();
             self.control = false;
             self.alt = false;
             self.observed_suspensions = lifecycle.suspensions;
         }
         if lifecycle.memory_warnings != self.observed_memory_warnings {
-            self.arrows.cancel();
+            self.gestures.cancel();
             // Preserve grid/history and discard only reconstructible view caches.
+            let font_size = self.view.font_size_points();
             self.view = TerminalView::default();
+            self.view
+                .zoom_by_factor(font_size / self.view.font_size_points());
             self.observed_memory_warnings = lifecycle.memory_warnings;
         }
         egui::Panel::top("spike-status").show(ui, |ui| {
@@ -210,7 +213,7 @@ impl MobileApp {
             ));
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Reset fixture").clicked() {
-                    self.arrows.cancel();
+                    self.gestures.cancel();
                     self.terminal = fixture_terminal();
                     self.view = TerminalView::default();
                     self.sink = ProbeSink::default();
@@ -249,7 +252,7 @@ impl MobileApp {
         let terminal_rect = ui.available_rect_before_wrap();
         let gesture = ui.input_mut(|input| {
             let any_touches = input.any_touches();
-            self.arrows.update(
+            self.gestures.update(
                 &mut input.events,
                 input.time,
                 terminal_rect,
@@ -259,6 +262,9 @@ impl MobileApp {
         });
         if let Some(key) = gesture.key {
             self.send_key(key);
+        }
+        if let Some(factor) = gesture.zoom_factor {
+            self.view.zoom_by_factor(factor);
         }
         if let Some(delay) = gesture.repaint_after {
             ui.ctx()
@@ -277,7 +283,7 @@ impl MobileApp {
                 ..Default::default()
             },
         );
-        self.arrows.paint_helper(ui, terminal_rect);
+        self.gestures.paint_helper(ui, terminal_rect);
         if lifecycle.active {
             // Persistent request for the system keyboard, independent of egui
             // focus on the accessory buttons. UIKit owns keyboard presentation.
@@ -311,6 +317,106 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning() {
+        for (width, height) in [
+            (390.0, 844.0),
+            (834.0, 1194.0),
+            (1194.0, 834.0),
+            (375.0, 1024.0),
+        ] {
+            let lifecycle = Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            }));
+            let mut app = MobileApp::new(lifecycle.clone());
+            app.terminal.ingest(b"\x1b[?1003h\x1b[?1006h");
+            let ctx = egui::Context::default();
+            let render = |app: &mut MobileApp, time, events| {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, height),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| app.show_with_occlusion(ui, 0.35),
+                );
+                let ime = output.platform_output.ime.is_some();
+                output.drop_without_applying_deltas();
+                assert!(ime);
+            };
+            render(&mut app, 0.0, vec![]);
+            render(&mut app, 0.01, vec![]);
+            let toolbar = app.toolbar_rect.unwrap();
+            let center = app.view.diagnostics().grid_rect.unwrap().center();
+            let columns = app.terminal.dimensions().columns();
+            let touch = |id, phase, dx| egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(id),
+                phase,
+                pos: center + egui::vec2(dx, 0.0),
+                force: None,
+            };
+            render(
+                &mut app,
+                0.1,
+                vec![
+                    touch(1, egui::TouchPhase::Start, -50.0),
+                    touch(2, egui::TouchPhase::Start, 50.0),
+                    egui::Event::PointerButton {
+                        pos: center - egui::vec2(50.0, 0.0),
+                        pressed: true,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            render(
+                &mut app,
+                0.2,
+                vec![
+                    touch(1, egui::TouchPhase::Move, -75.0),
+                    touch(2, egui::TouchPhase::Move, 75.0),
+                    egui::Event::PointerMoved(center - egui::vec2(75.0, 0.0)),
+                ],
+            );
+            render(&mut app, 0.3, vec![]);
+            assert_eq!(app.view.font_size_points(), 21.0);
+            assert!(app.terminal.dimensions().columns() < columns);
+            assert_eq!(app.toolbar_rect, Some(toolbar));
+            assert!(app.view.diagnostics().grid_rect.unwrap().bottom() <= toolbar.top());
+            assert!(app.gestures.helper().is_none());
+            assert_eq!(ctx.zoom_factor(), 1.0); // App chrome must not zoom.
+            let mut state = lifecycle.get();
+            state.memory_warning();
+            lifecycle.set(state);
+            render(&mut app, 0.4, vec![touch(2, egui::TouchPhase::Move, 100.0)]);
+            render(
+                &mut app,
+                0.5,
+                vec![
+                    touch(1, egui::TouchPhase::End, -75.0),
+                    touch(2, egui::TouchPhase::End, 100.0),
+                    egui::Event::PointerButton {
+                        pos: center - egui::vec2(75.0, 0.0),
+                        pressed: false,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerGone,
+                ],
+            );
+            render(&mut app, 1.0, vec![]);
+            assert_eq!(app.view.font_size_points(), 21.0);
+            assert_eq!(app.sink.diagnostics.byte_count, 0);
+            assert!(app.terminal.queued_input().is_empty());
+        }
+    }
 
     #[test]
     fn mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports() {
@@ -366,7 +472,7 @@ mod tests {
                 ],
             );
             render(&mut app, 0.56, vec![]);
-            assert_eq!(app.arrows.helper(), Some(None));
+            assert_eq!(app.gestures.helper(), Some(None));
             assert_eq!(app.sink.diagnostics.byte_count, 0);
             render(
                 &mut app,
@@ -378,8 +484,8 @@ mod tests {
             );
             assert_eq!(app.sink.diagnostics.byte_count, 3);
             assert_eq!(
-                app.arrows.helper(),
-                Some(Some(arrow_gesture::Direction::Right))
+                app.gestures.helper(),
+                Some(Some(terminal_gesture::Direction::Right))
             );
             render(
                 &mut app,
@@ -392,7 +498,7 @@ mod tests {
             );
             render(&mut app, 2.0, vec![]);
             assert_eq!(app.sink.diagnostics.byte_count, 3);
-            assert!(app.arrows.helper().is_none());
+            assert!(app.gestures.helper().is_none());
             assert!(app.terminal.queued_input().is_empty());
         }
     }

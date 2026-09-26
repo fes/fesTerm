@@ -45,7 +45,7 @@ The first iOS host is `app/festerm-mobile`; build/run instructions and current
 limits are in its README. It uses the pinned eframe/winit public host API,
 the shared renderer/core, and no session backend. The iOS CI workflow builds
 a Simulator bundle and checks device compilation; native acceptance remains
-`MOB-01`–`03` in `docs/manual-validation.md`.
+`MOB-01`–`04` in `docs/manual-validation.md`.
 
 Goal: prove `egui` can host on iOS and Android with acceptable touch input
 and lifecycle behavior before committing to further phases.

@@ -64,6 +64,22 @@ An early drag passes through to the existing renderer; touch-generated mouse
 events are consumed during arrow navigation. No terminal bytes are encoded
 in this adapter. Keyboard layout and one-shot Ctrl/Alt remain unchanged.
 
+The continuing feasibility work adds two-finger pinch through the renderer's
+existing session-local zoom bounds (8–32 logical points). It scales terminal
+text only; the native keyboard and accessory controls keep their size. A
+second in-terminal touch takes over Pending/Arrow ownership, hiding the arrow
+helper and stopping repeats before any zoom. Each frame coalesces touch moves
+into one scale change. A 20-point minimum initial span and 2-point span slop
+avoid unstable/jitter samples. These thresholds require native tuning.
+
+An ordinary drag already handed to the shared renderer keeps ownership until
+release; an outside/toolbar start cannot become a terminal pinch. A third
+finger, either finger ending/cancelling, geometry changes, blur or suspension
+ends zoom. All remaining contacts must lift before navigation can restart.
+Memory-warning cache reconstruction preserves zoom; Reset fixture restores
+the default. This extends the input experiment under `MOB-04`, without
+claiming native acceptance or advancing to the broader mobile product phase.
+
 Reviewed [Termius mobile-terminal documentation](https://docs.termius.com/terminal/mobile-terminal)
 on 2026-09-26. Adopt the following conventions in Phase 2, after the native
 feasibility gate; these are design direction, not implemented features:
@@ -72,8 +88,6 @@ feasibility gate; these are design direction, not implemented features:
   native handles and Copy/Paste follow. A directional drag commits to arrow
   navigation and must never also select or paste. The spike currently ends a
   neutral hold without selection. Clipboard policy remains app-owned.
-- **Font size:** two-finger pinch adjusts the existing font-size preference;
-  it must cancel arrow navigation before zooming and produce one coherent resize.
 - **Extended keys:** a customizable compact row plus an optional panel for
   Shift-Tab, function keys and navigation. Put the panel beside the terminal
   when width permits, above the keyboard when narrow; iPad Split View follows

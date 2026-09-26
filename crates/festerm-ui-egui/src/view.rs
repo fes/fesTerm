@@ -354,6 +354,15 @@ impl TerminalView {
         self.set_font_size_points(self.fonts.size_points - TERMINAL_ZOOM_STEP)
     }
 
+    /// Scales this session's terminal text, using the same bounds as keyboard
+    /// zoom. Invalid gesture samples leave the presentation unchanged.
+    pub fn zoom_by_factor(&mut self, factor: f32) -> bool {
+        if !factor.is_finite() || factor <= 0.0 {
+            return false;
+        }
+        self.set_font_size_points(self.fonts.size_points * factor)
+    }
+
     /// Restores only this session's terminal presentation size.
     pub fn reset_zoom(&mut self) -> bool {
         self.set_font_size_points(DEFAULT_TERMINAL_FONT_SIZE)
@@ -1783,6 +1792,25 @@ mod tests {
         assert!(first.reset_zoom());
         assert_eq!(first.font_size_points(), 14.0);
         assert!(!first.reset_zoom());
+    }
+
+    #[test]
+    fn terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples() {
+        let mut view = TerminalView::default();
+        assert!(view.zoom_by_factor(1.5));
+        assert_eq!(view.font_size_points(), 21.0);
+        assert_eq!(TerminalView::default().font_size_points(), 14.0);
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            assert!(!view.zoom_by_factor(invalid));
+            assert_eq!(view.font_size_points(), 21.0);
+        }
+        assert!(view.zoom_by_factor(f32::MAX));
+        assert_eq!(view.font_size_points(), 32.0);
+        assert!(view.zoom_by_factor(0.5));
+        assert_eq!(view.font_size_points(), 16.0);
+        assert!(view.zoom_by_factor(f32::MIN_POSITIVE));
+        assert_eq!(view.font_size_points(), 8.0);
+        assert!(view.reset_zoom());
     }
 
     #[test]

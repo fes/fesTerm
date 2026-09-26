@@ -13,10 +13,11 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 The owner requested the iOS port on 2026-09-26. Its active scope is the
 isolated Phase 1 rendering/lifecycle experiment in ADR 0040, an architectural
-enabler. Native `MOB-01`–`03` evidence and an explicit go/no-go decision are
+enabler. Native `MOB-01`–`04` evidence and an explicit go/no-go decision are
 required before broader mobile work. The owner-requested persistent-keyboard
-slice for both iPhone and iPad is included now; this does not change desktop
-acceptance gates.
+slice for both iPhone and iPad, arrow navigation, and pinch/arrow arbitration
+probes are included now. These remain experimental input feasibility work;
+this does not change desktop acceptance gates.
 
 At the start and before release of every milestone, review open GitHub issues
 and classify each one:

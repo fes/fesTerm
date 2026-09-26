@@ -1,10 +1,12 @@
-//! Touch-only arrow gesture. Owns no terminal bytes or platform APIs.
+//! Touch navigation arbitration. Owns no terminal bytes or platform APIs.
 use eframe::egui::{self, Event, Key as EguiKey, Pos2, Rect, TouchDeviceId, TouchId, TouchPhase};
 use festerm_core::Key;
 
 const HOLD_SECONDS: f64 = 0.45;
 const DRAG_SLOP: f32 = 10.0;
 const DEAD_ZONE: f32 = 12.0;
+const MIN_PINCH_SPAN: f32 = 20.0;
+const PINCH_SLOP: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -29,6 +31,7 @@ impl Direction {
 enum Mode {
     Pending,
     Arrows,
+    Pinch,
     Passthrough,
     Cancelled,
 }
@@ -42,10 +45,17 @@ struct Contact {
     direction: Option<Direction>,
     next_repeat: f64,
     bounds: Rect,
+    pinch: Option<Pinch>,
+}
+
+struct Pinch {
+    owner: (TouchDeviceId, TouchId),
+    position: Pos2,
+    previous_span: f32,
 }
 
 #[derive(Default)]
-pub struct ArrowGesture {
+pub struct TerminalGesture {
     contact: Option<Contact>,
 }
 
@@ -54,6 +64,7 @@ pub struct GestureFrame {
     pub block_pointer: bool,
     pub key: Option<Key>,
     pub repaint_after: Option<f64>,
+    pub zoom_factor: Option<f32>,
 }
 
 fn pointer_event(pos: Pos2, pressed: bool) -> Event {
@@ -65,7 +76,7 @@ fn pointer_event(pos: Pos2, pressed: bool) -> Event {
     }
 }
 
-impl ArrowGesture {
+impl TerminalGesture {
     pub fn cancel(&mut self) {
         if let Some(contact) = &mut self.contact {
             contact.mode = Mode::Cancelled;
@@ -127,27 +138,63 @@ impl ArrowGesture {
             if *phase == TouchPhase::Start {
                 if let Some(contact) = &mut self.contact {
                     if contact.owner != owner && contact.mode != Mode::Passthrough {
-                        contact.mode = Mode::Cancelled;
+                        let span = contact.position.distance(*pos);
+                        if matches!(contact.mode, Mode::Pending | Mode::Arrows)
+                            && device_id == &contact.owner.0
+                            && bounds.contains(*pos)
+                            && span.is_finite()
+                            && span >= MIN_PINCH_SPAN
+                        {
+                            contact.mode = Mode::Pinch;
+                            contact.pinch = Some(Pinch {
+                                owner,
+                                position: *pos,
+                                previous_span: span,
+                            });
+                        } else {
+                            contact.mode = Mode::Cancelled;
+                        }
                         suppress = true;
                     }
-                } else if enabled && bounds.contains(*pos) {
+                } else if enabled {
+                    // Remember an outside start without capturing it. A second
+                    // finger in the terminal must not steal a toolbar gesture.
+                    let inside = bounds.contains(*pos);
                     self.contact = Some(Contact {
                         owner,
                         origin: *pos,
                         position: *pos,
                         started: now,
-                        mode: Mode::Pending,
+                        mode: if inside {
+                            Mode::Pending
+                        } else {
+                            Mode::Passthrough
+                        },
                         direction: None,
                         next_repeat: now,
                         bounds,
+                        pinch: None,
                     });
-                    suppress = true;
+                    suppress |= inside;
                 }
             }
             let Some(contact) = &mut self.contact else {
                 continue;
             };
             if contact.owner != owner {
+                if contact.mode == Mode::Pinch {
+                    if let Some(pinch) = &mut contact.pinch {
+                        if pinch.owner == owner {
+                            match phase {
+                                TouchPhase::Move => pinch.position = *pos,
+                                TouchPhase::End | TouchPhase::Cancel => {
+                                    contact.mode = Mode::Cancelled
+                                }
+                                TouchPhase::Start => {}
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             match phase {
@@ -165,6 +212,11 @@ impl ArrowGesture {
                     }
                 }
                 TouchPhase::End => {
+                    if contact.mode == Mode::Pinch {
+                        // Keep both contacts captured until all fingers lift;
+                        // the remaining finger must not become a fresh arrow/click.
+                        contact.mode = Mode::Cancelled;
+                    }
                     if contact.mode == Mode::Pending && now - contact.started < HOLD_SECONDS {
                         replay.push(pointer_event(contact.origin, true));
                         replay.push(pointer_event(*pos, false));
@@ -231,6 +283,19 @@ impl ArrowGesture {
                         contact.next_repeat = now + interval;
                     }
                     frame.repaint_after = Some((contact.next_repeat - now).max(0.0));
+                }
+            }
+            if contact.mode == Mode::Pinch {
+                if let Some(pinch) = &mut contact.pinch {
+                    let span = contact.position.distance(pinch.position);
+                    if !span.is_finite() || span < MIN_PINCH_SPAN {
+                        contact.mode = Mode::Cancelled;
+                    } else if (span - pinch.previous_span).abs() >= PINCH_SLOP {
+                        // Coalesce all moves in this frame. Updating the span
+                        // even at the font limit makes reversing immediately responsive.
+                        frame.zoom_factor = Some(span / pinch.previous_span);
+                        pinch.previous_span = span;
+                    }
                 }
             }
         }
@@ -322,9 +387,159 @@ mod tests {
             force: None,
         }
     }
+
+    #[test]
+    fn mobile_pinch_takes_over_arrows_and_quarantines_remaining_finger() {
+        let mut gesture = TerminalGesture::default();
+        gesture.update(
+            &mut vec![touch(1, TouchPhase::Start, 100.0, 100.0)],
+            0.0,
+            bounds(),
+            true,
+            true,
+        );
+        gesture.update(&mut vec![], 0.5, bounds(), true, true);
+        assert!(gesture
+            .update(
+                &mut vec![touch(1, TouchPhase::Move, 130.0, 100.0)],
+                0.6,
+                bounds(),
+                true,
+                true
+            )
+            .key
+            .is_some());
+        let start = gesture.update(
+            &mut vec![touch(2, TouchPhase::Start, 230.0, 100.0)],
+            0.7,
+            bounds(),
+            true,
+            true,
+        );
+        assert!(start.block_pointer && start.key.is_none() && start.zoom_factor.is_none());
+        assert!(gesture.helper().is_none());
+        let mut moves = vec![
+            touch(1, TouchPhase::Move, 105.0, 100.0),
+            touch(2, TouchPhase::Move, 255.0, 100.0),
+            Event::PointerMoved(egui::pos2(105.0, 100.0)),
+        ];
+        let zoom = gesture.update(&mut moves, 0.8, bounds(), true, true);
+        assert_eq!(zoom.zoom_factor, Some(1.5));
+        assert!(moves.is_empty() && zoom.key.is_none() && zoom.repaint_after.is_none());
+        assert!(gesture
+            .update(&mut vec![], 0.9, bounds(), true, true)
+            .zoom_factor
+            .is_none());
+        let mut lift = vec![
+            touch(2, TouchPhase::End, 255.0, 100.0),
+            pointer_event(egui::pos2(255.0, 100.0), false),
+        ];
+        assert!(
+            gesture
+                .update(&mut lift, 1.0, bounds(), true, true)
+                .block_pointer
+        );
+        assert!(lift.is_empty());
+        let remaining = gesture.update(
+            &mut vec![touch(1, TouchPhase::Move, 180.0, 100.0)],
+            2.0,
+            bounds(),
+            true,
+            true,
+        );
+        assert!(
+            remaining.block_pointer && remaining.key.is_none() && remaining.zoom_factor.is_none()
+        );
+        gesture.update(
+            &mut vec![touch(1, TouchPhase::End, 180.0, 100.0)],
+            2.1,
+            bounds(),
+            false,
+            true,
+        );
+        gesture.update(
+            &mut vec![touch(3, TouchPhase::Start, 100.0, 100.0)],
+            3.0,
+            bounds(),
+            true,
+            true,
+        );
+        gesture.update(&mut vec![], 3.5, bounds(), true, true);
+        assert_eq!(gesture.helper(), Some(None));
+    }
+
+    #[test]
+    fn mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected() {
+        for cause in 0..7 {
+            let mut gesture = TerminalGesture::default();
+            gesture.update(
+                &mut vec![
+                    touch(1, TouchPhase::Start, 100.0, 100.0),
+                    touch(2, TouchPhase::Start, 200.0, 100.0),
+                ],
+                0.0,
+                bounds(),
+                true,
+                true,
+            );
+            let mut events = match cause {
+                0 => vec![touch(3, TouchPhase::Start, 250.0, 100.0)],
+                1 => vec![touch(1, TouchPhase::Cancel, 100.0, 100.0)],
+                2 => vec![touch(2, TouchPhase::Cancel, 200.0, 100.0)],
+                3 => vec![Event::WindowFocused(false)],
+                _ => vec![],
+            };
+            let rect = if cause == 4 {
+                bounds().shrink(1.0)
+            } else {
+                bounds()
+            };
+            let result = gesture.update(&mut events, 0.1, rect, cause != 6, cause != 5);
+            assert!(result.key.is_none() && result.zoom_factor.is_none());
+            let result = gesture.update(
+                &mut vec![touch(2, TouchPhase::Move, 290.0, 100.0)],
+                0.2,
+                rect,
+                true,
+                true,
+            );
+            assert!(result.key.is_none() && result.zoom_factor.is_none());
+        }
+        for outside in [true, false] {
+            let mut gesture = TerminalGesture::default();
+            gesture.update(
+                &mut vec![touch(
+                    1,
+                    TouchPhase::Start,
+                    100.0,
+                    if outside { 450.0 } else { 100.0 },
+                )],
+                0.0,
+                bounds(),
+                true,
+                true,
+            );
+            if !outside {
+                gesture.update(
+                    &mut vec![touch(1, TouchPhase::Move, 130.0, 100.0)],
+                    0.1,
+                    bounds(),
+                    true,
+                    true,
+                );
+            }
+            let mut events = vec![
+                touch(2, TouchPhase::Start, 230.0, 100.0),
+                touch(2, TouchPhase::Move, 280.0, 100.0),
+            ];
+            let result = gesture.update(&mut events, 0.2, bounds(), true, true);
+            assert!(!result.block_pointer && result.zoom_factor.is_none() && result.key.is_none());
+            assert_eq!(events.len(), 2);
+        }
+    }
     #[test]
     fn mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release() {
-        let mut gesture = ArrowGesture::default();
+        let mut gesture = TerminalGesture::default();
         let start = gesture.update(
             &mut vec![touch(1, TouchPhase::Start, 100.0, 100.0)],
             0.0,
@@ -393,7 +608,7 @@ mod tests {
     }
     #[test]
     fn mobile_arrow_tap_and_early_drag_reach_existing_pointer_routing() {
-        let mut gesture = ArrowGesture::default();
+        let mut gesture = TerminalGesture::default();
         gesture.update(
             &mut vec![touch(1, TouchPhase::Start, 100.0, 100.0)],
             0.0,
@@ -446,7 +661,7 @@ mod tests {
     #[test]
     fn mobile_arrow_multitouch_resize_and_background_cancel_without_keys() {
         for cause in 0..7 {
-            let mut gesture = ArrowGesture::default();
+            let mut gesture = TerminalGesture::default();
             gesture.update(
                 &mut vec![touch(1, TouchPhase::Start, 100.0, 100.0)],
                 0.0,
