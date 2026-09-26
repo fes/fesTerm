@@ -857,6 +857,8 @@
         "native_bounds_crop_sparse_paints_and_validate_indices",
         "shared_surfaces_preserve_pixels_and_previous_frame_ownership",
         "direct2d_selection_preserves_hardware_other_backends_and_srgb",
+        "direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy",
+        "direct2d_invalid_overrides_do_not_enable_the_default",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
         "declined_native_paint_keeps_original_shapes",

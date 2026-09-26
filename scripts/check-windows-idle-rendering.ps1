@@ -25,8 +25,9 @@ if ($env:OS -ne 'Windows_NT' -or $env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
 if (($DenseOutput -or $RequireDirect2D) -and -not $IncludeSustainedOutput) {
     throw 'DenseOutput and RequireDirect2D require IncludeSustainedOutput.'
 }
-if ($RequireDirect2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
-    throw 'RequireDirect2D requires FESTERM_EXPERIMENTAL_DIRECT2D=1.'
+if ($RequireDirect2D -and $null -ne $env:FESTERM_EXPERIMENTAL_DIRECT2D -and
+    $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
+    throw 'RequireDirect2D requires FESTERM_EXPERIMENTAL_DIRECT2D to be unset or 1.'
 }
 
 $root = Split-Path -Parent $PSScriptRoot

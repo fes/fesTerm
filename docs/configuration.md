@@ -222,18 +222,25 @@ eight-bit gamma framebuffers. No saved setting, output throttling, or
 resolution reduction is involved. Running Sessions
 discovery continues in the background without redrawing unchanged inventory.
 
-`FESTERM_EXPERIMENTAL_DIRECT2D=1` is a default-off Windows x64 experiment, not
-a saved TOML setting. On DX12 CPU adapters with an eight-bit gamma target it
-paints the root window's eligible terminal content through Direct2D and
-composes it with egui-wgpu. Hardware GPUs, other backends/formats, secondary
-windows, and translucent/transformed painters retain ordinary painting. An
-unsupported frame or native error is logged and disables the optional painter
-for that process; the current frame retains its ordinary shapes. `0` or an
-unset variable keeps the default renderer. Other values are reported and
-ignored. The experiment does not alter terminal semantics or output/frame
-scheduling. See [ADR 0039](adr/0039-opt-in-direct2d-terminal-composition.md) and
+`FESTERM_EXPERIMENTAL_DIRECT2D` is a compatibility environment override, not a
+saved TOML setting. When it is unset, fesTerm now defaults to Direct2D only on
+Windows x64 with a DX12 CPU adapter and an eight-bit gamma terminal target
+(`Bgra8Unorm` or `Rgba8Unorm`). `FESTERM_EXPERIMENTAL_DIRECT2D=1` requests that
+same supported path and is retained for compatibility; it cannot force
+hardware adapters, unsupported platforms, or unsupported formats. `0`
+explicitly disables Direct2D and keeps ordinary egui-wgpu. Invalid or
+non-Unicode override values warn and retain ordinary egui-wgpu. In automatic
+unset mode, unsupported adapters, platforms, and formats stay on ordinary
+egui-wgpu without a selection warning; explicit `1` still reports why the
+request was ineligible. Hardware GPUs, other backends/formats, secondary
+windows, translucent/transformed painters, unsupported content, and same-frame
+native rejections retain ordinary painting. Initialization failure or a logged
+native error disables the optional painter for the rest of that process while
+preserving the current frame's ordinary shapes. The experiment does not alter
+terminal semantics or output/frame scheduling. See
+[ADR 0039](adr/0039-opt-in-direct2d-terminal-composition.md) and
 [the investigation](../validation/direct2d/README.md); native qualification
-remains open under CP-18.
+remains open under CP-18 and issue #244.
 
 By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.
