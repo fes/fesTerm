@@ -163,6 +163,7 @@
         "provider_panics_wake_the_ui_and_leave_an_actionable_error",
         "changed_inventory_is_published_and_periodic_discovery_continues",
         "publication_before_worker_exit_schedules_nonblocking_retirement",
+        "explicit_refresh_waits_for_cancelled_worker_before_collecting_replacement",
         "visible_relative_ages_request_only_minute_scale_repaints",
         "a_provider_timeout_is_visible_and_explicit_refresh_recovers",
         "dropping_a_client_with_pending_terminal_output_retires_its_workers",

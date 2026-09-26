@@ -441,7 +441,7 @@ mod tests {
             discovery.refresh();
         }
         assert_eq!(discovery.generation, generation + 1);
-        discovery.update_with(true, &context, || Inventory {
+        let recovered_inventory = || Inventory {
             screen: vec![MultiplexerSession {
                 name: "same-owned-shell".into(),
                 match_key: "123.same-owned-shell|1700000000".into(),
@@ -449,8 +449,9 @@ mod tests {
                 started_at_unix_seconds: Some(1700000000),
             }],
             ..Default::default()
-        });
-        finish(&mut discovery, &context);
+        };
+        discovery.update_with(true, &context, recovered_inventory);
+        finish_with(&mut discovery, &context, recovered_inventory);
         assert!(discovery.inventory.errors.is_empty());
         assert_eq!(discovery.inventory.screen.len(), 1);
         assert_eq!(
@@ -462,14 +463,75 @@ mod tests {
     }
 
     fn finish(discovery: &mut Discovery, context: &eframe::egui::Context) {
+        finish_with(discovery, context, || {
+            panic!("unexpected extra discovery worker")
+        });
+    }
+
+    fn finish_with(
+        discovery: &mut Discovery,
+        context: &eframe::egui::Context,
+        discover: fn() -> Inventory,
+    ) {
         let deadline = Instant::now() + Duration::from_secs(3);
-        while !discovery.worker.as_ref().unwrap().handle.is_finished() {
+        loop {
+            let worker = discovery.worker.as_ref().unwrap();
+            let requested_generation_finished =
+                worker.generation == discovery.generation && worker.handle.is_finished();
+            discovery.update_with(true, context, discover);
+            if requested_generation_finished {
+                return;
+            }
             assert!(Instant::now() < deadline, "discovery worker did not finish");
             thread::sleep(Duration::from_millis(1));
         }
-        discovery.update_with(true, context, || {
-            panic!("unexpected extra discovery worker")
+    }
+
+    #[test]
+    fn explicit_refresh_waits_for_cancelled_worker_before_collecting_replacement() {
+        let context = eframe::egui::Context::default();
+        let (cancel, cancellation) = mpsc::sync_channel(1);
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let (cancelled, cancellation_observed) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            cancellation.recv().unwrap();
+            cancelled.send(()).unwrap();
+            released.recv().unwrap();
         });
+        let mut discovery = Discovery {
+            enabled: true,
+            inventory: Inventory::default(),
+            generation: 0,
+            requested: false,
+            worker: Some(Worker {
+                generation: 0,
+                receiver,
+                cancel,
+                handle,
+                result: None,
+            }),
+        };
+        let replacement = || Inventory {
+            errors: vec!["replacement generation".into()],
+            ..Default::default()
+        };
+        discovery.refresh();
+        let cancellation_observed = cancellation_observed.recv_timeout(Duration::from_secs(3));
+        discovery.update_with(true, &context, replacement);
+        let old_generation_retained = discovery.worker.as_ref().unwrap().generation == 0;
+        let refresh_pending = discovery.requested;
+        release.send(()).unwrap();
+        cancellation_observed.unwrap();
+        assert!(old_generation_retained);
+        assert!(refresh_pending);
+        finish_with(&mut discovery, &context, replacement);
+        assert_eq!(discovery.inventory.errors, ["replacement generation"]);
+        assert_eq!(
+            discovery.worker.as_ref().unwrap().generation,
+            discovery.generation
+        );
+        assert!(!discovery.requested);
     }
 
     #[test]
