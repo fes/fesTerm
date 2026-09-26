@@ -1,5 +1,7 @@
 mod confirmations;
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::{
     rc::Rc,
     sync::{
@@ -363,6 +365,45 @@ struct ClipboardPasteOrigin {
     ownership_epoch: u64,
 }
 
+#[derive(Default)]
+struct NativeMenuShortcutCache {
+    bindings: Option<festerm_config::KeyboardBindings>,
+    overlays_block_terminal_input: bool,
+    palette_open: bool,
+    terminal_owns_input: bool,
+    shortcuts: Vec<festerm_macos_window::NativeShortcut>,
+}
+
+impl NativeMenuShortcutCache {
+    fn needs_rebuild(
+        &self,
+        bindings: &festerm_config::KeyboardBindings,
+        overlays_block_terminal_input: bool,
+        palette_open: bool,
+        terminal_owns_input: bool,
+    ) -> bool {
+        self.bindings.as_ref() != Some(bindings)
+            || self.overlays_block_terminal_input != overlays_block_terminal_input
+            || self.palette_open != palette_open
+            || self.terminal_owns_input != terminal_owns_input
+    }
+
+    fn store(
+        &mut self,
+        bindings: &festerm_config::KeyboardBindings,
+        overlays_block_terminal_input: bool,
+        palette_open: bool,
+        terminal_owns_input: bool,
+        shortcuts: Vec<festerm_macos_window::NativeShortcut>,
+    ) {
+        self.bindings = Some(bindings.clone());
+        self.overlays_block_terminal_input = overlays_block_terminal_input;
+        self.palette_open = palette_open;
+        self.terminal_owns_input = terminal_owns_input;
+        self.shortcuts = shortcuts;
+    }
+}
+
 /// Composition root.
 ///
 /// `AppState` owns the always-nonempty tab collection and session/command
@@ -397,6 +438,7 @@ pub struct FesTermApp {
     /// have one shared answer.
     overlays: OverlayState,
     native_menu: festerm_macos_window::NativeMenu,
+    native_menu_shortcut_cache: NativeMenuShortcutCache,
     /// Resume-from-sleep notifier (see `install_wake_monitor`). `None` until
     /// installed by the real composition root; headless tests never call
     /// `install_wake_monitor`, so they simply never receive wake signals.
@@ -455,6 +497,10 @@ pub struct FesTermApp {
     /// Additional windows a restored workspace asks for, drained once by the
     /// composition root at startup because only it can create windows.
     pending_restored_windows: Vec<festerm_config::WorkspaceWindow>,
+    #[cfg(test)]
+    palette_build_count: Cell<usize>,
+    #[cfg(test)]
+    native_menu_shortcut_build_count: Cell<usize>,
 }
 
 /// Distinguishes the one window that owns application-scoped host
@@ -836,6 +882,7 @@ impl FesTermApp {
             clipboard_paste: None,
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
+            native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
@@ -853,6 +900,10 @@ impl FesTermApp {
             window_geometry: restored_geometry,
             pending_geometry_save: None,
             pending_restored_windows,
+            #[cfg(test)]
+            palette_build_count: Cell::new(0),
+            #[cfg(test)]
+            native_menu_shortcut_build_count: Cell::new(0),
         }
     }
 
@@ -1014,7 +1065,7 @@ impl FesTermApp {
         }
     }
 
-    fn update_native_menu(&self) {
+    fn update_native_menu(&mut self) {
         let close_label = match self.state.active_tab().content {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
@@ -1032,6 +1083,46 @@ impl FesTermApp {
             matches!(self.state.active_tab().content, TabContent::Session(_)),
             self.state.inspector_open(),
         );
+        let overlays_block_terminal_input = self.overlays.blocks_terminal_input();
+        let palette_open = self.palette.is_open();
+        let terminal_owns_input = self.terminal_owns_input();
+        let settings = self.state.interface_settings();
+        let bindings = settings.keyboard_bindings();
+        let rebuild_shortcuts = self.native_menu_shortcut_cache.needs_rebuild(
+            bindings,
+            overlays_block_terminal_input,
+            palette_open,
+            terminal_owns_input,
+        );
+        if rebuild_shortcuts {
+            let shortcuts = self.build_native_menu_shortcuts(
+                overlays_block_terminal_input,
+                palette_open,
+                terminal_owns_input,
+            );
+            self.native_menu_shortcut_cache.store(
+                bindings,
+                overlays_block_terminal_input,
+                palette_open,
+                terminal_owns_input,
+                shortcuts,
+            );
+        }
+        if rebuild_shortcuts || self.native_menu.shortcuts_need_update() {
+            self.native_menu
+                .update_shortcuts(&self.native_menu_shortcut_cache.shortcuts);
+        }
+    }
+
+    fn build_native_menu_shortcuts(
+        &self,
+        overlays_block_terminal_input: bool,
+        palette_open: bool,
+        terminal_owns_input: bool,
+    ) -> Vec<festerm_macos_window::NativeShortcut> {
+        #[cfg(test)]
+        self.native_menu_shortcut_build_count
+            .set(self.native_menu_shortcut_build_count.get() + 1);
         use festerm_config::KeyboardAction as A;
         use festerm_macos_window::NativeMenuCommand as N;
         let settings = self.state.interface_settings();
@@ -1048,14 +1139,10 @@ impl FesTermApp {
         ]
         .into_iter()
         .filter_map(|(command, action)| {
-            if self.overlays.blocks_terminal_input()
-                || (self.palette.is_open() && action != A::CommandPalette)
-            {
+            if overlays_block_terminal_input || (palette_open && action != A::CommandPalette) {
                 return None;
             }
-            if action.scope() == festerm_config::KeyboardScope::Terminal
-                && !self.terminal_owns_input()
-            {
+            if action.scope() == festerm_config::KeyboardScope::Terminal && !terminal_owns_input {
                 return None;
             }
             let parsed = festerm_config::Chord::parse(
@@ -1086,8 +1173,8 @@ impl FesTermApp {
                 shift: parsed.shift,
             })
         })
-        .collect::<Vec<_>>();
-        self.native_menu.update_shortcuts(&shortcuts);
+        .collect();
+        shortcuts
     }
 
     fn handle_paste_request(
@@ -2325,6 +2412,9 @@ impl FesTermApp {
     /// `docs/gui-design.md` ("a searchable session switcher keyed primarily
     /// by stable identity").
     fn palette_items(&self) -> Vec<PaletteItem> {
+        #[cfg(test)]
+        self.palette_build_count
+            .set(self.palette_build_count.get() + 1);
         use festerm_config::KeyboardAction as A;
         let bindings = self.state.interface_settings().keyboard_bindings().clone();
         let binding_label = |action| crate::keyboard::label(&bindings, action);
@@ -5281,10 +5371,15 @@ impl FesTermApp {
             self.show_status_bar(ui);
         }
 
-        if let Some(decision) = {
-            let items = self.palette_items();
-            palette::show(ui.ctx(), &mut self.palette, &items)
-        } {
+        if let Some(decision) = self
+            .palette
+            .is_open()
+            .then(|| {
+                let items = self.palette_items();
+                palette::show(ui.ctx(), &mut self.palette, &items)
+            })
+            .flatten()
+        {
             self.palette.close();
             if let Some(id) = decision {
                 let context = ui.ctx().clone();
@@ -6060,6 +6155,7 @@ impl FesTermApp {
             clipboard_paste: None,
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
+            native_menu_shortcut_cache: NativeMenuShortcutCache::default(),
             wake_monitor: None,
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
@@ -6078,6 +6174,10 @@ impl FesTermApp {
             window_geometry: None,
             pending_geometry_save: None,
             pending_restored_windows: Vec::new(),
+            #[cfg(test)]
+            palette_build_count: Cell::new(0),
+            #[cfg(test)]
+            native_menu_shortcut_build_count: Cell::new(0),
         }
     }
 
@@ -9475,6 +9575,104 @@ mod tests {
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let items = app.palette_items();
         assert!(!items.iter().any(|item| item.label == "Open File…"));
+    }
+
+    #[test]
+    fn closed_palette_skips_builds_until_open_and_uses_current_state() {
+        let context = egui::Context::default();
+        let (app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+
+        harness.run();
+        harness.run();
+        assert_eq!(
+            harness.state().palette_build_count.get(),
+            0,
+            "closed palettes must not rebuild their item list every frame"
+        );
+
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenSettings, &context);
+        harness.run();
+        assert_eq!(
+            harness.state().palette_build_count.get(),
+            0,
+            "state changes while the palette is closed must stay lazy"
+        );
+
+        harness.state_mut().palette.open();
+        harness.run();
+        assert!(
+            harness.state().palette_build_count.get() >= 1,
+            "opening the palette should build its items on demand"
+        );
+        let built_before_probe = harness.state().palette_build_count.get();
+        let items = harness.state().palette_items();
+        assert!(
+            items.iter().any(|item| item.label == "Close Settings"),
+            "opening the palette must reflect the latest app state"
+        );
+        assert_eq!(
+            harness.state().palette_build_count.get(),
+            built_before_probe + 1,
+            "the explicit test probe should be the only extra palette build"
+        );
+    }
+
+    #[test]
+    fn native_menu_shortcuts_rebuild_only_when_their_context_changes() {
+        let context = egui::Context::default();
+        let (app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().native_menu_shortcut_build_count.get(), 1);
+
+        harness.run();
+        assert_eq!(
+            harness.state().native_menu_shortcut_build_count.get(),
+            1,
+            "unchanged frames must reuse the cached native shortcut list"
+        );
+
+        harness.state_mut().palette.open();
+        harness.run();
+        assert_eq!(harness.state().native_menu_shortcut_build_count.get(), 2);
+
+        harness.run();
+        assert_eq!(
+            harness.state().native_menu_shortcut_build_count.get(),
+            2,
+            "keeping the same menu context should not rebuild shortcuts again"
+        );
+
+        harness.state_mut().palette.close();
+        harness.run();
+        assert_eq!(harness.state().native_menu_shortcut_build_count.get(), 3);
+
+        let bindings = festerm_config::KeyboardBindings(vec![festerm_config::KeyboardOverride {
+            action: festerm_config::KeyboardAction::ToggleFocusMode,
+            chord: "Primary+Shift+G".to_owned(),
+        }]);
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        harness.run();
+        assert_eq!(
+            harness.state().native_menu_shortcut_build_count.get(),
+            4,
+            "binding changes must invalidate the cached native shortcut list"
+        );
     }
 
     #[test]
