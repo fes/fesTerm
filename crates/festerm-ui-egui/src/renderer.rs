@@ -1,5 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{hash_map::RandomState, HashMap, HashSet, VecDeque},
+    hash::{BuildHasher, DefaultHasher, Hash, Hasher},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -10,6 +11,7 @@ use egui::{
     TextureOptions, Vec2,
 };
 use festerm_core::{Attributes, Color, ColorScheme, CursorStyle, Dimensions, Rgb};
+use hashbrown::Equivalent as _;
 use swash::{
     scale::{image::Content, Render, ScaleContext, Source, StrikeWith},
     shape::ShapeContext,
@@ -91,7 +93,7 @@ impl FontSettings {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct GlyphStyle {
     foreground: Color32,
     attributes: u16,
@@ -101,33 +103,80 @@ struct GlyphStyle {
     font_set: TerminalFontSet,
 }
 
-struct StyledGlyphs {
+impl Hash for GlyphStyle {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Feed contiguous words rather than making a separate keyed-hasher
+        // write for every small style field. Equality still checks every field.
+        [
+            u32::from_le_bytes(self.foreground.to_array()),
+            u32::from(self.attributes),
+            self.font_size_bits,
+            self.layout_width_bits,
+            self.pixels_per_point_bits,
+            self.font_set.family() as u32,
+            u32::from(self.font_set.ligatures()) | (u32::from(self.font_set.color_emoji()) << 1),
+        ]
+        .hash(state);
+        self.font_set.generation().hash(state);
+    }
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct GlyphKey {
     style: GlyphStyle,
-    layouts: HashMap<String, Arc<egui::Galley>>,
+    text: String,
+}
+
+#[derive(Hash)]
+struct GlyphQuery<'a> {
+    style: GlyphStyle,
+    text: &'a str,
+}
+
+impl hashbrown::Equivalent<GlyphKey> for GlyphQuery<'_> {
+    fn equivalent(&self, key: &GlyphKey) -> bool {
+        self.text == key.text && self.style == key.style
+    }
 }
 
 /// Cache laid-out cell glyphs. `egui` owns the underlying font atlas; this
 /// cache avoids rebuilding a one-cell layout job for unchanged text styling.
+/// `hashbrown` provides borrowed cached-hash lookup; `RandomState` retains
+/// randomized keyed hashing for untrusted terminal text.
 #[derive(Default)]
 pub(crate) struct GlyphCache {
-    styles: HashMap<GlyphStyle, usize>,
-    layouts: Vec<StyledGlyphs>,
-    last_style: Option<usize>,
-    layout_count: usize,
+    layouts: hashbrown::HashMap<GlyphKey, Arc<egui::Galley>, RandomState>,
+    style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
 }
 
 impl GlyphCache {
     pub(crate) fn clear(&mut self) {
-        self.clear_layouts();
+        self.layouts.clear();
+        self.style_hasher = None;
         self.color_emoji.clear();
     }
 
-    fn clear_layouts(&mut self) {
-        self.styles.clear();
-        self.layouts.clear();
-        self.last_style = None;
-        self.layout_count = 0;
+    fn query_hash(&mut self, query: &GlyphQuery<'_>) -> u64 {
+        // Clone the keyed hash prefix, not a finalized hash: this produces the
+        // same hash as GlyphKey while avoiding repeated style hashing.
+        if !self
+            .style_hasher
+            .as_ref()
+            .is_some_and(|(style, _)| *style == query.style)
+        {
+            let mut hasher = self.layouts.hasher().build_hasher();
+            query.style.hash(&mut hasher);
+            self.style_hasher = Some((query.style, hasher));
+        }
+        let mut hasher = self
+            .style_hasher
+            .as_ref()
+            .expect("style hash prefix was initialized")
+            .1
+            .clone();
+        query.text.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub(crate) fn layout(
@@ -147,21 +196,17 @@ impl GlyphCache {
             pixels_per_point_bits: painter.pixels_per_point().to_bits(),
             font_set: font.font_set(),
         };
-        // Adjacent cells usually share a style. Only hash that style when it
-        // changes, and borrow the text key so warm hits never allocate a String.
-        let mut style_index = self
-            .last_style
-            .filter(|&index| self.layouts[index].style == style)
-            .or_else(|| self.styles.get(&style).copied());
-        if let Some(index) = style_index {
-            self.last_style = Some(index);
-            if let Some(layout) = self.layouts[index].layouts.get(text) {
-                return layout.clone();
-            }
+        let query = GlyphQuery { text, style };
+        let hash = self.query_hash(&query);
+        if let Some((_, layout)) = self
+            .layouts
+            .raw_entry()
+            .from_hash(hash, |key| query.equivalent(key))
+        {
+            return layout.clone();
         }
-        if self.layout_count >= GLYPH_CACHE_CAPACITY {
-            self.clear_layouts();
-            style_index = None;
+        if self.layouts.len() >= GLYPH_CACHE_CAPACITY {
+            self.layouts.clear();
         }
 
         let mut job = LayoutJob::default();
@@ -180,20 +225,13 @@ impl GlyphCache {
             },
         );
         let layout = painter.layout_job(job);
-        let index = style_index.unwrap_or_else(|| {
-            let index = self.layouts.len();
-            self.layouts.push(StyledGlyphs {
+        self.layouts.insert(
+            GlyphKey {
+                text: text.to_owned(),
                 style,
-                layouts: HashMap::new(),
-            });
-            self.styles.insert(style, index);
-            index
-        });
-        self.layouts[index]
-            .layouts
-            .insert(text.to_owned(), layout.clone());
-        self.layout_count += 1;
-        self.last_style = Some(index);
+            },
+            layout.clone(),
+        );
         layout
     }
 
@@ -1078,11 +1116,12 @@ mod tests {
                 &font,
                 20.0,
             );
-            let key_address = cache.layouts[0]
+            let key_address = cache
                 .layouts
-                .get_key_value("A")
+                .keys()
+                .find(|key| key.text == "A")
                 .unwrap()
-                .0
+                .text
                 .as_ptr();
             for text in ["A", "B", "A", "界", "e\u{301}", "A"] {
                 let layout = cache.layout(
@@ -1097,14 +1136,14 @@ mod tests {
                     assert!(Arc::ptr_eq(&first, &layout));
                 }
             }
-            assert_eq!(cache.layout_count, 4);
-            assert_eq!(cache.styles.len(), 1);
+            assert_eq!(cache.layouts.len(), 4);
             assert_eq!(
-                cache.layouts[0]
+                cache
                     .layouts
-                    .get_key_value("A")
+                    .keys()
+                    .find(|key| key.text == "A")
                     .unwrap()
-                    .0
+                    .text
                     .as_ptr(),
                 key_address
             );
@@ -1158,8 +1197,7 @@ mod tests {
                 &ligatures,
                 20.0,
             );
-            assert_eq!(cache.layout_count, 10);
-            assert_eq!(cache.styles.len(), 7);
+            assert_eq!(cache.layouts.len(), 10);
             let restored = cache.layout(
                 painter,
                 "A",
@@ -1169,7 +1207,28 @@ mod tests {
                 20.0,
             );
             assert!(Arc::ptr_eq(&first, &restored));
-            assert_eq!(cache.last_style, Some(0));
+            assert_eq!(cache.layouts.len(), 10);
+            for key in cache.layouts.keys() {
+                assert!(cache.layouts.contains_key(&GlyphQuery {
+                    text: &key.text,
+                    style: key.style,
+                }));
+            }
+            let keys = cache
+                .layouts
+                .keys()
+                .map(|key| (key.style, key.text.clone()))
+                .collect::<Vec<_>>();
+            for (style, text) in keys.iter().chain(keys.iter().rev()) {
+                let query = GlyphQuery {
+                    style: *style,
+                    text,
+                };
+                assert_eq!(
+                    cache.query_hash(&query),
+                    cache.layouts.hasher().hash_one(&query)
+                );
+            }
         });
         output.textures_delta.clear();
     }
@@ -1199,7 +1258,7 @@ mod tests {
             });
             output.textures_delta.clear();
         }
-        assert_eq!(cache.styles.len(), 3);
+        assert_eq!(cache.layouts.len(), 3);
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             cache.layout(
                 ui.painter(),
@@ -1211,7 +1270,7 @@ mod tests {
             );
         });
         output.textures_delta.clear();
-        assert_eq!(cache.layout_count, 3);
+        assert_eq!(cache.layouts.len(), 3);
         context.set_pixels_per_point(1.0);
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             cache.layout(
@@ -1224,11 +1283,11 @@ mod tests {
             );
         });
         output.textures_delta.clear();
-        assert_eq!(cache.layout_count, 4);
+        assert_eq!(cache.layouts.len(), 4);
     }
 
     #[test]
-    fn glyph_cache_capacity_is_global_across_styles_and_clear_resets_indices() {
+    fn glyph_cache_capacity_is_global_across_styles_and_clear_removes_layouts() {
         let context = egui::Context::default();
         crate::install_terminal_fonts(&context);
         let mut cache = GlyphCache::default();
@@ -1238,25 +1297,7 @@ mod tests {
                 let color = Color32::from_rgb(index as u8, (index >> 8) as u8, 0);
                 cache.layout(ui.painter(), "A", Attributes::NONE, color, &font, 20.0);
             }
-            assert_eq!(cache.layout_count, GLYPH_CACHE_CAPACITY);
-            assert_eq!(cache.styles.len(), GLYPH_CACHE_CAPACITY);
-            cache.layout(
-                ui.painter(),
-                "B",
-                Attributes::NONE,
-                Color32::BLACK,
-                &font,
-                20.0,
-            );
-            assert_eq!(cache.layout_count, 1);
-            assert_eq!(cache.layouts.len(), 1);
-            assert_eq!(cache.styles.len(), 1);
-            assert_eq!(cache.last_style, Some(0));
-            cache.clear();
-            assert_eq!(cache.layout_count, 0);
-            assert!(cache.layouts.is_empty());
-            assert!(cache.styles.is_empty());
-            assert_eq!(cache.last_style, None);
+            assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
             cache.layout(
                 ui.painter(),
                 "A",
@@ -1265,7 +1306,28 @@ mod tests {
                 &font,
                 20.0,
             );
-            assert_eq!(cache.layout_count, 1);
+            assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
+            cache.layout(
+                ui.painter(),
+                "B",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), 1);
+            cache.clear();
+            assert!(cache.layouts.is_empty());
+            assert!(cache.style_hasher.is_none());
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), 1);
         });
         output.textures_delta.clear();
     }
@@ -1760,7 +1822,7 @@ mod tests {
                 .shapes
                 .iter()
                 .any(|shape| matches!(shape.shape, egui::Shape::Rect(_))));
-            assert_eq!(glyphs.layout_count, 0);
+            assert!(glyphs.layouts.is_empty());
             output.textures_delta.clear();
         }
     }

@@ -2252,6 +2252,7 @@ dependencies = [
  "egui_kittest",
  "festerm-core",
  "festerm-test-support",
+ "hashbrown 0.17.1",
  "icu_properties",
  "swash",
  "ttf-parser",

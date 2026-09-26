@@ -8,9 +8,13 @@
 A rendering profile found that cache hits were not cheap: every visible cell
 allocated a temporary glyph key and repeatedly hashed its full style, while
 plain ASCII still reached Unicode emoji classification. Glyph lookups now
-borrow text within bounded style buckets and reuse the last style between
-adjacent cells. Font policy, installation generation, layout width and DPI
-remain part of the cache identity. ASCII bypasses emoji classification, and
+borrow text and hash packed style fields in one bounded map. An initial
+style-bucket design helped plain text but regressed interleaved truecolor;
+the expanded workloads caught that tradeoff before acceptance. The final
+map retains randomized keyed hashing for untrusted terminal text and reuses
+the last style's unfinished hash prefix without allocating extra maps. Font
+policy, installation generation, layout width and DPI remain part of the
+cache identity. ASCII bypasses emoji classification, and
 spaces skip glyph submission without skipping their backgrounds, selection
 or decorations; tests verify that all bundled faces paint no space ink.
 

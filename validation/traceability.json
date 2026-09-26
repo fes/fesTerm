@@ -1718,7 +1718,7 @@
         "terminal_attributes_select_real_bundled_faces",
         "glyph_cache_reuses_borrowed_text_and_distinguishes_layout_styles",
         "glyph_cache_separates_dpi_and_font_installations",
-        "glyph_cache_capacity_is_global_across_styles_and_clear_resets_indices",
+        "glyph_cache_capacity_is_global_across_styles_and_clear_removes_layouts",
         "blank_cells_keep_backgrounds_and_decorations_without_glyph_work",
         "bundled_spaces_have_no_ink_in_any_style_or_ligature_policy",
         "every_ascii_scalar_stays_text_but_keycap_sequences_stay_emoji",
