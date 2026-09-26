@@ -68,7 +68,7 @@ the following sample. Its 7.867% post-warmup average is diagnostic evidence,
 included in the unprofiled comparison above.
 
 The unchanged official probe, with neither profiling nor injected repaints,
-then measured the candidate:
+then measured the isolated candidate before integrating #249-#252:
 
 | Scenario | Total-machine CPU | GUI frames/s | Result |
 |---|---:|---:|---|
@@ -82,6 +82,13 @@ unchanged. Earlier input-contaminated diagnostic runs and historical CPU
 failures are retained; they are not silently reclassified as passing results.
 This identifies and mitigates the reproduced rasterization burst, rather than
 retroactively assigning a cause to every older sample without hot evidence.
+
+After rebasing onto `170b023` (the integrated #249-#252 rendering work), the
+candidate passed the official probe again at the same size/DPI with no input:
+Launcher 0.000%, unread-background 0.010%, and sparse output 23.423% at
+12.387 GUI frames/s. The rebased workspace passed 1,821 tests (47 ignored);
+the separate opt-in full-resolution replay also passed. The isolation
+comparison above is not presented as a measurement of those other changes.
 
 ## Repeatable draw-cost probe
 
