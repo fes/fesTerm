@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
-    FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError, SessionEvent,
-    SessionLifecycle, SessionSendError, SessionTryReceiveError, SshPortForwardRuntime,
-    TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError, SessionErrorKind,
+    SessionEvent, SessionLifecycle, SessionSendError, SessionTryReceiveError,
+    SshPortForwardRuntime, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use festerm_ui_egui::{
     EncodedInputSink, InputRoute, InputSinkDiagnostics, TERMINAL_RESIZE_DEBOUNCE,
@@ -662,16 +662,27 @@ impl<S: Session> SessionController<S> {
     /// output" chip pulse) must read [`Self::last_pump_output_received`]
     /// instead of this return value.
     pub fn pump_events(&mut self, terminal: &mut Terminal) -> bool {
+        self.pump_events_with_resize(terminal, |terminal, dimensions| {
+            terminal.resize(dimensions).is_ok()
+        })
+    }
+
+    pub fn pump_events_with_resize(
+        &mut self,
+        terminal: &mut Terminal,
+        resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
+    ) -> bool {
         self.last_pump_output_received = false;
         let Some(session) = &self.session else {
             return false;
         };
         let mut observed = Vec::new();
         let resize_probe = &mut self.resize_probe;
-        let result = pump_session_events(
+        let result = pump_session_events_with_resize(
             session,
             terminal,
             MAX_SESSION_EVENTS_PER_FRAME,
+            resize,
             |event| match event {
                 PumpedSessionEvent::Output(bytes) => resize_probe.record_output(bytes),
                 PumpedSessionEvent::Event(event) => observed.push(event.clone()),
@@ -731,11 +742,21 @@ impl<S: Session> SessionController<S> {
                 self.port_forwards = forwards;
             }
             SessionEvent::Error(error) => self.record_session_error(error),
+            SessionEvent::RecoverySync(_) => {}
             SessionEvent::Output(_) => {}
         }
     }
 
     pub fn forward_terminal_replies(&mut self, terminal: &mut Terminal) {
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.terminal_replies_owned_by_backend())
+        {
+            let _ = terminal.drain_replies();
+            let _ = terminal.take_reply_queue_overflowed();
+            return;
+        }
         if terminal.take_reply_queue_overflowed() {
             self.last_error = Some("terminal reply queue overflowed".to_owned());
             tracing::warn!(
@@ -1243,6 +1264,12 @@ impl<S: Session> SessionController<S> {
 }
 
 impl<S: Session> EncodedInputSink for SessionController<S> {
+    fn terminal_resizes_owned_by_backend(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.terminal_replies_owned_by_backend())
+    }
+
     fn begin_input_event(&mut self, keyboard_input: bool) {
         self.input_event_is_keyboard = keyboard_input;
     }
@@ -1372,6 +1399,22 @@ pub fn pump_session_events(
     session: &impl Session,
     terminal: &mut Terminal,
     maximum: usize,
+    observe: impl FnMut(PumpedSessionEvent<'_>),
+) -> PumpResult {
+    pump_session_events_with_resize(
+        session,
+        terminal,
+        maximum,
+        |terminal, dimensions| terminal.resize(dimensions).is_ok(),
+        observe,
+    )
+}
+
+fn pump_session_events_with_resize(
+    session: &impl Session,
+    terminal: &mut Terminal,
+    maximum: usize,
+    mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
     let mut output_received = false;
@@ -1383,6 +1426,10 @@ pub fn pump_session_events(
                     output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
                     terminal.ingest(bytes);
+                    if session.terminal_replies_owned_by_backend() {
+                        let _ = terminal.drain_replies();
+                        let _ = terminal.take_reply_queue_overflowed();
+                    }
                     ingested_bytes = ingested_bytes.saturating_add(bytes.len());
                     if ingested_bytes >= MAX_INGEST_BYTES_PER_FRAME {
                         return PumpResult {
@@ -1390,6 +1437,40 @@ pub fn pump_session_events(
                             output_received,
                         };
                     }
+                }
+                SessionEvent::RecoverySync(payload) => {
+                    observe(PumpedSessionEvent::Event(&event));
+                    match festerm_sessiond::decode_recovery_sync_command(payload) {
+                        Ok(command) => apply_recovery_sync(terminal, &command),
+                        Err(error) => {
+                            observe(PumpedSessionEvent::Event(&SessionEvent::Error(
+                                SessionError::new(
+                                    SessionErrorKind::Output,
+                                    format!("invalid persistent-session control: {error}"),
+                                ),
+                            )));
+                            return PumpResult {
+                                hit_limit: false,
+                                output_received,
+                            };
+                        }
+                    }
+                }
+                SessionEvent::ResizeApplied(size)
+                    if session.terminal_replies_owned_by_backend() =>
+                {
+                    let resized =
+                        Dimensions::new(usize::from(size.columns()), usize::from(size.rows()))
+                            .is_ok_and(|dimensions| resize(terminal, dimensions));
+                    if !resized {
+                        observe(PumpedSessionEvent::Event(&SessionEvent::Error(
+                            SessionError::new(
+                                SessionErrorKind::Resize,
+                                "persistent-session resize was rejected",
+                            ),
+                        )));
+                    }
+                    observe(PumpedSessionEvent::Event(&event));
                 }
                 _ => observe(PumpedSessionEvent::Event(&event)),
             },
@@ -1405,6 +1486,25 @@ pub fn pump_session_events(
         hit_limit: true,
         output_received,
     }
+}
+
+fn apply_recovery_sync(terminal: &mut Terminal, command: &festerm_sessiond::RecoverySyncCommand) {
+    match command {
+        festerm_sessiond::RecoverySyncCommand::SetScrollbackLimit { limit_bytes } => {
+            terminal.set_scrollback_limit(*limit_bytes);
+        }
+        festerm_sessiond::RecoverySyncCommand::SetColorScheme(scheme) => {
+            terminal.set_color_scheme(*scheme);
+        }
+        festerm_sessiond::RecoverySyncCommand::MirrorBytes(bytes) => {
+            terminal.ingest(bytes);
+        }
+        festerm_sessiond::RecoverySyncCommand::ResetToInitialState => {
+            terminal.reset_to_initial_state();
+        }
+    }
+    let _ = terminal.drain_replies();
+    let _ = terminal.take_reply_queue_overflowed();
 }
 
 pub fn seed_session_failure(terminal: &mut Terminal, error: &str) {
@@ -1453,6 +1553,7 @@ pub(crate) mod fake {
         events: Mutex<VecDeque<SessionEvent>>,
         input_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         sent: Mutex<Vec<Vec<u8>>>,
+        backend_owned_terminal: bool,
     }
 
     impl FakeSession {
@@ -1468,6 +1569,7 @@ pub(crate) mod fake {
                 events: Mutex::new(events.into_iter().collect()),
                 input_results: Mutex::new(input_results.into_iter().collect()),
                 sent: Mutex::new(Vec::new()),
+                backend_owned_terminal: false,
             }
         }
 
@@ -1478,9 +1580,18 @@ pub(crate) mod fake {
         pub fn sent(&self) -> Vec<Vec<u8>> {
             self.sent.lock().expect("fake session sent lock").clone()
         }
+
+        pub fn with_backend_owned_terminal(mut self) -> Self {
+            self.backend_owned_terminal = true;
+            self
+        }
     }
 
     impl Session for FakeSession {
+        fn terminal_replies_owned_by_backend(&self) -> bool {
+            self.backend_owned_terminal
+        }
+
         fn id(&self) -> festerm_session::SessionId {
             festerm_session::SessionId::next()
         }
@@ -2195,6 +2306,47 @@ mod tests {
         assert_eq!(scanner.observe(b"6n"), 1);
         assert_eq!(scanner.observe(b"\x1b[16n"), 0);
         assert_eq!(scanner.observe(b"\x1b[6n"), 1);
+    }
+
+    #[test]
+    fn authoritative_resize_and_output_are_applied_in_wire_order_without_duplicate_replies() {
+        let session = FakeSession::new([
+            SessionEvent::Output(b"before\x1b[6n".to_vec()),
+            SessionEvent::ResizeApplied(TerminalSize::new(12, 4).unwrap()),
+            SessionEvent::Output(b"\x1b[4;12HX\x1b[6n".to_vec()),
+        ])
+        .with_backend_owned_terminal();
+        let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
+        let mut resized = false;
+        let result = pump_session_events_with_resize(
+            &session,
+            &mut terminal,
+            10,
+            |terminal, dimensions| {
+                assert_eq!(terminal.dimensions(), Dimensions::new(20, 6).unwrap());
+                assert_eq!(terminal.cell_ref(0, 0).unwrap().text(), "b");
+                resized = true;
+                terminal.resize(dimensions).is_ok()
+            },
+            |_| {},
+        );
+        assert!(resized);
+        assert!(!result.hit_limit);
+        assert_eq!(terminal.cell_ref(11, 3).unwrap().text(), "X");
+        assert!(session.sent().is_empty());
+    }
+
+    #[test]
+    fn malformed_authoritative_control_is_reported() {
+        let session = FakeSession::new([SessionEvent::RecoverySync(vec![255])]);
+        let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
+        let mut reported = false;
+        pump_session_events(&session, &mut terminal, 10, |event| {
+            if let PumpedSessionEvent::Event(SessionEvent::Error(_)) = event {
+                reported = true;
+            }
+        });
+        assert!(reported);
     }
 
     #[test]

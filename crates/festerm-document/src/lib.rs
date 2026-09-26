@@ -25,6 +25,7 @@ pub use bounds::{DocumentBounds, RefusalReason};
 pub use diff::{DiffLine, DiffSide, LineChange, LineComparison, LineComparisonRow};
 pub use identity::{
     DocumentId, DocumentKey, DocumentOrigin, LocalOrigin, OriginError, RemoteOrigin, RemoteOwner,
+    UntitledOrigin,
 };
 pub use search::{literal_word_pattern, CompiledSearch, MatchRange, SearchError, SearchOutcome};
 pub use status::{

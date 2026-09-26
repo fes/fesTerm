@@ -8,6 +8,28 @@ things. The tables describe the current encoder, including its limitations.
 
 ## Settings editor and recovery
 
+### Terminal mouse override
+
+**Shift+right-click** opens fesTerm's context menu even when a local or SSH
+terminal program has enabled mouse reporting. Plain right-click continues to
+belong to that program; without mouse reporting it opens the local menu.
+**Shift+drag** selects terminal text instead of forwarding the drag. The
+override is chosen on press and retained through release, even if Shift changes
+mid-gesture. Available menu actions depend on selection, clipboard, and session
+state; opening the menu never sends half a click to the terminal.
+
+These fixed mouse conventions are also explained in Settings under
+**Terminal mouse**, separately from configurable keyboard bindings.
+
+Inside the **Open File** picker, **Ctrl+L** (**Command+L** on macOS) focuses the
+**File or folder path** field. Paste an absolute path, a path relative to the
+picker's current folder, or `~/...`, and press Enter or **Open path**. A directory
+navigates; a regular file opens. Matching surrounding quotes are accepted,
+but shell variables, command substitutions, and other users' home aliases are
+not expanded. Errors preserve the typed path for correction.
+
+### Keyboard binding editor
+
 Open **Settings → Keyboard bindings**, or press the fixed
 **Ctrl+Shift+F12** recovery chord to open Settings and focus the searchable
 editor. Actions are grouped under the scope they apply in and can be narrowed

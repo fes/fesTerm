@@ -5,7 +5,7 @@ use std::{
 };
 
 use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
-use festerm_core::{ContentPosition, InputEventOutcome, MouseTrackingMode, Terminal};
+use festerm_core::{ContentPosition, Dimensions, InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
@@ -33,7 +33,7 @@ const TERMINAL_ZOOM_STEP: f32 = 1.0;
 
 /// Application-owned terminal capabilities that affect local viewport
 /// commands without exposing a session backend to the presentation crate.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TerminalViewOptions {
     /// The current session can accept a paste through its ordered input path.
     pub paste_available: bool,
@@ -62,6 +62,12 @@ pub struct TerminalViewOptions {
     /// unaware of `festerm-config`'s `ScrollSpeedPreference` clickstop names
     /// and only sees the resulting multiplier (feature request #67).
     pub scroll_speed_multiplier: f32,
+    /// One application-owned action that belongs to the terminal context
+    /// menu this frame, such as opening a detected path.
+    pub context_menu_action: Option<TerminalContextMenuAction>,
+    /// Whether the application wants terminal-history snapshot actions in the
+    /// local context menu when no selection is active.
+    pub history_snapshot_actions: bool,
 }
 
 impl Default for TerminalViewOptions {
@@ -72,8 +78,32 @@ impl Default for TerminalViewOptions {
             keyboard_input_enabled: true,
             defer_paste_to_application: false,
             scroll_speed_multiplier: 1.0,
+            context_menu_action: None,
+            history_snapshot_actions: false,
         }
     }
+}
+
+/// One application-owned terminal context-menu action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalContextMenuAction {
+    pub label: String,
+    pub preview: String,
+    pub enabled: bool,
+    pub disabled_reason: Option<String>,
+}
+
+/// Frozen content hit that opened the current context menu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalContextTarget {
+    pub content_position: ContentPosition,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalHistoryAction {
+    OpenInEditor,
+    SaveAs,
 }
 
 /// Diagnostics captured by the UI path without recording terminal content.
@@ -130,6 +160,8 @@ pub struct TerminalView {
     /// Explicit OSC 8 target captured under the pointer when the local menu
     /// opens. It remains stable while the pointer moves through the popup.
     context_link: Option<Arc<str>>,
+    context_target: Option<TerminalContextTarget>,
+    next_context_generation: u64,
     primary_link_gesture: Option<(Arc<str>, CellPosition)>,
     last_rendered_frame: Option<u64>,
     secondary_gesture: SecondaryGestureOwnership,
@@ -142,7 +174,10 @@ pub struct TerminalView {
     scrollbar_dragging: bool,
     pending_paste_requests: VecDeque<String>,
     pending_clipboard_read: bool,
+    pending_find_request: bool,
     pending_link_requests: VecDeque<Arc<str>>,
+    pending_context_action_request: bool,
+    pending_history_actions: VecDeque<TerminalHistoryAction>,
     /// Fractional scroll rows left over from the last wheel event after
     /// applying `scroll_speed_multiplier`, carried into the next event so a
     /// slow clickstop (e.g. "Very slow", well under `1.0`) actually slows
@@ -407,10 +442,29 @@ impl TerminalView {
         std::mem::take(&mut self.pending_clipboard_read)
     }
 
+    pub fn take_find_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_find_request)
+    }
+
     /// Takes explicit OSC 8 activation intents for application-owned
     /// validation and OS launch policy.
     pub fn take_link_requests(&mut self) -> Vec<Arc<str>> {
         self.pending_link_requests.drain(..).collect()
+    }
+
+    pub fn take_context_action_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_context_action_request)
+    }
+
+    pub const fn context_menu_target(&self) -> Option<TerminalContextTarget> {
+        self.context_target
+    }
+
+    /// Takes terminal-history snapshot intents chosen from the local context
+    /// menu. They stay application-owned so the same commands can also come
+    /// from the command palette.
+    pub fn take_history_actions(&mut self) -> Vec<TerminalHistoryAction> {
+        self.pending_history_actions.drain(..).collect()
     }
 
     /// Scrolls history so a terminal-search match becomes visible, used by
@@ -444,6 +498,77 @@ impl TerminalView {
     /// into their own chrome (e.g. the application status bar).
     pub fn show(&mut self, ui: &mut Ui, terminal: &mut Terminal, sink: &mut impl EncodedInputSink) {
         self.show_with_options(ui, terminal, sink, TerminalViewOptions::default());
+    }
+
+    pub fn reset_recovery_layout(&mut self) {
+        self.resize = ResizeTracker::default();
+        self.selection.clear();
+        self.pointer = TerminalPointerState::default();
+        self.primary_link_gesture = None;
+    }
+
+    pub fn apply_terminal_resize(
+        &mut self,
+        terminal: &mut Terminal,
+        dimensions: Dimensions,
+    ) -> ResizeOutcome {
+        let stats = terminal.scrollback_stats();
+        let history_rows = stats.physical_rows();
+        let alternate = terminal.modes().alternate_screen();
+        let first_row = stats
+            .content_row_origin()
+            .saturating_add(history_rows.saturating_sub(self.history.offset_rows) as u64);
+        let mut positions = Vec::new();
+        let top = (!alternate && self.history.offset_rows > 0).then(|| {
+            positions.push(ContentPosition {
+                column: 0,
+                absolute_row: first_row,
+            });
+            positions.len() - 1
+        });
+        let selection = (!alternate)
+            .then(|| self.selection.content_endpoints())
+            .flatten()
+            .map(|(anchor, head, active)| {
+                let index = positions.len();
+                positions.extend([anchor, head]);
+                (index, active)
+            });
+        let (outcome, mapped) = self
+            .resize
+            .apply_dimensions_with_content_positions(terminal, dimensions, &positions);
+        if matches!(outcome, ResizeOutcome::Resized(_)) {
+            self.pointer = TerminalPointerState::default();
+            self.primary_link_gesture = None;
+            let mapped_top = top
+                .and_then(|index| mapped.get(index).copied().flatten())
+                .and_then(|position| {
+                    position
+                        .absolute_row
+                        .checked_sub(terminal.scrollback_stats().content_row_origin())
+                        .and_then(|row| usize::try_from(row).ok())
+                });
+            self.history.reflowed(
+                history_rows,
+                terminal.scrollback_stats().physical_rows(),
+                mapped_top,
+            );
+            if alternate {
+                self.selection.clamp_rectangular(terminal.dimensions());
+            } else if let Some((index, active)) = selection {
+                if let Some((anchor, head)) = mapped
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .zip(mapped.get(index + 1).copied().flatten())
+                {
+                    self.selection.remap_content(anchor, head, active);
+                } else {
+                    self.selection.clear();
+                }
+            }
+        }
+        outcome
     }
 
     pub fn show_with_options(
@@ -532,70 +657,19 @@ impl TerminalView {
         };
         let calculated = dimensions_from_viewport(viewport, metrics);
         self.diagnostics.calculated_dimensions = calculated;
-        let stats_before_resize = terminal.scrollback_stats();
-        let history_rows_before_resize = stats_before_resize.physical_rows();
-        let alternate_screen = terminal.modes().alternate_screen();
-        let old_first_content_row = stats_before_resize.content_row_origin().saturating_add(
-            history_rows_before_resize.saturating_sub(self.history.offset_rows) as u64,
-        );
-        let mut positions = Vec::new();
-        let top_position_index = (!alternate_screen && self.history.offset_rows > 0).then(|| {
-            positions.push(ContentPosition {
-                column: 0,
-                absolute_row: old_first_content_row,
-            });
-            positions.len() - 1
-        });
-        let selection_position_indices = (!alternate_screen)
-            .then(|| self.selection.content_endpoints())
-            .flatten()
-            .map(|(anchor, head, active)| {
-                let anchor_index = positions.len();
-                positions.push(anchor);
-                let head_index = positions.len();
-                positions.push(head);
-                (anchor_index, head_index, active)
-            });
-        let (resize_outcome, mapped_positions) = self
-            .resize
-            .apply_viewport_with_content_positions(terminal, viewport, metrics, &positions);
-        if matches!(resize_outcome, ResizeOutcome::Resized(_)) {
-            self.pointer = TerminalPointerState::default();
-            self.primary_link_gesture = None;
-            let mapped_top_content_row = top_position_index
-                .and_then(|index| mapped_positions.get(index).copied().flatten())
-                .and_then(|position| {
-                    let origin = terminal.scrollback_stats().content_row_origin();
-                    position
-                        .absolute_row
-                        .checked_sub(origin)
-                        .and_then(|row| usize::try_from(row).ok())
-                });
-            self.history.reflowed(
-                history_rows_before_resize,
-                terminal.scrollback_stats().physical_rows(),
-                mapped_top_content_row,
-            );
-            if alternate_screen {
-                self.selection.clamp_rectangular(terminal.dimensions());
-            } else if let Some((anchor_index, head_index, active)) = selection_position_indices {
-                let mapped = mapped_positions
-                    .get(anchor_index)
-                    .copied()
-                    .flatten()
-                    .zip(mapped_positions.get(head_index).copied().flatten());
-                if let Some((anchor, head)) = mapped {
-                    self.selection.remap_content(anchor, head, active);
-                } else {
-                    self.selection.clear();
-                }
+        if let Some(dimensions) = calculated {
+            let requested = if sink.terminal_resizes_owned_by_backend() {
+                self.resize.request(dimensions)
+            } else {
+                matches!(
+                    self.apply_terminal_resize(terminal, dimensions),
+                    ResizeOutcome::Resized(_)
+                )
+            };
+            if requested {
+                sink.record_terminal_resize(dimensions);
+                ui.ctx().request_repaint_after(TERMINAL_RESIZE_DEBOUNCE);
             }
-            sink.record_terminal_resize(terminal.dimensions());
-            // Guarantees the sink's debounced resize (see
-            // `TERMINAL_RESIZE_DEBOUNCE`) actually gets flushed even if the
-            // window then sits idle and nothing else would otherwise
-            // schedule a later frame.
-            ui.ctx().request_repaint_after(TERMINAL_RESIZE_DEBOUNCE);
         }
 
         let (viewport_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
@@ -1020,6 +1094,14 @@ impl TerminalView {
         if let Some(position) = local_context_release {
             let snapshot =
                 TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+            self.context_target =
+                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
+                    .and_then(|cell| snapshot.content_position(cell))
+                    .map(|content_position| TerminalContextTarget {
+                        content_position,
+                        generation: self.next_context_generation,
+                    });
+            self.next_context_generation = self.next_context_generation.saturating_add(1);
             self.context_link =
                 cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
                     .and_then(|cell| snapshot.cell(cell.column, cell.row))
@@ -1030,34 +1112,47 @@ impl TerminalView {
             &self.selection,
         )
         .filter(|text| !text.is_empty());
+        let show_history_actions = options.history_snapshot_actions && selected_text.is_none();
+        let show_find = options.terminal_input_enabled;
         let menu_has_items = options.terminal_input_enabled
-            && (self.context_link.is_some() || selected_text.is_some() || options.paste_available);
+            && (self.context_target.is_some()
+                || self.context_link.is_some()
+                || selected_text.is_some()
+                || options.paste_available
+                || show_find
+                || show_history_actions);
         let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
         let menu = Popup::context_menu(&response)
             .open_memory(set_open)
             .show(|ui| {
                 style_context_menu(ui);
-                if let Some(text) = selected_text.clone() {
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(text);
-                        self.selection.clear();
+                let mut rendered_items = false;
+                if let Some(action) = options.context_menu_action.as_ref() {
+                    ui.label(egui::RichText::new(&action.preview).small().monospace())
+                        .on_hover_text(&action.preview);
+                    let clicked = if action.enabled {
+                        ui.button(&action.label).clicked()
+                    } else {
+                        let response = ui
+                            .add_enabled(false, egui::Button::new(&action.label))
+                            .on_hover_text(action.disabled_reason.as_deref().unwrap_or_default());
+                        response.clicked()
+                    };
+                    rendered_items = true;
+                    if action.enabled && clicked {
+                        self.pending_context_action_request = true;
                         ui.close();
                     }
+                } else if self.context_target.is_some()
+                    && self.context_link.is_none()
+                    && selected_text.is_none()
+                    && !options.paste_available
+                {
+                    ui.add_enabled(false, egui::Button::new("Resolving path…"));
+                    rendered_items = true;
                 }
-                if options.paste_available && ui.button("Paste").clicked() {
-                    response.request_focus();
-                    if options.defer_paste_to_application {
-                        self.pending_clipboard_read = true;
-                    } else {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    }
-                    ui.close();
-                }
-                // Find in terminal belongs immediately above this separator
-                // once search exists. Do not render an inert placeholder.
                 if let Some(link) = self.context_link.clone() {
-                    if selected_text.is_some() || options.paste_available {
+                    if rendered_items {
                         ui.separator();
                     }
                     ui.label(egui::RichText::new(link.as_ref()).small().monospace())
@@ -1070,9 +1165,66 @@ impl TerminalView {
                         ui.ctx().copy_text(link.to_string());
                         ui.close();
                     }
+                    rendered_items = true;
+                }
+                if let Some(text) = selected_text.clone() {
+                    if rendered_items {
+                        ui.separator();
+                    }
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(text);
+                        self.selection.clear();
+                        ui.close();
+                    }
+                    rendered_items = true;
+                }
+                if options.paste_available {
+                    if rendered_items {
+                        ui.separator();
+                    }
+                    if ui.button("Paste").clicked() {
+                        response.request_focus();
+                        if options.defer_paste_to_application {
+                            self.pending_clipboard_read = true;
+                        } else {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                        }
+                        ui.close();
+                    }
+                    rendered_items = true;
+                }
+                if show_find {
+                    if rendered_items {
+                        ui.separator();
+                    }
+                    if ui.button("Find in Terminal").clicked() {
+                        self.pending_find_request = true;
+                        ui.close();
+                    }
+                    rendered_items = true;
+                }
+                if show_history_actions {
+                    if rendered_items {
+                        ui.separator();
+                    }
+                    if ui.button("Open Terminal History in Editor").clicked() {
+                        self.pending_history_actions
+                            .push_back(TerminalHistoryAction::OpenInEditor);
+                        ui.close();
+                    }
+                    if ui.button("Save Terminal History As…").clicked() {
+                        self.pending_history_actions
+                            .push_back(TerminalHistoryAction::SaveAs);
+                        ui.close();
+                    }
                 }
             });
         let context_menu_open = menu.is_some();
+        if !context_menu_open {
+            self.context_link = None;
+            self.context_target = None;
+        }
         if options.defer_paste_to_application {
             // `response.has_focus()`/`clicked()` each read the egui context
             // themselves (via `Context::input`/`Context::memory`), so they
@@ -1627,6 +1779,46 @@ mod tests {
         assert!(first.reset_zoom());
         assert_eq!(first.font_size_points(), 14.0);
         assert!(!first.reset_zoom());
+    }
+
+    #[test]
+    fn backend_owned_resize_waits_for_acknowledgement_and_does_not_repeat_requests() {
+        #[derive(Default)]
+        struct BackendSink(Vec<Dimensions>);
+        impl EncodedInputSink for BackendSink {
+            fn record_encoded_input(&mut self, _: &[u8]) {}
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+            fn record_terminal_resize(&mut self, dimensions: Dimensions) {
+                self.0.push(dimensions);
+            }
+        }
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, (view, terminal, sink): &mut (TerminalView, Terminal, BackendSink)| {
+                    view.show(ui, terminal, sink);
+                },
+                (
+                    TerminalView::default(),
+                    terminal(20, 6),
+                    BackendSink::default(),
+                ),
+            );
+        harness.run();
+        let (view, terminal, sink) = harness.state_mut();
+        let requested = sink.0[0];
+        assert_ne!(requested, terminal.dimensions());
+        assert_eq!(terminal.dimensions(), Dimensions::new(20, 6).unwrap());
+        assert_eq!(sink.0.len(), 1);
+        assert!(matches!(
+            view.apply_terminal_resize(terminal, requested),
+            ResizeOutcome::Resized(_)
+        ));
+        harness.run();
+        assert_eq!(harness.state().1.dimensions(), requested);
+        assert_eq!(harness.state().2 .0.len(), 1);
     }
 
     #[test]
@@ -2218,32 +2410,164 @@ mod tests {
     }
 
     #[test]
-    fn shift_right_click_overrides_tui_mouse_reporting_without_leaking_bytes() {
-        let mut state = HeadlessViewState::new();
-        state.terminal.ingest(b"\x1b[?1000h");
+    fn terminal_context_menu_can_queue_history_snapshot_actions_without_pty_input() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            history_snapshot_actions: true,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Find in Terminal").is_some());
+        assert!(harness
+            .query_by_label("Open Terminal History in Editor")
+            .is_some());
+        assert!(harness
+            .query_by_label("Save Terminal History As…")
+            .is_some());
+        harness
+            .get_by_label("Open Terminal History in Editor")
+            .click();
+        harness.run();
+
+        assert_eq!(
+            harness.state_mut().view.take_history_actions(),
+            vec![TerminalHistoryAction::OpenInEditor]
+        );
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_can_request_find_without_pty_input() {
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(
                 |ui, state: &mut HeadlessViewState| {
                     state.view.show(ui, &mut state.terminal, &mut state.sink);
                 },
-                state,
+                HeadlessViewState::new(),
             );
         harness.run();
 
         harness.get_by_label("Terminal viewport").click_secondary();
         harness.run();
-        assert!(harness.query_by_label("Paste").is_none());
-        assert!(!harness.state().sink.0.is_empty());
-        let reports_before_override = harness.state().sink.0.len();
-
-        harness
-            .get_by_label("Terminal viewport")
-            .click_button_modifiers(egui::PointerButton::Secondary, egui::Modifiers::SHIFT);
+        harness.get_by_label("Find in Terminal").click();
         harness.run();
 
-        assert!(harness.query_by_label("Paste").is_some());
-        assert_eq!(harness.state().sink.0.len(), reports_before_override);
+        assert!(harness.state_mut().view.take_find_request());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_history_snapshot_actions_hide_while_text_is_selected() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"selectable");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            history_snapshot_actions: true,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("rendered grid");
+        let start = grid.left_top() + egui::vec2(2.0, 2.0);
+        let end = start + egui::vec2(48.0, 0.0);
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerMoved(end));
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Copy").is_some());
+        assert!(harness
+            .query_by_label("Open Terminal History in Editor")
+            .is_none());
+        assert!(harness
+            .query_by_label("Save Terminal History As…")
+            .is_none());
+    }
+
+    #[test]
+    fn shift_right_click_overrides_tui_mouse_reporting_without_leaking_bytes() {
+        for mode in [b"\x1b[?1000h".as_slice(), b"\x1b[?1002h", b"\x1b[?1003h"] {
+            for encoding in [b"".as_slice(), b"\x1b[?1006h", b"\x1b[?1015h"] {
+                let mut state = HeadlessViewState::new();
+                state.terminal.ingest(mode);
+                state.terminal.ingest(encoding);
+                let mut harness = Harness::builder()
+                    .with_size(Vec2::new(800.0, 600.0))
+                    .build_ui_state(
+                        |ui, state: &mut HeadlessViewState| {
+                            state.view.show(ui, &mut state.terminal, &mut state.sink);
+                        },
+                        state,
+                    );
+                harness.run();
+
+                harness.get_by_label("Terminal viewport").click_secondary();
+                harness.run();
+                assert!(harness.query_by_label("Paste").is_none());
+                assert!(!harness.state().sink.0.is_empty());
+                let reports_before_override = harness.state().sink.0.len();
+
+                let pos = harness.get_by_label("Terminal viewport").rect().center();
+                // Avoid synthesizing an unmodified move before the press: any-motion
+                // tracking legitimately forwards that separate event.
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::SHIFT,
+                    });
+                }
+                harness.run();
+
+                assert!(harness.query_by_label("Paste").is_some());
+                assert_eq!(harness.state().sink.0.len(), reports_before_override);
+            }
+        }
     }
 
     #[test]
@@ -2428,6 +2752,8 @@ mod tests {
                             keyboard_input_enabled: true,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
+                            context_menu_action: None,
+                            history_snapshot_actions: false,
                         },
                     );
                 },
@@ -2467,6 +2793,8 @@ mod tests {
                             keyboard_input_enabled: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
+                            context_menu_action: None,
+                            history_snapshot_actions: false,
                         },
                     );
                 },
@@ -2537,6 +2865,68 @@ mod tests {
 
         assert!(harness.query_by_label("Copy").is_some());
         assert!(harness.state().view.selection().range().is_some());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_exposes_application_owned_action_requests() {
+        struct State {
+            terminal: Terminal,
+            view: TerminalView,
+            sink: Sink,
+        }
+        let state = State {
+            terminal: terminal(80, 24),
+            view: TerminalView::default(),
+            sink: Sink::default(),
+        };
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            paste_available: false,
+                            context_menu_action: Some(TerminalContextMenuAction {
+                                label: "Open in viewer".to_owned(),
+                                preview: "/tmp/guide.md".to_owned(),
+                                enabled: true,
+                                disabled_reason: None,
+                            }),
+                            history_snapshot_actions: true,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Open in viewer").is_some());
+
+        harness.get_by_label("Open in viewer").click();
+        harness.run();
+
+        assert!(harness.state_mut().view.take_context_action_request());
+        assert!(harness.state_mut().view.take_history_actions().is_empty());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        harness
+            .get_by_label("Open Terminal History in Editor")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().view.take_history_actions(),
+            vec![TerminalHistoryAction::OpenInEditor]
+        );
+        assert!(!harness.state_mut().view.take_context_action_request());
         assert!(harness.state().sink.0.is_empty());
     }
 

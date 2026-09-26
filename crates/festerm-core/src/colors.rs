@@ -12,9 +12,10 @@
 //! precisely so a reported color and a painted color cannot drift apart.
 
 use crate::cell::Color;
+use serde::{Deserialize, Serialize};
 
 /// A fully resolved color, with no palette indirection left in it.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Rgb {
     pub red: u8,
     pub green: u8,
@@ -49,7 +50,7 @@ impl Rgb {
 /// way. The application still injects its own values through
 /// [`crate::Terminal::set_color_scheme`], so a future theme change stays
 /// correct without editing this file.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ColorScheme {
     foreground: Rgb,
     background: Rgb,

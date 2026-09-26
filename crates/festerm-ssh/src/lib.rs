@@ -11,7 +11,7 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
@@ -210,6 +210,34 @@ impl SshAuthentication {
     /// already been verified.
     pub const fn interactive() -> Self {
         Self::Interactive
+    }
+
+    /// Duplicates this credential source for a second SSH/SFTP transport in
+    /// the same process without exposing its secret material to callers.
+    pub fn duplicate_for_transport(&self) -> Self {
+        match self {
+            Self::Password(_) => Self::Interactive,
+            Self::StoredPassword(authentication) => {
+                Self::StoredPassword(StoredPasswordAuthentication {
+                    store: Arc::clone(&authentication.store),
+                    reference: authentication.reference.duplicate_for_transport(),
+                })
+            }
+            Self::PublicKey(key) => Self::PublicKey(key.clone()),
+            Self::Certificate(authentication) => {
+                Self::Certificate(SshCertificateAuthentication::new(
+                    authentication.key.clone(),
+                    authentication.certificate.clone(),
+                ))
+            }
+            Self::StoredPrivateKey(authentication) => {
+                Self::StoredPrivateKey(StoredPrivateKeyAuthentication {
+                    store: Arc::clone(&authentication.store),
+                    reference: authentication.reference.duplicate_for_transport(),
+                })
+            }
+            Self::Interactive => Self::Interactive,
+        }
     }
 
     fn into_worker_authentication(self) -> WorkerAuthentication {
@@ -442,6 +470,7 @@ impl fmt::Debug for SshKeyPassphrase {
 /// This type intentionally has no getter, `Clone`, or derived `Debug`
 /// implementation. It retains only the parsed private key; input encodings and
 /// encrypted-key passphrases are not retained.
+#[derive(Clone)]
 pub struct SshPrivateKey {
     key: Arc<russh::keys::PrivateKey>,
 }
@@ -530,6 +559,7 @@ impl std::error::Error for SshPrivateKeyError {}
 ///
 /// This type intentionally has no getter or derived `Debug` implementation.
 /// The parsed certificate is retained only in memory for the worker.
+#[derive(Clone)]
 pub struct SshCertificate {
     certificate: Arc<OpenSshCertificate>,
 }
@@ -1734,6 +1764,12 @@ impl PasswordDecisionWaiter {
 enum WorkerCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
+    ReadRemoteFile {
+        path: String,
+        max_bytes: usize,
+        generation: u64,
+        result_sender: SyncSender<Result<RemoteFileSnapshot, RemoteFileReadError>>,
+    },
     ApplyPortForwards(Vec<RequestedSshPortForward>),
     AddPortForward(RequestedSshPortForward),
     RemovePortForward(PortForwardBindingKey),
@@ -1762,12 +1798,19 @@ struct WorkerShared {
     reconnect_requested: AtomicBool,
     liveness_check_requested: AtomicBool,
     shutdown_requested: AtomicBool,
+    verified_host_key_fingerprint: Mutex<Option<String>>,
+    transport_generation: AtomicU64,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
 }
 
 impl WorkerShared {
+    fn begin_transport(&self) {
+        self.transport_generation.fetch_add(1, Ordering::AcqRel);
+        self.clear_verified_host_key_fingerprint();
+    }
+
     fn desired_terminal_size(&self) -> TerminalSize {
         *self
             .desired_terminal_size
@@ -1857,6 +1900,27 @@ impl WorkerShared {
 
     fn shutdown_requested(&self) -> bool {
         self.shutdown_requested.load(Ordering::Acquire)
+    }
+
+    fn verified_host_key_fingerprint(&self) -> Option<String> {
+        self.verified_host_key_fingerprint
+            .lock()
+            .expect("SSH verified fingerprint lock is not poisoned")
+            .clone()
+    }
+
+    fn set_verified_host_key_fingerprint(&self, fingerprint: String) {
+        *self
+            .verified_host_key_fingerprint
+            .lock()
+            .expect("SSH verified fingerprint lock is not poisoned") = Some(fingerprint);
+    }
+
+    fn clear_verified_host_key_fingerprint(&self) {
+        *self
+            .verified_host_key_fingerprint
+            .lock()
+            .expect("SSH verified fingerprint lock is not poisoned") = None;
     }
 
     fn metrics(&self) -> SessionMetrics {
@@ -2003,6 +2067,8 @@ impl SshWorkerFoundation {
             reconnect_requested: AtomicBool::new(false),
             liveness_check_requested: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
+            verified_host_key_fingerprint: Mutex::new(None),
+            transport_generation: AtomicU64::new(0),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: event_capacity,
                 ..SessionMetrics::default()
@@ -2036,6 +2102,19 @@ impl SshWorkerFoundation {
 
     fn id(&self) -> SessionId {
         self.shared.id
+    }
+
+    fn verified_host_key_fingerprint(&self) -> Option<String> {
+        self.shared.verified_host_key_fingerprint()
+    }
+
+    fn live_remote_file_requestor(&self) -> LiveRemoteFileRequestor {
+        LiveRemoteFileRequestor {
+            generation: self.shared.transport_generation.load(Ordering::Acquire),
+            session_id: self.id(),
+            shared: Arc::clone(&self.shared),
+            command_sender: self.command_sender.clone(),
+        }
     }
 
     fn lifecycle(&self) -> SessionLifecycle {
@@ -2504,6 +2583,208 @@ impl SftpWorkingDirectories {
     }
 }
 
+const REMOTE_FILE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_REMOTE_FILE_READS: usize = 2;
+
+#[derive(Default)]
+struct RemoteFileReads {
+    tasks: tokio::task::JoinSet<()>,
+}
+
+impl RemoteFileReads {
+    fn reap(&mut self) {
+        while let Some(result) = self.tasks.try_join_next() {
+            if let Err(error) = result {
+                eprintln!("fesTerm remote file task failed: {error}");
+            }
+        }
+    }
+
+    fn start(
+        &mut self,
+        handle: Arc<russh::client::Handle<SshClientHandler>>,
+        shared: Arc<WorkerShared>,
+        path: String,
+        max_bytes: usize,
+        generation: u64,
+        result_sender: SyncSender<Result<RemoteFileSnapshot, RemoteFileReadError>>,
+    ) {
+        self.reap();
+        if generation != shared.transport_generation.load(Ordering::Acquire) {
+            let _ = result_sender.send(Err(RemoteFileReadError::Closed));
+            return;
+        }
+        if self.tasks.len() >= MAX_REMOTE_FILE_READS {
+            let _ = result_sender.send(Err(RemoteFileReadError::QueueFull));
+            return;
+        }
+        self.tasks.spawn(async move {
+            let result = tokio::time::timeout(
+                REMOTE_FILE_READ_TIMEOUT,
+                read_remote_file_snapshot_from_handle(handle.as_ref(), &path, max_bytes),
+            )
+            .await
+            .unwrap_or(Err(RemoteFileReadError::TimedOut));
+            let result = if generation != shared.transport_generation.load(Ordering::Acquire)
+                || shared.lifecycle() != SessionLifecycle::Running
+            {
+                Err(RemoteFileReadError::Closed)
+            } else {
+                result
+            };
+            let _ = result_sender.send(result);
+        });
+    }
+}
+
+async fn stop_handle_after_remote_reads(
+    handle: Arc<russh::client::Handle<SshClientHandler>>,
+    reads: &mut RemoteFileReads,
+    shared: &WorkerShared,
+) -> Result<ShutdownResult, SessionError> {
+    reads.tasks.shutdown().await;
+    let handle = Arc::try_unwrap(handle)
+        .unwrap_or_else(|_| panic!("background channel tasks must release the SSH handle"));
+    stop_handle(handle, shared).await
+}
+
+/// One bounded remote-file snapshot captured from a live SSH/SFTP transport.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteFileSnapshot {
+    metadata: SftpPathMetadata,
+    bytes: Vec<u8>,
+}
+
+impl RemoteFileSnapshot {
+    pub fn metadata(&self) -> &SftpPathMetadata {
+        &self.metadata
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn into_parts(self) -> (SftpPathMetadata, Vec<u8>) {
+        (self.metadata, self.bytes)
+    }
+}
+
+/// Failure to capture a bounded remote-file snapshot from a live transport.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RemoteFileReadError {
+    NotRunning,
+    QueueFull,
+    Closed,
+    TimedOut,
+    InvalidRequest,
+    Missing {
+        path: String,
+    },
+    NotFile {
+        path: String,
+        file_type: SftpEntryType,
+    },
+    Sftp(SftpSessionError),
+}
+
+impl fmt::Display for RemoteFileReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotRunning => formatter.write_str("the remote session is not running"),
+            Self::QueueFull => formatter.write_str("the remote session is busy"),
+            Self::Closed => formatter.write_str("the remote session is closed"),
+            Self::TimedOut => formatter.write_str("the remote file request timed out"),
+            Self::InvalidRequest => {
+                formatter.write_str("the remote file request exceeds its bounds")
+            }
+            Self::Missing { path } => write!(formatter, "remote path does not exist: {path}"),
+            Self::NotFile { path, .. } => write!(formatter, "remote path is not a file: {path}"),
+            Self::Sftp(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for RemoteFileReadError {}
+
+/// Cloneable request handle for reading remote files through one live session.
+#[derive(Clone)]
+pub struct LiveRemoteFileRequestor {
+    generation: u64,
+    session_id: SessionId,
+    shared: Arc<WorkerShared>,
+    command_sender: SyncSender<WorkerCommand>,
+}
+
+impl LiveRemoteFileRequestor {
+    pub fn transport_generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn is_current(&self) -> bool {
+        self.generation == self.shared.transport_generation.load(Ordering::Acquire)
+            && self.shared.lifecycle() == SessionLifecycle::Running
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    pub fn verified_host_key_fingerprint(&self) -> Option<String> {
+        self.is_current()
+            .then(|| self.shared.verified_host_key_fingerprint())
+            .flatten()
+    }
+
+    pub fn read_remote_file_snapshot(
+        &self,
+        path: impl Into<String>,
+        max_bytes: usize,
+    ) -> Result<RemoteFileSnapshot, RemoteFileReadError> {
+        if !self.is_current() {
+            return Err(RemoteFileReadError::NotRunning);
+        }
+        let path = path.into();
+        if !path.starts_with('/')
+            || path.contains('\0')
+            || path.len() > 32 * 1024
+            || max_bytes == 0
+            || max_bytes > 4 * 1024 * 1024
+        {
+            return Err(RemoteFileReadError::InvalidRequest);
+        }
+        let (result_sender, result_receiver) = mpsc::sync_channel(1);
+        match self.command_sender.try_send(WorkerCommand::ReadRemoteFile {
+            path,
+            max_bytes,
+            generation: self.generation,
+            result_sender,
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return Err(RemoteFileReadError::QueueFull),
+            Err(TrySendError::Disconnected(_)) => return Err(RemoteFileReadError::Closed),
+        }
+        let result = result_receiver
+            .recv_timeout(REMOTE_FILE_READ_TIMEOUT + Duration::from_secs(1))
+            .map_err(|error| match error {
+                RecvTimeoutError::Timeout => RemoteFileReadError::TimedOut,
+                RecvTimeoutError::Disconnected => RemoteFileReadError::Closed,
+            })?;
+        if !self.is_current() {
+            return Err(RemoteFileReadError::Closed);
+        }
+        result
+    }
+}
+
+impl fmt::Debug for LiveRemoteFileRequestor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveRemoteFileRequestor")
+            .field("session_id", &self.session_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SftpTerminalSession {
     /// Starts a text-mode SFTP session with the default no-op event notifier.
     pub fn start(
@@ -2590,6 +2871,14 @@ impl SftpTerminalSession {
     /// Returns a resolver for the current interactive password request.
     pub fn password_decision_resolver(&self) -> PasswordDecisionResolver {
         self.password_resolver.clone()
+    }
+
+    pub fn verified_host_key_fingerprint(&self) -> Option<String> {
+        self.foundation.verified_host_key_fingerprint()
+    }
+
+    pub fn remote_file_requestor(&self) -> LiveRemoteFileRequestor {
+        self.foundation.live_remote_file_requestor()
     }
 
     pub fn working_directories(&self) -> Option<SftpWorkingDirectories> {
@@ -2749,6 +3038,14 @@ impl SshSession {
     /// Returns a resolver for the current interactive password request.
     pub fn password_decision_resolver(&self) -> PasswordDecisionResolver {
         self.password_resolver.clone()
+    }
+
+    pub fn verified_host_key_fingerprint(&self) -> Option<String> {
+        self.foundation.verified_host_key_fingerprint()
+    }
+
+    pub fn remote_file_requestor(&self) -> LiveRemoteFileRequestor {
+        self.foundation.live_remote_file_requestor()
     }
 
     /// Returns whether this connected session can accept one reconnect request.
@@ -3201,6 +3498,8 @@ pub async fn connect_gui_sftp_session(
         reconnect_requested: AtomicBool::new(false),
         liveness_check_requested: AtomicBool::new(false),
         shutdown_requested: AtomicBool::new(false),
+        verified_host_key_fingerprint: Mutex::new(None),
+        transport_generation: AtomicU64::new(0),
         metrics: Mutex::new(SessionMetrics::default()),
         event_sender,
         event_notifier: Arc::new(NoopNotifier),
@@ -3374,6 +3673,8 @@ pub async fn probe_remote_persistence_provider(
         reconnect_requested: AtomicBool::new(false),
         liveness_check_requested: AtomicBool::new(false),
         shutdown_requested: AtomicBool::new(false),
+        verified_host_key_fingerprint: Mutex::new(None),
+        transport_generation: AtomicU64::new(0),
         metrics: Mutex::new(SessionMetrics::default()),
         event_sender,
         event_notifier: Arc::new(NoopNotifier),
@@ -3645,6 +3946,8 @@ impl russh::client::Handler for SshClientHandler {
             .as_deref()
             .is_some_and(|expected| expected == fingerprint)
         {
+            self.shared
+                .set_verified_host_key_fingerprint(fingerprint.clone());
             return Ok(true);
         }
         let previously_trusted = self.expected_fingerprint.as_deref();
@@ -3668,7 +3971,10 @@ impl russh::client::Handler for SshClientHandler {
             HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist
         );
         if !accepted {
+            self.shared.clear_verified_host_key_fingerprint();
             self.host_key_rejected.store(true, Ordering::Release);
+        } else {
+            self.shared.set_verified_host_key_fingerprint(fingerprint);
         }
         Ok(accepted)
     }
@@ -3751,6 +4057,7 @@ async fn ssh_worker(
     let mut manual_recovery_attempts: u8 = 0;
 
     loop {
+        shared.begin_transport();
         match establish_connection(
             &profile,
             &authentication,
@@ -4884,6 +5191,7 @@ async fn sftp_worker(
     host_key_gate: Arc<HostKeyDecisionGate>,
     password_gate: Arc<PasswordDecisionGate>,
 ) -> Result<ShutdownResult, SessionError> {
+    shared.begin_transport();
     let authentication = authentication.into_worker_authentication();
     let handle = match establish_authenticated_handle(
         &profile,
@@ -4911,17 +5219,21 @@ async fn sftp_worker(
         }
     };
 
+    let handle = Arc::new(handle);
+    let mut remote_reads = RemoteFileReads::default();
     let connect = async {
         match local_working_directory {
-            Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path).await,
-            None => sftp::SftpSession::connect(&handle).await,
+            Some(path) => {
+                sftp::SftpSession::connect_with_local_directory(handle.as_ref(), path).await
+            }
+            None => sftp::SftpSession::connect(handle.as_ref()).await,
         }
     };
     let mut session =
         match wait_for_sftp_operation(connect, &command_receiver, &shared, &host_key_gate).await {
             WorkerWait::Completed(Ok(Ok(session))) => session,
             WorkerWait::Completed(Ok(Err(error))) => {
-                let _ = stop_handle(handle, &shared).await;
+                let _ = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared).await;
                 return Err(sftp_failure(
                     &shared,
                     format!("SFTP session failed to start: {error}"),
@@ -4929,7 +5241,7 @@ async fn sftp_worker(
             }
             WorkerWait::Completed(Err(_)) => unreachable!("SFTP worker wraps its result in Ok"),
             WorkerWait::Shutdown => {
-                let _ = stop_handle(handle, &shared).await;
+                let _ = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared).await;
                 shared.set_lifecycle(SessionLifecycle::Stopped);
                 return Ok(ShutdownResult::Stopped);
             }
@@ -4942,10 +5254,11 @@ async fn sftp_worker(
 
     let mut input_buffer = Vec::new();
     loop {
+        remote_reads.reap();
         if shared.shutdown_requested() {
             shared.set_lifecycle(SessionLifecycle::Stopping);
             let _ = session.close().await;
-            let result = stop_handle(handle, &shared)
+            let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
                 .await
                 .unwrap_or(ShutdownResult::Stopped);
             shared.set_lifecycle(SessionLifecycle::Stopped);
@@ -4964,7 +5277,7 @@ async fn sftp_worker(
                 .await?
                 {
                     shared.set_lifecycle(SessionLifecycle::Stopping);
-                    let result = stop_handle(handle, &shared)
+                    let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
                         .await
                         .unwrap_or(ShutdownResult::Stopped);
                     shared.set_lifecycle(SessionLifecycle::Stopped);
@@ -4972,10 +5285,25 @@ async fn sftp_worker(
                 }
             }
             Ok(WorkerCommand::Resize(size)) => shared.record_running_resize(size),
+            Ok(WorkerCommand::ReadRemoteFile {
+                path,
+                max_bytes,
+                generation,
+                result_sender,
+            }) => {
+                remote_reads.start(
+                    Arc::clone(&handle),
+                    Arc::clone(&shared),
+                    path,
+                    max_bytes,
+                    generation,
+                    result_sender,
+                );
+            }
             Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                 shared.set_lifecycle(SessionLifecycle::Stopping);
                 let _ = session.close().await;
-                let result = stop_handle(handle, &shared)
+                let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
                     .await
                     .unwrap_or(ShutdownResult::Stopped);
                 shared.set_lifecycle(SessionLifecycle::Stopped);
@@ -5207,12 +5535,14 @@ async fn run_authenticated_channel(
     let mut pending_commands = VecDeque::new();
     let attempt_limiter = PortForwardAttemptLimiter::new(MAX_IN_FLIGHT_PORT_FORWARD_CONNECTIONS);
     let mut port_forward_attempts = tokio::task::JoinSet::new();
+    let mut remote_reads = RemoteFileReads::default();
     if !initial_profile_port_forwards.is_empty() {
         pending_commands.push_back(WorkerCommand::ApplyPortForwards(
             initial_profile_port_forwards,
         ));
     }
     loop {
+        remote_reads.reap();
         let probe_due = liveness_probe_due(
             tokio::time::Instant::now(),
             next_liveness_probe,
@@ -5295,7 +5625,7 @@ async fn run_authenticated_channel(
             },
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
                 match process_authenticated_commands(
-                    handle.as_ref(),
+                    &handle,
                     &mut channel,
                     &mut pending_commands,
                     &mut active_port_forwards,
@@ -5303,6 +5633,7 @@ async fn run_authenticated_channel(
                     command_receiver,
                     shared,
                     host_key_gate,
+                    &mut remote_reads,
                 ).await {
                     Ok(AuthenticatedCommandOutcome::Continue) => {}
                     Ok(AuthenticatedCommandOutcome::Shutdown) => {
@@ -5313,10 +5644,9 @@ async fn run_authenticated_channel(
                             shared,
                         ).await;
                         return RunningOutcome::Shutdown(
-                            stop_handle(
-                                Arc::try_unwrap(handle).unwrap_or_else(|_| {
-                                    panic!("port-forward tasks must release the SSH handle")
-                                }),
+                            stop_handle_after_remote_reads(
+                                handle,
+                                &mut remote_reads,
                                 shared,
                             )
                             .await
@@ -5330,10 +5660,9 @@ async fn run_authenticated_channel(
                             &mut port_forward_attempts,
                             shared,
                         ).await;
-                        let _ = stop_handle(
-                            Arc::try_unwrap(handle).unwrap_or_else(|_| {
-                                panic!("port-forward tasks must release the SSH handle")
-                            }),
+                        let _ = stop_handle_after_remote_reads(
+                            handle,
+                            &mut remote_reads,
                             shared,
                         )
                         .await;
@@ -5362,7 +5691,7 @@ enum AuthenticatedCommandOutcome {
 
 #[allow(clippy::too_many_arguments)]
 async fn process_authenticated_commands(
-    handle: &russh::client::Handle<SshClientHandler>,
+    handle: &Arc<russh::client::Handle<SshClientHandler>>,
     channel: &mut russh::Channel<russh::client::Msg>,
     pending_commands: &mut VecDeque<WorkerCommand>,
     active_port_forwards: &mut Vec<ActivePortForward>,
@@ -5370,6 +5699,7 @@ async fn process_authenticated_commands(
     command_receiver: &WorkerCommandReceiver,
     shared: &Arc<WorkerShared>,
     host_key_gate: &HostKeyDecisionGate,
+    remote_reads: &mut RemoteFileReads,
 ) -> Result<AuthenticatedCommandOutcome, SessionError> {
     if shared.shutdown_requested() {
         host_key_gate.reject_pending();
@@ -5424,6 +5754,21 @@ async fn process_authenticated_commands(
                     }
                     WorkerWait::Shutdown => return Ok(AuthenticatedCommandOutcome::Shutdown),
                 }
+            }
+            Ok(WorkerCommand::ReadRemoteFile {
+                path,
+                max_bytes,
+                generation,
+                result_sender,
+            }) => {
+                remote_reads.start(
+                    Arc::clone(handle),
+                    Arc::clone(shared),
+                    path,
+                    max_bytes,
+                    generation,
+                    result_sender,
+                );
             }
             Ok(WorkerCommand::ApplyPortForwards(port_forwards)) => {
                 for forward in port_forwards {
@@ -5499,6 +5844,9 @@ async fn wait_for_manual_recovery(
                 let _ = size.columns();
                 report_unsupported(shared, "SSH resize is not available");
             }
+            Ok(WorkerCommand::ReadRemoteFile { result_sender, .. }) => {
+                let _ = result_sender.send(Err(RemoteFileReadError::Closed));
+            }
             Ok(
                 WorkerCommand::ApplyPortForwards(_)
                 | WorkerCommand::AddPortForward(_)
@@ -5541,6 +5889,9 @@ fn process_commands_before_running(
             Ok(WorkerCommand::Resize(size)) => {
                 shared.retain_pre_running_resize(size);
             }
+            Ok(WorkerCommand::ReadRemoteFile { result_sender, .. }) => {
+                let _ = result_sender.send(Err(RemoteFileReadError::Closed));
+            }
             Ok(
                 WorkerCommand::ApplyPortForwards(_)
                 | WorkerCommand::AddPortForward(_)
@@ -5559,6 +5910,49 @@ fn process_commands_before_running(
             Err(TryRecvError::Empty) => return false,
         }
     }
+}
+
+async fn read_remote_file_snapshot_from_handle<H>(
+    handle: &russh::client::Handle<H>,
+    path: &str,
+    max_bytes: usize,
+) -> Result<RemoteFileSnapshot, RemoteFileReadError>
+where
+    H: russh::client::Handler + Send + 'static,
+{
+    let mut session = sftp::SftpSession::connect(handle)
+        .await
+        .map_err(RemoteFileReadError::Sftp)?;
+    let result = read_remote_file_snapshot_from_session(&mut session, path, max_bytes).await;
+    let _ = session.close().await;
+    result
+}
+
+async fn read_remote_file_snapshot_from_session(
+    session: &mut sftp::SftpSession,
+    path: &str,
+    max_bytes: usize,
+) -> Result<RemoteFileSnapshot, RemoteFileReadError> {
+    let Some(metadata) = session
+        .remote_path_metadata_exact(path)
+        .await
+        .map_err(RemoteFileReadError::Sftp)?
+    else {
+        return Err(RemoteFileReadError::Missing {
+            path: path.to_owned(),
+        });
+    };
+    if metadata.file_type != SftpEntryType::File {
+        return Err(RemoteFileReadError::NotFile {
+            path: metadata.path.display(),
+            file_type: metadata.file_type,
+        });
+    }
+    let bytes = session
+        .read_file_snapshot_exact(path, max_bytes)
+        .await
+        .map_err(RemoteFileReadError::Sftp)?;
+    Ok(RemoteFileSnapshot { metadata, bytes })
 }
 
 async fn stop_handle(
@@ -6940,6 +7334,117 @@ mod tests {
     }
 
     #[test]
+    fn live_remote_file_requestor_enqueues_reads_without_reauthenticating() {
+        let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            2,
+            4,
+            noop_session_event_notifier(),
+        );
+        worker.shared.set_lifecycle(SessionLifecycle::Running);
+        let requestor = worker.live_remote_file_requestor();
+        let reader = requestor.clone();
+        let join =
+            thread::spawn(move || reader.read_remote_file_snapshot("/srv/docs/guide.md", 4096));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let (path, max_bytes, result_sender) = loop {
+            match receiver.try_recv() {
+                Ok(WorkerCommand::ReadRemoteFile {
+                    path,
+                    max_bytes,
+                    result_sender,
+                    ..
+                }) => break (path, max_bytes, result_sender),
+                Ok(_) => panic!("expected a live remote-file read command"),
+                Err(TryRecvError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "remote-file read command was never queued"
+                    );
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    panic!("remote-file read command channel closed early")
+                }
+            }
+        };
+        assert_eq!(path, "/srv/docs/guide.md");
+        assert_eq!(max_bytes, 4096);
+        result_sender
+            .send(Ok(RemoteFileSnapshot {
+                metadata: SftpPathMetadata {
+                    path: SftpPath::remote("/srv/docs/guide.md"),
+                    file_type: SftpEntryType::File,
+                    size: Some(5),
+                    modified_at: None,
+                    permissions: None,
+                },
+                bytes: b"hello".to_vec(),
+            }))
+            .unwrap();
+
+        let snapshot = join.join().unwrap().unwrap();
+        assert_eq!(requestor.session_id(), worker.id());
+        assert_eq!(snapshot.bytes(), b"hello");
+    }
+
+    #[test]
+    fn live_remote_file_requestor_rejects_old_transport_generations_and_oversize_requests() {
+        let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            2,
+            4,
+            noop_session_event_notifier(),
+        );
+        worker.shared.set_lifecycle(SessionLifecycle::Running);
+        let stale = worker.live_remote_file_requestor();
+        worker.shared.begin_transport();
+        worker.shared.set_lifecycle(SessionLifecycle::Running);
+        assert_eq!(
+            stale.read_remote_file_snapshot("/old.txt", 100),
+            Err(RemoteFileReadError::NotRunning)
+        );
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        let current = worker.live_remote_file_requestor();
+        assert_eq!(
+            current.read_remote_file_snapshot("/large.txt", usize::MAX),
+            Err(RemoteFileReadError::InvalidRequest)
+        );
+        assert_eq!(
+            current.read_remote_file_snapshot("/empty.txt", 0),
+            Err(RemoteFileReadError::InvalidRequest)
+        );
+        let reader = current.clone();
+        let read = thread::spawn(move || reader.read_remote_file_snapshot("/current.txt", 100));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let result_sender = loop {
+            match receiver.try_recv() {
+                Ok(WorkerCommand::ReadRemoteFile {
+                    generation,
+                    result_sender,
+                    ..
+                }) => {
+                    assert_eq!(generation, current.transport_generation());
+                    break result_sender;
+                }
+                Err(TryRecvError::Empty) => {
+                    assert!(Instant::now() < deadline);
+                    thread::sleep(Duration::from_millis(1));
+                }
+                _ => panic!("expected remote file request"),
+            }
+        };
+        worker.shared.begin_transport();
+        worker.shared.set_lifecycle(SessionLifecycle::Running);
+        result_sender
+            .send(Err(RemoteFileReadError::Missing {
+                path: "/current.txt".to_owned(),
+            }))
+            .unwrap();
+        assert_eq!(read.join().unwrap(), Err(RemoteFileReadError::Closed));
+    }
+
+    #[test]
     fn worker_rejects_input_and_resize_while_reconnecting() {
         let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
             profile(),
@@ -7593,6 +8098,10 @@ mod tests {
             accepted,
             "a matching known-host fingerprint must be accepted"
         );
+        assert_eq!(
+            worker.verified_host_key_fingerprint(),
+            Some("SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ".to_owned())
+        );
         loop {
             match worker.try_recv_event() {
                 Ok(SessionEvent::HostKeyVerification(_)) => {
@@ -7658,6 +8167,62 @@ mod tests {
             .resolve(&prompt, HostTrustDecision::Reject)
             .unwrap();
         assert!(!callback.join().unwrap());
+        assert_eq!(worker.verified_host_key_fingerprint(), None);
+    }
+
+    #[test]
+    fn handler_records_accept_once_fingerprint_for_live_session() {
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
+        let public_key = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
+        )
+        .unwrap();
+        let identity = worker.profile.identity.clone();
+        let shared = Arc::clone(&worker.shared);
+        let gate = Arc::clone(&worker.host_key_gate);
+        let callback = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            let mut handler = SshClientHandler {
+                identity,
+                shared,
+                host_key_gate: gate,
+                host_key_rejected: Arc::new(AtomicBool::new(false)),
+                forwarded_tcpip_sender: tokio::sync::mpsc::channel(
+                    PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
+                )
+                .0,
+                expected_fingerprint: None,
+            };
+            runtime
+                .block_on(handler.check_server_key(&public_key))
+                .unwrap()
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let prompt = loop {
+            match worker.try_recv_event() {
+                Ok(SessionEvent::HostKeyVerification(prompt)) => break prompt,
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "host-key callback did not prompt"
+                    );
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("host-key callback closed early"),
+            }
+        };
+        resolver
+            .resolve(&prompt, HostTrustDecision::AcceptOnce)
+            .unwrap();
+        assert!(callback.join().unwrap());
+        assert_eq!(
+            worker.verified_host_key_fingerprint(),
+            Some(prompt.sha256_fingerprint().to_owned())
+        );
     }
 
     #[test]

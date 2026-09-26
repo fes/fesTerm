@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use compact_str::CompactString;
+use serde::{Deserialize, Serialize};
+
+const MAX_CELL_TEXT_CAPACITY_BYTES: usize = crate::unicode::MAX_GRAPHEME_BYTES * 2;
 
 /// A color value used by a cell.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Color {
     #[default]
     Default,
@@ -18,7 +21,7 @@ pub enum Color {
 }
 
 /// Bitflags for the standard SGR text attributes supported by M2.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Attributes {
     bits: u16,
 }
@@ -69,7 +72,7 @@ impl Attributes {
 ///
 /// A double-width character owns a leading `Double` cell and the following
 /// `Continuation` cell. Continuations never carry text.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum CellWidth {
     Single,
     Double,
@@ -86,9 +89,10 @@ impl CellWidth {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Cell {
     pub(crate) text: CompactString,
+    pub(crate) text_capacity_bytes: usize,
     pub(crate) width: CellWidth,
     pub(crate) foreground: Color,
     pub(crate) background: Color,
@@ -139,11 +143,56 @@ impl Cell {
     pub fn hyperlink_target(&self) -> Option<Arc<str>> {
         self.hyperlink.clone()
     }
+
+    pub(crate) fn refresh_text_capacity_charge(&mut self) {
+        self.text_capacity_bytes = self.text.capacity();
+    }
+
+    pub(crate) fn text_owned_charge(&self) -> usize {
+        self.text_capacity_bytes
+    }
+
+    pub(crate) fn validate_recovery_state(&self) -> Result<(), String> {
+        if self.text.len() > crate::unicode::MAX_GRAPHEME_BYTES {
+            return Err(format!(
+                "cell stores {} text bytes above the {}-byte grapheme limit",
+                self.text.len(),
+                crate::unicode::MAX_GRAPHEME_BYTES
+            ));
+        }
+        if self.text_capacity_bytes < self.text.len() {
+            return Err(format!(
+                "cell records {} text capacity bytes for {} bytes of text",
+                self.text_capacity_bytes,
+                self.text.len()
+            ));
+        }
+        if self.text_capacity_bytes > MAX_CELL_TEXT_CAPACITY_BYTES {
+            return Err(format!(
+                "cell records {} text capacity bytes above the {}-byte recovery limit",
+                self.text_capacity_bytes, MAX_CELL_TEXT_CAPACITY_BYTES
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_recovery_allocation(&mut self) {
+        if self.text_capacity_bytes > self.text.capacity() {
+            self.text
+                .reserve(self.text_capacity_bytes.saturating_sub(self.text.len()));
+        }
+        if self.text.capacity() > self.text_capacity_bytes {
+            self.text.shrink_to(self.text_capacity_bytes);
+        }
+    }
 }
 
 pub(crate) fn blank_cell() -> Cell {
+    let text = CompactString::const_new(" ");
+    let text_capacity_bytes = text.capacity();
     Cell {
-        text: CompactString::const_new(" "),
+        text,
+        text_capacity_bytes,
         width: CellWidth::Single,
         foreground: Color::Default,
         background: Color::Default,

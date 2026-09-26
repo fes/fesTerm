@@ -1,9 +1,10 @@
+use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 pub(crate) const MAX_GRAPHEME_BYTES: usize = 256;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum Utf8Advance {
     Pending,
     Character(char),
@@ -12,7 +13,7 @@ pub(crate) enum Utf8Advance {
 
 /// A deliberately small, strict UTF-8 decoder that retains at most four
 /// bytes across [`crate::Terminal::ingest`] calls.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Utf8Decoder {
     bytes: [u8; 4],
     length: usize,
@@ -76,6 +77,62 @@ impl Utf8Decoder {
     fn reset(&mut self) {
         self.length = 0;
         self.expected = 0;
+    }
+
+    pub(crate) fn validate_recovery_state(&self) -> Result<(), String> {
+        if self.expected > self.bytes.len() {
+            return Err(format!(
+                "utf-8 decoder expects {} bytes, exceeding the {}-byte maximum",
+                self.expected,
+                self.bytes.len()
+            ));
+        }
+        if self.expected == 0 {
+            if self.length != 0 {
+                return Err(format!(
+                    "utf-8 decoder stores {0} pending bytes without an active sequence",
+                    self.length
+                ));
+            }
+            return Ok(());
+        }
+        if self.length == 0 || self.length > self.expected {
+            return Err(format!(
+                "utf-8 decoder stores {} bytes for a {}-byte sequence",
+                self.length, self.expected
+            ));
+        }
+        let valid_lead = match self.expected {
+            2 => matches!(self.bytes[0], 0xc2..=0xdf),
+            3 => matches!(self.bytes[0], 0xe0..=0xef),
+            4 => matches!(self.bytes[0], 0xf0..=0xf4),
+            _ => false,
+        };
+        if !valid_lead {
+            return Err("utf-8 decoder stores an invalid leading byte".to_owned());
+        }
+        let mut decoder = Self::new();
+        if !decoder.start(self.bytes[0]) {
+            return Err("utf-8 decoder could not restart its stored leading byte".to_owned());
+        }
+        if decoder.expected != self.expected {
+            return Err(format!(
+                "utf-8 decoder expects {} bytes but its leading byte implies {}",
+                self.expected, decoder.expected
+            ));
+        }
+        for byte in &self.bytes[1..self.length] {
+            match decoder.advance(*byte) {
+                Utf8Advance::Pending => {}
+                Utf8Advance::Character(_) | Utf8Advance::Invalid => {
+                    return Err(
+                        "utf-8 decoder stores bytes that do not represent a pending sequence"
+                            .to_owned(),
+                    )
+                }
+            }
+        }
+        Ok(())
     }
 }
 

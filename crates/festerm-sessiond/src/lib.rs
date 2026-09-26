@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bincode::Options;
 #[cfg(any(windows, test))]
 use std::{
     fs::{self, File},
@@ -25,6 +26,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
+use festerm_core::{ColorScheme, Terminal};
 use festerm_pty::{EnvironmentPolicy, LocalProfile};
 use festerm_session::{
     noop_session_event_notifier, Session, SessionError, SessionErrorKind, SessionEvent,
@@ -34,7 +36,7 @@ use festerm_session::{
 };
 use festerm_ssh::PersistentSessionName;
 use fs2::FileExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -43,11 +45,28 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const FRAME_MAGIC: &[u8; 4] = b"FSD1";
 const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;
+const FRAME_RECOVERY_SYNC: u8 = 3;
+const FRAME_RECOVERY_ADOPTED: u8 = 4;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
-/// Compatibility epoch for registry records and the `FSD1` client protocol.
+const SERVER_FRAME_MAGIC: &[u8; 4] = b"FSO1";
+const SERVER_FRAME_HEADER_BYTES: usize = 9;
+const SERVER_FRAME_OUTPUT: u8 = 1;
+const SERVER_FRAME_RECOVERY_SYNC: u8 = 2;
+const SERVER_FRAME_STOLEN: u8 = 3;
+const SERVER_FRAME_EXITED: u8 = 4;
+const SERVER_FRAME_RESIZE_APPLIED: u8 = 5;
+const RECOVERY_MAGIC: &[u8; 4] = b"FSD2";
+const RECOVERY_HEADER_BYTES: usize = 12;
+/// Allows the largest supported 256 MiB scrollback setting plus bounded
+/// screen/history serialization overhead without trusting arbitrary lengths.
+const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 768 * 1024 * 1024;
+/// Compatibility epoch for registry records and the persistent-session client protocol.
 ///
 /// This changes only when the daemon introduces an incompatible wire format.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
+/// Recovery snapshot schema used by protocol-v2 sessions started by this build.
+pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 2;
+const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
 /// Oldest daemon protocol this client can attach to safely.
 ///
 /// A release that increments [`PROTOCOL_VERSION`] must retain adapters down to
@@ -60,8 +79,14 @@ const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 trait SessionStream: Read + Write + Send {}
 impl<T: Read + Write + Send> SessionStream for T {}
 
+struct ConnectedSession {
+    stream: Box<dyn SessionStream>,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
+}
+
 type Reconnector =
-    dyn Fn(&AtomicBool) -> Result<Box<dyn SessionStream>, PersistentSessionError> + Send + Sync;
+    dyn Fn(&AtomicBool) -> Result<ConnectedSession, PersistentSessionError> + Send + Sync;
 
 #[derive(Clone, Debug, Deserialize)]
 struct SessionRecord {
@@ -81,6 +106,11 @@ struct SessionRecord {
     attached: bool,
     #[serde(default = "legacy_protocol_version")]
     protocol_version: u16,
+    #[serde(default = "legacy_recovery_snapshot_schema_version")]
+    snapshot_schema_version: u16,
+    #[serde(default = "default_scrollback_limit_bytes")]
+    #[allow(dead_code)]
+    scrollback_limit_bytes: usize,
     /// File name of the helper image this generation executes.
     ///
     /// Only Windows keeps per-release runtime copies, but every platform
@@ -92,6 +122,14 @@ struct SessionRecord {
 
 const fn legacy_protocol_version() -> u16 {
     1
+}
+
+const fn legacy_recovery_snapshot_schema_version() -> u16 {
+    LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION
+}
+
+const fn default_scrollback_limit_bytes() -> usize {
+    festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES
 }
 
 #[derive(Default)]
@@ -277,13 +315,26 @@ impl std::error::Error for PersistentSessionError {}
 enum SessionCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
+    RecoverySync(Vec<u8>),
     Shutdown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecoverySyncCommand {
+    SetScrollbackLimit { limit_bytes: usize },
+    SetColorScheme(ColorScheme),
+    MirrorBytes(Vec<u8>),
+    ResetToInitialState,
 }
 
 struct Shared {
     id: SessionId,
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
+    protocol_version: Mutex<u16>,
+    recovered_terminal: Mutex<Option<Terminal>>,
+    recovery_resize_blocked: AtomicBool,
+    recovery_adoption_blocked: AtomicBool,
     events: SyncSender<SessionEvent>,
     notifier: Arc<dyn SessionEventNotifier>,
     cancelled: AtomicBool,
@@ -385,14 +436,22 @@ impl PersistentSession {
         name: &str,
         profile: &LocalProfile,
         size: TerminalSize,
+        scrollback_limit_bytes: usize,
     ) -> Result<Self, PersistentSessionError> {
-        Self::start_with_notifier(name, profile, size, noop_session_event_notifier())
+        Self::start_with_notifier(
+            name,
+            profile,
+            size,
+            scrollback_limit_bytes,
+            noop_session_event_notifier(),
+        )
     }
 
     pub fn start_with_notifier(
         name: &str,
         profile: &LocalProfile,
         size: TerminalSize,
+        scrollback_limit_bytes: usize,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
         let name = PersistentSessionName::new(name.to_owned())
@@ -401,8 +460,8 @@ impl PersistentSession {
             .validate()
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
 
-        let stream = connect_or_start(name.as_str(), profile, size)?;
-        Self::from_named_stream(stream, notifier, name.as_str().to_owned())
+        let connection = connect_or_start(name.as_str(), profile, size, scrollback_limit_bytes)?;
+        Self::from_named_stream(connection, notifier, name.as_str().to_owned())
     }
 
     /// Attaches to an already-running, unattached `festerm-sessiond` session
@@ -422,8 +481,8 @@ impl PersistentSession {
     ) -> Result<Self, PersistentSessionError> {
         let name = PersistentSessionName::new(name.to_owned())
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        let stream = connect_existing(name.as_str())?;
-        Self::from_named_stream(stream, notifier, name.as_str().to_owned())
+        let connection = connect_existing(name.as_str())?;
+        Self::from_named_stream(connection, notifier, name.as_str().to_owned())
     }
 
     /// Attach the selected generation only. A replaced name or newly attached
@@ -440,11 +499,12 @@ impl PersistentSession {
         root: &std::path::Path,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        let stream = connect_discovered_with_cancel(selected, root, true, &AtomicBool::new(false))?;
+        let connection =
+            connect_discovered_with_cancel(selected, root, true, &AtomicBool::new(false))?;
         let selected = selected.clone();
         let root = root.to_owned();
         Self::from_stream_with_reconnector(
-            stream,
+            connection,
             notifier,
             Some(Arc::new(move |cancelled| {
                 // Manual reconnect retains steal-on-reconnect, but only for
@@ -454,13 +514,35 @@ impl PersistentSession {
         )
     }
 
+    pub fn sync_recovery_scrollback_limit(
+        &self,
+        limit_bytes: usize,
+    ) -> Result<(), PersistentSessionError> {
+        self.send_recovery_sync(RecoverySyncCommand::SetScrollbackLimit { limit_bytes })
+    }
+
+    pub fn sync_recovery_color_scheme(
+        &self,
+        scheme: ColorScheme,
+    ) -> Result<(), PersistentSessionError> {
+        self.send_recovery_sync(RecoverySyncCommand::SetColorScheme(scheme))
+    }
+
+    pub fn sync_recovery_bytes(&self, bytes: &[u8]) -> Result<(), PersistentSessionError> {
+        self.send_recovery_sync(RecoverySyncCommand::MirrorBytes(bytes.to_vec()))
+    }
+
+    pub fn sync_recovery_reset(&self) -> Result<(), PersistentSessionError> {
+        self.send_recovery_sync(RecoverySyncCommand::ResetToInitialState)
+    }
+
     fn from_named_stream(
-        stream: Box<dyn SessionStream>,
+        connection: ConnectedSession,
         notifier: Arc<dyn SessionEventNotifier>,
         name: String,
     ) -> Result<Self, PersistentSessionError> {
         Self::from_stream_with_reconnector(
-            stream,
+            connection,
             notifier,
             Some(Arc::new(move |cancelled| {
                 connect_existing_with_cancel(&name, cancelled)
@@ -473,13 +555,35 @@ impl PersistentSession {
         stream: Box<dyn SessionStream>,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        Self::from_stream_with_reconnector(stream, notifier, None)
+        Self::from_stream_with_protocol(
+            stream,
+            notifier,
+            None,
+            1,
+            LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
     }
 
     fn from_stream_with_reconnector(
+        connection: ConnectedSession,
+        notifier: Arc<dyn SessionEventNotifier>,
+        reconnector: Option<Arc<Reconnector>>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::from_stream_with_protocol(
+            connection.stream,
+            notifier,
+            reconnector,
+            connection.protocol_version,
+            connection.snapshot_schema_version,
+        )
+    }
+
+    fn from_stream_with_protocol(
         stream: Box<dyn SessionStream>,
         notifier: Arc<dyn SessionEventNotifier>,
         reconnector: Option<Arc<Reconnector>>,
+        protocol_version: u16,
+        snapshot_schema_version: u16,
     ) -> Result<Self, PersistentSessionError> {
         let (events_tx, events_rx) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (commands_tx, commands_rx) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
@@ -491,6 +595,16 @@ impl PersistentSession {
                 event_queue_capacity: DEFAULT_EVENT_QUEUE_CAPACITY,
                 ..SessionMetrics::default()
             }),
+            protocol_version: Mutex::new(protocol_version),
+            recovered_terminal: Mutex::new(None),
+            recovery_resize_blocked: AtomicBool::new(recovery_snapshot_required(
+                protocol_version,
+                snapshot_schema_version,
+            )),
+            recovery_adoption_blocked: AtomicBool::new(recovery_snapshot_required(
+                protocol_version,
+                snapshot_schema_version,
+            )),
             events: events_tx,
             notifier,
             cancelled: AtomicBool::new(false),
@@ -503,7 +617,16 @@ impl PersistentSession {
         let worker_shared = Arc::clone(&shared);
         let thread = thread::Builder::new()
             .name(format!("festerm-sessiond-client-{}", shared.id))
-            .spawn(move || client_worker(worker_shared, stream, commands_rx, completion_tx))
+            .spawn(move || {
+                client_worker(
+                    worker_shared,
+                    stream,
+                    protocol_version,
+                    snapshot_schema_version,
+                    commands_rx,
+                    completion_tx,
+                )
+            })
             .map_err(|error| {
                 PersistentSessionError::new(format!(
                     "could not start persistent-session worker: {error}"
@@ -532,6 +655,35 @@ impl PersistentSession {
             )
     }
 
+    /// Returns a newly attached daemon's recovered terminal state, if one has
+    /// arrived since the previous call.
+    pub fn take_recovered_terminal(&self) -> Option<Terminal> {
+        let terminal = self
+            .shared
+            .recovered_terminal
+            .lock()
+            .expect("persistent session recovery lock is healthy")
+            .take();
+        if terminal.is_some() {
+            self.shared
+                .recovery_adoption_blocked
+                .store(false, Ordering::Release);
+            self.shared
+                .recovery_resize_blocked
+                .store(false, Ordering::Release);
+        }
+        terminal
+    }
+
+    pub fn recovery_protocol_is_authoritative(&self) -> bool {
+        *self
+            .shared
+            .protocol_version
+            .lock()
+            .expect("persistent protocol-version lock is healthy")
+            >= 2
+    }
+
     /// Starts an asynchronous attachment to the existing named daemon.
     ///
     /// This never starts a shell. `Ok(())` acknowledges the request; connection
@@ -549,12 +701,32 @@ impl PersistentSession {
             ));
         }
         let reconnector = Arc::clone(self.reconnector.as_ref().expect("named session"));
+        let drop_pending_events = *self
+            .shared
+            .protocol_version
+            .lock()
+            .expect("persistent protocol-version lock is healthy")
+            >= 2;
         self.shared.reconnecting.store(true, Ordering::Release);
         *self
             .shared
             .lifecycle
             .lock()
             .expect("healthy lifecycle lock") = SessionLifecycle::Starting;
+        self.shared
+            .recovered_terminal
+            .lock()
+            .expect("healthy recovery lock")
+            .take();
+        self.shared
+            .recovery_resize_blocked
+            .store(false, Ordering::Release);
+        self.shared
+            .recovery_adoption_blocked
+            .store(false, Ordering::Release);
+        if drop_pending_events {
+            self.drain_pending_events();
+        }
         self.shared.notifier.notify();
 
         let previous = Arc::new(Mutex::new(worker.thread.take()));
@@ -599,9 +771,34 @@ impl PersistentSession {
                     return;
                 }
                 match connection {
-                    Ok(stream) => {
+                    Ok(connection) => {
+                        *shared
+                            .protocol_version
+                            .lock()
+                            .expect("healthy protocol-version lock") = connection.protocol_version;
+                        shared.recovery_resize_blocked.store(
+                            recovery_snapshot_required(
+                                connection.protocol_version,
+                                connection.snapshot_schema_version,
+                            ),
+                            Ordering::Release,
+                        );
+                        shared.recovery_adoption_blocked.store(
+                            recovery_snapshot_required(
+                                connection.protocol_version,
+                                connection.snapshot_schema_version,
+                            ),
+                            Ordering::Release,
+                        );
                         shared.reconnecting.store(false, Ordering::Release);
-                        client_worker(shared, stream, receiver, completion);
+                        client_worker(
+                            shared,
+                            connection.stream,
+                            connection.protocol_version,
+                            connection.snapshot_schema_version,
+                            receiver,
+                            completion,
+                        );
                     }
                     Err(error) => {
                         reconnect_failed(&shared, error.to_string());
@@ -648,6 +845,10 @@ impl PersistentSession {
         if operation != SessionOperation::Shutdown
             && (self.shared.cancelled.load(Ordering::Acquire)
                 || self.shared.reconnecting.load(Ordering::Acquire)
+                || self
+                    .shared
+                    .recovery_adoption_blocked
+                    .load(Ordering::Acquire)
                 || !matches!(
                     self.lifecycle(),
                     SessionLifecycle::Starting | SessionLifecycle::Running
@@ -656,6 +857,67 @@ impl PersistentSession {
             return Err(SessionSendError::Closed { operation });
         }
         send_command(&worker.commands, command, operation)
+    }
+
+    fn send_recovery_sync(
+        &self,
+        command: RecoverySyncCommand,
+    ) -> Result<(), PersistentSessionError> {
+        let protocol_version = *self
+            .shared
+            .protocol_version
+            .lock()
+            .expect("persistent session protocol-version lock is not poisoned");
+        if protocol_version < 2
+            || self.shared.cancelled.load(Ordering::Acquire)
+            || self.shared.reconnecting.load(Ordering::Acquire)
+            || self
+                .shared
+                .recovery_adoption_blocked
+                .load(Ordering::Acquire)
+            || !matches!(
+                self.lifecycle(),
+                SessionLifecycle::Starting | SessionLifecycle::Running
+            )
+        {
+            return Ok(());
+        }
+        let payload = encode_recovery_sync_command(&command)?;
+        let worker = self
+            .worker
+            .lock()
+            .expect("persistent worker lock is healthy");
+        match worker
+            .commands
+            .try_send(SessionCommand::RecoverySync(payload))
+        {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(PersistentSessionError::new(
+                "persistent-session recovery sync queue is full",
+            )),
+            Err(TrySendError::Disconnected(_)) => Err(PersistentSessionError::new(
+                "persistent-session recovery sync worker is no longer running",
+            )),
+        }
+    }
+
+    fn drain_pending_events(&self) {
+        let receiver = self
+            .events
+            .lock()
+            .expect("persistent session event receiver lock is not poisoned");
+        let mut drained = 0usize;
+        while receiver.try_recv().is_ok() {
+            drained += 1;
+        }
+        if drained > 0 {
+            let mut metrics = self
+                .shared
+                .metrics
+                .lock()
+                .expect("persistent session metrics lock is not poisoned");
+            metrics.event_queue_depth = metrics.event_queue_depth.saturating_sub(drained);
+        }
     }
 }
 
@@ -673,7 +935,7 @@ fn finish_cancelled_reconnect(shared: &Shared, completion: &SyncSender<ShutdownR
     let _ = completion.send(ShutdownResult::Stopped);
 }
 
-fn connect_existing(name: &str) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+fn connect_existing(name: &str) -> Result<ConnectedSession, PersistentSessionError> {
     connect_existing_with_cancel(name, &AtomicBool::new(false))
 }
 
@@ -682,7 +944,7 @@ fn connect_discovered_with_cancel(
     root: &std::path::Path,
     require_unattached: bool,
     cancelled: &AtomicBool,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+) -> Result<ConnectedSession, PersistentSessionError> {
     let registry = load_registry_in_with_cancel(root, cancelled)?;
     let record = registry.sessions.get(&selected.name).filter(|record| {
         record.pid == selected.pid
@@ -703,7 +965,7 @@ fn connect_discovered_with_cancel(
 fn connect_existing_with_cancel(
     name: &str,
     cancelled: &AtomicBool,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
@@ -715,7 +977,7 @@ fn connect_existing_with_cancel(
 fn connect_existing_in_registry(
     registry: &SessionRegistry,
     name: &str,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+) -> Result<ConnectedSession, PersistentSessionError> {
     connect_existing_in_registry_with_cancel(registry, name, &AtomicBool::new(false))
 }
 
@@ -723,7 +985,7 @@ fn connect_existing_in_registry_with_cancel(
     registry: &SessionRegistry,
     name: &str,
     cancelled: &AtomicBool,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+) -> Result<ConnectedSession, PersistentSessionError> {
     let record = match registry.sessions.get(name) {
         Some(record) => record,
         None => {
@@ -777,6 +1039,12 @@ impl Session for PersistentSession {
     }
 
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+        if self.shared.recovery_resize_blocked.load(Ordering::Acquire) {
+            return Err(SessionSendError::Full {
+                operation: SessionOperation::Resize,
+                capacity: DEFAULT_COMMAND_QUEUE_CAPACITY,
+            });
+        }
         self.send(SessionCommand::Resize(size), SessionOperation::Resize)
     }
 
@@ -809,6 +1077,10 @@ impl Session for PersistentSession {
             Err(TryRecvError::Empty) => Err(SessionTryReceiveError::Empty),
             Err(TryRecvError::Disconnected) => Err(SessionTryReceiveError::Closed),
         }
+    }
+
+    fn terminal_replies_owned_by_backend(&self) -> bool {
+        self.recovery_protocol_is_authoritative()
     }
 
     fn shutdown(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
@@ -889,9 +1161,16 @@ impl OutboundFrame {
 #[derive(Default)]
 struct OutboundFrames {
     frames: VecDeque<OutboundFrame>,
+    legacy_resize_ack: bool,
 }
 
 impl OutboundFrames {
+    fn new(protocol_version: u16) -> Self {
+        Self {
+            frames: VecDeque::new(),
+            legacy_resize_ack: protocol_version < 2,
+        }
+    }
     fn is_full(&self) -> bool {
         self.frames.len() >= DEFAULT_COMMAND_QUEUE_CAPACITY
     }
@@ -914,6 +1193,26 @@ impl OutboundFrames {
             written: 0,
             input_bytes: 0,
             resize_applied: Some(size),
+        });
+    }
+
+    fn push_recovery_sync(&mut self, payload: Vec<u8>) {
+        debug_assert!(!self.is_full());
+        self.frames.push_back(OutboundFrame {
+            bytes: encode_frame(FRAME_RECOVERY_SYNC, &payload),
+            written: 0,
+            input_bytes: 0,
+            resize_applied: None,
+        });
+    }
+
+    fn push_recovery_adopted(&mut self) {
+        debug_assert!(!self.is_full());
+        self.frames.push_back(OutboundFrame {
+            bytes: encode_frame(FRAME_RECOVERY_ADOPTED, &[]),
+            written: 0,
+            input_bytes: 0,
+            resize_applied: None,
         });
     }
 
@@ -988,7 +1287,9 @@ impl OutboundFrames {
                     .lock()
                     .expect("persistent session metrics lock is not poisoned")
                     .resize_count += 1;
-                events.push_back(SessionEvent::ResizeApplied(size));
+                if self.legacy_resize_ack {
+                    events.push_back(SessionEvent::ResizeApplied(size));
+                }
             }
         }
         Ok(())
@@ -1002,16 +1303,187 @@ fn is_retryable_write(error: &io::Error) -> bool {
     )
 }
 
+fn read_initial_recovery_terminal(
+    stream: &mut dyn SessionStream,
+    cancelled: &AtomicBool,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
+) -> Result<Option<Terminal>, io::Error> {
+    read_recovery_terminal_with_abort(stream, protocol_version, snapshot_schema_version, || {
+        cancelled.load(Ordering::Acquire).then(|| {
+            io::Error::new(
+                io::ErrorKind::Interrupted,
+                "persistent-session recovery read cancelled",
+            )
+        })
+    })
+}
+
+pub fn read_attach_recovery_terminal<R: Read>(
+    stream: &mut R,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
+    deadline: Instant,
+) -> Result<Option<Terminal>, io::Error> {
+    read_recovery_terminal_with_abort(stream, protocol_version, snapshot_schema_version, || {
+        (Instant::now() >= deadline).then(|| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "attach recovery prelude exceeded the read deadline",
+            )
+        })
+    })
+}
+
+fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
+    stream: &mut R,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
+    mut should_abort: impl FnMut() -> Option<io::Error>,
+) -> Result<Option<Terminal>, io::Error> {
+    if protocol_version < 2 {
+        return Ok(None);
+    }
+    if !snapshot_schema_is_supported(snapshot_schema_version) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "persistent-session recovery snapshot schema {} is unsupported",
+                snapshot_schema_version
+            ),
+        ));
+    }
+
+    let mut header = [0u8; RECOVERY_HEADER_BYTES];
+    read_protocol_bytes(stream, &mut header, &mut should_abort)?;
+    if &header[..RECOVERY_MAGIC.len()] != RECOVERY_MAGIC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "persistent-session recovery prelude has an invalid magic value",
+        ));
+    }
+    let payload_len = usize::try_from(u64::from_be_bytes(
+        header[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
+            .try_into()
+            .expect("fixed recovery header"),
+    ))
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "persistent-session recovery snapshot length overflows usize",
+        )
+    })?;
+    if payload_len > MAX_RECOVERY_SNAPSHOT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "persistent-session recovery snapshot exceeds the protocol limit",
+        ));
+    }
+    let mut payload = vec![0; payload_len];
+    read_protocol_bytes(stream, &mut payload, &mut should_abort)?;
+    let mut terminal = bincode_options()
+        .deserialize::<Terminal>(&payload)
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("persistent-session recovery snapshot is invalid: {error}"),
+            )
+        })?;
+    terminal.validate_recovery_snapshot().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("persistent-session recovery snapshot is invalid: {error}"),
+        )
+    })?;
+    if terminal.scrollback_stats().charged_bytes() > MAX_RECOVERY_SNAPSHOT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "persistent-session retained history allocation exceeds the protocol limit",
+        ));
+    }
+    terminal.restore_recovery_snapshot_allocations();
+    Ok(Some(terminal))
+}
+
+fn read_protocol_bytes(
+    stream: &mut (impl Read + ?Sized),
+    mut destination: &mut [u8],
+    should_abort: &mut impl FnMut() -> Option<io::Error>,
+) -> Result<(), io::Error> {
+    while !destination.is_empty() {
+        if let Some(error) = should_abort() {
+            return Err(error);
+        }
+        match stream.read(destination) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "persistent-session daemon closed during recovery",
+                ))
+            }
+            Ok(count) => {
+                let (_, remaining) = destination.split_at_mut(count);
+                destination = remaining;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 fn client_worker(
     shared: Arc<Shared>,
     mut stream: Box<dyn SessionStream>,
+    protocol_version: u16,
+    snapshot_schema_version: u16,
     commands: Receiver<SessionCommand>,
     completion: SyncSender<ShutdownResult>,
 ) {
+    match read_initial_recovery_terminal(
+        &mut *stream,
+        &shared.cancelled,
+        protocol_version,
+        snapshot_schema_version,
+    ) {
+        Ok(Some(terminal)) => {
+            *shared
+                .recovered_terminal
+                .lock()
+                .expect("persistent session recovery lock is not poisoned") = Some(terminal);
+            shared.notifier.notify();
+        }
+        Ok(None) => {}
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+            shared.set_lifecycle(SessionLifecycle::Stopped);
+            let _ = completion.send(ShutdownResult::Stopped);
+            return;
+        }
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+            shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
+                SessionErrorKind::Output,
+                "persistent-session daemon closed unexpectedly",
+            )));
+            let _ = completion.send(ShutdownResult::AlreadyStopped);
+            return;
+        }
+        Err(error) => {
+            fail_transport(&shared, SessionErrorKind::Output, error);
+            let _ = completion.send(ShutdownResult::AlreadyStopped);
+            return;
+        }
+    }
     shared.set_lifecycle(SessionLifecycle::Running);
-    let mut scanner = OutputScanner::default();
+    let mut legacy_scanner = OutputScanner::default();
+    let mut server_parser = ServerFrameParser::default();
     let mut buffer = [0u8; 4096];
-    let mut outbound = OutboundFrames::default();
+    let mut outbound = OutboundFrames::new(protocol_version);
+    let mut adoption_sent = protocol_version < 2;
     // Events the application has not taken yet. Holding them here rather than
     // blocking inside the send is what keeps input flowing while the GUI is
     // behind. Resize acknowledgements also occupy this bounded queue; once
@@ -1023,10 +1495,15 @@ fn client_worker(
             let _ = completion.send(ShutdownResult::Stopped);
             return;
         }
+        if !adoption_sent && !shared.recovery_adoption_blocked.load(Ordering::Acquire) {
+            outbound.push_recovery_adopted();
+            adoption_sent = true;
+        }
         while !outbound.is_full() {
             match commands.try_recv() {
                 Ok(SessionCommand::Input(bytes)) => outbound.push_input(&bytes),
                 Ok(SessionCommand::Resize(size)) => outbound.push_resize(size),
+                Ok(SessionCommand::RecoverySync(payload)) => outbound.push_recovery_sync(payload),
                 Ok(SessionCommand::Shutdown) => {
                     shared.set_lifecycle(SessionLifecycle::Stopped);
                     let _ = completion.send(ShutdownResult::Stopped);
@@ -1059,10 +1536,25 @@ fn client_worker(
             continue;
         }
 
+        if shared.recovery_adoption_blocked.load(Ordering::Acquire) {
+            thread::sleep(POLL_INTERVAL);
+            continue;
+        }
+
         match stream.read(&mut buffer) {
             Ok(0) => {
-                if let Some(output) = scanner.close() {
-                    send_output(&shared, output);
+                if protocol_version < 2 {
+                    if let Some(output) = legacy_scanner.close() {
+                        send_output(&shared, output);
+                    }
+                } else {
+                    match server_parser.close() {
+                        Ok(Some(output)) => send_output(&shared, output),
+                        Ok(None) => {}
+                        Err(error) => {
+                            fail_transport(&shared, SessionErrorKind::Output, error);
+                        }
+                    }
                 }
                 shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
                     SessionErrorKind::Output,
@@ -1071,31 +1563,87 @@ fn client_worker(
                 let _ = completion.send(ShutdownResult::AlreadyStopped);
                 return;
             }
-            Ok(count) => match scanner.push(&buffer[..count]) {
-                ScanResult::Output(output) => {
-                    pending_events.push_back(count_output(&shared, output))
-                }
-                ScanResult::Pending => {}
-                ScanResult::Stolen(output) => {
-                    if !output.is_empty() {
-                        send_output(&shared, output);
+            Ok(count) => {
+                if protocol_version >= 2 {
+                    if let Err(error) = server_parser.push(&buffer[..count]) {
+                        fail_transport(&shared, SessionErrorKind::Output, error);
+                        let _ = completion.send(ShutdownResult::AlreadyStopped);
+                        return;
                     }
-                    shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
-                        SessionErrorKind::Output,
-                        "persistent session was attached by another client",
-                    )));
-                    let _ = completion.send(ShutdownResult::AlreadyStopped);
-                    return;
-                }
-                ScanResult::Exited(output) => {
-                    if !output.is_empty() {
-                        send_output(&shared, output);
+                    loop {
+                        match server_parser.next_event() {
+                            Ok(Some(ServerFrameEvent::Output(output))) => {
+                                pending_events.push_back(count_output(&shared, output));
+                            }
+                            Ok(Some(ServerFrameEvent::RecoverySync(payload))) => {
+                                pending_events.push_back(SessionEvent::RecoverySync(payload));
+                            }
+                            Ok(Some(ServerFrameEvent::ResizeApplied(size))) => {
+                                pending_events.push_back(SessionEvent::ResizeApplied(size));
+                            }
+                            Ok(Some(ServerFrameEvent::Stolen)) => {
+                                while let Some(event) = pending_events.pop_front() {
+                                    shared.send_event(event);
+                                }
+                                shared.set_lifecycle(SessionLifecycle::Disconnected(
+                                    SessionError::new(
+                                        SessionErrorKind::Output,
+                                        "persistent session was attached by another client",
+                                    ),
+                                ));
+                                let _ = completion.send(ShutdownResult::AlreadyStopped);
+                                return;
+                            }
+                            Ok(Some(ServerFrameEvent::Exited)) => {
+                                while let Some(event) = pending_events.pop_front() {
+                                    shared.send_event(event);
+                                }
+                                shared.set_lifecycle(SessionLifecycle::Exited(
+                                    SessionExit::with_exit_code(0),
+                                ));
+                                let _ = completion.send(ShutdownResult::AlreadyStopped);
+                                return;
+                            }
+                            Ok(None) => break,
+                            Err(error) => {
+                                fail_transport(&shared, SessionErrorKind::Output, error);
+                                let _ = completion.send(ShutdownResult::AlreadyStopped);
+                                return;
+                            }
+                        }
                     }
-                    shared.set_lifecycle(SessionLifecycle::Exited(SessionExit::with_exit_code(0)));
-                    let _ = completion.send(ShutdownResult::AlreadyStopped);
-                    return;
+                } else {
+                    match legacy_scanner.push(&buffer[..count]) {
+                        ScanResult::Output(output) => {
+                            pending_events.push_back(count_output(&shared, output))
+                        }
+                        ScanResult::Pending => {}
+                        ScanResult::Stolen(output) => {
+                            if !output.is_empty() {
+                                send_output(&shared, output);
+                            }
+                            shared.set_lifecycle(SessionLifecycle::Disconnected(
+                                SessionError::new(
+                                    SessionErrorKind::Output,
+                                    "persistent session was attached by another client",
+                                ),
+                            ));
+                            let _ = completion.send(ShutdownResult::AlreadyStopped);
+                            return;
+                        }
+                        ScanResult::Exited(output) => {
+                            if !output.is_empty() {
+                                send_output(&shared, output);
+                            }
+                            shared.set_lifecycle(SessionLifecycle::Exited(
+                                SessionExit::with_exit_code(0),
+                            ));
+                            let _ = completion.send(ShutdownResult::AlreadyStopped);
+                            return;
+                        }
+                    }
                 }
-            },
+            }
             Err(error)
                 if matches!(
                     error.kind(),
@@ -1182,7 +1730,8 @@ fn connect_or_start(
     name: &str,
     profile: &LocalProfile,
     size: TerminalSize,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    scrollback_limit_bytes: usize,
+) -> Result<ConnectedSession, PersistentSessionError> {
     let registry = load_registry()?;
     if let Some(declared) = registry.unreadable.get(name) {
         // Starting a replacement would overwrite a record this build cannot
@@ -1208,6 +1757,8 @@ fn connect_or_start(
         .arg(size.columns().to_string())
         .arg("--rows")
         .arg(size.rows().to_string())
+        .arg("--scrollback-limit-bytes")
+        .arg(scrollback_limit_bytes.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -1259,16 +1810,14 @@ fn connect_or_start(
     }
 }
 
-fn connect_record(
-    record: &SessionRecord,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+fn connect_record(record: &SessionRecord) -> Result<ConnectedSession, PersistentSessionError> {
     connect_record_with_cancel(record, &AtomicBool::new(false))
 }
 
 fn connect_record_with_cancel(
     record: &SessionRecord,
     cancelled: &AtomicBool,
-) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
@@ -1293,7 +1842,11 @@ fn connect_record_with_cancel(
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        Ok(Box::new(stream))
+        Ok(ConnectedSession {
+            stream: Box::new(stream),
+            protocol_version: record.protocol_version,
+            snapshot_schema_version: record.snapshot_schema_version,
+        })
     }
 
     #[cfg(windows)]
@@ -1308,24 +1861,51 @@ fn connect_record_with_cancel(
         })?;
         stream.set_read_timeout(POLL_INTERVAL);
         stream.set_write_timeout(WRITE_TIMEOUT);
-        Ok(Box::new(stream))
+        Ok(ConnectedSession {
+            stream: Box::new(stream),
+            protocol_version: record.protocol_version,
+            snapshot_schema_version: record.snapshot_schema_version,
+        })
     }
 }
 
 fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSessionError> {
-    if protocol_is_supported(record.protocol_version) {
-        return Ok(());
+    if !protocol_is_supported(record.protocol_version) {
+        return Err(PersistentSessionError::new(format!(
+            "session '{}' uses persistent-session protocol {}, but this fesTerm supports protocol {}; \
+             keep using a compatible fesTerm version or terminate that session before replacing it",
+            record.name, record.protocol_version, PROTOCOL_VERSION
+        )));
     }
-    Err(PersistentSessionError::new(format!(
-        "session '{}' uses persistent-session protocol {}, but this fesTerm supports protocol {}; \
-         keep using a compatible fesTerm version or terminate that session before replacing it",
-        record.name, record.protocol_version, PROTOCOL_VERSION
-    )))
+    if record.protocol_version >= 2 && !snapshot_schema_is_supported(record.snapshot_schema_version)
+    {
+        return Err(PersistentSessionError::new(format!(
+            "session '{}' uses recovery snapshot schema {}, but this fesTerm supports schema {}; \
+             keep using a compatible fesTerm version or terminate that session before replacing it",
+            record.name, record.snapshot_schema_version, RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        )));
+    }
+    Ok(())
 }
 
 /// Returns whether this client can attach to a daemon protocol epoch.
 pub const fn protocol_is_supported(version: u16) -> bool {
     version >= MIN_SUPPORTED_PROTOCOL_VERSION && version <= PROTOCOL_VERSION
+}
+
+pub const fn snapshot_schema_is_supported(version: u16) -> bool {
+    version == RECOVERY_SNAPSHOT_SCHEMA_VERSION
+}
+
+const fn recovery_snapshot_required(protocol_version: u16, snapshot_schema_version: u16) -> bool {
+    protocol_version >= 2 && snapshot_schema_is_supported(snapshot_schema_version)
+}
+
+fn bincode_options() -> impl Options {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(MAX_RECOVERY_SNAPSHOT_BYTES as u64)
+        .reject_trailing_bytes()
 }
 
 fn unreadable_record_error(name: &str, declared: Option<u16>) -> PersistentSessionError {
@@ -1886,6 +2466,56 @@ pub fn runtime_root() -> Result<PathBuf, PersistentSessionError> {
     }
 }
 
+pub fn encode_recovery_snapshot(terminal: &Terminal) -> Result<Vec<u8>, PersistentSessionError> {
+    let snapshot = terminal.recovery_clone();
+    snapshot
+        .validate_recovery_snapshot()
+        .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    let payload = bincode_options().serialize(&snapshot).map_err(|error| {
+        PersistentSessionError::new(format!(
+            "could not serialize terminal recovery snapshot: {error}"
+        ))
+    })?;
+    if payload.len() > MAX_RECOVERY_SNAPSHOT_BYTES {
+        return Err(PersistentSessionError::new(format!(
+            "terminal recovery snapshot exceeds the {}-byte protocol limit",
+            MAX_RECOVERY_SNAPSHOT_BYTES
+        )));
+    }
+    let mut encoded = Vec::with_capacity(RECOVERY_HEADER_BYTES + payload.len());
+    encoded.extend_from_slice(RECOVERY_MAGIC);
+    encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+    encoded.extend_from_slice(&payload);
+    Ok(encoded)
+}
+
+pub fn encode_recovery_sync_command(
+    command: &RecoverySyncCommand,
+) -> Result<Vec<u8>, PersistentSessionError> {
+    let payload = bincode::serialize(command).map_err(|error| {
+        PersistentSessionError::new(format!(
+            "could not serialize terminal recovery sync command: {error}"
+        ))
+    })?;
+    if payload.len() > MAX_FRAME_BYTES {
+        return Err(PersistentSessionError::new(format!(
+            "terminal recovery sync command exceeds the {}-byte protocol limit",
+            MAX_FRAME_BYTES
+        )));
+    }
+    Ok(payload)
+}
+
+pub fn decode_recovery_sync_command(
+    payload: &[u8],
+) -> Result<RecoverySyncCommand, PersistentSessionError> {
+    bincode::deserialize(payload).map_err(|error| {
+        PersistentSessionError::new(format!(
+            "persistent-session recovery-sync payload is invalid: {error}"
+        ))
+    })
+}
+
 /// Serializes one protocol frame into a single buffer.
 ///
 /// Frames are built whole rather than written field by field so a write that
@@ -1904,6 +2534,39 @@ fn encode_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     frame.extend_from_slice(payload);
     frame
+}
+
+pub fn encode_server_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
+    debug_assert!(
+        payload.len() <= MAX_FRAME_BYTES,
+        "session output frame exceeds the protocol limit"
+    );
+    let mut frame = Vec::with_capacity(SERVER_FRAME_HEADER_BYTES + payload.len());
+    frame.extend_from_slice(SERVER_FRAME_MAGIC);
+    frame.push(kind);
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
+pub fn encode_server_output_frame(payload: &[u8]) -> Vec<u8> {
+    encode_server_frame(SERVER_FRAME_OUTPUT, payload)
+}
+
+pub fn encode_server_recovery_sync_frame(payload: &[u8]) -> Vec<u8> {
+    encode_server_frame(SERVER_FRAME_RECOVERY_SYNC, payload)
+}
+
+pub fn encode_server_stolen_frame() -> Vec<u8> {
+    encode_server_frame(SERVER_FRAME_STOLEN, &[])
+}
+
+pub fn encode_server_exited_frame() -> Vec<u8> {
+    encode_server_frame(SERVER_FRAME_EXITED, &[])
+}
+
+pub fn encode_server_resize_applied_frame(payload: &[u8]) -> Vec<u8> {
+    encode_server_frame(SERVER_FRAME_RESIZE_APPLIED, payload)
 }
 
 fn encode_resize(size: TerminalSize) -> Vec<u8> {
@@ -1959,6 +2622,107 @@ impl OutputScanner {
     }
 }
 
+pub enum ServerFrameEvent {
+    Output(Vec<u8>),
+    RecoverySync(Vec<u8>),
+    ResizeApplied(TerminalSize),
+    Stolen,
+    Exited,
+}
+
+#[derive(Default)]
+pub struct ServerFrameParser {
+    bytes: Vec<u8>,
+}
+
+impl ServerFrameParser {
+    pub fn push(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if self.bytes.len().saturating_add(bytes.len())
+            > 2 * (MAX_FRAME_BYTES + SERVER_FRAME_HEADER_BYTES)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session daemon frame exceeds the protocol limit",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    pub fn next_event(&mut self) -> io::Result<Option<ServerFrameEvent>> {
+        if self.bytes.len() < SERVER_FRAME_HEADER_BYTES {
+            return Ok(None);
+        }
+        if &self.bytes[..SERVER_FRAME_MAGIC.len()] != SERVER_FRAME_MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session daemon frame has an invalid magic value",
+            ));
+        }
+        let kind = self.bytes[4];
+        let payload_len =
+            u32::from_be_bytes(self.bytes[5..9].try_into().expect("fixed frame header")) as usize;
+        if payload_len > MAX_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session daemon frame payload exceeds the protocol limit",
+            ));
+        }
+        let frame_len = SERVER_FRAME_HEADER_BYTES + payload_len;
+        if self.bytes.len() < frame_len {
+            return Ok(None);
+        }
+        let payload = self.bytes[SERVER_FRAME_HEADER_BYTES..frame_len].to_vec();
+        self.bytes.drain(..frame_len);
+        let event = match kind {
+            SERVER_FRAME_OUTPUT => ServerFrameEvent::Output(payload),
+            SERVER_FRAME_RECOVERY_SYNC => {
+                decode_recovery_sync_command(&payload).map_err(io::Error::other)?;
+                ServerFrameEvent::RecoverySync(payload)
+            }
+            SERVER_FRAME_STOLEN if payload.is_empty() => ServerFrameEvent::Stolen,
+            SERVER_FRAME_EXITED if payload.is_empty() => ServerFrameEvent::Exited,
+            SERVER_FRAME_RESIZE_APPLIED => {
+                ServerFrameEvent::ResizeApplied(Self::parse_resize_payload(&payload)?)
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "session daemon frame has an invalid kind or payload",
+                ))
+            }
+        };
+        Ok(Some(event))
+    }
+
+    pub fn close(&mut self) -> io::Result<Option<Vec<u8>>> {
+        if self.bytes.is_empty() {
+            Ok(None)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "session daemon closed with a partial output frame",
+            ))
+        }
+    }
+
+    fn parse_resize_payload(payload: &[u8]) -> io::Result<TerminalSize> {
+        if payload.len() != 8 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session resize-applied frame has an invalid length",
+            ));
+        }
+        let value = |offset| u16::from_be_bytes([payload[offset], payload[offset + 1]]);
+        TerminalSize::with_pixels(value(0), value(2), value(4), value(6)).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("session resize-applied frame is invalid: {error}"),
+            )
+        })
+    }
+}
+
 fn partial_marker_suffix_len(data: &[u8]) -> usize {
     [STOLEN_NOTICE_BYTES, EXITED_NOTICE_BYTES]
         .into_iter()
@@ -1984,6 +2748,26 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod client_worker_tests {
     use super::*;
+
+    fn connected_test(stream: Box<dyn SessionStream>) -> ConnectedSession {
+        ConnectedSession {
+            stream,
+            protocol_version: 1,
+            snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        }
+    }
+
+    fn from_stream_with_reconnector_test(
+        stream: Box<dyn SessionStream>,
+        notifier: Arc<dyn SessionEventNotifier>,
+        reconnector: Option<Arc<Reconnector>>,
+    ) -> Result<PersistentSession, PersistentSessionError> {
+        PersistentSession::from_stream_with_reconnector(
+            connected_test(stream),
+            notifier,
+            reconnector,
+        )
+    }
 
     /// A transport whose writes can be made to stall or dribble, recording
     /// everything the worker actually put on the wire.
@@ -2098,10 +2882,12 @@ mod client_worker_tests {
         let replacement = ScriptedStream::default();
         let connector_stream = replacement.clone();
         let notifier = Arc::new(Notifier(std::sync::atomic::AtomicUsize::new(0)));
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old.clone()),
             notifier.clone(),
-            Some(Arc::new(move |_| Ok(Box::new(connector_stream.clone())))),
+            Some(Arc::new(move |_| {
+                Ok(connected_test(Box::new(connector_stream.clone())))
+            })),
         )
         .unwrap();
         let id = session.id();
@@ -2147,7 +2933,7 @@ mod client_worker_tests {
         old.lock().eof = true;
         let (entered, connecting) = mpsc::sync_channel(1);
         let caller = thread::current().id();
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old),
             noop_session_event_notifier(),
             Some(Arc::new(move |cancelled| {
@@ -2198,7 +2984,7 @@ mod client_worker_tests {
         let old = ScriptedStream::default();
         old.lock().eof = true;
         let (entered, connecting) = mpsc::sync_channel(1);
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old),
             noop_session_event_notifier(),
             Some(Arc::new(move |cancelled| {
@@ -2226,10 +3012,12 @@ mod client_worker_tests {
             old.queue_readable(b"old output".to_vec());
         }
         old.lock().eof = true;
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old),
             noop_session_event_notifier(),
-            Some(Arc::new(|_| Ok(Box::new(ScriptedStream::default())))),
+            Some(Arc::new(|_| {
+                Ok(connected_test(Box::new(ScriptedStream::default())))
+            })),
         )
         .unwrap();
         assert!(wait_for(|| session.reconnect_available()));
@@ -2272,7 +3060,7 @@ mod client_worker_tests {
     fn reconnect_missing_daemon_reports_failure_without_starting_a_shell() {
         let old = ScriptedStream::default();
         old.lock().eof = true;
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old),
             noop_session_event_notifier(),
             Some(Arc::new(|_| {
@@ -2320,7 +3108,7 @@ mod client_worker_tests {
 
         let old = ScriptedStream::default();
         old.queue_readable(EXITED_NOTICE_BYTES.to_vec());
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old),
             noop_session_event_notifier(),
             Some(Arc::new(|_| panic!("an exited shell must not reconnect"))),
@@ -2371,7 +3159,7 @@ mod client_worker_tests {
         let mut pending: VecDeque<_> = (0..DEFAULT_EVENT_QUEUE_CAPACITY)
             .map(|_| SessionEvent::ResizeApplied(size))
             .collect();
-        let mut outbound = OutboundFrames::default();
+        let mut outbound = OutboundFrames::new(1);
         outbound.push_input(b"before");
         outbound.push_resize(size);
         outbound.push_input(b"after");
@@ -2399,6 +3187,31 @@ mod client_worker_tests {
             .concat()
         );
         session.shutdown(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn maximum_output_frame_can_share_a_read_with_the_following_frame() {
+        let mut wire = encode_server_output_frame(&vec![b'x'; MAX_FRAME_BYTES]);
+        wire.extend(encode_server_output_frame(b"tail"));
+        wire.extend(encode_server_exited_frame());
+        let mut parser = ServerFrameParser::default();
+        let mut output = Vec::new();
+        let mut exited = false;
+        for chunk in wire.chunks(4096) {
+            parser.push(chunk).unwrap();
+            while let Some(event) = parser.next_event().unwrap() {
+                match event {
+                    ServerFrameEvent::Output(bytes) => output.extend(bytes),
+                    ServerFrameEvent::Exited => exited = true,
+                    _ => panic!("unexpected frame"),
+                }
+            }
+        }
+        assert_eq!(output.len(), MAX_FRAME_BYTES + 4);
+        assert!(output[..MAX_FRAME_BYTES].iter().all(|byte| *byte == b'x'));
+        assert_eq!(&output[MAX_FRAME_BYTES..], b"tail");
+        assert!(exited);
+        assert!(parser.close().unwrap().is_none());
     }
 
     #[test]
@@ -2576,6 +3389,154 @@ mod tests {
     use super::*;
     use std::os::unix::net::UnixStream;
 
+    fn connected_test(stream: Box<dyn SessionStream>) -> ConnectedSession {
+        ConnectedSession {
+            stream,
+            protocol_version: 1,
+            snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        }
+    }
+
+    fn from_stream_with_reconnector_test(
+        stream: Box<dyn SessionStream>,
+        notifier: Arc<dyn SessionEventNotifier>,
+        reconnector: Option<Arc<Reconnector>>,
+    ) -> Result<PersistentSession, PersistentSessionError> {
+        PersistentSession::from_stream_with_reconnector(
+            connected_test(stream),
+            notifier,
+            reconnector,
+        )
+    }
+
+    #[test]
+    fn protocol_v2_delivers_a_recovered_terminal_before_live_output() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(POLL_INTERVAL)).unwrap();
+        client.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut expected = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        expected.ingest(b"\x1b[?1049hRECOVERED");
+        let expected = expected.recovery_clone();
+        let snapshot = encode_recovery_snapshot(&expected).unwrap();
+        let server_thread = thread::spawn(move || {
+            server.write_all(&snapshot).unwrap();
+            let adopted = read_frame(&mut server);
+            assert_eq!(adopted.0, FRAME_RECOVERY_ADOPTED);
+            server
+                .write_all(&encode_server_output_frame(b"live output"))
+                .unwrap();
+            server.write_all(&encode_server_exited_frame()).unwrap();
+        });
+
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(client),
+            noop_session_event_notifier(),
+            None,
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        assert_eq!(session.take_recovered_terminal(), Some(expected.clone()));
+        assert!(session.take_recovered_terminal().is_none());
+
+        let mut output = Vec::new();
+        wait_for_lifecycle_with_output(&session, &mut output, |state| {
+            matches!(state, SessionLifecycle::Exited(_))
+        });
+        assert_eq!(output, b"live output");
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn protocol_v2_withholds_live_output_until_recovery_is_adopted() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(POLL_INTERVAL)).unwrap();
+        client.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let expected = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        let snapshot = encode_recovery_snapshot(&expected).unwrap();
+        let server_thread = thread::spawn(move || {
+            server.write_all(&snapshot).unwrap();
+            server
+                .write_all(&encode_server_output_frame(b"pending"))
+                .unwrap();
+            let adopted = read_frame(&mut server);
+            assert_eq!(adopted.0, FRAME_RECOVERY_ADOPTED);
+            server.write_all(&encode_server_exited_frame()).unwrap();
+        });
+
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(client),
+            noop_session_event_notifier(),
+            None,
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        thread::sleep(POLL_INTERVAL * 2);
+        assert!(matches!(
+            session.try_recv_event(),
+            Err(SessionTryReceiveError::Empty)
+        ));
+        assert!(session.take_recovered_terminal().is_some());
+        let mut output = Vec::new();
+        wait_for_lifecycle_with_output(&session, &mut output, |state| {
+            matches!(state, SessionLifecycle::Exited(_))
+        });
+        assert_eq!(output, b"pending");
+        server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn protocol_v2_blocks_resize_until_recovered_terminal_is_adopted() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(POLL_INTERVAL)).unwrap();
+        client.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut expected = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        expected.ingest(b"recovered");
+        let expected = expected.recovery_clone();
+        let snapshot = encode_recovery_snapshot(&expected).unwrap();
+        let size = TerminalSize::new(90, 30).unwrap();
+        let server_thread = thread::spawn(move || {
+            server.write_all(&snapshot).unwrap();
+            let adopted = read_frame(&mut server);
+            assert_eq!(adopted.0, FRAME_RECOVERY_ADOPTED);
+            let resize = read_frame(&mut server);
+            assert_eq!(resize.0, FRAME_RESIZE);
+            assert_eq!(resize.1, encode_resize(size));
+        });
+
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(client),
+            noop_session_event_notifier(),
+            None,
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        assert!(matches!(
+            session.try_resize(size),
+            Err(SessionSendError::Full {
+                operation: SessionOperation::Resize,
+                ..
+            })
+        ));
+        assert_eq!(session.take_recovered_terminal(), Some(expected));
+        session.try_resize(size).unwrap();
+        server_thread.join().unwrap();
+    }
+
     #[test]
     fn native_socket_eof_allows_manual_resume_on_the_same_session() {
         let (old_client, old_server) = UnixStream::pair().unwrap();
@@ -2588,11 +3549,13 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         let replacement = Mutex::new(Some(new_client));
-        let session = PersistentSession::from_stream_with_reconnector(
+        let session = from_stream_with_reconnector_test(
             Box::new(old_client),
             noop_session_event_notifier(),
             Some(Arc::new(move |_| {
-                Ok(Box::new(replacement.lock().unwrap().take().unwrap()))
+                Ok(connected_test(Box::new(
+                    replacement.lock().unwrap().take().unwrap(),
+                )))
             })),
         )
         .unwrap();
@@ -2678,6 +3641,84 @@ mod tests {
     }
 
     #[test]
+    fn session_backend_forwards_recovery_sync_commands() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(POLL_INTERVAL)).unwrap();
+        client.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let scheme = festerm_core::ColorScheme::new(
+            festerm_core::Rgb::new(1, 2, 3),
+            festerm_core::Rgb::new(4, 5, 6),
+            festerm_core::Rgb::new(7, 8, 9),
+            [festerm_core::Rgb::new(10, 11, 12); 16],
+        );
+        let snapshot = encode_recovery_snapshot(
+            &Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap(),
+        )
+        .unwrap();
+        let server_thread = thread::spawn(move || {
+            server.write_all(&snapshot).unwrap();
+            let adopted = read_frame(&mut server);
+            assert_eq!(adopted.0, FRAME_RECOVERY_ADOPTED);
+            let scrollback = read_frame(&mut server);
+            assert_eq!(scrollback.0, FRAME_RECOVERY_SYNC);
+            assert_eq!(
+                bincode::deserialize::<RecoverySyncCommand>(&scrollback.1).unwrap(),
+                RecoverySyncCommand::SetScrollbackLimit { limit_bytes: 1024 }
+            );
+
+            let colors = read_frame(&mut server);
+            assert_eq!(colors.0, FRAME_RECOVERY_SYNC);
+            assert_eq!(
+                bincode::deserialize::<RecoverySyncCommand>(&colors.1).unwrap(),
+                RecoverySyncCommand::SetColorScheme(scheme)
+            );
+
+            let clear = read_frame(&mut server);
+            assert_eq!(clear.0, FRAME_RECOVERY_SYNC);
+            assert_eq!(
+                bincode::deserialize::<RecoverySyncCommand>(&clear.1).unwrap(),
+                RecoverySyncCommand::MirrorBytes(b"\x1b[2J\x1b[3J\x1b[H".to_vec())
+            );
+
+            let reset = read_frame(&mut server);
+            assert_eq!(reset.0, FRAME_RECOVERY_SYNC);
+            assert_eq!(
+                bincode::deserialize::<RecoverySyncCommand>(&reset.1).unwrap(),
+                RecoverySyncCommand::ResetToInitialState
+            );
+        });
+
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(client),
+            noop_session_event_notifier(),
+            None,
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        wait_for_lifecycle(&session, |lifecycle| {
+            matches!(lifecycle, SessionLifecycle::Running)
+        });
+        assert!(session.take_recovered_terminal().is_some());
+        session.sync_recovery_scrollback_limit(1024).unwrap();
+        session.sync_recovery_color_scheme(scheme).unwrap();
+        session
+            .sync_recovery_bytes(b"\x1b[2J\x1b[3J\x1b[H")
+            .unwrap();
+        session.sync_recovery_reset().unwrap();
+        assert!(matches!(
+            wait_for_lifecycle(&session, |lifecycle| {
+                matches!(lifecycle, SessionLifecycle::Disconnected(_))
+            }),
+            SessionLifecycle::Disconnected(_)
+        ));
+        server_thread.join().unwrap();
+    }
+
+    #[test]
     fn session_backend_distinguishes_shell_exit_from_transport_loss() {
         let (client, mut server) = UnixStream::pair().unwrap();
         client.set_read_timeout(Some(POLL_INTERVAL)).unwrap();
@@ -2694,6 +3735,252 @@ mod tests {
             wait_for_lifecycle(&session, SessionLifecycle::is_terminal),
             SessionLifecycle::Exited(exit) if exit.success()
         ));
+    }
+
+    #[test]
+    fn recovered_terminal_keeps_bounded_history_snapshot_semantics() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(4, 2).unwrap()).unwrap();
+        terminal.ingest("\r\nalpha\r\n\r\nbeta\r\ne\u{301}nd".as_bytes());
+        let expected = terminal.bounded_text_snapshot(100, 10, 20).unwrap();
+        let wire = encode_recovery_snapshot(&terminal).unwrap();
+        let recovered = read_attach_recovery_terminal(
+            &mut io::Cursor::new(wire),
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+        let snapshot = recovered.bounded_text_snapshot(100, 10, 20).unwrap();
+        assert_eq!(snapshot, expected);
+        assert_eq!(snapshot.text(), "\nalpha\n\nbeta\ne\u{301}nd");
+        assert!(recovered.bounded_text_snapshot(4, 10, 20).is_err());
+        terminal.ingest(b"new output");
+        assert_eq!(
+            snapshot,
+            recovered.bounded_text_snapshot(100, 10, 20).unwrap()
+        );
+    }
+
+    fn read_recovery_snapshot_for_test(terminal: &Terminal) -> Terminal {
+        let wire = encode_recovery_snapshot(terminal).unwrap();
+        read_attach_recovery_terminal(
+            &mut io::Cursor::new(wire),
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    fn assert_recovery_equivalent(left: &Terminal, right: &Terminal) {
+        assert_eq!(left.scrollback_stats(), right.scrollback_stats());
+        assert_eq!(
+            left.bounded_text_snapshot(64 * 1024, 256, 4096).unwrap(),
+            right.bounded_text_snapshot(64 * 1024, 256, 4096).unwrap()
+        );
+        for row in 0..left.dimensions().rows() {
+            assert_eq!(left.row_text(row), right.row_text(row));
+        }
+    }
+
+    #[test]
+    fn recovered_terminal_preserves_history_accounting_after_future_growth() {
+        let dimensions = festerm_core::Dimensions::new(6, 3).unwrap();
+        let mut continuous = Terminal::with_scrollback_limit(dimensions, 16 * 1024).unwrap();
+        let long_grapheme = format!("e{}", "\u{301}".repeat(80));
+        continuous.ingest(
+            format!(
+                "alpha\r\n\
+                 \x1b]8;;https://example.invalid/recovery/accounting/long-target\x1b\\LINK\x1b]8;;\x1b\\\r\n\
+                 {long_grapheme}\r\n\
+                 {}",
+                "softwrapped-open-line-".repeat(12)
+            )
+            .as_bytes(),
+        );
+
+        let mut recovered = read_recovery_snapshot_for_test(&continuous);
+        assert_recovery_equivalent(&continuous, &recovered);
+
+        for terminal in [&mut continuous, &mut recovered] {
+            terminal.ingest(b"-continued\r\npost-recovery\r\n");
+            terminal
+                .resize(festerm_core::Dimensions::new(4, 4).unwrap())
+                .unwrap();
+            terminal.set_scrollback_limit(3 * 1024);
+            terminal.ingest("evict-\u{1f642}-".repeat(300).as_bytes());
+        }
+
+        assert_recovery_equivalent(&continuous, &recovered);
+        assert!(
+            continuous.scrollback_stats().evicted_lines() > 0
+                || continuous.scrollback_stats().oversize_lines() > 0,
+            "the follow-up writes should exercise bounded-history eviction"
+        );
+        assert_recovery_equivalent(&continuous, &read_recovery_snapshot_for_test(&continuous));
+    }
+
+    #[test]
+    fn repeated_recovery_preserves_history_during_bounded_terminal_churn() {
+        let mut continuous =
+            Terminal::with_scrollback_limit(festerm_core::Dimensions::new(7, 3).unwrap(), 2048)
+                .unwrap();
+        let mut recovered = read_recovery_snapshot_for_test(&continuous);
+        for step in 0..128 {
+            for terminal in [&mut continuous, &mut recovered] {
+                match step % 8 {
+                    0 => {
+                        terminal.ingest("line-\u{1f642}-e\u{301}\r\n".repeat(7).as_bytes());
+                    }
+                    1 => {
+                        terminal.ingest(b"\x1b[?1049hmenu");
+                    }
+                    2 => {
+                        terminal
+                            .resize(
+                                festerm_core::Dimensions::new(2 + step % 13, 2 + step % 5).unwrap(),
+                            )
+                            .unwrap();
+                    }
+                    3 => {
+                        terminal.ingest(b"\x1b[?1049l");
+                    }
+                    4 => {
+                        terminal.ingest(b"\x1b]8;;https://example.invalid/");
+                    }
+                    5 => {
+                        terminal.ingest(b"path\x1b\\link\x1b]8;;\x1b\\");
+                    }
+                    6 => {
+                        terminal.set_scrollback_limit(1024 * (1 + step % 4));
+                    }
+                    _ => {
+                        terminal.ingest("longwrap".repeat(50).as_bytes());
+                    }
+                }
+            }
+            recovered = read_recovery_snapshot_for_test(&recovered);
+            assert_eq!(
+                continuous.recovery_clone(),
+                recovered.recovery_clone(),
+                "step {step}"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_recovery_reader_retries_timeouts_and_enforces_payload_bounds() {
+        struct TimeoutThenCursor {
+            timeouts_remaining: usize,
+            inner: std::io::Cursor<Vec<u8>>,
+        }
+
+        impl Read for TimeoutThenCursor {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.timeouts_remaining > 0 {
+                    self.timeouts_remaining -= 1;
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "retry"));
+                }
+                self.inner.read(buffer)
+            }
+        }
+
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        terminal.ingest(b"recovered");
+        let snapshot = encode_recovery_snapshot(&terminal).unwrap();
+        let mut reader = TimeoutThenCursor {
+            timeouts_remaining: 2,
+            inner: std::io::Cursor::new(snapshot),
+        };
+        let recovered = read_attach_recovery_terminal(
+            &mut reader,
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(recovered.recovery_clone(), terminal.recovery_clone());
+
+        let mut oversized = Vec::new();
+        oversized.extend_from_slice(RECOVERY_MAGIC);
+        oversized.extend_from_slice(&((MAX_RECOVERY_SNAPSHOT_BYTES + 1) as u64).to_be_bytes());
+        let error = read_attach_recovery_terminal(
+            &mut std::io::Cursor::new(oversized),
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("protocol limit"));
+    }
+
+    #[test]
+    fn attach_recovery_reader_rejects_malformed_terminal_state() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"history\r\nvisible\r\n");
+        let mut snapshot = terminal.recovery_clone();
+        let mut value = serde_json::to_value(&snapshot).unwrap();
+        value["tab_stops"] = serde_json::Value::Array(Vec::new());
+        snapshot = serde_json::from_value(value).unwrap();
+        let payload = bincode_options().serialize(&snapshot).unwrap();
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(RECOVERY_MAGIC);
+        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&payload);
+        let error = read_attach_recovery_terminal(
+            &mut std::io::Cursor::new(encoded),
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("tab stops"));
+
+        let mut snapshot = terminal.recovery_clone();
+        let mut value = serde_json::to_value(&snapshot).unwrap();
+        value["scrollback"]["lines"][0]["cells"][0]["text_capacity_bytes"] =
+            serde_json::Value::from(0);
+        snapshot = serde_json::from_value(value).unwrap();
+        let payload = bincode_options().serialize(&snapshot).unwrap();
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(RECOVERY_MAGIC);
+        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&payload);
+        let error = read_attach_recovery_terminal(
+            &mut std::io::Cursor::new(encoded),
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("text capacity"));
+
+        let mut value = serde_json::to_value(terminal.recovery_clone()).unwrap();
+        value["scrollback"]["lines"][0]["cell_capacity"] = serde_json::Value::from(usize::MAX);
+        value["scrollback"]["lines"][0]["charged_bytes"] = serde_json::Value::from(usize::MAX);
+        value["scrollback"]["charged_bytes"] = serde_json::Value::from(usize::MAX);
+        value["scrollback"]["limit_bytes"] = serde_json::Value::from(usize::MAX);
+        let snapshot: Terminal = serde_json::from_value(value).unwrap();
+        let payload = bincode_options().serialize(&snapshot).unwrap();
+        let mut encoded = Vec::from(RECOVERY_MAGIC);
+        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&payload);
+        let error = read_attach_recovery_terminal(
+            &mut io::Cursor::new(encoded),
+            2,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("allocation exceeds the protocol limit"));
     }
 
     #[test]
@@ -2961,7 +4248,11 @@ mod registry_filtering_tests {
         assert_eq!(record.socket, "demo.sock");
         assert_eq!(record.name, "");
         assert!(!record.attached);
-        assert_eq!(record.protocol_version, PROTOCOL_VERSION);
+        assert_eq!(record.protocol_version, 1);
+        assert_eq!(
+            record.snapshot_schema_version,
+            LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        );
         assert!(record.helper_identity.is_none());
     }
 
@@ -2974,9 +4265,11 @@ mod registry_filtering_tests {
             shell: "/bin/bash".to_owned(),
             arguments: vec!["-l".to_owned()],
             working_directory: Some("/tmp".to_owned()),
+            scrollback_limit_bytes: 1024,
             created_at_unix_ms: 123,
             attached: false,
             protocol_version: PROTOCOL_VERSION,
+            snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             helper_identity: Some("festerm-sessiond-0.2.2.exe".to_owned()),
         };
         let mut registry = SessionRegistry::default();
@@ -3015,9 +4308,11 @@ mod registry_filtering_tests {
                 shell: "/bin/bash".to_owned(),
                 arguments: Vec::new(),
                 working_directory: None,
+                scrollback_limit_bytes: 1024,
                 created_at_unix_ms: 0,
                 attached: true,
                 protocol_version: PROTOCOL_VERSION,
+                snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                 helper_identity: None,
             },
         );
@@ -3039,9 +4334,11 @@ mod registry_filtering_tests {
             shell: String::new(),
             arguments: Vec::new(),
             working_directory: None,
+            scrollback_limit_bytes: 1024,
             created_at_unix_ms: 0,
             attached: false,
             protocol_version: PROTOCOL_VERSION + 1,
+            snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             helper_identity: None,
         };
         let registry = SessionRegistry {
@@ -3053,8 +4350,36 @@ mod registry_filtering_tests {
             .expect("incompatible protocol must fail before connecting")
             .to_string();
         assert!(error.contains("protocol 2"));
-        assert!(error.contains("supports protocol 1"));
+        assert!(error.contains("supports protocol 2"));
         assert!(error.contains("compatible fesTerm version"));
+    }
+
+    #[test]
+    fn unsupported_snapshot_schema_is_rejected_before_connecting() {
+        let record = SessionRecord {
+            name: "schema-future".to_owned(),
+            pid: 1,
+            socket: "future.sock".to_owned(),
+            shell: String::new(),
+            arguments: Vec::new(),
+            working_directory: None,
+            scrollback_limit_bytes: 1024,
+            created_at_unix_ms: 0,
+            attached: false,
+            protocol_version: PROTOCOL_VERSION,
+            snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
+            helper_identity: None,
+        };
+        let registry = SessionRegistry {
+            sessions: BTreeMap::from([(record.name.clone(), record)]),
+            ..Default::default()
+        };
+        let error = connect_existing_in_registry(&registry, "schema-future")
+            .err()
+            .expect("unsupported schema must fail before connecting")
+            .to_string();
+        assert!(error.contains("snapshot schema"));
+        assert!(error.contains(&RECOVERY_SNAPSHOT_SCHEMA_VERSION.to_string()));
     }
 
     #[test]
@@ -3357,7 +4682,7 @@ mod registry_filtering_tests {
             .expect("an unreadable record must not look like a missing session")
             .to_string();
         assert!(error.contains("protocol 9"));
-        assert!(error.contains("supports protocol 1"));
+        assert!(error.contains("supports protocol 2"));
     }
 
     #[test]

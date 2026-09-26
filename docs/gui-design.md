@@ -518,12 +518,28 @@ they belong in Settings as the corresponding settings surface matures.
 
 The terminal viewport's local context menu is deliberately about the text and
 target under the pointer, not application or session administration. An
-explicit OSC 8 link contributes **Open link** and **Copy link**. A non-empty
+explicit OSC 8 link contributes **Open link** and **Copy link**. A detected
+file path contributes **Open in viewer** when fesTerm can resolve that target
+honestly; its preview line freezes the local or remote path under the pointer,
+and a disabled button explains when trustworthy cwd, host-key, or credential
+metadata is missing. A non-empty
 terminal selection contributes **Copy**. A live session that currently accepts
 input contributes **Paste**. **Find in terminal** remains available in every
 retained terminal viewport, including an exited or disconnected read-only
-history. Unavailable entries are omitted; in particular, Paste is absent for a
-read-only history.
+history. When there is no active selection, the same menu also offers
+**Open Terminal History in Editor** and **Save Terminal History As…**. Both
+freeze the retained primary history plus the currently applicable screen into
+an independent plain-text snapshot with no ANSI/control-sequence export and no
+live link back to the session. **Open Terminal History in Editor** creates an
+untitled dirty editor document; **Save Terminal History As…** opens that same
+snapshot and immediately continues into the normal Save As sheet. The snapshot
+actions stay available for exited or disconnected retained history. If the
+retained text would exceed the editor's honest byte, line, or single-line
+bounds, fesTerm refuses before allocating a document and says so without
+quoting the history itself. Unavailable entries are omitted; in particular,
+Paste is absent for a read-only history, and the history-snapshot actions are
+omitted while a text selection is active so Copy remains the text action in
+that position.
 
 Clear, Close session, Disconnect, Reconnect, Settings, and appearance actions
 do not belong in this menu. **Select all** is also omitted initially because it
@@ -972,7 +988,10 @@ process-list guesses. A local file URI may identify a client path. An SSH path
 remains remote metadata and is never opened through the local OS. Runtime
 directories are private in screenshots, notifications, copied diagnostics,
 and workspace metadata and are not persisted as though they were a profile's
-reliable initial directory.
+reliable initial directory. Relative terminal paths stay disabled unless the
+session itself reports a trustworthy current directory (for example a text-mode
+SFTP session's own cwd); launch-profile directories and guessed shell prompts
+do not count.
 
 ### Session-type identity
 
@@ -2373,7 +2392,8 @@ The initial command inventory, subject to actual implementation and active-
 surface applicability, is:
 
 - **New Session…** and **Start Local Shell**;
-- **Find in Terminal**, **Manage Port Forwards…** for a live SSH shell session,
+- **Find in Terminal**, **Open Terminal History in Editor**, **Save Terminal
+  History As…**, **Manage Port Forwards…** for a live SSH shell session,
   **Rename Session…**, a capability-backed **Reconnect Session**, and **Close
   Session…**;
 - **Enter Focus Mode** or **Exit Focus Mode**, **Zoom In**, **Zoom Out**, and
@@ -2569,6 +2589,16 @@ If bounded scrollback evicts content above the current view, preserve the
 nearest retained position and announce that older history was discarded;
 never display stale rows.
 
+Terminal-history snapshot export uses the same retained-text model. The frozen
+text is the retained primary history plus the currently applicable visible
+screen, rendered as logical plain text: hard line breaks remain line breaks,
+soft wraps do not become synthetic newlines, grapheme clusters stay intact, and
+ANSI/control sequences are never exported. When the alternate screen is active,
+the snapshot still includes retained primary history but only the visible
+alternate screen; it does not fabricate hidden primary rows or off-screen TUI
+content. The resulting snapshot is immutable even if later output arrives or
+the saved copy is edited.
+
 The terminal uses a thin right-edge overlay scrollbar that does not consume a
 grid column. It appears on hover, scroll, selection drag, or whenever the view
 is away from the bottom. Its thumb represents only the bounded retained buffer,
@@ -2601,9 +2631,10 @@ read acknowledgment.
 
 ### Explicit terminal hyperlinks
 
-The initial link implementation supports explicit OSC 8 hyperlinks only.
-Automatic URL and path detection is deferred because punctuation, wrapping,
-and local-versus-remote ownership are ambiguous.
+Explicit OSC 8 hyperlinks and plain-text path opening remain separate
+features. OSC 8 parsing stays restricted to explicit hyperlinks; plain-text
+path detection is bounded by visible terminal cells, frozen when the context
+menu opens, and resolved without shell evaluation.
 
 Explicit links expose their normalized ASCII target in the context menu and
 full tooltip. `Ctrl+click` on Windows/Linux or `Cmd+click` on macOS opens a
@@ -2621,9 +2652,11 @@ reset, terminal reset, or primary/alternate-screen transition, and is capped
 at 4,096 printed cells. This prevents a hostile remote producer from silently
 annotating unrelated later prompts or output.
 
-A future local path action must first verify a client-local existing path. An
-SSH path is remote and must never be passed to the local OS without a separate
-deliberate remote-file workflow.
+Plain-text path opening may route to the existing local text/Markdown surfaces
+or to a verified SSH/SFTP snapshot, but an SSH path is always remote metadata
+and must never be passed to the local OS. Relative paths remain disabled until
+the session reports trustworthy cwd metadata; absent OSC 7 or an application-
+owned SFTP cwd, fesTerm must say cwd is unknown rather than guess.
 
 ### Bell and attention
 

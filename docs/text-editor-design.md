@@ -47,10 +47,10 @@ Consequences that follow from that and are worth stating plainly:
 
 ## Layout
 
-From the top: the tab chip row, the origin bar (`LOCAL` or `REMOTE` plus the
-path, and the `Edit | Preview | Split` toggle), the command bar, the Find bar
-when it is open, a state banner when there is something to say, the body with
-its line-number gutter, and the status bar.
+From the top: the tab chip row, the origin bar (`LOCAL`, `REMOTE`, or
+`UNTITLED` plus the label/path, and the `Edit | Preview | Split` toggle), the
+command bar, the Find bar when it is open, a state banner when there is
+something to say, the body with its line-number gutter, and the status bar.
 
 The command bar reads left to right as: **Save**, **Auto-save**, a separator,
 **Save As…**, **Find**, **Replace**, a separator, **Duplicate view**,
@@ -274,6 +274,18 @@ document layer's own words — "This file appears to be binary", "This file is
 too large to edit" — and shows the path. A picker that simply closes on a
 `.png` looks exactly like a click that missed.
 
+An editor tab may also come from a terminal-history snapshot rather than from a
+file. **Open Terminal History in Editor** freezes the retained primary history
+plus the currently applicable visible screen into a new untitled dirty
+document. It never aliases the live terminal buffer, never exports ANSI/control
+sequences, and stays unchanged while later terminal output continues. **Save
+Terminal History As…** uses the same snapshot and immediately opens the normal
+Save As sheet, and plain **Save** / `:w` / `:wq` on that untitled snapshot
+continue through the same Save As flow until a real destination is chosen.
+Auto-save stays unavailable until the snapshot is bound to a file. If the
+retained text would exceed the editor's declared bounds, fesTerm refuses
+before opening a document and reports the limit without quoting the history.
+
 ## What is not built yet
 
 - The remote half of the Save As sheet is present and disabled, and says
@@ -305,3 +317,7 @@ too large to edit" — and shows the path. A picker that simply closes on a
    is untouched, and a second window still holding the original stays on it.
 8. Save As onto a file that is already open in another tab; confirm one buffer,
    not two, and that the other tab shows the new bytes.
+9. Open Terminal History in Editor or Save Terminal History As… from a live or
+   disconnected terminal; confirm the snapshot opens as `UNTITLED`, starts
+   dirty, saves through the ordinary Save As sheet, and never changes when new
+   terminal output arrives or when the saved copy is edited.

@@ -216,6 +216,9 @@ pub struct StatusInputs {
     pub last_error: Option<SaveError>,
     /// Whether the origin is remote, which only changes the wording.
     pub remote: bool,
+    /// Whether Save already has a concrete destination instead of needing
+    /// Save As to choose one first.
+    pub has_save_target: bool,
     /// Set briefly after an outside change was taken up by a clean document,
     /// so every view says so instead of silently showing different text than
     /// the reader last looked at (ADR 0034 §6).
@@ -232,6 +235,7 @@ impl Default for StatusInputs {
             auto_save_requested: false,
             last_error: None,
             remote: false,
+            has_save_target: true,
             recently_reloaded: false,
         }
     }
@@ -361,7 +365,11 @@ impl DocumentStatus {
                 detail: error.detail().to_owned(),
                 actions: vec![BannerAction::Retry, BannerAction::SaveAs],
                 can_save: true,
-                auto_save: pause_or_keep(inputs.auto_save_requested),
+                auto_save: if inputs.has_save_target {
+                    pause_or_keep(inputs.auto_save_requested)
+                } else {
+                    AutoSaveControl::Unavailable
+                },
                 accent: StatusAccent::Warning,
                 chip_state: "not saved",
                 short_label: "Not saved",
@@ -385,7 +393,9 @@ impl DocumentStatus {
         }
 
         if inputs.dirty {
-            let detail = if inputs.auto_save_requested {
+            let detail = if !inputs.has_save_target {
+                "Save will ask where to write this document. Changes remain shared with every open view.".to_owned()
+            } else if inputs.auto_save_requested {
                 "Auto-save is on. Changes are shared with every open view.".to_owned()
             } else {
                 "Auto-save is off. Changes remain shared with other open views.".to_owned()
@@ -396,7 +406,7 @@ impl DocumentStatus {
                 detail,
                 actions: Vec::new(),
                 can_save: true,
-                auto_save: auto_save_idle(inputs.auto_save_requested),
+                auto_save: auto_save_control(inputs),
                 accent: StatusAccent::Working,
                 chip_state: "unsaved",
                 short_label: "Unsaved changes",
@@ -414,7 +424,7 @@ impl DocumentStatus {
                     .to_owned(),
                 actions: Vec::new(),
                 can_save: false,
-                auto_save: auto_save_idle(inputs.auto_save_requested),
+                auto_save: auto_save_control(inputs),
                 chip_state: "reloaded",
                 short_label: "Reloaded",
                 can_compare: false,
@@ -430,7 +440,7 @@ impl DocumentStatus {
             // Saving a clean document would rewrite bytes nobody changed, and
             // would make the file's modification time lie.
             can_save: false,
-            auto_save: auto_save_idle(inputs.auto_save_requested),
+            auto_save: auto_save_control(inputs),
             chip_state: "saved",
             short_label: "Saved",
             can_compare: false,
@@ -511,6 +521,14 @@ const fn auto_save_idle(requested: bool) -> AutoSaveControl {
     }
 }
 
+const fn auto_save_control(inputs: &StatusInputs) -> AutoSaveControl {
+    if !inputs.has_save_target {
+        AutoSaveControl::Unavailable
+    } else {
+        auto_save_idle(inputs.auto_save_requested)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,6 +587,23 @@ mod tests {
         assert_eq!(status.auto_save(), AutoSaveControl::Off);
         assert_eq!(status.chip_state(), "unsaved");
         assert_eq!(status.short_label(), "Unsaved changes");
+    }
+
+    #[test]
+    fn an_untitled_dirty_document_routes_save_and_disables_auto_save() {
+        let status = DocumentStatus::derive(&StatusInputs {
+            dirty: true,
+            auto_save_requested: true,
+            has_save_target: false,
+            ..StatusInputs::default()
+        });
+
+        assert!(status.can_save());
+        assert_eq!(status.auto_save(), AutoSaveControl::Unavailable);
+        assert_eq!(
+            status.detail(),
+            "Save will ask where to write this document. Changes remain shared with every open view."
+        );
     }
 
     #[test]
@@ -686,6 +721,7 @@ mod tests {
     fn a_failed_write_is_persistent_actionable_and_never_claims_saved() {
         let status = DocumentStatus::derive(&StatusInputs {
             dirty: true,
+            auto_save_requested: true,
             last_error: Some(SaveError::new(
                 "Could not save NOTES.md",
                 "The remote host refused the write.",
@@ -700,6 +736,7 @@ mod tests {
         );
         assert!(status.can_save());
         assert_eq!(status.chip_state(), "not saved");
+        assert_eq!(status.auto_save(), AutoSaveControl::Paused);
     }
 
     #[test]

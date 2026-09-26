@@ -19,7 +19,8 @@ unicode-width = "=0.2.2"
 # on the heap for every printed character, which matters enormously under
 # sustained high-volume output (e.g. `dir /s`) where every cell write and
 # every scrolled-up row clones its text.
-compact_str = "0.9"
+compact_str = { version = "0.9", features = ["serde"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 url = "2.5"
 
 [dev-dependencies]

@@ -333,6 +333,19 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
 
                         ui.add_space(12.0);
 
+                        settings_card(ui, "Terminal mouse", |ui| {
+                            ui.label("Shift+right-click opens the fesTerm menu");
+                            ssh_paragraph(
+                                ui,
+                                "Use Shift+right-click for fesTerm's Copy/Paste menu even \
+                                 when a terminal program handles mouse input. Plain right-click \
+                                 stays with that program. Shift+drag selects terminal text. \
+                                 These overrides work in local and SSH sessions.",
+                            );
+                        });
+
+                        ui.add_space(12.0);
+
                         settings_card(ui, "Scrolling", |ui| {
                             if let Some(selected) = settings_segmented_row(
                                 ui,
@@ -1030,6 +1043,19 @@ mod tests {
     }
 
     #[test]
+    fn settings_explains_the_fixed_terminal_mouse_override() {
+        let mut harness = wide_settings_harness();
+        harness.run();
+        assert!(harness
+            .query_by_label("Shift+right-click opens the fesTerm menu")
+            .is_some());
+        assert!(
+            harness.state().command.is_none(),
+            "help must not change settings"
+        );
+    }
+
+    #[test]
     fn settings_presents_each_shortcut_exactly_once() {
         // Regression test: a read-only "Keyboard" card used to restate the
         // command palette and Settings shortcuts that the bindings editor
@@ -1591,9 +1617,11 @@ mod tests {
         // The height has to track the content: this fixture is only 520
         // wide, and once `settings_segmented_row` began reserving its
         // buttons' real width the descriptions beside them wrap one line
-        // further at that width, making the whole surface taller.
+        // further at that width, making the whole surface taller. Match
+        // the full-content fixture above so the extra Windows controls and
+        // fixed mouse-gesture help do not put this widget below the fold.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 2600.0))
+            .with_size(egui::vec2(520.0, 5200.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")

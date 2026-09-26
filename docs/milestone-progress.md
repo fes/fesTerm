@@ -71,6 +71,19 @@ fuzzer now share a frame-by-frame CSI/DCS/OSC oracle, with mixed-reply and
 queue-overflow regressions. Valid concatenated replies pass; truncated frames
 anywhere in the stream still fail.
 
+## Freezing terminal history without lying about size
+
+Terminal history snapshots now follow the same rule as ordinary editor files:
+if the retained text would exceed the editor's declared byte, line, or
+single-line limits, fesTerm refuses before allocating an editor buffer instead
+of widening the limits or silently truncating the export. When the retained
+text does fit, the snapshot opens as an untitled dirty document that uses the
+ordinary Save As flow until it is bound to a real path; plain Save and `:w` /
+`:wq` follow that same path, and Auto-save stays unavailable until there is a
+destination to write to. The snapshot remains an immutable freeze of retained
+primary history plus the applicable visible screen even while live terminal
+output continues.
+
 ## Answering honestly, and stopping where the line does (v0.5.0)
 
 Two changes, both about fesTerm telling programs inside it the truth.
@@ -1691,13 +1704,49 @@ write loop. These remain follow-up work.
 
 Disconnected recoverable sessions now offer Reconnect beside Open Diagnostics.
 Native local recovery attaches only to the existing daemon, keeps the same
-tab/session identity, preserves the notifier, and restores the latest resize.
-It is asynchronous, rejects duplicate requests, and does not silently create
-a fresh shell when the daemon is missing. Both the transport and application
-discard old queued input before recovery, so a delayed keystroke cannot become
-an unexpected command in the resumed shell. Inspector Resume uses the same
-application command. Signed-package focus and platform acceptance remain
-under CP-11; no running user session was replaced during development.
+tab/session identity, preserves the notifier, and now restores a daemon-owned
+`festerm-core::Terminal` snapshot rather than replaying an arbitrary output
+tail. The daemon mirrors PTY output, accepted resizes, and frontend-owned
+terminal controls that affect recovery (scrollback limit, embedder color
+scheme, clear, reset), then sends one bounded snapshot before live output.
+It is asynchronous, rejects duplicate requests, explicitly rejects unsupported
+snapshot schemas before taking over a live session, and does not silently
+create a fresh shell when the daemon is missing. Both the transport and
+application discard old queued input before recovery, and the daemon clears
+mirrored reply queues continuously while detached, so a delayed keystroke or
+stale device reply cannot become an unexpected side effect in the resumed
+shell. Reattach now also validates decoded terminal invariants before
+adoption and temporarily holds initial frontend resizes until the recovered
+snapshot has replaced the local terminal, preventing a fresh window geometry
+from clobbering detached state.
+Inspector Resume uses the same application command. Signed-package focus and
+platform acceptance remain under CP-11; no running user session was replaced
+during development.
+
+Recovery review found that snapshot publication alone was insufficient:
+takeover needed an adoption acknowledgement, output backpressure had to
+retain control frames, and frontend resize had to wait for the daemon's
+ordered geometry event. Those boundaries now have deterministic regressions,
+including failed replacement retaining the old client and CLI framed attach
+without duplicate terminal-query side effects. The GUI stays asynchronous;
+the daemon's snapshot handshake deliberately quiesces PTY processing for a
+bounded 15-second deadline. The CLI uses a text projection, not full styled
+rendering. ADR 0038 remains Proposed pending explicit architectural approval.
+
+Combined history/recovery validation then exposed a subtler boundary: the
+snapshot validator compared text lengths with allocation-capacity charges,
+rejecting ordinary retained history. Schema 2 preserves capacity accounting
+through recovery and validates it before restoring bounded allocations.
+Regression coverage compares repeated recovery with continuous execution
+through wrapping, alternate-screen transitions, resizing, hyperlinks, and
+history eviction; recovery after trimming is covered too.
+
+Final stress runs caught an intermittent macOS PTY fixture race: a short-lived
+`pwd` process could exit before its output was captured. The fixture now
+acknowledges receipt while continuing to drain the PTY, with bounded waits.
+Terminal-origin SFTP reads also preserve literal parent components through
+metadata and file open, leaving symlink resolution to the server without
+changing the existing SFTP browser's navigation policy.
 
 Review also found two Windows-only waits hidden inside the old `named_pipe`
 dependency: connecting to a busy pipe could ignore the reconnect cancellation,
@@ -2260,3 +2309,52 @@ The one change with the clearest expected return is not a model choice at all:
 `app/festerm/src/text_editor.rs` is 4,000 lines, and every phase after B paid
 to re-read it. Splitting it would reduce the cost of the next comparable
 effort more than any routing decision available.
+
+## Direct paths and a discoverable mouse override
+
+The Open File picker no longer requires navigating every parent directory.
+Its path field accepts absolute paths, the user's home shorthand, and names
+relative to the displayed folder, while leaving shell syntax as literal text.
+File/directory checks use the existing bounded background loader; editing or
+navigating invalidates earlier requests so a late completion cannot open the
+wrong file. Paste/Enter and error-preservation regressions cover the new route.
+
+Shift+right-click was already the terminal's local-menu escape hatch, including
+inside mouse-aware TUIs. Settings now explains that fixed convention alongside
+Shift+drag, and the routing regression covers the supported tracking modes and
+encodings rather than only the simplest mouse mode. Native secondary-click,
+clipboard, and accessibility acceptance still requires platform evidence.
+
+## Opening paths without interrupting the terminal
+
+The terminal context menu can now resolve bounded filename candidates and open
+local documents or read remote documents through the source session's live
+SSH transport. It does not retain a second password or require users to persist
+a host key merely to use SFTP. Paths and viewer identity remain pinned to the
+verified host, owner, and transport generation, including automatic reconnects.
+Unknown shell working directories and remote home aliases are not guessed.
+
+Review caught an important distinction between background GUI work and
+nonblocking transport work: moving the caller to a thread did not help while
+the SSH worker still awaited SFTP inline. Remote reads now use at most two
+independent channel tasks per transport, with size/deadline limits and shutdown
+cancellation. A real loopback SSH fixture accepts a typed password and
+session-only host trust, stalls or refuses SFTP, and still requires shell
+input/output and shutdown to make progress. The app also bounds pending opens.
+
+The history snapshot Save As failure scenario exposed a real Windows bug,
+not just a platform-sensitive assertion: the replacement fallback could move a
+directory aside as though it were a file and then report success. Saves now
+reject directories and special destinations before creating a temporary file,
+and the Windows fallback rechecks its destination before moving anything.
+The regression preserves a sentinel inside the refused directory and requires
+the untitled document to stay dirty and unchanged.
+
+The final CI review also caught an intermittent Linux diagnostics failure:
+after a clean run ended, a concurrent process spawn could temporarily keep an
+inherited `flock` descriptor open until exec. Closing the parent descriptor did
+not release that shared lock, so the next startup mistook completed evidence
+for an active run. A duplicated-descriptor regression reproduces the failure
+without relying on scheduling. Diagnostic lock guards now explicitly unlock
+when their last real owner finishes; log writers still retain lifetime
+ownership, and catalog/probe locks use the same release rule.

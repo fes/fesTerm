@@ -99,7 +99,7 @@ user input, clipboard disclosure, network activity, or process invocation.
 | Query replies (DECRQSS, title, color, font) | Reply only to recognized requests; never echo attacker-controlled payloads; strip C0 controls from every reply sent to a child session. |
 | OSC 52 clipboard | Disable reads. If writes are implemented, require explicit opt-in or confirmation and cap decoded payload size. |
 | OSC 8 hyperlinks | Preserve only normalized absolute ASCII HTTP/HTTPS URLs with a host after the first parameter separator; bound URI and link-run length; require explicit user action and repeat validation in the application before opening. |
-| OSC 7 working directory | Never resolve an untrusted hostname or interpolate it into a shell command. |
+| OSC 7 working directory | Never resolve an untrusted hostname or interpolate it into a shell command. Without verified OSC 7 (or an application-owned session cwd such as text-mode SFTP), relative terminal paths stay disabled instead of guessing from prompts or launch directories. |
 | Titles and reporting | Sanitize control characters and bound lengths. Do not enable title-report queries by default. |
 | DCS/graphics/passthrough | Keep unsupported protocols disabled; cap all payload, repeat, and allocation sizes. |
 
