@@ -3,6 +3,9 @@ param(
     [string] $ResultPath = 'os-input-smoke-result.txt'
 )
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
 if ($env:OS -ne 'Windows_NT') {
     throw 'Windows OS-input smoke is supported only on Windows.'
 }
@@ -12,9 +15,6 @@ using System;
 using System.Runtime.InteropServices;
 
 public static class FesTermOsInputNative {
-    [DllImport("user32.dll")]
-    public static extern bool SetForegroundWindow(IntPtr hWnd);
-
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
@@ -34,10 +34,19 @@ public static class FesTermOsInputNative {
 $mouseLeftDown = 0x0002
 $mouseLeftUp = 0x0004
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. "$PSScriptRoot\windows-application-window.ps1"
 if (-not [System.IO.Path]::IsPathRooted($ResultPath)) {
     $ResultPath = Join-Path $repositoryRoot $ResultPath
 }
 $nativeResultPath = [System.IO.Path]::GetFullPath($ResultPath)
+
+function Send-SmokeKeys([string] $Keys) {
+    [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+    if ([FesTermApplicationWindow]::GetForegroundWindow() -ne $window) {
+        throw 'The OS-input application window lost foreground activation.'
+    }
+    $shell.SendKeys($Keys)
+}
 
 cargo build --workspace
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -51,7 +60,8 @@ $env:FESTERM_CONFIG_PATH = Join-Path $isolation 'config.toml'
 $env:FESTERM_NATIVE_OS_INPUT_SMOKE = '1'
 $env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativeResultPath
 try {
-    $process = Start-Process -FilePath '.\target\debug\festerm.exe' -WorkingDirectory (Get-Location) -PassThru
+    $process = Start-Process -FilePath '.\target\debug\festerm.exe' -WorkingDirectory (Get-Location) -PassThru `
+        -RedirectStandardOutput "$nativeResultPath.stdout.log" -RedirectStandardError "$nativeResultPath.stderr.log"
 } catch {
     Remove-Item -LiteralPath $isolation -Recurse -Force
     throw
@@ -65,17 +75,22 @@ try {
     $deadline = (Get-Date).AddSeconds(10)
     do {
         $process.Refresh()
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero) { break }
+        $window = [FesTermApplicationWindow]::Find($process.Id)
+        if ($window -ne [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds 50
     } while ((Get-Date) -lt $deadline)
-    if ($process.MainWindowHandle -eq [IntPtr]::Zero) {
-        throw 'fesTerm did not create a native window.'
+    if ($window -eq [IntPtr]::Zero) {
+        throw 'fesTerm did not create a native application window.'
     }
 
-    [void] [FesTermOsInputNative]::ShowWindow($process.MainWindowHandle, 5)
-    [void] [FesTermOsInputNative]::MoveWindow($process.MainWindowHandle, 100, 100, 860, 540, $true)
-    [void] [FesTermOsInputNative]::SetForegroundWindow($process.MainWindowHandle)
+    [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+    [void] [FesTermOsInputNative]::ShowWindow($window, 5)
+    [void] [FesTermOsInputNative]::MoveWindow($window, 100, 100, 860, 540, $true)
+    [FesTermApplicationWindow]::Activate($window, $process.Id)
     Start-Sleep -Milliseconds 500
+    if ([FesTermApplicationWindow]::GetForegroundWindow() -ne $window) {
+        throw 'The OS-input application window lost foreground activation.'
+    }
     [void] [FesTermOsInputNative]::SetCursorPos(530, 370)
     [FesTermOsInputNative]::mouse_event($mouseLeftDown, 0, 0, 0, [UIntPtr]::Zero)
     [FesTermOsInputNative]::mouse_event($mouseLeftUp, 0, 0, 0, [UIntPtr]::Zero)
@@ -83,18 +98,18 @@ try {
 
     $shell = New-Object -ComObject WScript.Shell
     if ($env:FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE -eq '1') {
-        $shell.SendKeys('^+c')
-        $shell.SendKeys('^+p')
+        Send-SmokeKeys '^+c'
+        Send-SmokeKeys '^+p'
         Start-Sleep -Seconds 1
-        $shell.SendKeys('{ESC}')
+        Send-SmokeKeys '{ESC}'
         Start-Sleep -Seconds 1
-        $shell.SendKeys('^+p')
+        Send-SmokeKeys '^+p'
         Start-Sleep -Seconds 1
-        $shell.SendKeys('paste{ENTER}')
+        Send-SmokeKeys 'paste{ENTER}'
         Start-Sleep -Seconds 1
-        $shell.SendKeys('^b^+b')
+        Send-SmokeKeys '^b^+b'
     }
-    $shell.SendKeys('{TAB}{UP}os-input-ok{ENTER}')
+    Send-SmokeKeys '{TAB}{UP}os-input-ok{ENTER}'
 
     $deadline = (Get-Date).AddSeconds(20)
     do {

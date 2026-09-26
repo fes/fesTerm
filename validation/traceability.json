@@ -226,7 +226,9 @@
         "CP-16"
       ],
       "status": "partial",
-      "prerequisites": []
+      "prerequisites": [
+        "CP-16 requires verified application HWND and input-free native samples; residual idle failure tracked in #242"
+      ]
     },
     {
       "id": "launcher-profile-search-sort",
@@ -846,6 +848,8 @@
         "native_solid_background_matches_terminal_pixels_across_dpi",
         "srgb_framebuffers_keep_standard_background_pixels",
         "only_eight_bit_gamma_framebuffers_use_the_solid_background_pipeline",
+        "os_input_smoke_never_passes_on_startup_output_alone",
+        "child_acknowledgment_requires_completed_controlled_input",
         "native_bounds_crop_sparse_paints_and_validate_indices",
         "shared_surfaces_preserve_pixels_and_previous_frame_ownership",
         "direct2d_selection_preserves_hardware_other_backends_and_srgb",
@@ -911,7 +915,8 @@
       "status": "partial",
       "prerequisites": [
         "IME and complete selection semantics remain platform/capability work",
-        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review"
+        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review",
+        "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards"
       ]
     },
     {
@@ -1428,7 +1433,9 @@
         "CP-16"
       ],
       "status": "partial",
-      "prerequisites": []
+      "prerequisites": [
+        "CP-16 requires verified application HWND and input-free native samples; residual idle failure tracked in #242"
+      ]
     },
     {
       "id": "sftp-settings",
