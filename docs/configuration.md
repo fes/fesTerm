@@ -213,7 +213,12 @@ mirror the current Settings controls for chip layout, chip details, the
 status bar, live-session close confirmation, workspace restoration, compact
 Launcher layout, background-output chip pulsing, resumable local-session
 surfacing, terminal-only typography, keyboard quick-switch overlays, and
-scrollback scroll speed. By default, choosing **Local Shell** starts the
+scrollback scroll speed. Unread-output pulses are rate-limited; an unfocused
+window or reduced-motion style uses a static ring-and-dot marker instead.
+Software rendering adapters automatically select reduced motion for the
+current process without changing the saved preference. Running Sessions
+discovery continues in the background without redrawing unchanged inventory.
+By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.
 `customize_local_shell = true` instead opens the executable, arguments, and
 working-directory form before launch. On Windows, `prefer_powershell` makes new default

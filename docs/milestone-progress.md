@@ -3,6 +3,30 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Letting an idle software-rendered window stay idle
+
+A Windows Hyper-V desktop reported nearly machine-wide CPU usage from
+fesTerm. Thread stacks identified WARP's pixel rasterizer, not PowerShell,
+Copilot, or a terminal-parser loop. Two harmless-looking UI behaviors kept
+feeding it work: Running Sessions redrew the Launcher for unchanged discovery
+results, and one unread background prompt started an unbounded status-dot
+animation that lasted until the user visited its tab.
+
+Discovery now waits and compares inventory on its bounded worker, waking the
+UI for changes rather than for every probe. Cancellation, generation checks,
+explicit refresh coalescing, and visible provider failures remain intact.
+Relative-age labels have their own coarse refresh. The unread pulse retains
+its period but has a real frame budget; unfocused or reduced-motion windows
+keep a static, shape-distinct unread marker. A CPU rendering adapter selects
+reduced motion without modifying the user's saved settings.
+
+Tests cover unchanged-result silence, cancellation, worker failure and
+retirement, animation timing, and marker geometry/color at fixed times. A
+separate opt-in Windows probe measures both native idle scenarios and can
+require a software adapter. This is deliberately not a claim that sustained
+output is cheap on WARP: even a small changing terminal region currently
+causes full-frame rendering, which remains a separate follow-up.
+
 ## Leaving evidence when the application disappears
 
 An application that exits abruptly cannot explain itself after the fact unless

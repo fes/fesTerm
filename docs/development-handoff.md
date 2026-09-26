@@ -279,6 +279,20 @@ recording terminal content.
 
 ## Diagnostics and Safety
 
+- For idle-rendering CPU regressions on a Windows desktop, build the workspace,
+  set `FESTERM_RUN_OPTIONAL_VALIDATION=1`, and run
+  `pwsh -NoProfile -File scripts\check-windows-idle-rendering.ps1`.
+  The optional Windows suite also runs it. It opens two isolated-config
+  windows in sequence: maximized Launcher discovery and an idle background
+  PowerShell tab with unread output. Each must average at most 5% of total
+  machine CPU after warmup. Run without competing builds, and do not interact
+  with or minimize the test windows during measurement. Add
+  `-RequireSoftwareRenderer` to require WARP/another CPU adapter rather than
+  treating a hardware-GPU run as software-renderer evidence. Results and
+  local logs go under `target`; `-Executable` and `-ResultPath` support
+  before/after comparisons. Logs retain the sensitivity boundary below.
+  Software adapters use static unread indicators; sustained terminal output
+  can still be expensive to rasterize and is a separate performance concern.
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
 - fesTerm keeps local lifecycle metadata and logs under

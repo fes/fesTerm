@@ -474,6 +474,12 @@ visual recovery during rapid resizing remain native evidence, not implied by
 these tests. A replacement handshake can pause daemon processing for up to
 15 seconds; CLI attach is a text projection rather than full styled rendering.
 
+### Idle rendering
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| CP-16 | On a Windows software-rendered desktop, leave a maximized Launcher with unchanged Running Sessions idle, then leave a second maximized window on Launcher with an idle background PowerShell tab that has unread startup output. Confirm low CPU, preserved session discovery, and a visible static ring-and-dot unread cue. On an accelerated display, confirm the slow pulse, focus-loss static cue, and immediate clearing on tab activation. Compare chrome, text, and window geometry before/after at ordinary and high DPI. | Native performance + visual + usability | `scripts/check-windows-idle-rendering.ps1` (also in the opt-in Windows suite) measures both cases with isolated configurations and a default 5% total-machine CPU ceiling; `-RequireSoftwareRenderer` rejects hardware-only evidence. Deterministic tests assert pulse cadence, fixed-time color/geometry, and reduced-motion/static markers. Native readability, smoothness, mixed-DPI appearance, and accelerated-device behavior still require visual review. Sustained-output rendering cost is a separate follow-up, not covered by this idle budget. |
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:
