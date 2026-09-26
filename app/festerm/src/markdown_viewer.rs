@@ -573,15 +573,11 @@ impl MarkdownViewerTab {
         }
     }
 
-    /// Whether this tab already shows the remote file at `host:port` +
-    /// `remote_path`, so re-double-clicking the same remote Markdown file
-    /// refreshes the existing tab instead of opening a duplicate. Owner and
-    /// verified-fingerprint identity are deliberately not compared here:
-    /// they can legitimately change across a reconnect while still
-    /// referring to the same logical remote file.
-    pub fn matches_remote_path(&self, host: &str, port: u16, remote_path: &str) -> bool {
-        matches!(&self.source, MarkdownSource::Remote(remote)
-            if remote.host() == host && remote.port() == port && remote.remote_path() == remote_path)
+    /// Whether this tab already shows the same validated remote Markdown
+    /// source identity, so refreshing one remote origin never overwrites a
+    /// different owner/fingerprint/generation that happens to share a path.
+    pub fn matches_remote_source(&self, source: &RemoteMarkdownSource) -> bool {
+        matches!(&self.source, MarkdownSource::Remote(remote) if remote == source)
     }
 
     /// Left-hand status-bar context, mirroring the mockup's
@@ -4821,16 +4817,46 @@ mod tests {
     }
 
     #[test]
-    fn matches_remote_path_ignores_owner_and_fingerprint() {
+    fn matches_remote_source_requires_full_remote_identity() {
         let tab = MarkdownViewerTab::open_remote(
             test_remote_source("/etc/motd"),
             "/etc/motd".to_owned(),
             b"hello\n".to_vec(),
         );
-        assert!(tab.matches_remote_path("sftp.example.test", 22, "/etc/motd"));
-        assert!(!tab.matches_remote_path("sftp.example.test", 2222, "/etc/motd"));
-        assert!(!tab.matches_remote_path("other.example.test", 22, "/etc/motd"));
-        assert!(!tab.matches_remote_path("sftp.example.test", 22, "/etc/other"));
+        assert!(tab.matches_remote_source(&test_remote_source("/etc/motd")));
+        assert!(!tab.matches_remote_source(
+            &RemoteMarkdownSource::new(
+                "sftp.example.test",
+                22,
+                RemoteSourceOwner::profile_identifier("staging").unwrap(),
+                "SHA256:abc123",
+                "/etc/motd",
+                1,
+            )
+            .unwrap()
+        ));
+        assert!(!tab.matches_remote_source(
+            &RemoteMarkdownSource::new(
+                "sftp.example.test",
+                22,
+                RemoteSourceOwner::username("deploy").unwrap(),
+                "SHA256:different",
+                "/etc/motd",
+                1,
+            )
+            .unwrap()
+        ));
+        assert!(!tab.matches_remote_source(
+            &RemoteMarkdownSource::new(
+                "sftp.example.test",
+                22,
+                RemoteSourceOwner::username("deploy").unwrap(),
+                "SHA256:abc123",
+                "/etc/motd",
+                2,
+            )
+            .unwrap()
+        ));
     }
 
     #[test]

@@ -6,6 +6,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use festerm_core::{MouseTrackingMode, Terminal};
+
 #[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 
@@ -344,6 +346,12 @@ fn read_session_until(session: &festerm_sessiond::PersistentSession, marker: &st
     #[cfg(windows)]
     let mut replied_through = 0;
     loop {
+        if let Some(terminal) = session.take_recovered_terminal() {
+            let text = terminal_text(&terminal);
+            if text.contains(marker) {
+                return text;
+            }
+        }
         match session.try_recv_event() {
             Ok(SessionEvent::Output(bytes)) => output.extend(bytes),
             Ok(_) | Err(SessionTryReceiveError::Empty) => {}
@@ -428,7 +436,7 @@ fn native_discovery_churn_reconnect_pins_generation_and_explicit_registry() {
     read_session_until(&session, "BEFORE:original");
 
     let mut takeover = connect(&selected.endpoint);
-    assert_contains(&mut *takeover, b"BEFORE:original");
+    assert!(terminal_contains(&takeover.snapshot, b"BEFORE:original"));
     bounded_poll(|| session.reconnect_available(), "takeover disconnect");
     // A stale Launcher selection cannot steal, but this tab's explicit
     // reconnect must retain the existing same-generation takeover policy.
@@ -440,7 +448,7 @@ fn native_discovery_churn_reconnect_pins_generation_and_explicit_registry() {
     .is_err());
     session.try_reconnect().unwrap();
     read_session_until(&session, "BEFORE:original");
-    assert_contains(&mut *takeover, STOLEN_NOTICE);
+    assert_contains(&mut takeover, STOLEN_NOTICE);
     drop(takeover);
     assert_eq!(session.id(), id);
     session.try_send_input(&test_input("reconnected")).unwrap();
@@ -449,8 +457,8 @@ fn native_discovery_churn_reconnect_pins_generation_and_explicit_registry() {
 
     // Leave A reconnectable rather than naturally exited, then replace its
     // name with B while keeping B's client attached throughout the attempt.
-    let mut takeover = connect(&selected.endpoint);
-    assert_contains(&mut *takeover, b"AFTER:reconnected");
+    let takeover = connect(&selected.endpoint);
+    assert!(terminal_contains(&takeover.snapshot, b"AFTER:reconnected"));
     bounded_poll(
         || session.reconnect_available(),
         "second takeover disconnect",
@@ -614,6 +622,56 @@ fn native_discovery_churn_prunes_forcibly_terminated_generation_artifacts() {
 trait ClientStream: Read + Write {}
 impl<T: Read + Write> ClientStream for T {}
 
+struct ConnectedClient {
+    snapshot: Terminal,
+    stream: Box<dyn ClientStream>,
+    pending: Vec<u8>,
+}
+
+impl Read for ConnectedClient {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        while self.pending.is_empty() {
+            let mut header = [0u8; 9];
+            self.stream.read_exact(&mut header)?;
+            if &header[..4] != b"FSO1" {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid daemon output frame",
+                ));
+            }
+            let length = u32::from_be_bytes(header[5..9].try_into().unwrap()) as usize;
+            let mut payload = vec![0; length];
+            self.stream.read_exact(&mut payload)?;
+            match header[4] {
+                1 => self.pending = payload,
+                2 | 5 => continue,
+                3 => self.pending = STOLEN_NOTICE.to_vec(),
+                4 => self.pending = EXITED_NOTICE.to_vec(),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unknown daemon output frame",
+                    ))
+                }
+            }
+        }
+        let count = buf.len().min(self.pending.len());
+        buf[..count].copy_from_slice(&self.pending[..count]);
+        self.pending.drain(..count);
+        Ok(count)
+    }
+}
+
+impl Write for ConnectedClient {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
+    }
+}
+
 struct BatchCleanup {
     executable: PathBuf,
     runtime: PathBuf,
@@ -745,22 +803,22 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     let mut first = connect(&endpoint);
     eprintln!("sessiond-native phase=first-connected");
     #[cfg(windows)]
-    assert_windows_ready(&mut *first);
+    assert_windows_ready(&mut first);
     eprintln!("sessiond-native phase=initial-output");
-    send_input(&mut *first, &test_input("first-marker")).unwrap();
+    send_input(&mut first, &test_input("first-marker")).unwrap();
     eprintln!("sessiond-native phase=first-input-sent");
-    assert_contains(&mut *first, b"first-marker");
+    assert_contains(&mut first, b"first-marker");
     eprintln!("sessiond-native phase=first-output");
 
     let mut second = connect(&endpoint);
     eprintln!("sessiond-native phase=second-connected");
-    assert_contains(&mut *first, STOLEN_NOTICE);
-    assert_eof(&mut *first);
-    assert_contains(&mut *second, b"first-marker");
+    assert_contains(&mut first, STOLEN_NOTICE);
+    assert_eof(&mut first);
+    assert!(terminal_contains(&second.snapshot, b"first-marker"));
     eprintln!("sessiond-native phase=takeover");
 
-    send_input(&mut *second, &test_input("second-marker")).unwrap();
-    assert_contains(&mut *second, b"second-marker");
+    send_input(&mut second, &test_input("second-marker")).unwrap();
+    assert_contains(&mut second, b"second-marker");
     eprintln!("sessiond-native phase=second-output");
 
     let output = daemon_command(&executable, &runtime_root)
@@ -780,6 +838,103 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     );
     #[cfg(windows)]
     let _terminated_status = daemon.wait().unwrap();
+}
+
+#[test]
+#[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
+fn native_daemon_snapshot_matches_fresh_terminal_after_large_output() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let name = format!("native-snapshot-{suffix}");
+    let runtime_root = short_runtime_root(&suffix);
+    fs::create_dir_all(&runtime_root).unwrap();
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime_root.clone(),
+        name: name.clone(),
+    };
+
+    let shell = pty_test_child(&executable);
+    let scrollback_limit = 4 * 1024 * 1024usize;
+    let repeat_count = 120_000usize;
+    let repeat_text = "0123456789";
+    let prefix = b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[HREADY:";
+    let suffix_bytes = b"\x1b[3;5HEND";
+    let arguments = [
+        format!("emit-bytes-hex:{}", hex_encode_bytes(prefix)),
+        format!("emit-repeat:{repeat_count}:{repeat_text}"),
+        format!("emit-bytes-hex:{}", hex_encode_bytes(suffix_bytes)),
+        "spin".to_owned(),
+    ];
+    let argument_refs: Vec<_> = arguments.iter().map(String::as_str).collect();
+
+    #[cfg(unix)]
+    launch_session_with_scrollback(
+        &executable,
+        &runtime_root,
+        &name,
+        &shell,
+        &argument_refs,
+        scrollback_limit,
+    );
+    #[cfg(windows)]
+    let mut daemon = launch_session_with_scrollback(
+        &executable,
+        &runtime_root,
+        &name,
+        &shell,
+        &argument_refs,
+        scrollback_limit,
+    );
+
+    let registry = runtime_root
+        .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
+        .join("sessiond");
+    let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
+
+    let client = loop {
+        let client = connect(&endpoint);
+        if terminal_contains(&client.snapshot, b"END") {
+            break client;
+        }
+        drop(client);
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(client.snapshot.modes().alternate_screen());
+    assert_ne!(
+        client.snapshot.modes().mouse_tracking(),
+        MouseTrackingMode::None
+    );
+    assert!(client.snapshot.modes().sgr_mouse());
+    assert!(client.snapshot.modes().bracketed_paste());
+
+    let mut expected = Terminal::with_scrollback_limit(
+        festerm_core::Dimensions::new(80, 24).unwrap(),
+        scrollback_limit,
+    )
+    .unwrap();
+    expected.ingest(prefix);
+    for _ in 0..repeat_count {
+        expected.ingest(repeat_text.as_bytes());
+    }
+    expected.ingest(suffix_bytes);
+    let expected = expected.recovery_clone();
+    assert_eq!(client.snapshot, expected);
+
+    let _ = daemon_command(&executable, &runtime_root)
+        .args(["kill", "--name", &name])
+        .output()
+        .unwrap();
+    #[cfg(windows)]
+    let _ = daemon.wait();
+    drop(client);
 }
 
 /// Regression test for the Windows handle-inheritance leak fixed alongside
@@ -895,9 +1050,9 @@ fn native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_us
 
     let endpoint = record["socket"].as_str().unwrap();
     let mut client = connect(endpoint);
-    assert_windows_ready(&mut *client);
-    send_input(&mut *client, &test_input("after-package-replacement")).unwrap();
-    assert_contains(&mut *client, b"after-package-replacement");
+    assert_windows_ready(&mut client);
+    send_input(&mut client, &test_input("after-package-replacement")).unwrap();
+    assert_contains(&mut client, b"after-package-replacement");
 }
 
 #[cfg(windows)]
@@ -946,9 +1101,9 @@ fn native_windows_versioned_helper_installs_beside_a_live_legacy_daemon() {
     let registry = runtime_root.join("fesTerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
     let mut client = connect(&endpoint);
-    assert_windows_ready(&mut *client);
-    send_input(&mut *client, &test_input("after-side-by-side-install")).unwrap();
-    assert_contains(&mut *client, b"after-side-by-side-install");
+    assert_windows_ready(&mut client);
+    send_input(&mut client, &test_input("after-side-by-side-install")).unwrap();
+    assert_contains(&mut client, b"after-side-by-side-install");
 }
 
 /// Regression test for the Windows zombie daemon reported in September 2026.
@@ -995,11 +1150,11 @@ fn native_daemon_exits_and_deregisters_when_its_shell_exits() {
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
     let mut client = connect(&endpoint);
     #[cfg(windows)]
-    assert_windows_ready(&mut *client);
+    assert_windows_ready(&mut client);
 
     // The shell consumes this line and exits.
-    send_input(&mut *client, &test_input("goodbye")).unwrap();
-    assert_contains(&mut *client, EXITED_NOTICE);
+    send_input(&mut client, &test_input("goodbye")).unwrap();
+    assert_contains(&mut client, EXITED_NOTICE);
     drop(client);
 
     #[cfg(windows)]
@@ -1063,15 +1218,15 @@ fn native_daemon_keeps_a_slow_client_through_a_large_output_burst() {
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
     let mut client = connect(&endpoint);
     #[cfg(windows)]
-    assert_windows_ready(&mut *client);
+    assert_windows_ready(&mut client);
 
     // Release the burst, then stop reading for long enough to overrun every
     // buffer between the shell and this client.
-    send_input(&mut *client, &test_input("go")).unwrap();
+    send_input(&mut client, &test_input("go")).unwrap();
     std::thread::sleep(Duration::from_secs(5));
 
     // The session must still be attached and still delivering the burst.
-    assert_contains(&mut *client, b"FLOOD-COMPLETE");
+    assert_contains(&mut client, b"FLOOD-COMPLETE");
 
     // The test shell ends in `spin`, so the daemon only goes away when the
     // session is killed. Reap it here rather than leaving a zombie behind for
@@ -1116,10 +1271,33 @@ fn launch_session_with(
     shell: &Path,
     arguments: &[&str],
 ) {
+    launch_session_with_scrollback(
+        executable,
+        runtime_root,
+        name,
+        shell,
+        arguments,
+        festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+    );
+}
+
+#[cfg(unix)]
+fn launch_session_with_scrollback(
+    executable: &Path,
+    runtime_root: &Path,
+    name: &str,
+    shell: &Path,
+    arguments: &[&str],
+    scrollback_limit_bytes: usize,
+) {
     let mut command = daemon_command(executable, runtime_root);
     command
         .args(["start", "--name", name, "--shell"])
-        .arg(shell);
+        .arg(shell)
+        .args([
+            "--scrollback-limit-bytes",
+            &scrollback_limit_bytes.to_string(),
+        ]);
     for argument in arguments {
         command.arg("--arg").arg(argument);
     }
@@ -1166,12 +1344,35 @@ fn launch_session_with(
     shell: &Path,
     arguments: &[&str],
 ) -> std::process::Child {
+    launch_session_with_scrollback(
+        executable,
+        runtime_root,
+        name,
+        shell,
+        arguments,
+        festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+    )
+}
+
+#[cfg(windows)]
+fn launch_session_with_scrollback(
+    executable: &Path,
+    runtime_root: &Path,
+    name: &str,
+    shell: &Path,
+    arguments: &[&str],
+    scrollback_limit_bytes: usize,
+) -> std::process::Child {
     use std::{process::Stdio, thread};
 
     let mut command = daemon_command(executable, runtime_root);
     command
         .args(["daemon", "--name", name, "--shell"])
-        .arg(shell);
+        .arg(shell)
+        .args([
+            "--scrollback-limit-bytes",
+            &scrollback_limit_bytes.to_string(),
+        ]);
     for argument in arguments {
         command.arg("--arg").arg(argument);
     }
@@ -1215,6 +1416,21 @@ fn daemon_command(executable: &Path, runtime_root: &Path) -> Command {
     command
 }
 
+fn native_test_runtime_leaf(pid: u32, index: usize, millis: u128) -> String {
+    format!("f{pid:x}-{index:x}-{millis:x}")
+}
+
+#[cfg(unix)]
+#[test]
+fn native_test_runtime_leaf_fits_macos_ci_socket_paths() {
+    let leaf = native_test_runtime_leaf(u32::MAX, 255, 9_999_999_999_999);
+    let probe = PathBuf::from("/Users/runner/work/fesTerm/.f")
+        .join(leaf)
+        .join("festerm/sessiond/4294967295-9999999999999.sock");
+    assert!(probe.as_os_str().as_encoded_bytes().len() < 104);
+    std::os::unix::net::SocketAddr::from_pathname(probe).unwrap();
+}
+
 fn short_runtime_root(_suffix: &str) -> PathBuf {
     static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let index = NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1224,18 +1440,19 @@ fn short_runtime_root(_suffix: &str) -> PathBuf {
             format!("{}-{index}", std::process::id()),
         ),
         None => (
-            if cfg!(unix) {
-                PathBuf::from("/tmp")
-            } else {
-                std::env::temp_dir()
-            },
-            format!(
-                "fsd-{}-{index}-{:x}",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::parent)
+                .expect("crate lives under /Users/fes/src workspace during native tests")
+                .join(".f"),
+            native_test_runtime_leaf(
                 std::process::id(),
+                index,
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_millis(),
             ),
         ),
     };
@@ -1377,8 +1594,48 @@ fn registry_endpoint(path: &Path, name: &str) -> String {
         .to_owned()
 }
 
+fn hex_encode_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn read_recovery_terminal(stream: &mut dyn ClientStream) -> Terminal {
+    let mut header = [0u8; 12];
+    stream.read_exact(&mut header).unwrap();
+    assert_eq!(&header[..4], b"FSD2");
+    let length = usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
+    let mut payload = vec![0; length];
+    stream.read_exact(&mut payload).unwrap();
+    bincode::deserialize(&payload).unwrap()
+}
+
+fn terminal_contains(terminal: &Terminal, expected: &[u8]) -> bool {
+    let expected = String::from_utf8_lossy(expected);
+    terminal_text(terminal).contains(expected.as_ref())
+}
+
+fn terminal_text(terminal: &Terminal) -> String {
+    let mut text = String::new();
+    if !terminal.modes().alternate_screen() {
+        for row in 0..terminal.scrollback_stats().physical_rows() {
+            for cell in terminal.scrollback_physical_row(row).into_iter().flatten() {
+                text.push_str(cell.text());
+            }
+            text.push('\n');
+        }
+    }
+    for row in 0..terminal.dimensions().rows() {
+        for column in 0..terminal.dimensions().columns() {
+            if let Some(cell) = terminal.cell_ref(column, row) {
+                text.push_str(cell.text());
+            }
+        }
+        text.push('\n');
+    }
+    text
+}
+
 #[cfg(unix)]
-fn connect(endpoint: &str) -> Box<dyn ClientStream> {
+fn connect(endpoint: &str) -> ConnectedClient {
     let stream = UnixStream::connect(endpoint).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -1386,11 +1643,18 @@ fn connect(endpoint: &str) -> Box<dyn ClientStream> {
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
         .unwrap();
-    Box::new(stream)
+    let mut stream: Box<dyn ClientStream> = Box::new(stream);
+    let snapshot = read_recovery_terminal(&mut *stream);
+    acknowledge_recovery(&mut *stream).unwrap();
+    ConnectedClient {
+        snapshot,
+        stream,
+        pending: Vec::new(),
+    }
 }
 
 #[cfg(windows)]
-fn connect(endpoint: &str) -> Box<dyn ClientStream> {
+fn connect(endpoint: &str) -> ConnectedClient {
     // Bundled ConPTY spawns a separate OpenConsole.exe host process for the
     // child shell. On a cold GitHub Actions Windows runner, that host's own
     // startup (plus first-write scheduling for the test child's `READY`
@@ -1407,7 +1671,23 @@ fn connect(endpoint: &str) -> Box<dyn ClientStream> {
     .unwrap();
     stream.set_read_timeout(Duration::from_secs(10));
     stream.set_write_timeout(Duration::from_secs(10));
-    Box::new(stream)
+    let mut stream: Box<dyn ClientStream> = Box::new(stream);
+    let snapshot = read_recovery_terminal(&mut *stream);
+    acknowledge_recovery(&mut *stream).unwrap();
+    ConnectedClient {
+        snapshot,
+        stream,
+        pending: Vec::new(),
+    }
+}
+
+fn acknowledge_recovery(stream: &mut dyn ClientStream) -> io::Result<()> {
+    stream.write_all(FRAME_MAGIC)?;
+    stream.write_all(&[4])?;
+    stream.write_all(&0u32.to_be_bytes())?;
+    #[cfg(not(windows))]
+    stream.flush()?;
+    Ok(())
 }
 
 fn send_input(stream: &mut dyn ClientStream, bytes: &[u8]) -> io::Result<()> {
@@ -1421,7 +1701,10 @@ fn send_input(stream: &mut dyn ClientStream, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn assert_windows_ready(stream: &mut dyn ClientStream) {
+fn assert_windows_ready(stream: &mut ConnectedClient) {
+    if terminal_contains(&stream.snapshot, b"READY") {
+        return;
+    }
     let mut received = Vec::new();
     let mut replied_through = 0;
     let mut buffer = [0u8; 4096];
@@ -1504,8 +1787,8 @@ fn assert_eof(stream: &mut dyn ClientStream) {
 }
 
 #[cfg(unix)]
-fn is_eof_error(_error: &io::Error) -> bool {
-    false
+fn is_eof_error(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::UnexpectedEof
 }
 
 #[cfg(windows)]

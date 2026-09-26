@@ -40,6 +40,7 @@ impl fmt::Display for DocumentId {
 pub enum DocumentOrigin {
     Local(LocalOrigin),
     Remote(RemoteOrigin),
+    Untitled(UntitledOrigin),
 }
 
 impl DocumentOrigin {
@@ -55,6 +56,7 @@ impl DocumentOrigin {
                 remote.verified_host_key_fingerprint(),
                 remote.path()
             ),
+            Self::Untitled(untitled) => format!("untitled:{}", untitled.key()),
         })
     }
 
@@ -63,6 +65,7 @@ impl DocumentOrigin {
         match self {
             Self::Local(local) => local.file_name(),
             Self::Remote(remote) => remote.file_name(),
+            Self::Untitled(untitled) => untitled.file_name(),
         }
     }
 
@@ -83,6 +86,7 @@ impl DocumentOrigin {
                 let name = parent.rsplit('/').find(|part| !part.is_empty())?;
                 Some(name.to_owned())
             }
+            Self::Untitled(_) => None,
         }
     }
 
@@ -92,6 +96,7 @@ impl DocumentOrigin {
         match self {
             Self::Local(_) => None,
             Self::Remote(remote) => Some(remote.host()),
+            Self::Untitled(_) => None,
         }
     }
 
@@ -107,6 +112,7 @@ impl DocumentOrigin {
                 remote.host(),
                 remote.path()
             ),
+            Self::Untitled(untitled) => untitled.qualified_label().to_owned(),
         }
     }
 
@@ -124,6 +130,12 @@ impl From<LocalOrigin> for DocumentOrigin {
 impl From<RemoteOrigin> for DocumentOrigin {
     fn from(origin: RemoteOrigin) -> Self {
         Self::Remote(origin)
+    }
+}
+
+impl From<UntitledOrigin> for DocumentOrigin {
+    fn from(origin: UntitledOrigin) -> Self {
+        Self::Untitled(origin)
     }
 }
 
@@ -181,6 +193,41 @@ pub struct RemoteOrigin {
     path: String,
     file_name: String,
     lifecycle_generation: u64,
+}
+
+/// An application-created document that has bytes and editor state but no
+/// backing path yet.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct UntitledOrigin {
+    key: String,
+    file_name: String,
+    qualified_label: String,
+}
+
+impl UntitledOrigin {
+    pub fn new(
+        key: impl Into<String>,
+        file_name: impl Into<String>,
+        qualified_label: impl Into<String>,
+    ) -> Result<Self, OriginError> {
+        Ok(Self {
+            key: non_empty(key, OriginError::EmptyPath)?,
+            file_name: non_empty(file_name, OriginError::NoFileName)?,
+            qualified_label: non_empty(qualified_label, OriginError::EmptyLabel)?,
+        })
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    pub fn qualified_label(&self) -> &str {
+        &self.qualified_label
+    }
 }
 
 impl RemoteOrigin {
@@ -343,6 +390,7 @@ fn non_empty(value: impl Into<String>, error: OriginError) -> Result<String, Ori
 pub enum OriginError {
     EmptyPath,
     NoFileName,
+    EmptyLabel,
     EmptyHost,
     WhitespaceHost,
     ZeroPort,
@@ -355,6 +403,7 @@ impl fmt::Display for OriginError {
         let message = match self {
             Self::EmptyPath => "the path is empty",
             Self::NoFileName => "the path does not name a file",
+            Self::EmptyLabel => "the label is empty",
             Self::EmptyHost => "the host is empty",
             Self::WhitespaceHost => "the host contains whitespace",
             Self::ZeroPort => "the port is zero",
@@ -453,6 +502,18 @@ mod tests {
         assert_eq!(remote.file_name(), "NOTES.md");
         assert_eq!(remote.parent_label().as_deref(), Some("nimbus-relay"));
         assert_eq!(remote.host_label(), Some("web-1.staging.example.com"));
+
+        let untitled = DocumentOrigin::from(
+            UntitledOrigin::new(
+                "terminal-history-1",
+                "terminal-history-1.txt",
+                "Terminal history snapshot",
+            )
+            .unwrap(),
+        );
+        assert_eq!(untitled.file_name(), "terminal-history-1.txt");
+        assert_eq!(untitled.parent_label(), None);
+        assert_eq!(untitled.host_label(), None);
     }
 
     #[test]
@@ -465,9 +526,34 @@ mod tests {
     }
 
     #[test]
+    fn untitled_documents_never_alias_one_another() {
+        let first = DocumentOrigin::from(
+            UntitledOrigin::new(
+                "terminal-history-1",
+                "terminal-history-1.txt",
+                "Terminal history snapshot",
+            )
+            .unwrap(),
+        );
+        let second = DocumentOrigin::from(
+            UntitledOrigin::new(
+                "terminal-history-2",
+                "terminal-history-2.txt",
+                "Terminal history snapshot",
+            )
+            .unwrap(),
+        );
+        assert_ne!(first.key(), second.key());
+    }
+
+    #[test]
     fn empty_and_malformed_identities_are_refused() {
         assert_eq!(LocalOrigin::new(""), Err(OriginError::EmptyPath));
         assert_eq!(LocalOrigin::new("/"), Err(OriginError::NoFileName));
+        assert_eq!(
+            UntitledOrigin::new("snapshot", "terminal-history.txt", "   "),
+            Err(OriginError::EmptyLabel)
+        );
         assert_eq!(
             RemoteOrigin::new(
                 "",

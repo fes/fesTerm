@@ -48,8 +48,13 @@ pub(crate) struct LocalDirectoryLoadRequest {
     pub(crate) complete: Box<dyn FnOnce(LocalDirectoryLoadResult) + Send>,
 }
 
+struct LocalDirectoryLoadTask {
+    path: SftpPath,
+    run: Box<dyn FnOnce(&SftpPath) + Send>,
+}
+
 struct LocalDirectoryLoadShared {
-    pending: Mutex<Option<LocalDirectoryLoadRequest>>,
+    pending: Mutex<Option<LocalDirectoryLoadTask>>,
     wake: Condvar,
     shutdown: AtomicBool,
 }
@@ -89,14 +94,20 @@ impl LocalDirectoryLoader {
                     }
                     pending.take().expect("pending request was checked")
                 };
-                let result = local_snapshot_and_metadata(&request.path);
-                (request.complete)(result);
+                (request.run)(&request.path);
             })
             .expect("could not spawn local directory loader thread");
         Self { shared }
     }
 
     pub(crate) fn schedule(&self, request: LocalDirectoryLoadRequest) {
+        self.schedule_task(LocalDirectoryLoadTask {
+            path: request.path,
+            run: Box::new(move |path| (request.complete)(local_snapshot_and_metadata(path))),
+        });
+    }
+
+    fn schedule_task(&self, request: LocalDirectoryLoadTask) {
         *self
             .shared
             .pending
@@ -5715,6 +5726,63 @@ enum MarkdownPickerEvent {
         summary: String,
         details: String,
     },
+    PathResolved {
+        request_id: u64,
+        result: Result<(PathBuf, bool), String>,
+    },
+}
+
+fn resolve_picker_path(text: &str, directory: &Path, home: &Path) -> Result<PathBuf, String> {
+    if text.is_empty() {
+        return Err("Enter a file or folder path.".to_owned());
+    }
+    if text.len() > 32 * 1024 || text.chars().any(char::is_control) {
+        return Err("The path is too long or contains control characters.".to_owned());
+    }
+    // Strip only a complete pair of pasted quotes; whitespace can be part of a filename.
+    let text = text
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            text.strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(text);
+    if text.is_empty() {
+        return Err("Enter a file or folder path.".to_owned());
+    }
+    if text == "~" {
+        return Ok(home.to_owned());
+    }
+    if let Some(relative) = text.strip_prefix("~/").or_else(|| {
+        if cfg!(windows) {
+            text.strip_prefix("~\\")
+        } else {
+            None
+        }
+    }) {
+        return Ok(home.join(relative));
+    }
+    if text.starts_with('~') {
+        return Err("Only ~ for your own home directory is supported.".to_owned());
+    }
+    let path = PathBuf::from(text);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    #[cfg(windows)]
+    if path.has_root()
+        || matches!(
+            path.components().next(),
+            Some(std::path::Component::Prefix(_))
+        )
+    {
+        return Err(
+            "Use a fully qualified drive or UNC path, or a relative path without a drive."
+                .to_owned(),
+        );
+    }
+    Ok(directory.join(path))
 }
 
 /// Local-filesystem-only file picker for "Open Markdown File…" (#132),
@@ -5733,6 +5801,9 @@ pub(crate) struct MarkdownFilePicker {
     repaint: egui::Context,
     local_loader: LocalDirectoryLoader,
     next_request_id: u64,
+    entered_path: String,
+    resolving_path: bool,
+    pending_file: Option<PathBuf>,
 }
 
 impl MarkdownFilePicker {
@@ -5748,6 +5819,9 @@ impl MarkdownFilePicker {
             repaint,
             local_loader,
             next_request_id: 0,
+            entered_path: String::new(),
+            resolving_path: false,
+            pending_file: None,
         };
         let start = picker.pane.current_path.clone();
         picker.load(start, false);
@@ -5755,6 +5829,9 @@ impl MarkdownFilePicker {
     }
 
     fn load(&mut self, path: SftpPath, push_history: bool) {
+        self.entered_path.clear();
+        self.resolving_path = false;
+        self.pending_file = None;
         self.pane.loading = true;
         self.pane.error = None;
         self.pane.details = None;
@@ -5812,7 +5889,87 @@ impl MarkdownFilePicker {
                         self.pane.set_error(summary, details);
                     }
                 }
+                MarkdownPickerEvent::PathResolved { request_id, result } => {
+                    if request_id != self.pane.pending_request_id || !self.resolving_path {
+                        continue;
+                    }
+                    self.resolving_path = false;
+                    self.pane.loading = false;
+                    match result {
+                        Ok((path, true)) => self.navigate_to_breadcrumb(SftpPath::local(path)),
+                        Ok((path, false)) => self.pending_file = Some(path),
+                        Err(details) => {
+                            self.pane
+                                .set_error("Could not open the path.".to_owned(), details);
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    fn submit_path(&mut self) {
+        self.cancel_path_request();
+        let Some(directory) = self.current_directory() else {
+            self.pane.set_error(
+                "Could not open the path.".to_owned(),
+                "No local folder is selected.".to_owned(),
+            );
+            return;
+        };
+        let path =
+            match resolve_picker_path(&self.entered_path, &directory, &local_home_directory()) {
+                Ok(path) => path,
+                Err(error) => {
+                    self.pane
+                        .set_error("Could not open the path.".to_owned(), error);
+                    return;
+                }
+            };
+        self.next_request_id += 1;
+        let request_id = self.next_request_id;
+        self.pane.pending_request_id = request_id;
+        self.pane.loading = true;
+        self.pane.error = None;
+        self.pane.details = None;
+        self.pending_file = None;
+        self.resolving_path = true;
+        let event_sender = self.event_sender.clone();
+        let repaint = self.repaint.clone();
+        self.local_loader.schedule_task(LocalDirectoryLoadTask {
+            path: SftpPath::local(path.clone()),
+            run: Box::new(move |_| {
+                let result = fs::metadata(&path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|metadata| {
+                        if metadata.is_dir() {
+                            // Resolve dot segments through the filesystem, not lexically:
+                            // `symlink/..` may name a different parent than its spelling.
+                            fs::canonicalize(path)
+                                .map(|path| (path, true))
+                                .map_err(|error| error.to_string())
+                        } else if metadata.is_file() {
+                            Ok((path, false))
+                        } else {
+                            Err(
+                                "Choose a regular file or directory, not a device or special file."
+                                    .to_owned(),
+                            )
+                        }
+                    });
+                let _ = event_sender.send(MarkdownPickerEvent::PathResolved { request_id, result });
+                repaint.request_repaint();
+            }),
+        });
+    }
+
+    fn cancel_path_request(&mut self) {
+        self.pending_file = None;
+        if self.resolving_path {
+            self.next_request_id += 1;
+            self.pane.pending_request_id = self.next_request_id;
+            self.resolving_path = false;
+            self.pane.loading = false;
         }
     }
 
@@ -5938,6 +6095,33 @@ impl MarkdownFilePicker {
         });
         ui.add_space(6.0);
 
+        let path_id = ui.make_persistent_id("markdown_picker_path");
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::L)) {
+            ui.memory_mut(|memory| memory.request_focus(path_id));
+        }
+        let mut path_owns_keys = ui.memory(|memory| memory.has_focus(path_id));
+        ui.horizontal(|ui| {
+            let label = ui.label("File or folder path");
+            let response = ui.add(
+                TextEdit::singleline(&mut self.entered_path)
+                    .id(path_id)
+                    .char_limit(32 * 1024)
+                    .hint_text("Absolute path, ~/path, or relative to this folder")
+                    .desired_width((width - 210.0).max(80.0)),
+            ).labelled_by(label.id)
+                .on_hover_text("Paste a file or folder path. Relative paths start in the current folder. Ctrl+L (Command+L on macOS) focuses this field.");
+            path_owns_keys |= response.has_focus() || response.lost_focus();
+            if response.changed() {
+                self.cancel_path_request();
+            }
+            let submit = path_owns_keys
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Enter));
+            if ui.add_enabled(!self.entered_path.is_empty(), egui::Button::new("Open path")).clicked() || submit {
+                self.submit_path();
+            }
+        });
+        ui.add_space(6.0);
+
         let mut filter_text = self.pane.filter.clone();
         let filter_response = show_filter_field(ui, &mut filter_text, PaneFocus::Local, width);
         if filter_response.changed() {
@@ -5947,6 +6131,9 @@ impl MarkdownFilePicker {
 
         if let Some(summary) = self.pane.error.clone() {
             ui.colored_label(theme::STATUS_ERROR, summary);
+            if let Some(details) = &self.pane.details {
+                ui.label(details);
+            }
             ui.add_space(6.0);
         }
 
@@ -6120,19 +6307,21 @@ impl MarkdownFilePicker {
             });
         self.pane.update_scroll_offset(scroll_output.state.offset.y);
 
-        if ui.input(|input| input.key_pressed(Key::Enter)) {
+        if !path_owns_keys && !self.pane.loading && ui.input(|input| input.key_pressed(Key::Enter))
+        {
             if let Some(item) = self.pane.activate_cursor() {
                 picked_item = Some(item);
             }
         }
-        if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
+        if !path_owns_keys && ui.input(|input| input.key_pressed(Key::ArrowDown)) {
             self.pane.move_cursor(1, false);
         }
-        if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
+        if !path_owns_keys && ui.input(|input| input.key_pressed(Key::ArrowUp)) {
             self.pane.move_cursor(-1, false);
         }
 
         if let Some(item) = picked_item {
+            self.cancel_path_request();
             outcome = self.open_item(&item);
         }
 
@@ -6145,11 +6334,17 @@ impl MarkdownFilePicker {
             );
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Cancel").clicked() {
+                    self.cancel_path_request();
                     outcome = MarkdownPickerOutcome::Cancelled;
                 }
             });
         });
 
+        if matches!(outcome, MarkdownPickerOutcome::Pending) {
+            if let Some(path) = self.pending_file.take() {
+                outcome = MarkdownPickerOutcome::Open(path);
+            }
+        }
         outcome
     }
 }
@@ -7210,6 +7405,272 @@ mod tests {
         assert_eq!(picker.pane.current_path, SftpPath::local(dir.clone()));
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn markdown_file_picker_resolves_literal_paths_against_its_directory() {
+        let directory = std::env::temp_dir().join("picker base");
+        let home = std::env::temp_dir().join("picker home");
+        for text in [
+            "notes.txt",
+            "./notes.txt",
+            "../notes.txt",
+            " spaced name .txt",
+        ] {
+            assert_eq!(
+                resolve_picker_path(text, &directory, &home).unwrap(),
+                directory.join(text)
+            );
+        }
+        assert_eq!(
+            resolve_picker_path("'two words.txt'", &directory, &home).unwrap(),
+            directory.join("two words.txt")
+        );
+        assert_eq!(
+            resolve_picker_path("\"日本語.md\"", &directory, &home).unwrap(),
+            directory.join("日本語.md")
+        );
+        assert_eq!(resolve_picker_path("~", &directory, &home).unwrap(), home);
+        assert_eq!(
+            resolve_picker_path("~/notes.txt", &directory, &home).unwrap(),
+            home.join("notes.txt")
+        );
+        let absolute = directory.join("absolute.txt");
+        assert_eq!(
+            resolve_picker_path(absolute.to_str().unwrap(), &home, &home).unwrap(),
+            absolute
+        );
+        for invalid in ["", "''", "~someone/notes.txt", "a\nb", "a\0b"] {
+            assert!(
+                resolve_picker_path(invalid, &directory, &home).is_err(),
+                "{invalid:?}"
+            );
+        }
+        // Shell syntax is literal filename text, never evaluated.
+        assert_eq!(
+            resolve_picker_path("$(pwd).txt", &directory, &home).unwrap(),
+            directory.join("$(pwd).txt")
+        );
+        #[cfg(windows)]
+        {
+            for invalid in ["C:notes.txt", "\\notes.txt"] {
+                assert!(resolve_picker_path(invalid, &directory, &home).is_err());
+            }
+            for absolute in [r"C:\notes.txt", r"\\server\share\notes.txt"] {
+                assert_eq!(
+                    resolve_picker_path(absolute, &directory, &home).unwrap(),
+                    PathBuf::from(absolute)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn markdown_file_picker_typed_paths_open_files_navigate_folders_and_preserve_errors() {
+        let dir = std::env::temp_dir().join(format!("festerm-picker-paths-{}", std::process::id()));
+        fs::create_dir_all(dir.join("child")).unwrap();
+        let dir = fs::canonicalize(dir).unwrap();
+        fs::write(dir.join("child/two words.txt"), b"hello").unwrap();
+        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        picker.entered_path = "child".to_owned();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.current_directory(), Some(dir.join("child")));
+        picker.entered_path = "\"two words.txt\"".to_owned();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(
+            picker.pending_file.take(),
+            Some(dir.join("child/two words.txt"))
+        );
+        picker.entered_path = dir.join("child/two words.txt").display().to_string();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(
+            picker.pending_file.take(),
+            Some(dir.join("child/two words.txt"))
+        );
+        picker.entered_path = "missing.txt".to_owned();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.entered_path, "missing.txt");
+        assert!(picker.pane.error.is_some());
+        assert!(picker.pane.details.is_some());
+        assert!(picker.pending_file.is_none());
+        picker.entered_path = "../child/..".to_owned();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.current_directory(), Some(dir.clone()));
+        assert!(picker
+            .current_directory()
+            .unwrap()
+            .components()
+            .all(|part| !matches!(
+                part,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )));
+        drop(picker);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn markdown_file_picker_stale_path_results_cannot_open_after_edit_or_navigation() {
+        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        picker.local_loader = LocalDirectoryLoader::paused_for_test();
+        picker.entered_path = "old.txt".to_owned();
+        picker.submit_path();
+        let stale = picker.pane.pending_request_id;
+        picker.entered_path = "new.txt".to_owned();
+        picker.cancel_path_request();
+        picker
+            .event_sender
+            .send(MarkdownPickerEvent::PathResolved {
+                request_id: stale,
+                result: Ok((std::env::temp_dir().join("old.txt"), false)),
+            })
+            .unwrap();
+        picker.poll();
+        assert!(picker.pending_file.is_none());
+        picker.submit_path();
+        let stale = picker.pane.pending_request_id;
+        picker.navigate_home();
+        picker
+            .event_sender
+            .send(MarkdownPickerEvent::PathResolved {
+                request_id: stale,
+                result: Ok((std::env::temp_dir().join("new.txt"), false)),
+            })
+            .unwrap();
+        picker.poll();
+        assert!(picker.pending_file.is_none());
+        picker.entered_path = "invalid\npath".to_owned();
+        picker.submit_path();
+        assert!(picker.pane.error.is_some());
+        assert!(picker.pending_file.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn markdown_file_picker_parent_navigation_follows_the_symlink_target() {
+        let dir =
+            std::env::temp_dir().join(format!("festerm-picker-symlink-{}", std::process::id()));
+        fs::create_dir_all(dir.join("target/child")).unwrap();
+        let dir = fs::canonicalize(dir).unwrap();
+        std::os::unix::fs::symlink(dir.join("target/child"), dir.join("alias")).unwrap();
+        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        picker.entered_path = "alias/..".to_owned();
+        picker.submit_path();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.current_directory(), Some(dir.join("target")));
+        assert_eq!(
+            breadcrumb_segments(&picker.pane.current_path)
+                .last()
+                .unwrap()
+                .label,
+            "target"
+        );
+        drop(picker);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn markdown_file_picker_path_focus_shortcut_and_cancel_own_pending_results() {
+        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 650.0))
+            .build_ui_state(
+                |ui, (picker, outcomes): &mut (MarkdownFilePicker, Vec<MarkdownPickerOutcome>)| {
+                    let outcome = picker.ui(ui);
+                    if !matches!(outcome, MarkdownPickerOutcome::Pending) {
+                        outcomes.push(outcome);
+                    }
+                },
+                (picker, Vec::new()),
+            );
+        harness.run();
+        harness.event(egui::Event::Key {
+            key: Key::L,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        });
+        harness.run();
+        harness.event(egui::Event::Paste("focused.txt".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().0.entered_path, "focused.txt");
+        harness.state_mut().0.local_loader = LocalDirectoryLoader::paused_for_test();
+        harness.state_mut().0.submit_path();
+        let request_id = harness.state().0.pane.pending_request_id;
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().1.as_slice(),
+            [MarkdownPickerOutcome::Cancelled]
+        ));
+        harness
+            .state()
+            .0
+            .event_sender
+            .send(MarkdownPickerEvent::PathResolved {
+                request_id,
+                result: Ok((std::env::temp_dir().join("must-not-open.txt"), false)),
+            })
+            .unwrap();
+        harness.state_mut().0.poll();
+        assert!(harness.state().0.pending_file.is_none());
+    }
+
+    #[test]
+    fn markdown_file_picker_path_paste_and_enter_do_not_activate_the_selected_row() {
+        let dir = std::env::temp_dir().join(format!("festerm-picker-paste-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("selected.txt"), b"selected").unwrap();
+        fs::write(dir.join("pasted.txt"), b"pasted").unwrap();
+        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        picker
+            .pane
+            .select_single(&SftpPath::local(dir.join("selected.txt")));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 650.0))
+            .build_ui_state(
+            |ui, (picker, opened, leaked_enter): &mut (MarkdownFilePicker, Vec<PathBuf>, bool)| {
+                picker.poll();
+                if let MarkdownPickerOutcome::Open(path) = picker.ui(ui) {
+                    opened.push(path);
+                }
+                *leaked_enter = ui.input(|input| input.key_pressed(Key::Enter));
+            },
+            (picker, Vec::new(), false),
+        );
+        harness.run();
+        harness.get_by_label("File or folder path").click();
+        harness.event(egui::Event::Paste("pasted.txt".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().0.entered_path, "pasted.txt");
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert!(
+            !harness.state().2,
+            "Enter must be consumed by the path field"
+        );
+        for _ in 0..200 {
+            harness.run();
+            if !harness.state().1.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(harness.state().1, vec![dir.join("pasted.txt")]);
+        harness.run();
+        assert_eq!(harness.state().1.len(), 1);
+        drop(harness);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     /// Home has to be a real directory on every platform. Windows sets

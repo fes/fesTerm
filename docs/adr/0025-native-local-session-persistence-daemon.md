@@ -75,8 +75,9 @@ CLI:
   registry the daemon(s) maintain; see below) without needing to already hold
   a connection to any of them.
 - `festerm-sessiond attach --name <id>` — used internally by fesTerm as a
-  subprocess/library call path to obtain the socket/pipe endpoint and replay
-  buffer for a session; also usable standalone for debugging.
+  subprocess/library call path to obtain the socket/pipe endpoint and, for
+  protocol-v2 daemons, the bounded recovery snapshot prelude for a session;
+  also usable standalone for debugging.
 - `festerm-sessiond kill --name <id>` (and an implicit "last client detaches
   and the shell has already exited" self-termination) — explicit teardown.
 
@@ -157,15 +158,27 @@ special case. Concretely:
   teardown without waiting for peer consumption. This keeps raw Win32 and
   unsafe ownership code out of the daemon and application crates.
 - **The attached byte stream is duplex and bounded at the session boundary.**
-  Shell output and replay remain an unstructured byte stream with fixed
-  takeover/exit sentinels. Client-to-daemon commands use a small length-framed
-  internal protocol for input and terminal resize, each capped at 64 KiB.
-  This lets the library target implement `festerm-session::Session` directly
-  without nesting a second PTY around the standalone `attach` command.
+  Shell output after the recovery prelude remains an unstructured byte stream
+  with fixed takeover/exit sentinels. Protocol-v2 attach begins with one
+  length-prefixed serialized `festerm-core::Terminal` recovery snapshot before
+  ordinary output bytes; protocol-v1 keeps the legacy no-snapshot path for
+  already-running older helpers. Client-to-daemon commands use a small
+  length-framed internal protocol for input, terminal resize, and
+  frontend-owned recovery-mirror control messages (scrollback limit,
+  embedder color scheme, clear, reset), each capped at 64 KiB. Snapshot
+  payloads are capped at 768 MiB, which is 3x the largest supported 256 MiB
+  scrollback preference and leaves bounded room for visible-screen and cell
+  serialization overhead. This lets the library target implement
+  `festerm-session::Session` directly without nesting a second PTY around the
+  standalone `attach` command.
   A full daemon command queue is backpressure, not a disconnect: pending
   input/resize commands must remain bounded and ordered while socket reads
   pause until capacity returns. Output and newest-client takeover must remain
   serviceable during that pause.
+  The daemon's recovery mirror continuously discards queued terminal replies,
+  queued frontend input, and their overflow flags after parsing output, so a
+  detached session never replays clipboard/device-query side effects and never
+  fabricates answers while no GUI owns the terminal.
   The current internal PTY-reader channel is still unbounded; the client IPC
   queue bounds do not imply a global daemon memory bound. Making that channel
   bounded must also address synchronous PTY input writes to avoid circular
@@ -431,8 +444,9 @@ installer/application cleanup.
 
 - **Invariants introduced or changed:** The provisional implementation creates
   one detached local daemon per reusable session identity, exposes it only
-  through owner-scoped local IPC, serializes registry mutation, retains bounded
-  replay, and gives the newest attaching client exclusive ownership.
+  through owner-scoped local IPC, serializes registry mutation, retains a
+  daemon-owned authoritative terminal mirror plus bounded attach snapshots,
+  and gives the newest attaching client exclusive ownership.
 - **GUI/action edges affected:** `PROF-06` now covers selecting the native
   local provider, attach-or-create launch, Inspector facts, non-destructive
   tab detach, replay, and newest-client takeover.
@@ -440,11 +454,17 @@ installer/application cleanup.
   provider counts, generation-aware attach-only resume, stale-click recovery,
   and explicit Refresh (`LAUNCH-20`); `LAUNCH-21` covers offscreen row layout.
 - **Automated tests required:** `festerm-sessiond` covers argument and identity
-  validation, registry round trips and PID-safe removal, replay bounds,
-  split-marker client handling, and an end-to-end Unix service-loop test in
-  which a second client steals the session from the first. Coalesced command
-  bursts exceeding the daemon input queue must retain input/resize order
-  without disconnecting; pending input must not prevent output or takeover.
+  validation, registry round trips and PID-safe removal, snapshot-length
+  bounds, split-marker client handling, an end-to-end Unix service-loop test
+  in which a second client steals the session from the first, and recovery-sync
+  tests proving that scrollback-limit changes, embedder color-scheme updates,
+  clear, and reset all survive reattach through the daemon mirror. Recovery
+  attach also rejects unsupported snapshot-schema versions before takeover,
+  rejects malformed serialized terminal state before adoption, and holds
+  frontend resizes until the recovered snapshot has actually replaced the
+  local terminal. Coalesced command bursts exceeding the daemon input queue
+  must retain input/resize order without disconnecting; pending input must not
+  prevent output or takeover.
   Manual reconnect must preserve session identity, reject duplicate attempts,
   avoid starting a missing daemon, and discard previous-connection input.
   `native_discovery_churn_preserves_process_and_rejects_replaced_generations`
@@ -515,11 +535,11 @@ installer/application cleanup.
   `byte_identical_helpers_match_across_read_chunk_boundaries` proves the
   comparison does not depend on how a read is chunked.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
-  presence, detach/reattach replay, single-client stealing, natural-exit and
-  kill cleanup, lifecycle independence, Unix ownership modes, and Windows
-  named-pipe current-user isolation, Job Object breakaway, compatible signed
-  update continuity, new-session helper selection, and post-exit old-copy
-  cleanup.
+  presence, detach/reattach snapshot recovery, single-client stealing,
+  natural-exit and kill cleanup, lifecycle independence, Unix ownership modes,
+  and Windows named-pipe current-user isolation, Job Object breakaway,
+  compatible signed update continuity, new-session helper selection, and
+  post-exit old-copy cleanup.
 - **Coverage superseded:** None.
 
 The ADR remains Proposed while this implementation is evaluated.

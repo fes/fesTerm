@@ -560,6 +560,16 @@ impl SftpSession {
     ) -> Result<Vec<u8>, SftpSessionError> {
         self.ensure_open()?;
         let resolved = resolve_remote_path(&self.remote_working_directory, path)?;
+        self.read_file_snapshot_exact(&resolved, max_bytes).await
+    }
+
+    pub(crate) async fn read_file_snapshot_exact(
+        &mut self,
+        path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, SftpSessionError> {
+        self.ensure_open()?;
+        let resolved = path.to_owned();
         let mut file = self
             .client
             .open(resolved.clone())

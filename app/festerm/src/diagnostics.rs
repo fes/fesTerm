@@ -326,7 +326,7 @@ struct RunJournal {
     directory: PathBuf,
     marker: RunMarker,
     intent: Option<ExitIntent>,
-    lifetime: Arc<File>,
+    lifetime: Arc<LockedFile>,
     panic_seen: bool,
     finished: bool,
 }
@@ -354,8 +354,9 @@ impl RunJournal {
                 Err(error) => return Err(error),
             }
         };
-        let lifetime = Arc::new(open_lock(&directory.join(RUN_LOCK_FILE))?);
-        fs2::FileExt::try_lock_exclusive(lifetime.as_ref())?;
+        let lifetime = open_lock(&directory.join(RUN_LOCK_FILE))?;
+        fs2::FileExt::try_lock_exclusive(&lifetime)?;
+        let lifetime = Arc::new(LockedFile { file: lifetime });
         let marker = RunMarker {
             schema_version: 2,
             run_id,
@@ -562,6 +563,21 @@ impl RunJournal {
     }
 }
 
+struct LockedFile {
+    file: File,
+}
+
+impl Drop for LockedFile {
+    fn drop(&mut self) {
+        // A concurrent fork can inherit even a close-on-exec descriptor.
+        // Closing our descriptor alone would keep flock held until that child
+        // execs; explicitly unlock when the last actual owner is finished.
+        if let Err(error) = fs2::FileExt::unlock(&self.file) {
+            eprintln!("fesTerm could not release a diagnostic lock: {error}");
+        }
+    }
+}
+
 fn open_lock(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
@@ -581,7 +597,7 @@ fn try_lock(file: &File) -> io::Result<bool> {
     }
 }
 
-fn lock_catalog(directory: &Path) -> io::Result<File> {
+fn lock_catalog(directory: &Path) -> io::Result<LockedFile> {
     let file = open_lock(&directory.join(CATALOG_LOCK_FILE))?;
     let deadline = Instant::now() + Duration::from_secs(2);
     while !try_lock(&file)? {
@@ -593,7 +609,7 @@ fn lock_catalog(directory: &Path) -> io::Result<File> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    Ok(file)
+    Ok(LockedFile { file })
 }
 
 fn scan_and_prune(runs: &Path, now: u128) -> io::Result<Option<ExitRecord>> {
@@ -608,6 +624,7 @@ fn scan_and_prune(runs: &Path, now: u128) -> io::Result<Option<ExitRecord>> {
         if !try_lock(&lifetime)? {
             continue;
         }
+        let lifetime = LockedFile { file: lifetime };
         let record = RunJournal::load_previous_exit(&directory, now)?;
         if let Some(record) = record {
             write_json(&directory.join(LAST_EXIT_FILE), &record)?;
@@ -761,7 +778,7 @@ impl Write for DiagnosticWriter {
 struct BoundedLog {
     file: File,
     remaining: u64,
-    _lifetime: Arc<File>,
+    _lifetime: Arc<LockedFile>,
 }
 
 impl BoundedLog {
@@ -886,6 +903,22 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn inherited_lock_descriptor_does_not_hide_a_completed_run() {
+        let directory = temporary_directory("inherited-lock");
+        let (mut first, _) = RunJournal::start_in(directory.clone(), 400).unwrap();
+        let inherited = first.lifetime.file.try_clone().unwrap();
+        first.finish(true, 410).unwrap();
+        drop(first);
+
+        let (second, previous) = RunJournal::start_in(directory.clone(), 500).unwrap();
+        assert_eq!(previous.unwrap().status, ExitStatus::Clean);
+        drop(second);
+        drop(inherited);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn bounded_log_never_grows_past_its_per_run_limit() {
         let directory = temporary_directory("bounded-log");
         let (journal, _) = RunJournal::start_in(directory.clone(), 100).unwrap();
@@ -1003,6 +1036,8 @@ mod tests {
     fn catalog_serializes_same_process_openers_and_incomplete_creation_is_recovered() {
         let directory = temporary_directory("catalog");
         let catalog = lock_catalog(&directory).unwrap();
+        #[cfg(unix)]
+        let inherited = catalog.file.try_clone().unwrap();
         let other = open_lock(&directory.join(CATALOG_LOCK_FILE)).unwrap();
         assert!(!try_lock(&other).unwrap());
         let incomplete = directory.join(RUNS_DIRECTORY).join("incomplete");
@@ -1012,6 +1047,8 @@ mod tests {
         assert!(previous.is_none());
         assert!(!incomplete.exists());
         drop(run);
+        #[cfg(unix)]
+        drop(inherited);
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use festerm_core::{Attributes, Cell, CellWidth, Color, ContentPosition, Dimensions, Terminal};
 
-use crate::{
-    geometry::{dimensions_from_viewport, CellMetrics, ViewSize},
-    TerminalSnapshot,
-};
+#[cfg(test)]
+use crate::geometry::{dimensions_from_viewport, CellMetrics, ViewSize};
+use crate::TerminalSnapshot;
 
 /// A copied cell used by the presentation cache.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -156,6 +155,12 @@ pub enum ResizeOutcome {
 }
 
 impl ResizeTracker {
+    pub(crate) fn request(&mut self, dimensions: Dimensions) -> bool {
+        let changed = self.last_requested != Some(dimensions);
+        self.last_requested = Some(dimensions);
+        changed
+    }
+
     pub fn apply(&mut self, terminal: &mut Terminal, dimensions: Dimensions) -> ResizeOutcome {
         if self.last_requested == Some(dimensions) && terminal.dimensions() == dimensions {
             return ResizeOutcome::Unchanged;
@@ -169,6 +174,7 @@ impl ResizeTracker {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_viewport_with_content_positions(
         &mut self,
         terminal: &mut Terminal,
@@ -179,6 +185,15 @@ impl ResizeTracker {
         let Some(dimensions) = dimensions_from_viewport(available, cell) else {
             return (ResizeOutcome::Unchanged, Vec::new());
         };
+        self.apply_dimensions_with_content_positions(terminal, dimensions, positions)
+    }
+
+    pub(crate) fn apply_dimensions_with_content_positions(
+        &mut self,
+        terminal: &mut Terminal,
+        dimensions: Dimensions,
+        positions: &[ContentPosition],
+    ) -> (ResizeOutcome, Vec<Option<ContentPosition>>) {
         if self.last_requested == Some(dimensions) && terminal.dimensions() == dimensions {
             return (
                 ResizeOutcome::Unchanged,

@@ -388,6 +388,7 @@ pub(crate) struct TextEditorTab {
     title: String,
     origin_label: String,
     remote: bool,
+    untitled: bool,
     /// The widget's copy of the text. egui's `TextEdit` needs a `String` it
     /// can own edits in; the document is told about them straight afterwards,
     /// so this never drifts by more than the inside of one frame.
@@ -560,6 +561,7 @@ impl TextEditorTab {
             title,
             origin_label: open.origin().qualified_label(),
             remote: open.origin().is_remote(),
+            untitled: matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_)),
             buffer: open.text().text().to_owned(),
             options,
             options_state: OptionsState::from_options(options),
@@ -626,6 +628,7 @@ impl TextEditorTab {
         self.title = open.origin().file_name().to_owned();
         self.origin_label = open.origin().qualified_label();
         self.remote = open.origin().is_remote();
+        self.untitled = matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_));
         self.buffer = open.text().text().to_owned();
         self.find = FindState::default();
         self.preview = None;
@@ -1291,6 +1294,10 @@ impl TextEditorTab {
         Some(AppCommand::CloseTab(tab_id))
     }
 
+    pub(crate) fn cancel_close_after_save(&mut self) {
+        self.close_after_save = false;
+    }
+
     /// The version the source now holds, when a conflict captured one.
     fn source_text(&self, documents: &SharedDocuments) -> Option<String> {
         documents.borrow().get(self.document).and_then(|open| {
@@ -1449,7 +1456,9 @@ impl TextEditorTab {
                             self.show_mode_control(ui);
                         }
                         ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
-                            let icon = if self.remote {
+                            let icon = if self.untitled {
+                                Icon::Edit
+                            } else if self.remote {
                                 Icon::SshRemote
                             } else {
                                 Icon::LocalTerminal
@@ -1461,7 +1470,13 @@ impl TextEditorTab {
                             icon::paint(ui.painter(), icon, icon_rect, theme::TEXT_SECONDARY);
                             label(
                                 ui,
-                                if self.remote { "REMOTE" } else { "LOCAL" },
+                                if self.untitled {
+                                    "UNTITLED"
+                                } else if self.remote {
+                                    "REMOTE"
+                                } else {
+                                    "LOCAL"
+                                },
                                 theme::TEXT_PRIMARY,
                                 true,
                             );

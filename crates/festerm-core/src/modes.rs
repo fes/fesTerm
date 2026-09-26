@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// Visual cursor shape requested by DECSCUSR.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum CursorStyle {
     #[default]
     BlinkingBlock,
@@ -11,7 +13,7 @@ pub enum CursorStyle {
 }
 
 /// Mouse tracking mode requested by the terminal application.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum MouseTrackingMode {
     #[default]
     None,
@@ -26,7 +28,7 @@ pub enum MouseTrackingMode {
 }
 
 /// Terminal modes implemented through Milestone 3.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TerminalModes {
     pub(crate) auto_wrap: bool,
     pub(crate) reverse_wrap: bool,

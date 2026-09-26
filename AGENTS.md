@@ -46,15 +46,18 @@ Read `README.md`, then use the document that matches the task:
   Object required for whole-ConPTY-tree shutdown.
 - `crates/festerm-windows-runtime`: cfg-gated trusted selection and loading of
   an optional install-owned ConPTY sidecar.
-- `app/festerm`: composition root; the only owner that mutates a terminal from
-  session output.
+- `app/festerm`: composition root; the only owner that mutates each presented
+  terminal from session output (the daemon recovery mirror is separate).
 
 ## Architectural Invariants
 
 1. Terminal protocol semantics belong in `festerm-core`, never GUI widgets.
-2. Session backends exchange bytes and lifecycle events; they never mutate a
-   `Terminal`.
-3. The app has one logical writer for each terminal.
+2. Session backends exchange bytes and lifecycle events; ordinary interactive
+   terminals are mutated by the app. The protocol-v2 `festerm-sessiond`
+   recovery mirror is the one intentional backend-owned `Terminal`: it answers
+   terminal queries for detached shells and publishes ordered recovery
+   snapshots/control events, while the frontend suppresses duplicate replies.
+3. The app has one logical live writer for each presented terminal.
 4. Session and core queues remain bounded, ordered, and observable. PTY event
    availability wakes the UI through the session notifier; do not add polling.
 5. Secrets never enter ordinary configuration, workspaces, fixtures, logs, or

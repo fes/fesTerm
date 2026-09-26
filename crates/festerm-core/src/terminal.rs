@@ -1,6 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use compact_str::CompactString;
+use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
@@ -30,6 +31,75 @@ pub struct ContentPosition {
     pub absolute_row: u64,
 }
 
+/// Which visible buffer contributed the snapshot's live-screen suffix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalTextSnapshotScreen {
+    Primary,
+    Alternate,
+}
+
+/// Why a terminal snapshot cannot be materialized as one editor document.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalTextSnapshotRefusal {
+    TooLarge { bytes: usize, limit: usize },
+    TooManyLines { lines: usize, limit: usize },
+    LineTooLong { line: usize, limit: usize },
+}
+
+impl TerminalTextSnapshotRefusal {
+    pub fn headline(self) -> &'static str {
+        match self {
+            Self::TooLarge { .. } => "Terminal history is too large to open in the editor",
+            Self::TooManyLines { .. } => {
+                "Terminal history has too many lines to open in the editor"
+            }
+            Self::LineTooLong { .. } => {
+                "Terminal history has a line that is too long to open in the editor"
+            }
+        }
+    }
+
+    pub fn detail(self) -> String {
+        match self {
+            Self::TooLarge { bytes, limit } => format!(
+                "It is {} and the editor limit is {}.",
+                describe_bytes(bytes),
+                describe_bytes(limit)
+            ),
+            Self::TooManyLines { lines, limit } => {
+                format!("It has {lines} lines and the editor limit is {limit}.")
+            }
+            Self::LineTooLong { line, limit } => format!(
+                "Line {line} is longer than the {} editor limit for a single line.",
+                describe_bytes(limit)
+            ),
+        }
+    }
+}
+
+/// Plain-text extraction of the terminal's retained primary history plus the
+/// currently applicable screen.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalTextSnapshot {
+    text: String,
+    screen: TerminalTextSnapshotScreen,
+    evicted_logical_lines: u64,
+}
+
+impl TerminalTextSnapshot {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub const fn screen(&self) -> TerminalTextSnapshotScreen {
+        self.screen
+    }
+
+    pub const fn evicted_logical_lines(&self) -> u64 {
+        self.evicted_logical_lines
+    }
+}
+
 #[derive(Debug)]
 pub struct TerminalError {
     message: String,
@@ -39,6 +109,12 @@ impl TerminalError {
     pub(crate) fn allocation(resource: &str, error: std::collections::TryReserveError) -> Self {
         Self {
             message: format!("unable to allocate {resource}: {error}"),
+        }
+    }
+
+    pub(crate) fn invalid_snapshot(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
         }
     }
 }
@@ -52,12 +128,187 @@ impl fmt::Display for TerminalError {
 impl std::error::Error for TerminalError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SnapshotBounds {
+    max_bytes: usize,
+    max_lines: usize,
+    max_line_bytes: usize,
+}
+
+struct SnapshotAccumulator {
+    text: String,
+    bytes: usize,
+    lines: usize,
+    current_line_bytes: usize,
+    trailing_newline: bool,
+    bounds: Option<SnapshotBounds>,
+}
+
+impl SnapshotAccumulator {
+    fn unbounded() -> Self {
+        Self {
+            text: String::new(),
+            bytes: 0,
+            lines: 1,
+            current_line_bytes: 0,
+            trailing_newline: false,
+            bounds: None,
+        }
+    }
+
+    fn bounded(max_bytes: usize, max_lines: usize, max_line_bytes: usize) -> Self {
+        Self {
+            text: String::with_capacity(max_bytes.min(8 * 1024)),
+            bytes: 0,
+            lines: 1,
+            current_line_bytes: 0,
+            trailing_newline: false,
+            bounds: Some(SnapshotBounds {
+                max_bytes,
+                max_lines,
+                max_line_bytes,
+            }),
+        }
+    }
+
+    fn into_text(self) -> String {
+        self.text
+    }
+
+    fn push_cell_text(&mut self, text: &str) -> Result<(), TerminalTextSnapshotRefusal> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        if self.trailing_newline {
+            self.start_line()?;
+        }
+        let Some(next_line_bytes) = self.current_line_bytes.checked_add(text.len()) else {
+            return Err(TerminalTextSnapshotRefusal::LineTooLong {
+                line: self.lines,
+                limit: self
+                    .bounds
+                    .map_or(usize::MAX, |bounds| bounds.max_line_bytes),
+            });
+        };
+        if let Some(bounds) = self.bounds {
+            if next_line_bytes > bounds.max_line_bytes {
+                return Err(TerminalTextSnapshotRefusal::LineTooLong {
+                    line: self.lines,
+                    limit: bounds.max_line_bytes,
+                });
+            }
+        }
+        self.reserve_bytes(text.len())?;
+        self.current_line_bytes = next_line_bytes;
+        self.text.push_str(text);
+        Ok(())
+    }
+
+    fn push_newline(&mut self) -> Result<(), TerminalTextSnapshotRefusal> {
+        if self.trailing_newline {
+            self.start_line()?;
+        }
+        self.reserve_bytes(1)?;
+        self.text.push('\n');
+        self.current_line_bytes = 0;
+        self.trailing_newline = true;
+        Ok(())
+    }
+
+    fn start_line(&mut self) -> Result<(), TerminalTextSnapshotRefusal> {
+        self.trailing_newline = false;
+        let Some(next_lines) = self.lines.checked_add(1) else {
+            return Err(TerminalTextSnapshotRefusal::TooManyLines {
+                lines: usize::MAX,
+                limit: self.bounds.map_or(usize::MAX, |bounds| bounds.max_lines),
+            });
+        };
+        if let Some(bounds) = self.bounds {
+            if next_lines > bounds.max_lines {
+                return Err(TerminalTextSnapshotRefusal::TooManyLines {
+                    lines: next_lines,
+                    limit: bounds.max_lines,
+                });
+            }
+        }
+        self.lines = next_lines;
+        Ok(())
+    }
+
+    fn reserve_bytes(&mut self, added: usize) -> Result<(), TerminalTextSnapshotRefusal> {
+        let Some(next_bytes) = self.bytes.checked_add(added) else {
+            return Err(TerminalTextSnapshotRefusal::TooLarge {
+                bytes: usize::MAX,
+                limit: self.bounds.map_or(usize::MAX, |bounds| bounds.max_bytes),
+            });
+        };
+        if let Some(bounds) = self.bounds {
+            if next_bytes > bounds.max_bytes {
+                return Err(TerminalTextSnapshotRefusal::TooLarge {
+                    bytes: next_bytes,
+                    limit: bounds.max_bytes,
+                });
+            }
+        }
+        self.bytes = next_bytes;
+        Ok(())
+    }
+}
+
+fn push_cells_text(
+    target: &mut SnapshotAccumulator,
+    cells: &[Cell],
+) -> Result<(), TerminalTextSnapshotRefusal> {
+    for cell in cells {
+        if cell.is_continuation() {
+            continue;
+        }
+        target.push_cell_text(cell.text())?;
+    }
+    Ok(())
+}
+
+fn append_visible_screen_text(
+    target: &mut SnapshotAccumulator,
+    screen: &Screen,
+    cursor_row: usize,
+    continue_first_row: bool,
+) -> Result<(), TerminalTextSnapshotRefusal> {
+    let content_rows = screen
+        .occupied_row_count()
+        .max(cursor_row + 1)
+        .min(screen.dimensions().rows());
+    let mut continuing = continue_first_row;
+    for row in 0..content_rows {
+        if !continuing && (row > 0 || (target.bytes > 0 && !target.trailing_newline)) {
+            target.push_newline()?;
+        }
+        push_cells_text(target, screen.occupied_row_cells(row))?;
+        continuing = screen.row_soft_wrapped(row).unwrap_or(false);
+    }
+    Ok(())
+}
+
+fn describe_bytes(bytes: usize) -> String {
+    const KIB: usize = 1024;
+    const MIB: usize = 1024 * KIB;
+    if bytes >= MIB && bytes.is_multiple_of(MIB) {
+        format!("{} MB", bytes / MIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{} KB", bytes / KIB)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ActiveScreen {
     Primary,
     Alternate,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct BufferState {
     screen: Screen,
     cursor: Cursor,
@@ -360,9 +611,43 @@ impl BufferState {
             saved.cursor.row = saved.cursor.row.min(dimensions.rows() - 1);
         }
     }
+
+    fn validate_recovery_state(&self) -> Result<(), String> {
+        self.screen.validate_recovery_state()?;
+        validate_cursor(self.cursor, self.screen.dimensions(), "buffer cursor")?;
+        validate_scroll_region(
+            self.scroll_top,
+            self.scroll_bottom,
+            self.screen.dimensions().rows(),
+            "buffer vertical scroll region",
+        )?;
+        validate_scroll_region(
+            self.scroll_left,
+            self.scroll_right,
+            self.screen.dimensions().columns(),
+            "buffer horizontal scroll region",
+        )?;
+        if self.pending_wrap && self.cursor.column + 1 != self.screen.dimensions().columns() {
+            return Err("buffer stores pending wrap away from the last column".to_owned());
+        }
+        if let Some(anchor) = self.grapheme_anchor {
+            validate_cursor(anchor, self.screen.dimensions(), "buffer grapheme anchor")?;
+        }
+        if let Some(saved) = self.dec_saved {
+            validate_cursor(saved.cursor, self.screen.dimensions(), "saved DEC cursor")?;
+        }
+        if let Some(saved) = self.ansi_saved {
+            validate_cursor(saved.cursor, self.screen.dimensions(), "saved ANSI cursor")?;
+        }
+        Ok(())
+    }
+
+    fn restore_recovery_allocations(&mut self) {
+        self.screen.restore_recovery_allocations();
+    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct SavedDecState {
     cursor: Cursor,
     pending_wrap: bool,
@@ -374,7 +659,7 @@ struct SavedDecState {
     protection: ProtectionSource,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct SavedAnsiCursor {
     cursor: Cursor,
     protected: bool,
@@ -382,7 +667,7 @@ struct SavedAnsiCursor {
 }
 
 /// GUI-independent terminal state. The terminal owns one logical writer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Terminal {
     parser: Parser,
     utf8: Utf8Decoder,
@@ -462,6 +747,94 @@ impl Terminal {
         self.primary.screen.dimensions()
     }
 
+    pub fn validate_recovery_snapshot(&self) -> Result<(), TerminalError> {
+        self.parser
+            .validate_recovery_state()
+            .map_err(TerminalError::invalid_snapshot)?;
+        self.utf8
+            .validate_recovery_state()
+            .map_err(TerminalError::invalid_snapshot)?;
+        self.primary
+            .validate_recovery_state()
+            .map_err(TerminalError::invalid_snapshot)?;
+        let dimensions = self.primary.screen.dimensions();
+        if self.active_screen == ActiveScreen::Alternate && self.alternate.is_none() {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal selects the alternate screen without storing one",
+            ));
+        }
+        if let Some(alternate) = &self.alternate {
+            alternate
+                .validate_recovery_state()
+                .map_err(TerminalError::invalid_snapshot)?;
+            if alternate.screen.dimensions() != dimensions {
+                return Err(TerminalError::invalid_snapshot(
+                    "alternate screen dimensions do not match the primary screen",
+                ));
+            }
+        }
+        if self.tab_stops.len() != dimensions.columns() {
+            return Err(TerminalError::invalid_snapshot(format!(
+                "terminal stores {} tab stops for a {}-column grid",
+                self.tab_stops.len(),
+                dimensions.columns()
+            )));
+        }
+        if self.title.len() > 256 || self.title.chars().any(char::is_control) {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal stores an invalid OSC title",
+            ));
+        }
+        if self.current_hyperlink.is_none() && self.current_hyperlink_cells_remaining != 0 {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal stores hyperlink cell credits without an active hyperlink",
+            ));
+        }
+        if self.reply_queue_overflowed
+            || self.input_queue_overflowed
+            || !self.reply_queue.is_empty()
+            || !self.input_queue.is_empty()
+        {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal recovery snapshots must not retain queued replies or input",
+            ));
+        }
+        self.scrollback
+            .validate_recovery_state(dimensions.columns())
+            .map_err(TerminalError::invalid_snapshot)?;
+        Ok(())
+    }
+
+    /// Rehydrates allocation capacities recorded in a validated recovery snapshot.
+    ///
+    /// Recovery accounting records logical capacities so validation can reject
+    /// malformed charges before trusting allocator state. After validation, the
+    /// session daemon calls this before handing the terminal to a frontend so
+    /// later appends and reflows follow the same capacity-based eviction path
+    /// as the continuously running mirror.
+    pub fn restore_recovery_snapshot_allocations(&mut self) {
+        self.primary.restore_recovery_allocations();
+        if let Some(alternate) = &mut self.alternate {
+            alternate.restore_recovery_allocations();
+        }
+        self.scrollback.restore_recovery_allocations();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tab_stops_for_test(&mut self, tab_stops: Vec<bool>) {
+        self.tab_stops = tab_stops;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_transport_queues_for_test(
+        &mut self,
+        reply_queue: Vec<u8>,
+        input_queue: Vec<u8>,
+    ) {
+        self.reply_queue = reply_queue;
+        self.input_queue = input_queue;
+    }
+
     pub const fn cursor(&self) -> Cursor {
         match self.active_screen {
             ActiveScreen::Primary => self.primary.cursor,
@@ -539,6 +912,72 @@ impl Terminal {
     /// Returns content-free retained-history accounting and eviction metrics.
     pub fn scrollback_stats(&self) -> ScrollbackStats {
         self.scrollback.stats()
+    }
+
+    /// Freezes retained primary history plus the currently applicable screen
+    /// as plain text.
+    ///
+    /// Primary-screen extraction merges retained logical lines with the live
+    /// primary screen's visible rows, preserving hard newlines while omitting
+    /// synthetic newlines at soft-wrap boundaries. When the alternate screen
+    /// is active, only the retained primary history and the currently visible
+    /// alternate screen are exported: any hidden primary-screen viewport rows
+    /// and any off-screen alternate-screen content were never retained and are
+    /// therefore not reconstructed.
+    pub fn text_snapshot(&self) -> TerminalTextSnapshot {
+        self.snapshot_with_accumulator(SnapshotAccumulator::unbounded())
+            .expect("unbounded snapshots cannot refuse")
+    }
+
+    /// Freezes retained primary history plus the currently applicable screen
+    /// as plain text, refusing before the snapshot grows beyond the requested
+    /// editor-safe limits.
+    pub fn bounded_text_snapshot(
+        &self,
+        max_bytes: usize,
+        max_lines: usize,
+        max_line_bytes: usize,
+    ) -> Result<TerminalTextSnapshot, TerminalTextSnapshotRefusal> {
+        self.snapshot_with_accumulator(SnapshotAccumulator::bounded(
+            max_bytes,
+            max_lines,
+            max_line_bytes,
+        ))
+    }
+
+    fn snapshot_with_accumulator(
+        &self,
+        mut text: SnapshotAccumulator,
+    ) -> Result<TerminalTextSnapshot, TerminalTextSnapshotRefusal> {
+        let mut continue_primary = false;
+        for line in self.scrollback.lines() {
+            push_cells_text(&mut text, line.cells())?;
+            if line.has_hard_break() {
+                text.push_newline()?;
+                continue_primary = false;
+            } else {
+                continue_primary = true;
+            }
+        }
+
+        let screen = if self.modes.alternate_screen() {
+            append_visible_screen_text(&mut text, self.screen(), self.cursor().row(), false)?;
+            TerminalTextSnapshotScreen::Alternate
+        } else {
+            append_visible_screen_text(
+                &mut text,
+                self.primary_screen(),
+                self.primary.cursor.row,
+                continue_primary,
+            )?;
+            TerminalTextSnapshotScreen::Primary
+        };
+
+        Ok(TerminalTextSnapshot {
+            text: text.into_text(),
+            screen,
+            evicted_logical_lines: self.scrollback.stats().evicted_lines(),
+        })
     }
 
     #[cfg(test)]
@@ -678,6 +1117,26 @@ impl Terminal {
 
     pub fn take_dirty_rows(&mut self) -> Vec<usize> {
         self.active_buffer_mut().screen.take_dirty_rows()
+    }
+
+    /// Returns a transport-queue-free clone suitable for durable recovery.
+    ///
+    /// The clone preserves parser, UTF-8, screen, history, modes, and
+    /// geometry state exactly, but it deliberately drops queued input/reply
+    /// bytes and marks every visible row dirty so a newly attached frontend
+    /// performs a full redraw from the recovered state instead of depending
+    /// on stale prior-frame caches.
+    pub fn recovery_clone(&self) -> Self {
+        let mut clone = self.clone();
+        clone.input_queue.clear();
+        clone.reply_queue.clear();
+        clone.input_queue_overflowed = false;
+        clone.reply_queue_overflowed = false;
+        clone.primary.screen.mark_all_dirty();
+        if let Some(alternate) = clone.alternate.as_mut() {
+            alternate.screen.mark_all_dirty();
+        }
+        clone
     }
 
     /// Queues an atomic input write for the session transport.
@@ -1039,8 +1498,11 @@ impl Terminal {
     }
 
     fn erase_cell(&self) -> Cell {
+        let text = CompactString::const_new(" ");
+        let text_capacity_bytes = text.capacity();
         Cell {
-            text: CompactString::const_new(" "),
+            text,
+            text_capacity_bytes,
             width: CellWidth::Single,
             foreground: self.current_foreground,
             background: self.current_background,
@@ -1122,15 +1584,15 @@ impl Terminal {
             }
         }
         let buffer = self.active_buffer_mut();
+        let mut text = CompactString::const_new("");
+        text.push(character);
+        let text_capacity_bytes = text.capacity();
         buffer.screen.replace_cluster(
             cursor.column,
             cursor.row,
             Cell {
-                text: {
-                    let mut text = CompactString::const_new("");
-                    text.push(character);
-                    text
-                },
+                text,
+                text_capacity_bytes,
                 width: if width == 2 {
                     CellWidth::Double
                 } else {
@@ -1174,6 +1636,7 @@ impl Terminal {
         if cell.text().len().saturating_add(character.len_utf8()) > MAX_GRAPHEME_BYTES {
             cell.text.clear();
             cell.text.push(char::REPLACEMENT_CHARACTER);
+            cell.refresh_text_capacity_charge();
             cell.width = CellWidth::Single;
             let (wrap_limit, _) = self.wrap_geometry();
             let auto_wrap = self.modes.auto_wrap;
@@ -1187,6 +1650,7 @@ impl Terminal {
             return true;
         }
         cell.text.push(character);
+        cell.refresh_text_capacity_charge();
         let old_width = cell.width.columns();
         let new_width = grapheme_width(cell.text());
         if new_width == 0 {
@@ -1205,6 +1669,7 @@ impl Terminal {
             if !auto_wrap {
                 cell.text.clear();
                 cell.text.push(char::REPLACEMENT_CHARACTER);
+                cell.refresh_text_capacity_charge();
                 cell.width = CellWidth::Single;
                 let buffer = self.active_buffer_mut();
                 buffer
@@ -1781,6 +2246,7 @@ impl Terminal {
         };
         let mut cell = self.erase_cell();
         cell.text = CompactString::from(character.to_string());
+        cell.refresh_text_capacity_charge();
         self.active_buffer_mut()
             .screen
             .fill_rectangle(rectangle, cell, false);
@@ -2866,8 +3332,10 @@ impl Terminal {
             bottom: dimensions.rows() - 1,
             right: dimensions.columns() - 1,
         };
+        let text = CompactString::const_new("E");
         let cell = Cell {
-            text: CompactString::const_new("E"),
+            text_capacity_bytes: text.capacity(),
+            text,
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
@@ -3001,7 +3469,7 @@ fn color_report(color: Color, background: bool) -> Option<String> {
 }
 
 /// Which family of sequences last set or cleared character protection.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ProtectionSource {
     None,
     /// `DECSCA`. Only `DECSED` and `DECSEL` honour it.
@@ -3017,6 +3485,34 @@ const SET: u8 = 1;
 const RESET: u8 = 2;
 const PERMANENTLY_SET: u8 = 3;
 const PERMANENTLY_RESET: u8 = 4;
+
+fn validate_cursor(cursor: Cursor, dimensions: Dimensions, label: &str) -> Result<(), String> {
+    if cursor.column >= dimensions.columns() || cursor.row >= dimensions.rows() {
+        return Err(format!(
+            "{label} ({}, {}) exceeds the {}x{} screen",
+            cursor.column,
+            cursor.row,
+            dimensions.columns(),
+            dimensions.rows()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_scroll_region(
+    start: usize,
+    end: usize,
+    limit: usize,
+    label: &str,
+) -> Result<(), String> {
+    if start >= limit || end >= limit || start > end {
+        return Err(format!(
+            "{label} [{start}, {end}] exceeds the 0..{} range",
+            limit.saturating_sub(1)
+        ));
+    }
+    Ok(())
+}
 
 fn default_tab_stops(dimensions: Dimensions) -> Vec<bool> {
     (0..dimensions.columns())

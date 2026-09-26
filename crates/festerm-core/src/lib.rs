@@ -5,6 +5,7 @@
 //! Raw C1 bytes are deliberately not controls: treating them as such would
 //! make UTF-8 continuation bytes ambiguous.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 mod cell;
@@ -52,7 +53,7 @@ pub fn normalize_external_web_url(target: &str) -> Option<String> {
     .then(|| parsed.to_string())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Dimensions {
     columns: usize,
     rows: usize,
@@ -133,7 +134,7 @@ impl fmt::Display for DimensionsError {
 
 impl std::error::Error for DimensionsError {}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Cursor {
     column: usize,
     row: usize,
@@ -159,7 +160,10 @@ pub use modes::{CursorStyle, MouseTrackingMode, TerminalModes};
 pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
-pub use terminal::{ContentPosition, Terminal, TerminalError};
+pub use terminal::{
+    ContentPosition, Terminal, TerminalError, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
+    TerminalTextSnapshotScreen,
+};
 
 #[cfg(test)]
 mod model_tests;
@@ -170,8 +174,8 @@ mod tests {
         Attributes, CellWidth, Color, ColorScheme, ContentPosition, Dimensions, FocusEvent,
         InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
         MouseEventKind, MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Rgb, Terminal,
-        TerminalOp, MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_STRING_BYTES,
-        TRANSPORT_QUEUE_HIGH_WATERMARK,
+        TerminalOp, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_CELL_COUNT,
+        MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
 
@@ -1860,6 +1864,43 @@ mod tests {
     }
 
     #[test]
+    fn recovery_snapshots_validate_terminal_state_before_adoption() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"\x1b[?1049hRECOVERED");
+        assert!(terminal
+            .recovery_clone()
+            .validate_recovery_snapshot()
+            .is_ok());
+
+        let mut invalid = terminal.recovery_clone();
+        invalid.set_tab_stops_for_test(Vec::new());
+        let error = invalid
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("tab stops"));
+    }
+
+    #[test]
+    fn recovery_snapshots_reject_queued_replies_and_input() {
+        let mut invalid_reply = terminal(8, 2).recovery_clone();
+        invalid_reply.set_transport_queues_for_test(vec![1, 2, 3], Vec::new());
+        assert!(invalid_reply
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("queued replies or input"));
+
+        let mut invalid_input = terminal(8, 2).recovery_clone();
+        invalid_input.set_transport_queues_for_test(Vec::new(), vec![4]);
+        assert!(invalid_input
+            .validate_recovery_snapshot()
+            .unwrap_err()
+            .to_string()
+            .contains("queued replies or input"));
+    }
+
+    #[test]
     fn encodes_ctrl_chords_as_their_conventional_control_bytes() {
         let mut terminal = terminal(8, 2);
 
@@ -2889,6 +2930,112 @@ mod tests {
                 .contains("five"),
             "output after reset should scroll normally"
         );
+    }
+
+    #[test]
+    fn text_snapshot_preserves_soft_wraps_and_graphemes() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest("e\u{301}🤖AB".as_bytes());
+        terminal.ingest(b"CD\r\ntail");
+
+        let snapshot = terminal.text_snapshot();
+
+        assert_eq!(snapshot.screen(), TerminalTextSnapshotScreen::Primary);
+        assert_eq!(snapshot.text(), "e\u{301}🤖ABCD\ntail");
+    }
+
+    #[test]
+    fn text_snapshot_preserves_blank_lines_across_screen_and_history() {
+        for rows in [2, 10] {
+            let mut terminal = terminal(4, rows);
+            terminal.ingest(b"\r\nalpha\r\n\r\nbeta\r\n");
+            let snapshot = terminal.bounded_text_snapshot(100, 10, 20).unwrap();
+            assert_eq!(snapshot.text(), "\nalpha\n\nbeta\n");
+        }
+    }
+
+    #[test]
+    fn alternate_screen_snapshot_keeps_retained_history_and_visible_alt_screen_only() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour");
+        terminal.ingest(b"\x1b[?1049hmenu");
+
+        let snapshot = terminal.text_snapshot();
+
+        assert_eq!(snapshot.screen(), TerminalTextSnapshotScreen::Alternate);
+        assert_eq!(snapshot.text(), "one\ntwo\nthre\nmenu");
+    }
+
+    #[test]
+    fn bounded_text_snapshot_refuses_an_overlong_logical_line() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(&[b'x'; 65]);
+
+        let refusal = terminal
+            .bounded_text_snapshot(4 * 1024, 64, 64)
+            .unwrap_err();
+
+        assert_eq!(
+            refusal,
+            TerminalTextSnapshotRefusal::LineTooLong { line: 1, limit: 64 }
+        );
+    }
+
+    #[test]
+    fn bounded_text_snapshot_refuses_when_line_count_exceeds_the_limit() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\nthree");
+
+        let refusal = terminal.bounded_text_snapshot(4 * 1024, 2, 64).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            TerminalTextSnapshotRefusal::TooManyLines { lines: 3, limit: 2 }
+        );
+    }
+
+    #[test]
+    fn bounded_text_snapshot_refuses_when_total_bytes_exceed_the_limit() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour");
+
+        let refusal = terminal.bounded_text_snapshot(9, 8, 64).unwrap_err();
+
+        assert_eq!(
+            refusal,
+            TerminalTextSnapshotRefusal::TooLarge {
+                bytes: 10,
+                limit: 9
+            }
+        );
+    }
+
+    #[test]
+    fn text_snapshot_reports_when_older_history_was_evicted() {
+        let dimensions = Dimensions::new(4, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 96).unwrap();
+        for line in 0..20 {
+            terminal.ingest(format!("{line:02}\r\n").as_bytes());
+        }
+
+        let snapshot = terminal.text_snapshot();
+
+        assert!(
+            snapshot.evicted_logical_lines() > 0,
+            "the tiny history budget must report prior retained-line eviction"
+        );
+        assert!(
+            !snapshot.text().is_empty(),
+            "the retained snapshot still has text"
+        );
+    }
+
+    #[test]
+    fn empty_text_snapshot_is_empty() {
+        let terminal = terminal(8, 3);
+        let snapshot = terminal.text_snapshot();
+        assert!(snapshot.text().is_empty());
+        assert_eq!(snapshot.evicted_logical_lines(), 0);
     }
 
     #[test]

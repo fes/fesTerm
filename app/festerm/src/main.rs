@@ -30,6 +30,7 @@ mod search;
 pub mod session_controller;
 mod sftp_file_manager;
 mod tabs;
+mod terminal_paths;
 mod text_compare;
 mod text_editor;
 #[cfg(test)]

@@ -17,8 +17,9 @@ use crate::{
 /// forwards it to a real backend (e.g. a PTY's `ioctl(TIOCSWINSZ)` +
 /// `SIGWINCH`).
 ///
-/// The visible terminal grid reflows immediately, every frame, purely from
-/// the measured window size, so a live OS-level drag can request dozens of
+/// Ordinary terminal grids reflow immediately from the measured window size;
+/// authoritative persistent backends instead confirm reflow in output order.
+/// A live OS-level drag can request dozens of
 /// different sizes per second. An application-owned sink that debounces
 /// against this interval before forwarding to its backend avoids racing a
 /// child process's own resize-triggered redraw against a rapidly still-
@@ -51,6 +52,10 @@ pub struct InputSinkDiagnostics {
 
 /// Application-owned destination for bytes encoded by the core.
 pub trait EncodedInputSink {
+    fn terminal_resizes_owned_by_backend(&self) -> bool {
+        false
+    }
+
     /// Distinguishes ordered keyboard/paste input from focus/mouse reports;
     /// no payload is exposed to this optional classification hook.
     fn begin_input_event(&mut self, _keyboard_input: bool) {}

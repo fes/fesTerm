@@ -445,6 +445,10 @@ impl SshPortForwardRuntime {
 pub enum SessionEvent {
     Lifecycle(SessionLifecycle),
     Output(Vec<u8>),
+    /// Authoritative terminal-state mutation emitted by a backend that owns a
+    /// recovery mirror. Unlike terminal output, this is not shell-controlled
+    /// byte stream content and must be applied in session order.
+    RecoverySync(Vec<u8>),
     HostKeyVerification(HostKeyPrompt),
     PasswordRequested(PasswordPrompt),
     ResizeApplied(TerminalSize),
@@ -596,6 +600,12 @@ pub trait Session: Send + Sync {
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError>;
     fn try_shutdown(&self) -> Result<(), SessionSendError>;
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError>;
+
+    /// Whether this backend, rather than the frontend terminal instance,
+    /// answers terminal protocol replies generated while parsing output.
+    fn terminal_replies_owned_by_backend(&self) -> bool {
+        false
+    }
     fn shutdown(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError>;
 }
 

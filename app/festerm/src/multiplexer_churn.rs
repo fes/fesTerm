@@ -259,7 +259,7 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
         .try_send_input(b"recovered\r")
         .unwrap();
     poll(|| {
-        tab.controller.pump_events(&mut tab.terminal);
+        tab.pump_session_events();
         (0..24).any(|row| {
             tab.terminal
                 .row_text(row)
