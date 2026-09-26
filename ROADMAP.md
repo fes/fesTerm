@@ -11,6 +11,13 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 ## Milestone Issue Review
 
+The owner requested the iOS port on 2026-09-26. Its active scope is the
+isolated Phase 1 rendering/lifecycle experiment in ADR 0040, an architectural
+enabler. Native `MOB-01`–`03` evidence and an explicit go/no-go decision are
+required before broader mobile work. The owner-requested persistent-keyboard
+slice for both iPhone and iPad is included now; this does not change desktop
+acceptance gates.
+
 At the start and before release of every milestone, review open GitHub issues
 and classify each one:
 
@@ -545,8 +552,9 @@ The following tracks remain intentionally outside the initial critical path. Arc
   `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`.
   It reuses `festerm-core`/`festerm-ui-egui`, excludes local shell/PTY
   sessions and mandatory cloud sync, and requires store-mediated
-  distribution instead of ADR 0021's desktop updater. Implementation is not
-  scheduled: Phase 1's rendering-feasibility spike is a go/no-go gate before
+  distribution instead of ADR 0021's desktop updater. The iOS Phase 1 host is
+  now implemented for review under ADR 0040, with native feasibility pending.
+  Android and later iOS phases remain deferred. Phase 1 is a go/no-go gate before
   further phases, and each concrete crate/dependency change still requires
   its own ADR under the 0.1 Architecture-Stability Period.
 

@@ -1,5 +1,11 @@
 # fesTerm Architecture
 
+The additive experimental iOS composition root in `app/festerm-mobile` reuses
+`festerm-core` and `festerm-ui-egui` through eframe/winit, without depending on
+the desktop application. [ADR 0040](docs/adr/0040-ios-rendering-spike-host.md)
+defines its Phase 1 ownership and validation boundary; it has no session
+backend or credential/persistence path yet.
+
 **Status:** Draft
 
 This document defines the proposed subsystem boundaries, dependency direction,

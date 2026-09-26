@@ -56,6 +56,18 @@ native qualification; ADR-0039 remains Proposed and issue #244 remains open.
 
 ## How to use the graph
 
+### Isolated iOS feasibility host
+
+These edges belong only to `app/festerm-mobile` (ADR 0040), not the desktop
+application or a supported mobile SSH workflow. Checkpoint: newly launched
+spike with the repository fixture; Reset fixture restores terminal content.
+
+| ID | From → To | Action / guard | Oracle | Return | Layer |
+| --- | --- | --- | --- | --- | --- |
+| `MOB-01` | Cold → fixture | Launch, rotate/resize, select and scroll | Shared ANSI/Unicode grid paints within available area; bounded history remains readable | Reset fixture or relaunch | H, V, N, U |
+| `MOB-02` | Fixture → input probe | Use docked Esc/Tab/Ctrl/Alt/arrows, native IME or hardware keyboard | Persistent keyboard request on iPhone/iPad; grid above measured keyboard; one-shot modifiers; encoded byte count changes with no duplicate text, execution or retained text | Reset fixture | P, H, N |
+| `MOB-03` | Active → suspended → active | Background/foreground, memory warning, terminate/relaunch | No suspended redraw; resume repaints; memory warning preserves grid; process death restarts fixture honestly | Relaunch | P, N |
+
 Each test run starts at a named checkpoint, follows one or more edges, asserts
 the edge oracle, and returns through the named recovery edge. Never depend on
 the state left by an unrelated test. A driver may skip an edge only when its

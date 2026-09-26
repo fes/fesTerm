@@ -11,6 +11,13 @@ Rust.
 
 ## Status
 
+The iOS port has started with an isolated [rendering/lifecycle
+spike](app/festerm-mobile/README.md), reusing the terminal core and renderer.
+The first input surface uses the same terminal-above-persistent-keyboard
+layout on iPhone and iPad, with a docked terminal-key row and sticky Ctrl/Alt.
+It is an offline development harness; native iOS feasibility remains pending
+and SSH/mobile product support is not yet implemented.
+
 Milestones 0 through 5, M7, and M8 are implemented. M6 remains the open
 compatibility acceptance gate because fresh native-window and
 reference-application evidence is still incomplete; this is a formal

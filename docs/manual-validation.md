@@ -77,6 +77,26 @@ remain active rolling qualification but do not independently keep M6 open.
 | Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
 
+## iOS Phase 1 feasibility (ADR 0040)
+
+The isolated spike is implemented for review. The following evidence is
+**manual pending**, not passed by portable tests or a linked Simulator app.
+Record OS/SDK, device, orientation, scale and commit with each result; fixture
+content is repository-owned. Physical-device runs require a provisioned build.
+The requested persistent-keyboard slice is included in this host. Broader
+mobile product work remains blocked on this gate and a hosting go/no-go decision.
+
+| ID | Environment / scenario | Acceptance / evidence |
+| --- | --- | --- |
+| MOB-01 | iPhone and iPad Simulator plus physical iOS device; cold launch, portrait/landscape, safe areas, touch selection/scrolling and software-keyboard feasibility | ANSI/Unicode/emoji fixture paints and resizes; no clipped/inaccessible controls or stale grid; record touch/keyboard gaps explicitly and assess whether public hosting APIs suffice. Visual/usability evidence required. |
+| MOB-02 | iPhone/iPad portrait, landscape, Split View; native keyboard, accessory row, IME and hardware keyboard | Keyboard remains requested after toolbar taps/scrolling; terminal stays above keyboard using measured geometry; Ctrl/Alt apply once; hardware keyboard reclaims space while retaining the row; counters match encoded key events without duplicate routing; terminal fixture does not echo input; reset clears counters; capture only fixture and content-free diagnostics. |
+| MOB-03 | Background/foreground repeated ten times; Simulator memory warning; real-device suspension; terminate and relaunch | No background draw/crash/spin, foreground surface repaints, counters advance once per transition, view-cache reset retains the grid/history, process death starts the fixture rather than claiming restoration. Profile memory/CPU and record unsupported callbacks. |
+
+Automated policy/input/headless-grid tests are in `festerm-mobile`; iOS CI
+checks device compilation and Simulator linking, while the build script checks
+normal/build graph exclusions. SSH recovery and Keychain are **deferred** behind
+the Phase 1 decision, not missing evidence for an implemented connection.
+
 ## Deferred desktop Store qualification
 
 The [desktop Store distribution plan](app-store-distribution-plan.md) defines

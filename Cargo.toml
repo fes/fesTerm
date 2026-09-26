@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "app/festerm",
+    "app/festerm-mobile",
     "crates/festerm-core",
+    "crates/festerm-ios-window",
     "crates/festerm-config",
     "crates/festerm-linux-power",
     "crates/festerm-macos-window",

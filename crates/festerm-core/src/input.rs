@@ -115,6 +115,12 @@ pub struct MouseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InputEvent {
     Key(Key),
+    /// Explicit modifiers from an input surface, including mobile sticky keys.
+    /// Characters already carry their layout/Shift-translated text.
+    ModifiedKey {
+        key: Key,
+        modifiers: Modifiers,
+    },
     Paste(String),
     Focus(FocusEvent),
     Mouse(MouseEvent),
@@ -159,6 +165,91 @@ pub(crate) fn encode_key(key: Key, modes: TerminalModes) -> Option<Vec<u8>> {
         Key::Keypad(key) => keypad_key_bytes(key, modes.application_keypad())?,
     };
     Some(bytes)
+}
+
+pub(crate) fn encode_modified_key(
+    key: Key,
+    modifiers: Modifiers,
+    modes: TerminalModes,
+) -> Option<Vec<u8>> {
+    if modes.keyboard_locked() {
+        return None;
+    }
+    if modifiers == Modifiers::NONE {
+        return encode_key(key, modes);
+    }
+    let cursor_final = match key {
+        Key::ArrowUp => Some('A'),
+        Key::ArrowDown => Some('B'),
+        Key::ArrowRight => Some('C'),
+        Key::ArrowLeft => Some('D'),
+        _ => None,
+    };
+    if let Some(final_byte) = cursor_final {
+        let parameter = 1
+            + u8::from(modifiers.contains(Modifiers::SHIFT))
+            + 2 * u8::from(modifiers.contains(Modifiers::ALT))
+            + 4 * u8::from(modifiers.contains(Modifiers::CONTROL));
+        return Some(format!("\x1b[1;{parameter}{final_byte}").into_bytes());
+    }
+    if modifiers.contains(Modifiers::SHIFT) && !matches!(key, Key::Character(_) | Key::Control(_)) {
+        // Non-character Shift chords other than cursor keys are not part of
+        // this additive API yet. Do not silently turn Shift-Tab into Tab.
+        return None;
+    }
+    let key = if modifiers.contains(Modifiers::CONTROL) {
+        match key {
+            Key::Character(character) | Key::Control(character) => Key::Control(character),
+            // Reject unsupported chords rather than sending a different key.
+            _ => return None,
+        }
+    } else {
+        key
+    };
+    let mut bytes = encode_key(key, modes)?;
+    if modifiers.contains(Modifiers::ALT) {
+        bytes.insert(0, 0x1b);
+    }
+    Some(bytes)
+}
+
+#[cfg(test)]
+mod modified_key_tests {
+    use super::*;
+    use crate::{Dimensions, Terminal};
+
+    #[test]
+    fn explicit_modifiers_encode_control_meta_and_cursor_chords_atomically() {
+        let mut terminal = Terminal::new(Dimensions::new(20, 4).unwrap()).unwrap();
+        for (key, modifiers, expected) in [
+            (Key::Character('c'), Modifiers::CONTROL, b"\x03".as_slice()),
+            (Key::Character('x'), Modifiers::ALT, b"\x1bx".as_slice()),
+            (
+                Key::Character('c'),
+                Modifiers::ALT.with(Modifiers::CONTROL),
+                b"\x1b\x03".as_slice(),
+            ),
+            (Key::ArrowUp, Modifiers::CONTROL, b"\x1b[1;5A".as_slice()),
+            (Key::ArrowLeft, Modifiers::ALT, b"\x1b[1;3D".as_slice()),
+        ] {
+            assert_eq!(
+                terminal.handle_input(InputEvent::ModifiedKey { key, modifiers }),
+                InputEventOutcome::Encoded {
+                    bytes: expected.len()
+                }
+            );
+            assert_eq!(terminal.drain_input(), expected);
+        }
+        terminal.ingest(b"\x1b[2h"); // KAM locks the whole chord, including Meta's prefix.
+        assert_eq!(
+            terminal.handle_input(InputEvent::ModifiedKey {
+                key: Key::Character('x'),
+                modifiers: Modifiers::ALT,
+            }),
+            InputEventOutcome::Rejected
+        );
+        assert!(terminal.drain_input().is_empty());
+    }
 }
 
 /// Maps a Ctrl-chord's base `character` to the C0/C1 control byte xterm

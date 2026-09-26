@@ -113,7 +113,10 @@ fn route_input_with_metadata(
     sink: &mut impl EncodedInputSink,
     metadata: crate::routing_trace::Metadata,
 ) -> InputRoute {
-    sink.begin_input_event(matches!(&event, InputEvent::Key(_) | InputEvent::Paste(_)));
+    sink.begin_input_event(matches!(
+        &event,
+        InputEvent::Key(_) | InputEvent::ModifiedKey { .. } | InputEvent::Paste(_)
+    ));
     let outcome = terminal.handle_input(event);
     let queue_depth = terminal.queued_input().len();
     let bytes = terminal.drain_input();

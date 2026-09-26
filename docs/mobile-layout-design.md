@@ -1,6 +1,8 @@
 # Mobile Responsive Layout Design (Phone/Tablet)
 
-**Status:** Exploratory design, not scheduled. Companion to ADR 0031 and
+**Status:** Persistent terminal keyboard approved for iPhone and iPad on
+2026-09-26; initial implementation in ADR 0040, native validation pending.
+Companion to ADR 0031 and
 `docs/mobile-port-plan.md`. Extends `docs/sftp-ui-design.md`'s existing
 narrow-width precedent to phone/tablet form factors rather than introducing
 a separate device-specific layout system.
@@ -21,7 +23,7 @@ product policy the governance process asks changes to avoid.
 
 | Tier | Typical context | Terminal layout | SFTP layout |
 |---|---|---|---|
-| **Wide** | Desktop, most iPad orientations | Unchanged from today | Today's horizontal Local/Remote split, unchanged |
+| **Wide** | Most iPad orientations | Terminal above the same persistent input region | Today's horizontal Local/Remote split, unchanged |
 | **Compact** | Phone portrait, iPad narrow Split View | Terminal fills available space above a docked extra-keys row + system keyboard | Stacked vertical split: Local-primary pane on top, Remote-primary pane below |
 | **Minimal** | Phone landscape with keyboard docked, iPad Slide Over | Falls back to the existing focused-single-pane toggle | Same focused-pane toggle, applied to SFTP's two panes |
 
@@ -36,10 +38,16 @@ is no persisted "device mode" setting to get out of sync with reality.
   the mobile analog of ADR 0022's focused-chip-first single-row chrome
   allocation, not a new chrome concept.
 - The terminal view fills all remaining space above the input region.
-- The extra-keys row (Phase 2 of `docs/mobile-port-plan.md`) and the system
-  on-screen keyboard dock at the bottom **only while an input field or the
-  terminal has focus**; dismissing the keyboard reclaims that space for the
-  terminal, matching how native mobile text apps behave.
+- The native system keyboard is requested persistently while the terminal
+  surface is active, including after touching the extra-keys row or scrolling.
+  The terminal sits above the docked Esc/Tab/Ctrl/Alt/arrow row and keyboard.
+  Ctrl and Alt are one-shot latches. This replaces the earlier focus-only
+  dismissal design at the owner's explicit request.
+- The same vertical arrangement applies to iPad portrait, landscape and
+  Split View; measured keyboard occlusion determines the terminal grid height.
+  UIKit owns hardware/floating keyboard presentation. With no docked keyboard,
+  the terminal reclaims that region while the terminal-key row stays available.
+  Never reserve a guessed device-specific keyboard height.
 
 ## Phone: SFTP layout
 
@@ -74,11 +82,9 @@ preference's rendering logic, not add a second preference.
   portrait iPad has enough width for the existing horizontal SFTP split and
   standard chrome; it should not inherit phone's Compact defaults just
   because it is a "mobile OS" device.
-- Auto-hide the extra-keys letter/symbol row when a hardware/Bluetooth
-  keyboard is attached (matching Termius's behavior), keeping a slim
-  modifier/signal strip available on demand rather than removing keyboard
-  affordances entirely — a Bluetooth keyboard does not eliminate the need
-  for a Ctrl/Esc tap target when using SSH-specific control sequences.
+- Keep the same terminal-key row on iPad, including with a hardware/Bluetooth
+  keyboard. The native system keyboard can then disappear under UIKit policy
+  without hiding the Ctrl/Alt/Esc/Tab/arrow affordances.
 - Only drop to **Compact** or **Minimal** tier in genuinely narrow
   multitasking contexts: iPad Split View at a narrow width, or Slide Over.
   The same width/height breakpoints used for phone apply here; iPad does

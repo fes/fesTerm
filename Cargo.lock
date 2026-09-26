@@ -2113,6 +2113,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-ios-window"
+version = "0.6.0"
+dependencies = [
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-ui-kit 0.3.2",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "festerm-linux-power"
 version = "0.6.0"
 dependencies = [
@@ -2136,6 +2147,18 @@ version = "0.6.0"
 dependencies = [
  "festerm-syntax",
  "pulldown-cmark",
+]
+
+[[package]]
+name = "festerm-mobile"
+version = "0.6.0"
+dependencies = [
+ "eframe",
+ "festerm-core",
+ "festerm-ios-window",
+ "festerm-ui-egui",
+ "raw-window-handle",
+ "winit",
 ]
 
 [[package]]
