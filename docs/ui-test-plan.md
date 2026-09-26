@@ -427,6 +427,15 @@ submission. Run it with `cargo bench -p festerm-core` and
 `cargo bench -p festerm-ui-egui`; native GPU/compositor presentation latency
 remains platform evidence rather than a headless UI benchmark.
 
+The UI rendering group also covers a mostly blank viewport, 64 interleaved
+truecolor styles, and 4,800 unique truecolor styles that exceed the glyph-cache
+capacity. `rendering/steady_frame_tessellation` includes egui CPU tessellation
+as well as shape submission, so clip-separated mesh preparation is not hidden
+by the submission-only workloads. It still does not execute GPU draws, open
+native windows, or measure presentation latency. Compare identical benchmark
+sources in alternating baseline/candidate runs; do not infer an idle-CPU or
+whole-application speedup from a requested-frame microbenchmark.
+
 Emoji P2 adds `emoji_rendering/cold_texture_population` and
 `emoji_rendering/warm_texture_reuse` to the UI Criterion suite. Correctness
 tests enforce the hardware-independent work budget while the visible working
