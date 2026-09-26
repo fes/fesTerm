@@ -838,13 +838,22 @@
       ],
       "decisions": [
         "ADR-0012",
-        "ADR-0037"
+        "ADR-0037",
+        "ADR-0039"
       ],
       "automated_tests": [
         "native_background_hook_preserves_rectangles_and_translucent_fallback",
         "native_solid_background_matches_terminal_pixels_across_dpi",
         "srgb_framebuffers_keep_standard_background_pixels",
         "only_eight_bit_gamma_framebuffers_use_the_solid_background_pipeline",
+        "native_bounds_crop_sparse_paints_and_validate_indices",
+        "shared_surfaces_preserve_pixels_and_previous_frame_ownership",
+        "direct2d_selection_preserves_hardware_other_backends_and_srgb",
+        "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
+        "unsupported_native_palette_keeps_the_current_frame_pixels",
+        "declined_native_paint_keeps_original_shapes",
+        "native_paint_replaces_only_its_scope_and_preserves_order",
+        "translucent_and_invisible_painters_never_enter_native_capture",
         "terminal_context_menu_intercepts_local_right_click_without_pty_input",
         "terminal_context_menu_can_queue_history_snapshot_actions_without_pty_input",
         "terminal_history_snapshot_actions_hide_while_text_is_selected",
@@ -896,11 +905,13 @@
         "TI-10",
         "TI-14",
         "TI-15",
-        "CP-17"
+        "CP-17",
+        "CP-18"
       ],
       "status": "partial",
       "prerequisites": [
-        "IME and complete selection semantics remain platform/capability work"
+        "IME and complete selection semantics remain platform/capability work",
+        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review"
       ]
     },
     {

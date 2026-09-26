@@ -48,6 +48,12 @@ festerm-document -----> (no workspace dependencies)
 
 `festerm-core` must not depend on GUI, PTY, SSH, operating-system keychain, cloud identity, or persistence implementations.
 
+The default-off Windows Direct2D experiment adds an app-owned
+`festerm-windows-direct2d` graphics boundary consuming egui primitives, not
+terminal state. The UI retains layout, input, fonts and paint order; the
+native crate owns SDK interop and immutable shared surfaces. See proposed
+[ADR 0039](docs/adr/0039-opt-in-direct2d-terminal-composition.md).
+
 ## Current and Target Workspace Layout
 
 The repository is a Cargo workspace. The initial core, test-support, and
@@ -71,6 +77,7 @@ change, but the responsibilities should remain distinct.
     festerm-windows-job/   # Windows process-tree shutdown support
     festerm-windows-security/ # current-user named-pipe DACL support
     festerm-windows-runtime/ # trusted optional ConPTY sidecar loading
+    festerm-windows-direct2d/ # experimental SDK/wgpu graphics interop, no terminal ownership
     festerm-test-support/
   app/
     festerm/

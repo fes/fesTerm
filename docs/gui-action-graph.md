@@ -31,6 +31,12 @@ remain identical. `CP-17` pairs a native CPU ceiling with a minimum GUI
 frame-building rate under controlled output; neither is a production frame
 limit or a claim about OS presentation latency.
 
+The default-off Direct2D experiment also affects `TERM-01`: eligible root
+terminal paints may use an immutable native surface, but input ownership,
+geometry, clipping, colors and output consumption remain unchanged. A rejected
+native frame keeps ordinary painting in the same frame. CP-18 tracks the
+remaining native qualification; ADR-0039 remains Proposed.
+
 ## How to use the graph
 
 Each test run starts at a named checkpoint, follows one or more edges, asserts

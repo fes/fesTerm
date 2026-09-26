@@ -2058,6 +2058,7 @@ dependencies = [
  "festerm-ssh",
  "festerm-syntax",
  "festerm-ui-egui",
+ "festerm-windows-direct2d",
  "festerm-windows-power",
  "fs2",
  "image",
@@ -2254,6 +2255,18 @@ dependencies = [
  "icu_properties",
  "swash",
  "ttf-parser",
+]
+
+[[package]]
+name = "festerm-windows-direct2d"
+version = "0.5.0"
+dependencies = [
+ "cc",
+ "egui",
+ "egui-wgpu",
+ "egui_kittest",
+ "wgpu",
+ "windows-core",
 ]
 
 [[package]]

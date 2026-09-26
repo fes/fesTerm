@@ -8,6 +8,9 @@ mod app;
 mod application;
 mod configuration_startup;
 mod diagnostics;
+mod direct2d;
+#[cfg(all(test, windows))]
+mod direct2d_probe;
 mod discovery;
 // Every entry point here is exercised by its own tests and is called for real
 // once the editor tab lands; the allowance goes with it.
@@ -151,6 +154,10 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|creation_context| {
             log_wgpu_adapter(creation_context);
+            direct2d::install_from_environment(
+                &creation_context.egui_ctx,
+                creation_context.wgpu_render_state.as_ref(),
+            );
             let mut app = FesTermApp::with_startup_configuration(
                 &creation_context.egui_ctx,
                 startup_configuration,

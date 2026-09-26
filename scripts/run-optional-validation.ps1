@@ -245,12 +245,34 @@ if ($env:OS -eq 'Windows_NT') {
         $status = 'fail'
     }
     try {
-        & "$PSScriptRoot\check-windows-idle-rendering.ps1" -IncludeSustainedOutput
+        $renderingOptions = @{}
+        if ($env:FESTERM_EXPERIMENTAL_DIRECT2D -eq '1') {
+            $renderingOptions.DenseOutput = $true
+            $renderingOptions.RequireDirect2D = $true
+        }
+        & "$PSScriptRoot\check-windows-idle-rendering.ps1" -IncludeSustainedOutput @renderingOptions
         Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=pass"
     } catch {
         Write-Warning $_
         Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=fail"
         $status = 'fail'
+    }
+    if ($env:FESTERM_RUN_DIRECT2D_PROBE -eq '1') {
+        try {
+            $direct2dResult = if ($env:FESTERM_DIRECT2D_PROBE_DIR) {
+                $env:FESTERM_DIRECT2D_PROBE_DIR
+            } else {
+                Join-Path $PSScriptRoot '..\target\direct2d-probe'
+            }
+            & "$PSScriptRoot\..\validation\direct2d\run.ps1" -ResultDirectory $direct2dResult
+            Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=skipped reason=experimental-opt-in"
     }
 }
 
