@@ -467,6 +467,15 @@ Translucent UI and other framebuffer formats retain ordinary egui painting.
 This is not retained-pixel or partial-frame rendering; CP-17 tracks its native
 performance and visual evidence.
 
+The default-off Windows x64 Direct2D experiment may replace eligible root
+terminal content with an immutable shared surface while leaving chrome and
+composition in egui-wgpu. It reuses the existing glyph/emoji pixels and cell
+geometry. The ordinary full background still clears old content before the
+cropped native surface is composed. Hardware, secondary windows, translucent
+or transformed painters, and rejected native frames retain ordinary painting.
+Input, session ownership and frame scheduling do not change. See proposed
+ADR-0039 and CP-18; this is not a default renderer replacement.
+
 ### Launcher lifecycle
 
 Launcher is a singleton task surface and the window's stable empty state, not a

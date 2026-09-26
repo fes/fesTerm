@@ -204,6 +204,7 @@ struct ColorEmojiKey {
 
 struct ColorEmojiTexture {
     texture: TextureHandle,
+    image: Option<Arc<ColorImage>>,
     aspect_ratio: f32,
     byte_size: usize,
 }
@@ -266,7 +267,8 @@ impl ColorEmojiCache {
                 self.touch(&key);
                 return ColorEmojiPaintOutcome::RasterizationFailed;
             };
-            let byte_size = image.width() * image.height() * 4;
+            let retain_image = crate::native_painter::installed(painter.ctx());
+            let byte_size = image.width() * image.height() * 4 * if retain_image { 2 } else { 1 };
             self.prepare_for_insert(byte_size);
             let aspect_ratio = image.width() as f32 / image.height() as f32;
             let texture_name = format!(
@@ -274,13 +276,18 @@ impl ColorEmojiCache {
                 stable_text_hash(text),
                 pixel_size
             );
-            let texture = painter
-                .ctx()
-                .load_texture(texture_name, image, TextureOptions::LINEAR);
+            let image = Arc::new(image);
+            let retained_image = retain_image.then(|| image.clone());
+            let texture = painter.ctx().load_texture(
+                texture_name,
+                egui::ImageData::Color(image),
+                TextureOptions::LINEAR,
+            );
             self.textures.insert(
                 key.clone(),
                 ColorEmojiTexture {
                     texture,
+                    image: retained_image,
                     aspect_ratio,
                     byte_size,
                 },
@@ -292,6 +299,9 @@ impl ColorEmojiCache {
         let Some(entry) = self.textures.get(&key) else {
             return ColorEmojiPaintOutcome::RasterizationFailed;
         };
+        if let Some(image) = &entry.image {
+            crate::native_painter::record_texture(painter.ctx(), entry.texture.id(), image);
+        }
         let max_size = rect.size() * 0.92;
         let size = if max_size.x / max_size.y > entry.aspect_ratio {
             Vec2::new(max_size.y * entry.aspect_ratio, max_size.y)
@@ -638,6 +648,7 @@ pub(crate) fn paint_grid(
     let mut stats = GridPaintStats::default();
     let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
     crate::background::paint_background(&painter, paint.layout.rect);
+    let native = crate::native_painter::Batch::begin(&painter, painter.clip_rect());
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {
             continue;
@@ -822,6 +833,9 @@ pub(crate) fn paint_grid(
                 }
             }
         }
+    }
+    if let Some(native) = native {
+        native.finish(&painter);
     }
     stats
 }
@@ -1278,6 +1292,7 @@ mod tests {
                 },
                 ColorEmojiTexture {
                     texture: texture.clone(),
+                    image: None,
                     aspect_ratio: 1.0,
                     byte_size,
                 },
@@ -1304,6 +1319,7 @@ mod tests {
             },
             ColorEmojiTexture {
                 texture,
+                image: None,
                 aspect_ratio: 1.0,
                 byte_size: COLOR_EMOJI_CACHE_BYTE_CAPACITY,
             },
@@ -1352,6 +1368,7 @@ mod tests {
                 key.clone(),
                 ColorEmojiTexture {
                     texture: texture.clone(),
+                    image: None,
                     aspect_ratio: 1.0,
                     byte_size: 4,
                 },

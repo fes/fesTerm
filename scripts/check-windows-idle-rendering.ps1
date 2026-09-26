@@ -8,6 +8,8 @@ param(
     [double] $MaximumCpuPercent = 5,
     [switch] $RequireSoftwareRenderer,
     [switch] $IncludeSustainedOutput,
+    [switch] $DenseOutput,
+    [switch] $RequireDirect2D,
     [ValidateRange(0.1, 100)]
     [double] $MaximumOutputCpuPercent = 30,
     [ValidateRange(1, 120)]
@@ -18,6 +20,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT' -or $env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Run on a Windows desktop with FESTERM_RUN_OPTIONAL_VALIDATION=1.'
+}
+if (($DenseOutput -or $RequireDirect2D) -and -not $IncludeSustainedOutput) {
+    throw 'DenseOutput and RequireDirect2D require IncludeSustainedOutput.'
+}
+if ($RequireDirect2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
+    throw 'RequireDirect2D requires FESTERM_EXPERIMENTAL_DIRECT2D=1.'
 }
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -42,12 +50,34 @@ public static class FesTermIdleRenderingNative {
     public static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")]
     public static extern bool IsZoomed(IntPtr window);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetClientRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr window);
+    public static int[] ClientMetrics(IntPtr window) {
+        var previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        if (previous == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+        try {
+            Rect rect;
+            if (!GetClientRect(window, out rect)) throw new System.ComponentModel.Win32Exception();
+            var dpi = GetDpiForWindow(window);
+            if (dpi == 0) throw new InvalidOperationException("Window DPI unavailable.");
+            return new[] { rect.Right - rect.Left, rect.Bottom - rect.Top, (int)dpi };
+        } finally {
+            if (SetThreadDpiAwarenessContext(previous) == IntPtr.Zero)
+                throw new System.ComponentModel.Win32Exception();
+        }
+    }
 }
 '@
 
-function Get-GuiFrameNumber([string] $Stdout, [string] $Stderr) {
-    $frames = @(Select-String -LiteralPath $Stdout, $Stderr -Pattern 'gui_frame_number=(\d+)')
-    if ($frames.Count -eq 0) { throw 'No GUI frame counters were logged by the candidate.' }
+function Get-FrameNumber([string] $Stdout, [string] $Stderr, [string] $Counter) {
+    $frames = @(Select-String -LiteralPath $Stdout, $Stderr -Pattern "$Counter=(\d+)")
+    if ($frames.Count -eq 0) { throw "No $Counter counters were logged by the candidate." }
     return [long] $frames[-1].Matches[0].Groups[1].Value
 }
 
@@ -59,7 +89,10 @@ try {
         $sustained = $scenario -eq 'sustained-output'
         $configuration = "schema_version = 1`n"
         if ($scenario -ne 'launcher') {
-            $arguments = if ($sustained) {
+            $arguments = if ($sustained -and $DenseOutput) {
+                @('-NoLogo', '-NoProfile', '-File',
+                    (Join-Path $root 'validation\direct2d\dense-output.ps1'))
+            } elseif ($sustained) {
                 @('-NoLogo', '-NoProfile', '-Command',
                   '$end = [DateTime]::UtcNow.AddSeconds(180); $i = 0; while ([DateTime]::UtcNow -lt $end) { [Console]::Write(([char]13 + "Rendering frame {0:D5}" -f $i)); $i++; Start-Sleep -Milliseconds 100 }')
             } else {
@@ -121,6 +154,7 @@ pulse_new_output_dot = true
             if (-not [FesTermIdleRenderingNative]::IsZoomed($process.MainWindowHandle)) {
                 throw "$scenario did not remain maximized."
             }
+            $windowMetrics = [FesTermIdleRenderingNative]::ClientMetrics($process.MainWindowHandle)
             if ($RequireSoftwareRenderer -and
                 -not (Select-String -LiteralPath $stdout, $stderr -Pattern 'device_type=Cpu' -List)) {
                 throw "$scenario did not select a software renderer."
@@ -129,8 +163,10 @@ pulse_new_output_dot = true
                 -not (Get-CimInstance Win32_Process -Filter "ParentProcessId=$($process.Id) AND Name='pwsh.exe'")) {
                 throw 'The PowerShell fixture did not start.'
             }
-
-            $firstFrame = if ($sustained) { Get-GuiFrameNumber $stdout $stderr } else { 0 }
+            $firstFrame = if ($sustained) { Get-FrameNumber $stdout $stderr 'gui_frame_number' } else { 0 }
+            $firstNativeFrame = if ($sustained -and $RequireDirect2D) {
+                Get-FrameNumber $stdout $stderr 'direct2d_frame_number'
+            } else { 0 }
             $before = $process.TotalProcessorTime.TotalSeconds
             $clock = [Diagnostics.Stopwatch]::StartNew()
             Start-Sleep -Seconds $SampleSeconds
@@ -142,9 +178,23 @@ pulse_new_output_dot = true
             if (-not [FesTermIdleRenderingNative]::IsZoomed($process.MainWindowHandle)) {
                 throw "$scenario did not remain maximized during measurement."
             }
+            if (($windowMetrics -join ',') -ne
+                ([FesTermIdleRenderingNative]::ClientMetrics($process.MainWindowHandle) -join ',')) {
+                throw "$scenario changed physical size or DPI during measurement."
+            }
             $framesPerSecond = if ($sustained) {
-                ((Get-GuiFrameNumber $stdout $stderr) - $firstFrame) / $elapsed
+                ((Get-FrameNumber $stdout $stderr 'gui_frame_number') - $firstFrame) / $elapsed
             } else { $null }
+            $nativeFramesPerSecond = if ($sustained -and $RequireDirect2D) {
+                ((Get-FrameNumber $stdout $stderr 'direct2d_frame_number') - $firstNativeFrame) / $elapsed
+            } else { $null }
+            if ($sustained -and $RequireDirect2D -and $nativeFramesPerSecond -le 0) {
+                throw 'The foreground fixture did not build Direct2D frames during measurement.'
+            }
+            if ($RequireDirect2D -and
+                (Select-String -LiteralPath $stdout, $stderr -Pattern 'disabling experimental Direct2D|Direct2D initialization failed|Direct2D state poisoned' -List)) {
+                throw 'The Direct2D fixture fell back; inspect its logs.'
+            }
             $budget = if ($sustained) { $MaximumOutputCpuPercent } else { $MaximumCpuPercent }
             $passed = $cpu -le $budget -and
                 (-not $sustained -or $framesPerSecond -ge $MinimumOutputFramesPerSecond)
@@ -152,8 +202,14 @@ pulse_new_output_dot = true
                 scenario = $scenario
                 cpu_percent = [Math]::Round($cpu, 3)
                 elapsed_seconds = $elapsed
+                client_width_pixels = $windowMetrics[0]
+                client_height_pixels = $windowMetrics[1]
+                window_dpi = $windowMetrics[2]
                 maximum_cpu_percent = $budget
                 gui_frames_per_second = $framesPerSecond
+                direct2d_frames_per_second = $nativeFramesPerSecond
+                working_set_bytes = $process.WorkingSet64
+                private_bytes = $process.PrivateMemorySize64
                 minimum_gui_frames_per_second = if ($sustained) { $MinimumOutputFramesPerSecond } else { $null }
                 status = if ($passed) { 'pass' } else { 'fail' }
             })
@@ -173,9 +229,10 @@ pulse_new_output_dot = true
     [pscustomobject]@{
         status = $status
         logical_processors = [Environment]::ProcessorCount
+        output_workload = if ($DenseOutput) { '80x24-dense' } else { 'sparse-line' }
         scenarios = $results.ToArray()
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ResultPath -Encoding utf8
     Remove-Item -LiteralPath $isolation -Recurse -Force
 }
-$results | Format-Table -AutoSize
+$results | Format-Table scenario, cpu_percent, gui_frames_per_second, direct2d_frames_per_second, status -AutoSize
 if ($status -ne 'pass') { throw "Rendering CPU or GUI frame-rate budget failed; see $ResultPath" }

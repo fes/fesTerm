@@ -33,6 +33,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: python -m unittest discover -s scripts/tests -p "test_*.py"
+      - run: python -m pip install -r validation/direct2d/requirements.txt
+      - run: python -m unittest discover -s validation/direct2d -p "test_*.py"
       - run: python scripts/manage_bundled_font.py
       - run: python scripts/check_unicode_emoji_data.py
       - run: python scripts/validate-icons.py --check
@@ -105,6 +107,14 @@ jobs:
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Check the shared Direct2D replay probe
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          python -m pip install -r validation\direct2d\requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Probe dependency installation failed.' }
+          $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+          .\validation\direct2d\run.ps1 -ResultDirectory "$env:RUNNER_TEMP\direct2d-probe" -SelfTestOnly
       - if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -112,4 +122,5 @@ jobs:
           path: |
             crates/festerm-ui-egui/tests/snapshots/*.diff.png
             crates/festerm-ui-egui/tests/snapshots/*.new.png
+            target/direct2d-snapshots/*.png
           if-no-files-found: ignore

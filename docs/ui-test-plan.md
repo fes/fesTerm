@@ -268,6 +268,16 @@ and initial renderer styling are stable.
 
 ### Rules
 
+The Windows Direct2D experiment adds paired **integrated** framebuffer checks,
+not just replay snapshots. They compare the ordinary #240 path with actual
+shared-surface composition at 100%, 125%, and 200% scale, enabled/disabled and
+clipped/unclipped, including ligatures, color/faint emoji, a cursor and an alpha
+overlay. Tests assert that native painting really executed where eligible and
+did not silently fall back. A >256-color fixture separately verifies explicit
+same-frame fallback with unchanged pixels. Surface-ownership tests retain an
+older frame while rendering the next. These checks do not replace CP-18's
+native-window, hardware, or presentation-latency evidence.
+
 - Keep snapshots small and deterministic; use a fixed theme, scale factor,
   dimensions, renderer configuration, and bundled/test font. Record those
   choices with the snapshot harness; do not rely on an installed user font or

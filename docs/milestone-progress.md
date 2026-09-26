@@ -3,6 +3,52 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Correcting the Windows native recovery smoke oracles
+
+The first nightly native run after snapshot recovery exposed two test
+assumptions, not lost terminal state. The framed test client reports a closed
+stream as `UnexpectedEof`, while its Windows assertion only recognized raw
+named-pipe errors. A deterministic stolen-notice/EOF fixture now covers that
+path. The large-output snapshot differed only in focus reporting, which ConPTY
+enabled with mouse input. The fixture now requests that mode explicitly on
+every platform and still compares the entire recovered terminal exactly.
+Neither correction changes runtime behavior or substitutes for native GUI
+qualification.
+
+## Exploring a native terminal painter without replacing the UI
+
+Issue #241 asked whether Direct2D could help the remaining WARP cost after the
+idle and solid-background fixes. A controlled replay fed the same real terminal
+geometry and glyph pixels to both renderers. Dense frames became materially
+cheaper, but that was not a whole-application result: scene preparation and
+window presentation were outside the measurement.
+
+The experiment exposed two correctness traps. Native gradient filtering changed
+one-pixel alpha feathers, and fractional-DPI roundoff made nominally one-to-one
+glyph copies resample. Shared bitmap opacity masks and explicit raster-grid
+coordinates restored the pixel comparisons without replacing fonts or weakening
+the visual threshold.
+
+The resulting implementation is deliberately default-off. An application-owned
+hook receives completed egui primitives, not terminal state. A narrow Windows
+SDK boundary renders into immutable committed surfaces, then imports those
+already-initialized pixels into wgpu for composition. Sparse content uses a
+small surface; the ordinary full background still clears previous content.
+Unsupported frames preserve ordinary painting immediately and disable the
+optional path rather than returning a blank or stale success.
+
+Integrated framebuffer checks cover DPI, clipping, opacity, ligatures, emoji and
+explicit fallback. A controlled 79-column by 24-row application workload then
+reduced total-machine CPU from 57.6% to 24.5% while GUI frame construction rose
+from 5.8 to 11.6 frames/s. Sparse output was approximately unchanged. These
+single-host figures are not presentation latency or hardware-GPU evidence.
+Intermittent idle baseline failures remain a separate investigation in #242.
+Native performance, hardware and window-system evidence are kept separate
+under CP-18 and proposed ADR-0039. The earlier repaint and
+background fixes remain in place for the default path and composition; this
+experiment is not a default renderer replacement or completed platform
+qualification.
+
 ## Making software-rendered terminal backgrounds cheap
 
 The idle repaint fix did not make sustained output cheap on WARP. A controlled

@@ -221,6 +221,20 @@ solid-color fast path for opaque default terminal backgrounds on supported
 eight-bit gamma framebuffers. No saved setting, output throttling, or
 resolution reduction is involved. Running Sessions
 discovery continues in the background without redrawing unchanged inventory.
+
+`FESTERM_EXPERIMENTAL_DIRECT2D=1` is a default-off Windows x64 experiment, not
+a saved TOML setting. On DX12 CPU adapters with an eight-bit gamma target it
+paints the root window's eligible terminal content through Direct2D and
+composes it with egui-wgpu. Hardware GPUs, other backends/formats, secondary
+windows, and translucent/transformed painters retain ordinary painting. An
+unsupported frame or native error is logged and disables the optional painter
+for that process; the current frame retains its ordinary shapes. `0` or an
+unset variable keeps the default renderer. Other values are reported and
+ignored. The experiment does not alter terminal semantics or output/frame
+scheduling. See [ADR 0039](adr/0039-opt-in-direct2d-terminal-composition.md) and
+[the investigation](../validation/direct2d/README.md); native qualification
+remains open under CP-18.
+
 By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.
 `customize_local_shell = true` instead opens the executable, arguments, and
