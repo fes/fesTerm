@@ -245,7 +245,7 @@ if ($env:OS -eq 'Windows_NT') {
         $status = 'fail'
     }
     try {
-        & "$PSScriptRoot\check-windows-idle-rendering.ps1"
+        & "$PSScriptRoot\check-windows-idle-rendering.ps1" -IncludeSustainedOutput
         Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=pass"
     } catch {
         Write-Warning $_

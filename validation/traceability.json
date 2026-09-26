@@ -831,6 +831,7 @@
         "TERM-*"
       ],
       "requirements": [
+        "docs/gui-design.md#main-content",
         "docs/gui-design.md#reserved-local-input-and-clipboard",
         "docs/gui-design.md#terminal-selection",
         "docs/gui-design.md#explicit-terminal-hyperlinks"
@@ -840,6 +841,10 @@
         "ADR-0037"
       ],
       "automated_tests": [
+        "native_background_hook_preserves_rectangles_and_translucent_fallback",
+        "native_solid_background_matches_terminal_pixels_across_dpi",
+        "srgb_framebuffers_keep_standard_background_pixels",
+        "only_eight_bit_gamma_framebuffers_use_the_solid_background_pipeline",
         "terminal_context_menu_intercepts_local_right_click_without_pty_input",
         "terminal_context_menu_can_queue_history_snapshot_actions_without_pty_input",
         "terminal_history_snapshot_actions_hide_while_text_is_selected",
@@ -890,7 +895,8 @@
         "TI-03",
         "TI-10",
         "TI-14",
-        "TI-15"
+        "TI-15",
+        "CP-17"
       ],
       "status": "partial",
       "prerequisites": [

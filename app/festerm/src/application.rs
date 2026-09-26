@@ -428,6 +428,11 @@ impl eframe::App for FesTermApplication {
         self.show_secondary_windows(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
         self.settle_windows(&context);
+        tracing::debug!(
+            target: "festerm::rendering",
+            gui_frame_number = context.cumulative_frame_nr(),
+            "built GUI frame"
+        );
     }
 }
 

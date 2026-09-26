@@ -23,7 +23,7 @@ use crate::{
     },
     selection::selection_text,
     selection::Selection,
-    TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND,
+    TerminalSnapshot, DEFAULT_FOREGROUND,
 };
 
 use crate::fonts::DEFAULT_TERMINAL_FONT_SIZE;
@@ -578,10 +578,11 @@ impl TerminalView {
         sink: &mut impl EncodedInputSink,
         options: TerminalViewOptions,
     ) {
-        egui::CentralPanel::default()
+        let painter = ui.painter().clone();
+        let background = painter.add(egui::Shape::Noop);
+        let panel = egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
-                    .fill(DEFAULT_BACKGROUND)
                     // Share the chrome row's own inset
                     // (`crate::chrome::CHROME_SIDE_INSET`, equal on every
                     // side) so the terminal viewport reserves the same
@@ -597,6 +598,10 @@ impl TerminalView {
             .show(ui, |ui| {
                 self.show_in_ui_with_options(ui, terminal, sink, options);
             });
+        painter.set(
+            background,
+            crate::background::background_shape(&painter, panel.response.rect),
+        );
     }
 
     /// Shows the cell grid inside an existing `egui` UI.
@@ -676,8 +681,7 @@ impl TerminalView {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Terminal viewport")
         });
-        ui.painter()
-            .rect_filled(viewport_rect, 0.0, DEFAULT_BACKGROUND);
+        crate::background::paint_background(ui.painter(), viewport_rect);
         let vp_layout =
             viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
         self.diagnostics.grid_rect = Some(vp_layout.grid);

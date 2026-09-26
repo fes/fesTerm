@@ -3,6 +3,37 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Making software-rendered terminal backgrounds cheap
+
+The idle repaint fix did not make sustained output cheap on WARP. A controlled
+maximized window updating one short line at 10 Hz still consumed most of a
+16-logical-processor machine. Removing all background drawing made it much
+faster, but changed the appearance and was only a diagnostic experiment.
+
+Prior art supported a narrower solution than replacing the renderer.
+[Alacritty](https://github.com/alacritty/alacritty/blob/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty/res/glsl3/text.f.glsl)
+separates solid background shading from glyph texture sampling.
+[Windows Terminal](https://github.com/microsoft/terminal/blob/fda72a070905570cd44e022658c7b9d1ee89322a/src/renderer/atlas/AtlasEngine.r.cpp#L192-L201)
+selects its better-tested Direct2D backend for WARP in automatic mode.
+[foot](https://codeberg.org/dnkl/foot/wiki/Performance) demonstrates the larger
+alternative: CPU rendering with retained pixels and cell-level damage tracking.
+Full redraw is not unique to egui, and dirty presentation is not the same as
+avoiding rasterization.
+
+fesTerm now supplies an opaque solid-color callback for the default terminal
+canvas on CPU adapters using eight-bit gamma framebuffers. The application
+owns the native pipeline; the UI crate retains an egui-only callback boundary
+and its ordinary painter. No terminal ownership, dependency direction, output
+processing, global clear color, or frame scheduling changes were needed.
+sRGB/other formats and translucent UI retain ordinary painting so color-space
+and opacity behavior are not approximated.
+
+GPU readback tests compare actual colored terminal fixtures, clipping,
+overlays and several DPI scales. An opt-in native probe pairs the CPU budget
+with a minimum GUI frame-building rate. This is an optimization of default
+canvas fills, not a promise that dense glyphs, colored-cell backgrounds, or
+every software-rendered workload are inexpensive.
+
 ## Letting an idle software-rendered window stay idle
 
 A Windows Hyper-V desktop reported nearly machine-wide CPU usage from

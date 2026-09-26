@@ -459,6 +459,14 @@ Per-session diagnostics live in the temporary session inspector unless a
 future cross-session support workflow establishes a real need for a separate
 application surface. Terminal tabs should maximize terminal area.
 
+On CPU rendering adapters with an eight-bit gamma framebuffer, the default
+opaque terminal canvas uses a native solid-color paint callback rather than
+the general textured-rectangle shader. Colors, clipping, overlays, cell
+backgrounds, text, input processing, and redraw scheduling are unchanged.
+Translucent UI and other framebuffer formats retain ordinary egui painting.
+This is not retained-pixel or partial-frame rendering; CP-17 tracks its native
+performance and visual evidence.
+
 ### Launcher lifecycle
 
 Launcher is a singleton task surface and the window's stable empty state, not a
