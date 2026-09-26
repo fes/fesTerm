@@ -1,8 +1,15 @@
 # ADR 0038: Authoritative Terminal Snapshots for `festerm-sessiond` Reattach Recovery
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-25
+- **Approval:** Project owner, 2026-09-25
 - **Updates:** ADR 0025
+
+The project owner approved daemon-owned authoritative recovery state with a
+frontend display copy after reviewing the ownership boundary and tradeoffs.
+Implementation was merged in [PR #237](https://github.com/fes/fesTerm/pull/237).
+Architectural acceptance does not close the separate native GUI and
+signed-package validation obligations in CP-11.
 
 ## Context
 

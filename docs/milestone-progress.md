@@ -1731,7 +1731,10 @@ including failed replacement retaining the old client and CLI framed attach
 without duplicate terminal-query side effects. The GUI stays asynchronous;
 the daemon's snapshot handshake deliberately quiesces PTY processing for a
 bounded 15-second deadline. The CLI uses a text projection, not full styled
-rendering. ADR 0038 remains Proposed pending explicit architectural approval.
+rendering. The project owner accepted ADR 0038 on September 25, 2026, after
+reviewing daemon-owned authoritative state and frontend display copies.
+Implementation is merged in PR #237; native GUI and signed-package acceptance
+remain separate CP-11 obligations.
 
 Combined history/recovery validation then exposed a subtler boundary: the
 snapshot validator compared text lengths with allocation-capacity charges,
