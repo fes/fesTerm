@@ -1,9 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     ffi::{c_char, c_void, CStr},
     fmt,
     ptr::NonNull,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use egui::{
@@ -52,6 +53,7 @@ unsafe extern "C" {
         width: u32,
         height: u32,
         clear: Color,
+        normalized_positions: bool,
         meshes: *const MeshInput,
         count: usize,
     ) -> i32;
@@ -96,12 +98,59 @@ pub struct Surface {
     pub origin: [u32; 2],
 }
 
+#[derive(Default)]
+pub struct RenderTimings {
+    pub analysis: Duration,
+    pub texture_upload: Duration,
+    pub geometry_prepare: Duration,
+    pub native_draw: Duration,
+    pub mesh_count: usize,
+    pub vertex_count: usize,
+    pub index_count: usize,
+    pub texture_count: usize,
+    pub uploaded_texture_count: usize,
+    pub surface_width: u32,
+    pub surface_height: u32,
+}
+
+impl RenderTimings {
+    fn record_analysis(
+        &mut self,
+        started: Instant,
+        meshes: usize,
+        vertices: usize,
+        indices: usize,
+    ) {
+        self.analysis = started.elapsed();
+        self.mesh_count = meshes;
+        self.vertex_count = vertices;
+        self.index_count = indices;
+    }
+}
+
+const MAX_PRIMITIVES: usize = 250_000;
+const MAX_FRAME_VERTICES: usize = 2_000_000;
+const MAX_FRAME_INDICES: usize = 6_000_000;
+const MAX_MESH_VERTICES: usize = 1_000_000;
+const MAX_MESH_INDICES: usize = 3_000_000;
+const MAX_TEXTURE_BYTES: usize = 96 * 1024 * 1024;
+const MAX_TEXTURE_DIMENSION: usize = 8_192;
+const MAX_TEXTURE_PIXELS: usize = 16_777_216;
+const MAX_SURFACE_DIMENSION: u32 = 4_096;
+const MAX_RETAINED_TEXTURE_UPLOAD_PIXELS: usize = MAX_TEXTURE_PIXELS;
+const MAX_RETAINED_FRAME_VERTICES: usize = MAX_FRAME_VERTICES;
+const MAX_RETAINED_MESH_INPUTS: usize = MAX_PRIMITIVES;
+
 /// Serial ownership of a multithread-capable Direct2D/D3D11-on-12 context.
 pub struct Renderer {
     native: NonNull<c_void>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     textures: HashMap<u64, Arc<ColorImage>>,
+    used_texture_ids: Vec<u64>,
+    texture_upload: Vec<Color>,
+    mesh_vertices: Vec<Vertex>,
+    mesh_inputs: Vec<MeshInput>,
 }
 
 // Native operations require &mut self. The SDK factory is multithread-capable,
@@ -140,6 +189,10 @@ impl Renderer {
             device,
             queue,
             textures: HashMap::new(),
+            used_texture_ids: Vec::new(),
+            texture_upload: Vec::new(),
+            mesh_vertices: Vec::new(),
+            mesh_inputs: Vec::new(),
         })
     }
 
@@ -167,47 +220,48 @@ impl Renderer {
         background: Color32,
         primitives: &[ClippedPrimitive],
         textures: &[(TextureId, Arc<ColorImage>)],
+        timings: Option<&mut RenderTimings>,
     ) -> Result<Option<Surface>, Error> {
+        let mut timings = timings;
         if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 || background.a() != 255 {
             return Err(Error::unsupported(
                 "finite scale and opaque background required",
             ));
         }
-        if primitives.len() > 250_000 {
-            return Err(Error::unsupported("too many paint primitives"));
+        let analysis_started = timings.as_ref().map(|_| Instant::now());
+        let analysis = analyze_frame(
+            rect,
+            pixels_per_point,
+            primitives,
+            &mut self.used_texture_ids,
+        )?;
+        if let (Some(timings), Some(started)) = (timings.as_deref_mut(), analysis_started) {
+            timings.record_analysis(
+                started,
+                primitives.len(),
+                analysis.vertex_count,
+                analysis.index_count,
+            );
+            timings.texture_count = self.used_texture_ids.len();
         }
-        let mut vertices = 0usize;
-        let mut indices = 0usize;
-        for primitive in primitives {
-            if let Primitive::Mesh(mesh) = &primitive.primitive {
-                vertices = vertices.saturating_add(mesh.vertices.len());
-                indices = indices.saturating_add(mesh.indices.len());
-                if vertices > 2_000_000 || indices > 6_000_000 {
-                    return Err(Error::unsupported("native frame geometry budget exceeded"));
-                }
-            }
-        }
-        let Some(bounds) = visible_bounds(rect, pixels_per_point, primitives)? else {
+        let Some(bounds) = analysis.bounds else {
             return Ok(None);
         };
         let origin = [bounds.min.x as u32, bounds.min.y as u32];
         let width = bounds.width() as u32;
         let height = bounds.height() as u32;
-        if width > 4096 || height > 4096 || primitives.len() > 250_000 {
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.surface_width = width;
+            timings.surface_height = height;
+        }
+        if width > MAX_SURFACE_DIMENSION || height > MAX_SURFACE_DIMENSION {
             return Err(Error::unsupported("native frame exceeds supported bounds"));
         }
-        let used = primitives
-            .iter()
-            .map(|primitive| match &primitive.primitive {
-                Primitive::Mesh(mesh) => match mesh.texture_id {
-                    TextureId::Managed(id) => Ok(id),
-                    TextureId::User(_) => Err(Error::unsupported("external texture")),
-                },
-                Primitive::Callback(_) => Err(Error::unsupported("nested paint callback")),
-            })
-            .collect::<Result<HashSet<_>, _>>()?;
+
+        let texture_upload_started = timings.as_ref().map(|_| Instant::now());
         let mut texture_bytes = 0usize;
-        for &id in &used {
+        let mut uploaded_texture_count = 0usize;
+        for &id in &self.used_texture_ids {
             let image = textures
                 .iter()
                 .find_map(|(texture_id, image)| {
@@ -215,7 +269,7 @@ impl Renderer {
                 })
                 .ok_or_else(|| Error::unsupported("captured texture pixels missing"))?;
             texture_bytes = texture_bytes.saturating_add(image.pixels.len().saturating_mul(4));
-            if texture_bytes > 96 * 1024 * 1024 {
+            if texture_bytes > MAX_TEXTURE_BYTES {
                 return Err(Error::unsupported("native frame texture budget exceeded"));
             }
             if self
@@ -228,18 +282,16 @@ impl Renderer {
             let [w, h] = image.size;
             if w == 0
                 || h == 0
-                || w > 8192
-                || h > 8192
-                || w * h > 16_777_216
+                || w > MAX_TEXTURE_DIMENSION
+                || h > MAX_TEXTURE_DIMENSION
+                || w * h > MAX_TEXTURE_PIXELS
                 || image.pixels.len() != w * h
             {
                 return Err(Error::unsupported("invalid texture dimensions"));
             }
-            let pixels = image
-                .pixels
-                .iter()
-                .map(|pixel| Color(pixel.to_array()))
-                .collect::<Vec<_>>();
+            self.texture_upload.clear();
+            self.texture_upload
+                .extend(image.pixels.iter().map(|pixel| Color(pixel.to_array())));
             // Pixel storage remains alive for the synchronous SDK copy.
             let code = unsafe {
                 festerm_d2d_texture(
@@ -247,22 +299,35 @@ impl Renderer {
                     id,
                     w as u32,
                     h as u32,
-                    pixels.as_ptr(),
-                    pixels.len(),
+                    self.texture_upload.as_ptr(),
+                    self.texture_upload.len(),
                 )
             };
             self.checked("texture upload", code)?;
+            uploaded_texture_count = uploaded_texture_count.saturating_add(1);
             self.textures.insert(id, image.clone());
         }
-        let retained = used.iter().copied().collect::<Vec<_>>();
         // The SDK copies the IDs before returning; no Rust storage is retained.
-        let code =
-            unsafe { festerm_d2d_prune(self.native.as_ptr(), retained.as_ptr(), retained.len()) };
+        let code = unsafe {
+            festerm_d2d_prune(
+                self.native.as_ptr(),
+                self.used_texture_ids.as_ptr(),
+                self.used_texture_ids.len(),
+            )
+        };
         self.checked("texture retirement", code)?;
-        self.textures.retain(|id, _| used.contains(id));
+        let used = &self.used_texture_ids;
+        self.textures.retain(|id, _| used.binary_search(id).is_ok());
+        if let (Some(timings), Some(started)) = (timings.as_deref_mut(), texture_upload_started) {
+            timings.texture_upload = started.elapsed();
+            timings.uploaded_texture_count = uploaded_texture_count;
+        }
 
-        let mut storage = Vec::with_capacity(primitives.len());
-        let mut inputs = Vec::with_capacity(primitives.len());
+        let geometry_prepare_started = timings.as_ref().map(|_| Instant::now());
+        self.mesh_vertices.clear();
+        self.mesh_vertices.reserve(analysis.vertex_count);
+        self.mesh_inputs.clear();
+        self.mesh_inputs.reserve(primitives.len());
         for primitive in primitives {
             let Primitive::Mesh(mesh) = &primitive.primitive else {
                 unreachable!()
@@ -270,28 +335,24 @@ impl Renderer {
             let TextureId::Managed(id) = mesh.texture_id else {
                 unreachable!()
             };
-            if mesh.vertices.len() > 1_000_000 || mesh.indices.len() > 3_000_000 {
+            if mesh.vertices.len() > MAX_MESH_VERTICES || mesh.indices.len() > MAX_MESH_INDICES {
                 return Err(Error::unsupported("mesh exceeds supported bounds"));
             }
-            storage.push(
-                mesh.vertices
-                    .iter()
-                    .map(|vertex| Vertex {
-                        position: [
-                            vertex.pos.x * pixels_per_point - bounds.min.x,
-                            vertex.pos.y * pixels_per_point - bounds.min.y,
-                        ],
-                        uv: [vertex.uv.x, vertex.uv.y],
-                        color: Color(vertex.color.to_array()),
-                    })
-                    .collect::<Vec<_>>(),
-            );
-            let vertices = storage.last().expect("just inserted vertices");
+            let start = self.mesh_vertices.len();
+            self.mesh_vertices
+                .extend(mesh.vertices.iter().map(|vertex| Vertex {
+                    position: [
+                        raster_position(vertex.pos.x * pixels_per_point - bounds.min.x),
+                        raster_position(vertex.pos.y * pixels_per_point - bounds.min.y),
+                    ],
+                    uv: [vertex.uv.x, vertex.uv.y],
+                    color: Color(vertex.color.to_array()),
+                }));
             let clip = pixel_rect(primitive.clip_rect, pixels_per_point).intersect(bounds);
-            inputs.push(MeshInput {
+            self.mesh_inputs.push(MeshInput {
                 texture: id,
-                vertices: vertices.as_ptr(),
-                vertex_count: vertices.len(),
+                vertices: self.mesh_vertices[start..].as_ptr(),
+                vertex_count: mesh.vertices.len(),
                 indices: mesh.indices.as_ptr(),
                 index_count: mesh.indices.len(),
                 clip: [
@@ -310,11 +371,18 @@ impl Renderer {
                 width,
                 height,
                 Color(background.to_array()),
-                inputs.as_ptr(),
-                inputs.len(),
+                true,
+                self.mesh_inputs.as_ptr(),
+                self.mesh_inputs.len(),
             )
         };
         self.checked("geometry preparation", code)?;
+        trim_vec_capacity(&mut self.texture_upload, MAX_RETAINED_TEXTURE_UPLOAD_PIXELS);
+        trim_vec_capacity(&mut self.mesh_vertices, MAX_RETAINED_FRAME_VERTICES);
+        trim_vec_capacity(&mut self.mesh_inputs, MAX_RETAINED_MESH_INPUTS);
+        if let (Some(timings), Some(started)) = (timings.as_deref_mut(), geometry_prepare_started) {
+            timings.geometry_prepare = started.elapsed();
+        }
 
         let descriptor = wgpu::TextureDescriptor {
             label: Some("festerm immutable Direct2D frame"),
@@ -335,8 +403,12 @@ impl Renderer {
         let mut pointer = std::ptr::null_mut();
         // The SDK owns a fresh committed resource, clears/draws its full extent,
         // releases it to ALL_SHADER_RESOURCE, and flushes on this graphics queue.
+        let native_draw_started = timings.as_ref().map(|_| Instant::now());
         let code = unsafe { festerm_d2d_draw(self.native.as_ptr(), &mut pointer) };
         self.checked("native drawing", code)?;
+        if let (Some(timings), Some(started)) = (timings, native_draw_started) {
+            timings.native_draw = started.elapsed();
+        }
         let pointer =
             NonNull::new(pointer).ok_or_else(|| Error::unsupported("native surface missing"))?;
         // Transfer the owned COM reference into wgpu without transferring a
@@ -398,6 +470,61 @@ impl Drop for Renderer {
     }
 }
 
+struct FrameAnalysis {
+    bounds: Option<Rect>,
+    vertex_count: usize,
+    index_count: usize,
+}
+
+fn analyze_frame(
+    rect: Rect,
+    scale: f32,
+    primitives: &[ClippedPrimitive],
+    used_texture_ids: &mut Vec<u64>,
+) -> Result<FrameAnalysis, Error> {
+    if primitives.len() > MAX_PRIMITIVES {
+        return Err(Error::unsupported("too many paint primitives"));
+    }
+    let canvas = pixel_rect(rect, scale);
+    if !canvas.is_finite() || canvas.min.x < 0.0 || canvas.min.y < 0.0 {
+        return Err(Error::unsupported("invalid canvas bounds"));
+    }
+
+    let mut bounds = Rect::NOTHING;
+    let mut vertex_count = 0usize;
+    let mut index_count = 0usize;
+    used_texture_ids.clear();
+
+    for primitive in primitives {
+        let Primitive::Mesh(mesh) = &primitive.primitive else {
+            return Err(Error::unsupported("nested paint callback"));
+        };
+        let TextureId::Managed(id) = mesh.texture_id else {
+            return Err(Error::unsupported("external texture"));
+        };
+        vertex_count = vertex_count.saturating_add(mesh.vertices.len());
+        index_count = index_count.saturating_add(mesh.indices.len());
+        if vertex_count > MAX_FRAME_VERTICES || index_count > MAX_FRAME_INDICES {
+            return Err(Error::unsupported("native frame geometry budget exceeded"));
+        }
+        used_texture_ids.push(id);
+        let clipped = visible_mesh_bounds(mesh, primitive.clip_rect, scale, canvas)?;
+        if clipped.is_positive() {
+            bounds = bounds.union(clipped);
+        }
+    }
+    used_texture_ids.sort_unstable();
+    used_texture_ids.dedup();
+
+    Ok(FrameAnalysis {
+        bounds: bounds
+            .is_positive()
+            .then(|| Rect::from_min_max(bounds.min.floor(), bounds.max.ceil()).intersect(canvas)),
+        vertex_count,
+        index_count,
+    })
+}
+
 fn pixel_rect(rect: Rect, scale: f32) -> Rect {
     Rect::from_min_max(
         Pos2::new((rect.min.x * scale).round(), (rect.min.y * scale).round()),
@@ -405,45 +532,38 @@ fn pixel_rect(rect: Rect, scale: f32) -> Rect {
     )
 }
 
-fn visible_bounds(
-    rect: Rect,
+fn visible_mesh_bounds(
+    mesh: &egui::Mesh,
+    clip_rect: Rect,
     scale: f32,
-    primitives: &[ClippedPrimitive],
-) -> Result<Option<Rect>, Error> {
-    let canvas = pixel_rect(rect, scale);
-    if !canvas.is_finite() || canvas.min.x < 0.0 || canvas.min.y < 0.0 {
-        return Err(Error::unsupported("invalid canvas bounds"));
-    }
-    let mut bounds = Rect::NOTHING;
-    for primitive in primitives {
-        let Primitive::Mesh(mesh) = &primitive.primitive else {
-            return Err(Error::unsupported("nested paint callback"));
-        };
-        let mut mesh_bounds = Rect::NOTHING;
-        for index in &mesh.indices {
-            let vertex = mesh
-                .vertices
-                .get(*index as usize)
-                .ok_or_else(|| Error::unsupported("invalid mesh index"))?;
-            let point = vertex.pos * scale;
-            if !point.is_finite() {
-                return Err(Error::unsupported("nonfinite vertex"));
-            }
-            mesh_bounds.extend_with(point);
+    canvas: Rect,
+) -> Result<Rect, Error> {
+    let mut mesh_bounds = Rect::NOTHING;
+    for index in &mesh.indices {
+        let vertex = mesh
+            .vertices
+            .get(*index as usize)
+            .ok_or_else(|| Error::unsupported("invalid mesh index"))?;
+        let point = vertex.pos * scale;
+        if !point.is_finite() {
+            return Err(Error::unsupported("nonfinite vertex"));
         }
-        let clipped = mesh_bounds
-            .intersect(pixel_rect(primitive.clip_rect, scale))
-            .intersect(canvas);
-        if clipped.is_positive() {
-            bounds = bounds.union(clipped);
-        }
+        mesh_bounds.extend_with(point);
     }
-    if !bounds.is_positive() {
-        return Ok(None);
+    Ok(mesh_bounds
+        .intersect(pixel_rect(clip_rect, scale))
+        .intersect(canvas))
+}
+
+fn raster_position(value: f32) -> f32 {
+    const SCALE: f32 = (1 << 8) as f32;
+    (value * SCALE).round() / SCALE
+}
+
+fn trim_vec_capacity<T>(values: &mut Vec<T>, retained_capacity: usize) {
+    if values.capacity() > retained_capacity {
+        values.shrink_to(retained_capacity);
     }
-    Ok(Some(
-        Rect::from_min_max(bounds.min.floor(), bounds.max.ceil()).intersect(canvas),
-    ))
 }
 
 #[cfg(test)]
@@ -467,18 +587,46 @@ mod tests {
     #[test]
     fn native_bounds_crop_sparse_paints_and_validate_indices() {
         let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+        let mut used = Vec::new();
         assert_eq!(
-            visible_bounds(canvas, 1.25, &frame(Color32::RED))
+            analyze_frame(canvas, 1.25, &frame(Color32::RED), &mut used)
                 .unwrap()
+                .bounds
                 .unwrap(),
             Rect::from_min_max(egui::pos2(12.0, 25.0), egui::pos2(33.0, 45.0))
         );
+        assert_eq!(used, vec![0]);
         let mut invalid = frame(Color32::RED);
         let Primitive::Mesh(mesh) = &mut invalid[0].primitive else {
             unreachable!()
         };
         mesh.indices.push(999);
-        assert!(visible_bounds(canvas, 1.0, &invalid).is_err());
+        assert!(analyze_frame(canvas, 1.0, &invalid, &mut used).is_err());
+    }
+
+    #[test]
+    fn native_analysis_deduplicates_textures_and_rejects_large_frames() {
+        let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+        let mut used = Vec::new();
+        let mut meshes = frame(Color32::RED);
+        meshes.extend(frame(Color32::BLUE));
+        assert_eq!(
+            analyze_frame(canvas, 1.0, &meshes, &mut used)
+                .unwrap()
+                .vertex_count,
+            8
+        );
+        assert_eq!(used, vec![0]);
+
+        let too_many = vec![meshes[0].clone(); MAX_PRIMITIVES + 1];
+        assert!(analyze_frame(canvas, 1.0, &too_many, &mut used).is_err());
+    }
+
+    #[test]
+    fn raster_grid_normalization_matches_native_rounding() {
+        assert_eq!(raster_position(f32::from_bits(0x44a4_4001)), 1314.0);
+        let aligned = f32::from_bits(0x446e_ed00);
+        assert_eq!(raster_position(aligned), aligned);
     }
 
     fn first_pixel(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> [u8; 4] {
@@ -544,7 +692,14 @@ mod tests {
         )];
         let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
         let red = renderer
-            .render(canvas, 1.0, Color32::BLACK, &frame(Color32::RED), &textures)
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &frame(Color32::RED),
+                &textures,
+                None,
+            )
             .unwrap()
             .unwrap();
         let blue = renderer
@@ -554,6 +709,7 @@ mod tests {
                 Color32::BLACK,
                 &frame(Color32::BLUE),
                 &textures,
+                None,
             )
             .unwrap()
             .unwrap();
