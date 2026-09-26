@@ -209,6 +209,7 @@ fn log_wgpu_adapter(creation_context: &eframe::CreationContext<'_>) {
     match creation_context.wgpu_render_state.as_ref() {
         Some(render_state) => {
             let info = render_state.adapter.get_info();
+            configure_renderer_animations(&creation_context.egui_ctx, info.device_type);
             tracing::info!(
                 target: "festerm::app",
                 adapter_name = %info.name,
@@ -228,8 +229,46 @@ fn log_wgpu_adapter(creation_context: &eframe::CreationContext<'_>) {
     }
 }
 
+fn configure_renderer_animations(
+    context: &eframe::egui::Context,
+    device_type: eframe::wgpu::DeviceType,
+) {
+    if device_type == eframe::wgpu::DeviceType::Cpu {
+        context.all_styles_mut(|style| style.animation_time = 0.0);
+        tracing::info!(
+            target: "festerm::app",
+            "using static animation indicators on a software rendering adapter"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn software_renderers_disable_animation_without_changing_gpu_defaults() {
+        use eframe::{egui::Context, wgpu::DeviceType};
+
+        for device_type in [
+            DeviceType::Other,
+            DeviceType::IntegratedGpu,
+            DeviceType::DiscreteGpu,
+            DeviceType::VirtualGpu,
+            DeviceType::Cpu,
+        ] {
+            let context = Context::default();
+            context.all_styles_mut(|style| style.animation_time = 0.5);
+            super::configure_renderer_animations(&context, device_type);
+            let expected = if device_type == DeviceType::Cpu {
+                0.0
+            } else {
+                0.5
+            };
+            for theme in [eframe::egui::Theme::Dark, eframe::egui::Theme::Light] {
+                assert_eq!(context.style_of(theme).animation_time, expected);
+            }
+        }
+    }
+
     /// A restored workspace reopens the first window at the size and position
     /// it was left at, rather than at the default size the platform places
     /// wherever it likes.

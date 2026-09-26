@@ -2390,6 +2390,14 @@ fn relative_age(now_unix_seconds: u64, then_unix_seconds: u64) -> String {
     }
 }
 
+fn visible_relative_age(ui: &Ui, now: u64, then: u64) -> String {
+    // Discovery no longer repaints unchanged inventories. Only visible age
+    // labels need a clock tick, at their minimum displayed precision.
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs(60));
+    relative_age(now, then)
+}
+
 /// Lays text out on a bounded number of lines, eliding the remainder.
 ///
 /// Table cells and card descriptions have fixed heights, so overflowing text
@@ -2775,7 +2783,7 @@ fn show_profile_row(
     let last_used = item
         .last_used_unix_seconds
         .zip(now_unix_seconds)
-        .map(|(then, now)| relative_age(now, then))
+        .map(|(then, now)| visible_relative_age(ui, now, then))
         .unwrap_or_else(|| "Never".to_owned());
     let name_left = rect.left() + width * options.column_origins[0];
     let name_right = rect.left() + width * options.column_origins[1];
@@ -3078,7 +3086,7 @@ fn show_session_row(
                 .last_used_unix_seconds
                 .zip(now_unix_seconds)
                 .map(|(started, now)| {
-                    let age = format!("Started {}", relative_age(now, started));
+                    let age = format!("Started {}", visible_relative_age(ui, now, started));
                     if item.description == "Attached elsewhere" {
                         format!("Attached elsewhere · {age}")
                     } else {
@@ -4537,6 +4545,29 @@ mod tests {
     use super::*;
     use crate::tabs::AppState;
     use egui_kittest::{kittest::Queryable, Harness};
+
+    #[test]
+    fn visible_relative_ages_request_only_minute_scale_repaints() {
+        let context = egui::Context::default();
+        let input = egui::RawInput {
+            predicted_dt: 0.0,
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            let mut output = context.run_ui(input.clone(), |ui| {
+                assert_eq!(visible_relative_age(ui, 120, 60), "1 minute ago");
+            });
+            output.textures_delta.clear();
+        }
+        let mut output = context.run_ui(input, |ui| {
+            assert_eq!(visible_relative_age(ui, 120, 60), "1 minute ago");
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            std::time::Duration::from_secs(60)
+        );
+    }
 
     struct LauncherHarnessState {
         tab_id: TabId,

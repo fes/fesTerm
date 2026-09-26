@@ -264,7 +264,10 @@ subtitle “Local sessions available to reattach.” Its refresh control dispatc
 `AppCommand::RefreshRunningSessions`. Opt-in discovery runs outside rendering,
 coalesces repeated requests into one pending refresh, and refreshes approximately
 every two seconds without a restart. A superseded/disabled request cannot
-overwrite newer inventory. Locally reattachable
+overwrite newer inventory. The worker waits between probes without scheduling
+GUI frames; only changed inventory or a changed error wakes the Launcher.
+Visible relative-age labels refresh at minute scale independently of discovery.
+Locally reattachable
 sessions are grouped by provider: **fesTerm Native (sessiond)**, **tmux**, and
 **screen**. Each nonempty group has a disclosure header, count badge, and one
 row per session. Rows show the session name, `Started N ago` when the provider
@@ -1552,6 +1555,11 @@ quiet rows with subtle dividers:
   strict settings deserialization.
 - **Pulse status dot on new background output** is an on-by-default switch
   that animates only background-session chip dots when unseen output arrives.
+  The 2.4-second fade schedules at most 30 animation frames per second, not an
+  immediate repaint loop. Unfocused windows and reduced-motion styles use a
+  static ring-and-dot unread marker in the same footprint. CPU/software
+  rendering adapters select reduced motion automatically; activating the tab
+  still clears the unread marker, and the setting is not changed on disk.
 - **Resume unattached local sessions from New Session** is an on-by-default
   switch that surfaces locally running, unattached `festerm-sessiond`
   sessions as one-click Resume entries in the Launcher.

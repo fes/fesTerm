@@ -244,6 +244,14 @@ if ($env:OS -eq 'Windows_NT') {
         Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=fail"
         $status = 'fail'
     }
+    try {
+        & "$PSScriptRoot\check-windows-idle-rendering.ps1"
+        Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=pass"
+    } catch {
+        Write-Warning $_
+        Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=fail"
+        $status = 'fail'
+    }
 }
 
 Add-Content -Path $ResultPath -Value "`nstatus=$status"

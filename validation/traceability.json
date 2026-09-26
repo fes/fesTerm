@@ -155,6 +155,14 @@
       ],
       "automated_tests": [
         "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
+        "unchanged_inventory_keeps_polling_until_a_visible_change",
+        "unchanged_discovery_does_not_schedule_a_gui_repaint",
+        "cancellation_discards_inflight_inventory_and_stops_further_probes",
+        "dropping_discovery_interrupts_the_background_refresh_wait",
+        "provider_panics_wake_the_ui_and_leave_an_actionable_error",
+        "changed_inventory_is_published_and_periodic_discovery_continues",
+        "publication_before_worker_exit_schedules_nonblocking_retirement",
+        "visible_relative_ages_request_only_minute_scale_repaints",
         "a_provider_timeout_is_visible_and_explicit_refresh_recovers",
         "dropping_a_client_with_pending_terminal_output_retires_its_workers",
         "dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal",
@@ -201,7 +209,8 @@
         "isolated_multiplexer_discovery_churn"
       ],
       "manual_scenarios": [
-        "CP-12"
+        "CP-12",
+        "CP-16"
       ],
       "status": "partial",
       "prerequisites": []
@@ -1283,6 +1292,11 @@
       ],
       "automated_tests": [
         "toggle_chip_layout_flips_between_wrap_and_single_row_scroll",
+        "unread_pulse_schedules_a_bounded_frame_even_when_rendering_is_slow",
+        "unread_pulse_keeps_its_period_color_and_geometry",
+        "reduced_motion_and_unfocused_windows_keep_a_static_unread_marker",
+        "clearing_unread_output_restores_the_static_connection_dot",
+        "software_renderers_disable_animation_without_changing_gpu_defaults",
         "toggle_status_bar_flips_visibility_and_defaults_to_shown",
         "toggle_show_session_details_flips_visibility_and_defaults_to_hidden",
         "toggle_restore_workspace_flips_state_and_resets_to_on",
@@ -1313,7 +1327,8 @@
       "manual_scenarios": [
         "AS-02",
         "AS-09",
-        "CP-01"
+        "CP-01",
+        "CP-16"
       ],
       "status": "partial",
       "prerequisites": []

@@ -594,7 +594,10 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
     // sit slightly off from the text's own optical center.
     let text_height = ui.text_style_height(&egui::TextStyle::Body);
     let (rect, response) = ui.allocate_exact_size(vec2(diameter, text_height), Sense::hover());
-    let color = if pulse {
+    let animate = pulse
+        && ui.style().animation_time > 0.0
+        && ui.input(|input| input.viewport().focused != Some(false));
+    let color = if animate {
         // Feature request #68: a slow (~2.4s period), smooth fade between
         // full and low opacity - deliberately slower and gentler than the
         // fixed-solid connection-state dot so it reads as an ambient "new
@@ -602,7 +605,11 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
         // hue, which stays reserved for connection-state semantics.
         let phase = (ui.input(|i| i.time) * std::f64::consts::TAU / 2.4).sin();
         let alpha = (0.35 + 0.65 * (phase * 0.5 + 0.5)) as f32;
-        ui.ctx().request_repaint();
+        let predicted_frame = std::time::Duration::from_secs_f32(ui.input(|i| i.predicted_dt));
+        // egui subtracts predicted_dt; retain a real 30 Hz wait even for slow frames.
+        ui.ctx().request_repaint_after(
+            std::time::Duration::from_secs_f64(1.0 / 30.0) + predicted_frame,
+        );
         status.color().gamma_multiply(alpha)
     } else {
         status.color()
@@ -610,7 +617,18 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
     let radius = diameter / 2.0;
     match status.marker() {
         ChipMarker::Filled => {
-            ui.painter().circle_filled(rect.center(), radius, color);
+            if pulse && !animate {
+                // Preserve a visible unread cue when continuous motion is disabled.
+                ui.painter().circle_stroke(
+                    rect.center(),
+                    radius - 0.5,
+                    egui::Stroke::new(1.0, color),
+                );
+                ui.painter()
+                    .circle_filled(rect.center(), radius - 2.0, color);
+            } else {
+                ui.painter().circle_filled(rect.center(), radius, color);
+            }
         }
         // Hollow, not merely a different hue: an edited document has to be
         // distinguishable from a saved one with the colour taken away.
@@ -696,5 +714,119 @@ fn paint_close_button(ui: &mut Ui, id: ChipId, actions: &mut Vec<ChromeAction>) 
     let response = response.on_hover_text("Close");
     if response.clicked() {
         actions.push(ChromeAction::Close(id));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn dot_frame(
+        pulse: bool,
+        animation_time: f32,
+        focused: bool,
+        time: f64,
+        predicted_dt: f32,
+    ) -> egui::FullOutput {
+        let context = egui::Context::default();
+        context.all_styles_mut(|style| style.animation_time = animation_time);
+        let mut input = egui::RawInput {
+            time: Some(time),
+            predicted_dt,
+            focused,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .focused = Some(focused);
+        for _ in 0..3 {
+            let mut output = context.run_ui(input.clone(), |ui| {
+                paint_status_dot(ui, ChipStatus::Connected, pulse);
+            });
+            output.textures_delta.clear();
+        }
+        let mut output = context.run_ui(input, |ui| {
+            paint_status_dot(ui, ChipStatus::Connected, pulse);
+        });
+        output.textures_delta.clear();
+        output
+    }
+
+    fn circles(output: &egui::FullOutput) -> Vec<egui::epaint::CircleShape> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Circle(circle) => Some(*circle),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unread_pulse_schedules_a_bounded_frame_even_when_rendering_is_slow() {
+        for predicted_dt in [0.0, 1.0 / 60.0, 0.2] {
+            let output = dot_frame(true, 0.5, true, 0.6, predicted_dt);
+            assert_eq!(
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                Duration::from_secs_f64(1.0 / 30.0)
+            );
+        }
+    }
+
+    #[test]
+    fn unread_pulse_keeps_its_period_color_and_geometry() {
+        let bright = circles(&dot_frame(true, 0.5, true, 0.6, 0.0));
+        let dim = circles(&dot_frame(true, 0.5, true, 1.8, 0.0));
+        let next_period = circles(&dot_frame(true, 0.5, true, 3.0, 0.0));
+        assert_eq!(bright.len(), 1);
+        assert_eq!(dim.len(), 1);
+        assert_eq!(bright, next_period);
+        assert_eq!(bright[0].center, dim[0].center);
+        assert_eq!(bright[0].radius, dim[0].radius);
+        assert_eq!(bright[0].fill, ChipStatus::Connected.color());
+        assert_eq!(
+            dim[0].fill,
+            ChipStatus::Connected.color().gamma_multiply(0.35)
+        );
+    }
+
+    #[test]
+    fn reduced_motion_and_unfocused_windows_keep_a_static_unread_marker() {
+        for (animation_time, focused) in [(0.0, true), (0.5, false)] {
+            let early = dot_frame(true, animation_time, focused, 0.6, 0.0);
+            let later = dot_frame(true, animation_time, focused, 1.8, 0.0);
+            assert_eq!(
+                early.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                Duration::MAX
+            );
+            assert_eq!(circles(&early), circles(&later));
+            let marker = circles(&early);
+            assert_eq!(
+                marker.len(),
+                2,
+                "unread output must remain visibly distinct"
+            );
+            assert_eq!(marker[0].center, marker[1].center);
+            assert_eq!(marker[0].radius + marker[0].stroke.width / 2.0, 4.0);
+            assert_eq!(marker[1].radius, 2.0);
+            assert_eq!(marker[1].fill, ChipStatus::Connected.color());
+        }
+    }
+
+    #[test]
+    fn clearing_unread_output_restores_the_static_connection_dot() {
+        let output = dot_frame(false, 0.5, true, 0.6, 0.0);
+        assert_eq!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            Duration::MAX
+        );
+        let marker = circles(&output);
+        assert_eq!(marker.len(), 1);
+        assert_eq!(marker[0].radius, 4.0);
+        assert_eq!(marker[0].fill, ChipStatus::Connected.color());
     }
 }

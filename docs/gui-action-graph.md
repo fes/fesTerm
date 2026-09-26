@@ -13,6 +13,18 @@ replace the product rules in `gui-design.md`, the evidence inventory in
 behavior conflicts, `gui-design.md` is authoritative. This graph supplies the
 route through those requirements and the recovery path after each probe.
 
+For `LAUNCH-12` and `LAUNCH-20`, periodic discovery must not schedule a GUI
+frame when inventory and provider errors are unchanged. Explicit refresh,
+generation invalidation, and disabled-work cancellation still apply. Visible
+relative-age labels refresh independently at minute scale.
+
+For `SET-07`, the 2.4-second unread pulse has at most 30 animation frames per
+second. An unfocused window or a reduced-motion style shows a static
+ring-and-dot unread marker instead; CPU/software rendering adapters select
+reduced motion automatically without changing the persisted setting.
+Activation clears either presentation. Native CPU and visual evidence is
+tracked by `CP-16`.
+
 ## How to use the graph
 
 Each test run starts at a named checkpoint, follows one or more edges, asserts
