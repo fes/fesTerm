@@ -1,5 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{hash_map::RandomState, HashMap, HashSet, VecDeque},
+    hash::{BuildHasher, DefaultHasher, Hash, Hasher},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -10,6 +11,7 @@ use egui::{
     TextureOptions, Vec2,
 };
 use festerm_core::{Attributes, Color, ColorScheme, CursorStyle, Dimensions, Rgb};
+use hashbrown::Equivalent as _;
 use swash::{
     scale::{image::Content, Render, ScaleContext, Source, StrikeWith},
     shape::ShapeContext,
@@ -29,6 +31,10 @@ use crate::{
     TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, GLYPH_CACHE_CAPACITY,
     SELECTION_BACKGROUND,
 };
+
+mod clip_batching;
+
+use clip_batching::{GridGlyphClipPolicy, GridTextClipOverride, GridTextClipPainter};
 
 /// Font configuration for the initial cell renderer.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,28 +97,90 @@ impl FontSettings {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct GlyphKey {
-    text: String,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct GlyphStyle {
     foreground: Color32,
     attributes: u16,
     font_size_bits: u32,
     layout_width_bits: u32,
-    font_generation: crate::TerminalFontGeneration,
+    pixels_per_point_bits: u32,
+    font_set: TerminalFontSet,
+}
+
+impl Hash for GlyphStyle {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Feed contiguous words rather than making a separate keyed-hasher
+        // write for every small style field. Equality still checks every field.
+        [
+            u32::from_le_bytes(self.foreground.to_array()),
+            u32::from(self.attributes),
+            self.font_size_bits,
+            self.layout_width_bits,
+            self.pixels_per_point_bits,
+            self.font_set.family() as u32,
+            u32::from(self.font_set.ligatures()) | (u32::from(self.font_set.color_emoji()) << 1),
+        ]
+        .hash(state);
+        self.font_set.generation().hash(state);
+    }
+}
+
+#[derive(Eq, Hash, PartialEq)]
+struct GlyphKey {
+    style: GlyphStyle,
+    text: String,
+}
+
+#[derive(Hash)]
+struct GlyphQuery<'a> {
+    style: GlyphStyle,
+    text: &'a str,
+}
+
+impl hashbrown::Equivalent<GlyphKey> for GlyphQuery<'_> {
+    fn equivalent(&self, key: &GlyphKey) -> bool {
+        self.text == key.text && self.style == key.style
+    }
 }
 
 /// Cache laid-out cell glyphs. `egui` owns the underlying font atlas; this
 /// cache avoids rebuilding a one-cell layout job for unchanged text styling.
+/// `hashbrown` provides borrowed cached-hash lookup; `RandomState` retains
+/// randomized keyed hashing for untrusted terminal text.
 #[derive(Default)]
 pub(crate) struct GlyphCache {
-    layouts: HashMap<GlyphKey, Arc<egui::Galley>>,
+    layouts: hashbrown::HashMap<GlyphKey, Arc<egui::Galley>, RandomState>,
+    style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
 }
 
 impl GlyphCache {
     pub(crate) fn clear(&mut self) {
         self.layouts.clear();
+        self.style_hasher = None;
         self.color_emoji.clear();
+    }
+
+    fn query_hash(&mut self, query: &GlyphQuery<'_>) -> u64 {
+        // Clone the keyed hash prefix, not a finalized hash: this produces the
+        // same hash as GlyphKey while avoiding repeated style hashing.
+        if !self
+            .style_hasher
+            .as_ref()
+            .is_some_and(|(style, _)| *style == query.style)
+        {
+            let mut hasher = self.layouts.hasher().build_hasher();
+            query.style.hash(&mut hasher);
+            self.style_hasher = Some((query.style, hasher));
+        }
+        let mut hasher = self
+            .style_hasher
+            .as_ref()
+            .expect("style hash prefix was initialized")
+            .1
+            .clone();
+        query.text.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub(crate) fn layout(
@@ -124,15 +192,21 @@ impl GlyphCache {
         font: &FontSettings,
         layout_width: f32,
     ) -> Arc<egui::Galley> {
-        let key = GlyphKey {
-            text: text.to_owned(),
+        let style = GlyphStyle {
             foreground,
             attributes: attributes.bits(),
             font_size_bits: font.size_points.to_bits(),
             layout_width_bits: layout_width.to_bits(),
-            font_generation: font.font_set().generation(),
+            pixels_per_point_bits: painter.pixels_per_point().to_bits(),
+            font_set: font.font_set(),
         };
-        if let Some(layout) = self.layouts.get(&key) {
+        let query = GlyphQuery { text, style };
+        let hash = self.query_hash(&query);
+        if let Some((_, layout)) = self
+            .layouts
+            .raw_entry()
+            .from_hash(hash, |key| query.equivalent(key))
+        {
             return layout.clone();
         }
         if self.layouts.len() >= GLYPH_CACHE_CAPACITY {
@@ -155,7 +229,13 @@ impl GlyphCache {
             },
         );
         let layout = painter.layout_job(job);
-        self.layouts.insert(key, layout.clone());
+        self.layouts.insert(
+            GlyphKey {
+                text: text.to_owned(),
+                style,
+            },
+            layout.clone(),
+        );
         layout
     }
 
@@ -642,11 +722,21 @@ pub(crate) fn paint_grid(
     paint: GridPaint<'_>,
     glyphs: &mut GlyphCache,
 ) -> GridPaintStats {
+    paint_grid_with_clip_override(painter, paint, glyphs, GridTextClipOverride::Auto)
+}
+
+fn paint_grid_with_clip_override(
+    painter: egui::Painter,
+    paint: GridPaint<'_>,
+    glyphs: &mut GlyphCache,
+    clip_override: GridTextClipOverride,
+) -> GridPaintStats {
     let Some(dimensions) = paint.cache.dimensions() else {
         return GridPaintStats::default();
     };
     let mut stats = GridPaintStats::default();
     let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
+    let clip_policy = GridGlyphClipPolicy::new(&painter, clip_override);
     crate::background::paint_background(&painter, paint.layout.rect);
     let native = crate::native_painter::Batch::begin(&painter, painter.clip_rect());
     for row in 0..dimensions.rows() {
@@ -673,7 +763,7 @@ pub(crate) fn paint_grid(
                     },
                 );
             }
-            if !paint.shape_cell_runs && !cell.text.is_empty() {
+            if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
                 // Clip to this cell's rect. Some glyphs (notably box-drawing
                 // corners/dots in certain bundled faces) can measure taller
                 // than the "M"-derived cell height, so an unclipped paint can
@@ -681,9 +771,9 @@ pub(crate) fn paint_grid(
                 // fill then overwrites part of the bled glyph, leaving only
                 // a flat sliver visible. The run-shaping path below already
                 // clips for the same reason.
-                let cell_painter = painter.with_clip_rect(rect);
+                let clipped_painter = painter.with_clip_rect(rect);
                 let outcome = glyphs.paint_color_emoji(
-                    &cell_painter,
+                    &clipped_painter,
                     &cell.text,
                     rect,
                     cell.attributes,
@@ -692,7 +782,7 @@ pub(crate) fn paint_grid(
                 stats.record_color_emoji(outcome);
                 if !outcome.painted() {
                     let galley = glyphs.layout(
-                        &cell_painter,
+                        &painter,
                         &cell.text,
                         cell.attributes,
                         foreground,
@@ -704,7 +794,14 @@ pub(crate) fn paint_grid(
                         rect.top()
                             + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
                     );
-                    cell_painter.galley(text_position, galley, foreground);
+                    match clip_policy.galley_painter(rect, text_position, galley.as_ref()) {
+                        GridTextClipPainter::SharedParent => {
+                            painter.galley(text_position, galley, foreground);
+                        }
+                        GridTextClipPainter::ClippedCell => {
+                            clipped_painter.galley(text_position, galley, foreground);
+                        }
+                    }
                 }
             }
             let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
@@ -741,13 +838,13 @@ pub(crate) fn paint_grid(
         }
         if paint.shape_cell_runs {
             for run in glyph_runs(cells, row, dimensions, selection_range) {
-                if run.text.is_empty() {
+                if !has_glyph_ink(&run.text) {
                     continue;
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
-                let run_painter = painter.with_clip_rect(rect);
+                let clipped_painter = painter.with_clip_rect(rect);
                 let outcome = glyphs.paint_color_emoji(
-                    &run_painter,
+                    &clipped_painter,
                     &run.text,
                     rect,
                     run.attributes,
@@ -756,7 +853,7 @@ pub(crate) fn paint_grid(
                 stats.record_color_emoji(outcome);
                 if !outcome.painted() {
                     let galley = glyphs.layout(
-                        &run_painter,
+                        &painter,
                         &run.text,
                         run.attributes,
                         run.foreground,
@@ -768,7 +865,14 @@ pub(crate) fn paint_grid(
                         rect.top()
                             + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
                     );
-                    run_painter.galley(text_position, galley, run.foreground);
+                    match clip_policy.galley_painter(rect, text_position, galley.as_ref()) {
+                        GridTextClipPainter::SharedParent => {
+                            painter.galley(text_position, galley, run.foreground);
+                        }
+                        GridTextClipPainter::ClippedCell => {
+                            clipped_painter.galley(text_position, galley, run.foreground);
+                        }
+                    }
                 }
             }
         }
@@ -838,6 +942,12 @@ pub(crate) fn paint_grid(
         native.finish(&painter);
     }
     stats
+}
+
+fn has_glyph_ink(text: &str) -> bool {
+    // ASCII spaces have no ink in the bundled faces. Their backgrounds and
+    // decorations still paint above; other Unicode whitespace is not assumed.
+    text.bytes().any(|byte| byte != b' ')
 }
 
 fn paint_cursor(
@@ -996,10 +1106,12 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    use egui::epaint::Primitive;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     use egui_kittest::Harness;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     use egui_kittest::SnapshotResults;
+    use egui_kittest::TestRenderer;
     use festerm_core::{
         Attributes, CellWidth, Color, Dimensions, InputEvent, InputEventOutcome, Key, Terminal,
     };
@@ -1017,6 +1129,238 @@ mod tests {
         ResizeTracker, TerminalRenderCache, TerminalSnapshot, TerminalView, ViewSize,
         DEFAULT_BACKGROUND,
     };
+
+    #[test]
+    fn glyph_cache_reuses_borrowed_text_and_distinguishes_layout_styles() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter();
+            let first = cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            let key_address = cache
+                .layouts
+                .keys()
+                .find(|key| key.text == "A")
+                .unwrap()
+                .text
+                .as_ptr();
+            for text in ["A", "B", "A", "界", "e\u{301}", "A"] {
+                let layout = cache.layout(
+                    painter,
+                    text,
+                    Attributes::NONE,
+                    DEFAULT_FOREGROUND,
+                    &font,
+                    20.0,
+                );
+                if text == "A" {
+                    assert!(Arc::ptr_eq(&first, &layout));
+                }
+            }
+            assert_eq!(cache.layouts.len(), 4);
+            assert_eq!(
+                cache
+                    .layouts
+                    .keys()
+                    .find(|key| key.text == "A")
+                    .unwrap()
+                    .text
+                    .as_ptr(),
+                key_address
+            );
+
+            cache.layout(
+                painter,
+                "A",
+                Attributes::BOLD,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            cache.layout(
+                painter,
+                "A",
+                Attributes::ITALIC,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            cache.layout(painter, "A", Attributes::NONE, Color32::RED, &font, 20.0);
+            cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                40.0,
+            );
+            let mut larger = font.clone();
+            larger.size_points += 2.0;
+            cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &larger,
+                20.0,
+            );
+            let mut ligatures = font.clone();
+            ligatures.set_font_set(TerminalFontSet::new(
+                crate::TerminalFontFamily::JetBrainsMono,
+                true,
+                font.font_set().generation(),
+            ));
+            cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &ligatures,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), 10);
+            let restored = cache.layout(
+                painter,
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+            assert!(Arc::ptr_eq(&first, &restored));
+            assert_eq!(cache.layouts.len(), 10);
+            for key in cache.layouts.keys() {
+                assert!(cache.layouts.contains_key(&GlyphQuery {
+                    text: &key.text,
+                    style: key.style,
+                }));
+            }
+            let keys = cache
+                .layouts
+                .keys()
+                .map(|key| (key.style, key.text.clone()))
+                .collect::<Vec<_>>();
+            for (style, text) in keys.iter().chain(keys.iter().rev()) {
+                let query = GlyphQuery {
+                    style: *style,
+                    text,
+                };
+                assert_eq!(
+                    cache.query_hash(&query),
+                    cache.layouts.hasher().hash_one(&query)
+                );
+            }
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn glyph_cache_separates_dpi_and_font_installations() {
+        let context = egui::Context::default();
+        let mut font = FontSettings::default();
+        let mut cache = GlyphCache::default();
+        for (family, pixels_per_point) in [
+            (crate::TerminalFontFamily::JetBrainsMono, 1.0),
+            (crate::TerminalFontFamily::JuliaMono, 1.0),
+            (crate::TerminalFontFamily::JetBrainsMono, 2.0),
+        ] {
+            let generation = crate::install_terminal_font_family(&context, family);
+            font.set_font_set(TerminalFontSet::new(family, false, generation));
+            context.set_pixels_per_point(pixels_per_point);
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                cache.layout(
+                    ui.painter(),
+                    "A",
+                    Attributes::NONE,
+                    DEFAULT_FOREGROUND,
+                    &font,
+                    20.0,
+                );
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(cache.layouts.len(), 3);
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+        });
+        output.textures_delta.clear();
+        assert_eq!(cache.layouts.len(), 3);
+        context.set_pixels_per_point(1.0);
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                DEFAULT_FOREGROUND,
+                &font,
+                20.0,
+            );
+        });
+        output.textures_delta.clear();
+        assert_eq!(cache.layouts.len(), 4);
+    }
+
+    #[test]
+    fn glyph_cache_capacity_is_global_across_styles_and_clear_removes_layouts() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            for index in 0..GLYPH_CACHE_CAPACITY {
+                let color = Color32::from_rgb(index as u8, (index >> 8) as u8, 0);
+                cache.layout(ui.painter(), "A", Attributes::NONE, color, &font, 20.0);
+            }
+            assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
+            cache.layout(
+                ui.painter(),
+                "B",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), 1);
+            cache.clear();
+            assert!(cache.layouts.is_empty());
+            assert!(cache.style_hasher.is_none());
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), 1);
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn terminal_attributes_select_real_bundled_faces() {
@@ -1473,6 +1817,260 @@ mod tests {
         }
     }
 
+    #[test]
+    fn blank_cells_keep_backgrounds_and_decorations_without_glyph_work() {
+        for shape_cell_runs in [false, true] {
+            let context = egui::Context::default();
+            crate::install_terminal_fonts(&context);
+            let mut terminal = terminal(4, 2);
+            terminal.ingest(b"\x1b[?25l\x1b[4;9m \x1b[21m \x1b[7m ");
+            let snapshot = TerminalSnapshot::from_terminal(&terminal);
+            let mut cache = TerminalRenderCache::default();
+            cache.update(snapshot, &[]);
+            let mut glyphs = GlyphCache::default();
+            let mut output = context.run_ui(Default::default(), |ui| {
+                let stats = paint_grid(
+                    ui.painter().clone(),
+                    GridPaint {
+                        cache: &cache,
+                        snapshot,
+                        layout: grid_layout(4, 2),
+                        selection: &Selection::default(),
+                        fonts: &FontSettings::default(),
+                        focused: true,
+                        shape_cell_runs,
+                    },
+                    &mut glyphs,
+                );
+                assert_eq!(stats, GridPaintStats::default());
+            });
+            assert!(output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::LineSegment { .. })));
+            assert!(output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::Rect(_))));
+            assert!(glyphs.layouts.is_empty());
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn bundled_spaces_have_no_ink_in_any_style_or_ligature_policy() {
+        for family in [
+            crate::TerminalFontFamily::JetBrainsMono,
+            crate::TerminalFontFamily::IosevkaTerm,
+            crate::TerminalFontFamily::JuliaMono,
+            crate::TerminalFontFamily::MapleMono,
+        ] {
+            let context = egui::Context::default();
+            let generation = crate::install_terminal_font_family(&context, family);
+            let mut glyphs = GlyphCache::default();
+            let mut output = context.run_ui(Default::default(), |ui| {
+                for ligatures in [false, true] {
+                    let mut font = FontSettings::default();
+                    font.set_font_set(TerminalFontSet::new(family, ligatures, generation));
+                    for attributes in [
+                        Attributes::NONE,
+                        Attributes::BOLD,
+                        Attributes::ITALIC,
+                        Attributes::from_bits(Attributes::BOLD.bits() | Attributes::ITALIC.bits()),
+                    ] {
+                        for text in [" ", "    "] {
+                            let galley = glyphs.layout(
+                                ui.painter(),
+                                text,
+                                attributes,
+                                Color32::WHITE,
+                                &font,
+                                80.0,
+                            );
+                            assert!(
+                                galley.rows.iter().all(|row| row.visuals.mesh.is_empty()),
+                                "{family:?} {ligatures} {attributes:?}"
+                            );
+                        }
+                    }
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert!(!has_glyph_ink(""));
+        assert!(!has_glyph_ink("   "));
+        for text in [" A ", "\u{a0}", "\u{2003}", "界"] {
+            assert!(has_glyph_ink(text));
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct RenderGridScenario {
+        family: crate::TerminalFontFamily,
+        ligatures: bool,
+        pixels_per_point: f32,
+        origin: Pos2,
+        viewport_clip: Option<Rect>,
+        metrics: CellMetrics,
+        shape_cell_runs: bool,
+        transform: Option<egui::emath::TSTransform>,
+        debug_clip_rects: bool,
+        debug_text_rects: bool,
+        debug_ignore_clip_rects: bool,
+    }
+
+    impl RenderGridScenario {
+        fn screen_size(self, dimensions: Dimensions) -> Vec2 {
+            let clip = self.viewport_clip.unwrap_or_else(|| {
+                Rect::from_min_size(
+                    self.origin,
+                    Vec2::new(
+                        dimensions.columns() as f32 * self.metrics.width,
+                        dimensions.rows() as f32 * self.metrics.height,
+                    ),
+                )
+            });
+            clip.max.to_vec2() + Vec2::splat(16.0)
+        }
+    }
+
+    impl Default for RenderGridScenario {
+        fn default() -> Self {
+            Self {
+                family: crate::TerminalFontFamily::JetBrainsMono,
+                ligatures: false,
+                pixels_per_point: 1.0,
+                origin: Pos2::new(5.0, 7.0),
+                viewport_clip: None,
+                metrics: CellMetrics::new(10.0, 20.0).expect("valid test metrics"),
+                shape_cell_runs: false,
+                transform: None,
+                debug_clip_rects: false,
+                debug_text_rects: false,
+                debug_ignore_clip_rects: false,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct RenderCounts {
+        primitives: usize,
+        mesh_primitives: usize,
+    }
+
+    struct RenderGridCapture {
+        output: egui::FullOutput,
+        context: egui::Context,
+        counts: RenderCounts,
+    }
+
+    impl Drop for RenderGridCapture {
+        fn drop(&mut self) {
+            self.output.textures_delta.clear();
+        }
+    }
+
+    fn render_grid_capture(
+        dimensions: Dimensions,
+        content: &[u8],
+        scenario: RenderGridScenario,
+        clip_override: GridTextClipOverride,
+    ) -> RenderGridCapture {
+        let context = egui::Context::default();
+        let generation = crate::install_terminal_font_family(&context, scenario.family);
+        let mut fonts = FontSettings::default();
+        fonts.set_font_set(crate::TerminalFontSet::new(
+            scenario.family,
+            scenario.ligatures,
+            generation,
+        ));
+
+        let mut terminal = Terminal::new(dimensions).expect("test terminal allocation");
+        terminal.ingest(content);
+        let dirty_rows = terminal.take_dirty_rows();
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut cache = TerminalRenderCache::default();
+        cache.update(snapshot, &dirty_rows);
+        let layout = GridLayout {
+            rect: Rect::from_min_size(
+                scenario.origin,
+                Vec2::new(
+                    dimensions.columns() as f32 * scenario.metrics.width,
+                    dimensions.rows() as f32 * scenario.metrics.height,
+                ),
+            ),
+            dimensions,
+            metrics: scenario.metrics,
+        };
+        let viewport_clip = scenario.viewport_clip.unwrap_or(layout.rect);
+        let screen_rect = Rect::from_min_size(Pos2::ZERO, scenario.screen_size(dimensions));
+        let mut glyphs = GlyphCache::default();
+        let selection = Selection::default();
+
+        let mut input = egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .expect("root viewport exists")
+            .native_pixels_per_point = Some(scenario.pixels_per_point);
+        let output = context.run_ui(input, |context| {
+            context.tessellation_options_mut(|options| {
+                options.debug_paint_clip_rects = scenario.debug_clip_rects;
+                options.debug_paint_text_rects = scenario.debug_text_rects;
+                options.debug_ignore_clip_rects = scenario.debug_ignore_clip_rects;
+            });
+            let painter = context.layer_painter(egui::LayerId::background());
+            if let Some(transform) = scenario.transform {
+                context.set_transform_layer(painter.layer_id(), transform);
+            }
+            paint_grid_with_clip_override(
+                painter.with_clip_rect(viewport_clip),
+                GridPaint {
+                    layout,
+                    snapshot,
+                    cache: &cache,
+                    selection: &selection,
+                    fonts: &fonts,
+                    shape_cell_runs: scenario.shape_cell_runs,
+                    focused: false,
+                },
+                &mut glyphs,
+                clip_override,
+            );
+        });
+        let primitives = context.tessellate(output.shapes.clone(), context.pixels_per_point());
+        let counts = RenderCounts {
+            primitives: primitives.len(),
+            mesh_primitives: primitives
+                .iter()
+                .filter(|primitive| matches!(primitive.primitive, Primitive::Mesh(_)))
+                .count(),
+        };
+        RenderGridCapture {
+            output,
+            context,
+            counts,
+        }
+    }
+
+    fn render_grid_pixels(
+        dimensions: Dimensions,
+        content: &[u8],
+        scenario: RenderGridScenario,
+        clip_override: GridTextClipOverride,
+    ) -> Vec<u8> {
+        let mut capture = render_grid_capture(dimensions, content, scenario, clip_override);
+        let mut renderer = egui_kittest::wgpu::WgpuTestRenderer::new();
+        renderer.handle_delta(&mut capture.output.textures_delta);
+        renderer
+            .render(&capture.context, &capture.output)
+            .expect("grid render succeeds")
+            .into_raw()
+    }
+
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     struct HeadlessViewState {
         view: TerminalView,
@@ -1655,6 +2253,238 @@ mod tests {
         );
         assert_eq!(separated.len(), 3);
         assert_eq!(separated[2].position(), CellPosition { column: 2, row: 0 });
+    }
+
+    #[test]
+    fn glyph_clip_batching_reduces_meshes_for_dense_ascii_without_changing_pixels() {
+        let dimensions = Dimensions::new(80, 6).unwrap();
+        let content = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?\r\n\
+                        0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?\r\n\
+                        0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?\r\n\
+                        0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?\r\n\
+                        0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?\r\n\
+                        0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!?";
+        let scenario = RenderGridScenario::default();
+
+        let baseline = render_grid_capture(
+            dimensions,
+            content,
+            scenario,
+            GridTextClipOverride::AlwaysCell,
+        );
+        let optimized =
+            render_grid_capture(dimensions, content, scenario, GridTextClipOverride::Auto);
+
+        assert!(
+            optimized.counts.primitives < baseline.counts.primitives,
+            "expected fewer clipped primitives, baseline {:?} optimized {:?}",
+            baseline.counts,
+            optimized.counts
+        );
+        assert!(
+            optimized.counts.mesh_primitives + dimensions.columns()
+                < baseline.counts.mesh_primitives,
+            "dense ASCII should materially reduce text meshes, baseline {:?} optimized {:?}",
+            baseline.counts,
+            optimized.counts
+        );
+        assert_eq!(
+            render_grid_pixels(
+                dimensions,
+                content,
+                scenario,
+                GridTextClipOverride::AlwaysCell,
+            ),
+            render_grid_pixels(dimensions, content, scenario, GridTextClipOverride::Auto)
+        );
+    }
+
+    #[test]
+    fn glyph_clip_batching_preserves_pixels_across_fonts_styles_and_dpi() {
+        let dimensions = Dimensions::new(32, 3).unwrap();
+        let families = [
+            crate::TerminalFontFamily::JetBrainsMono,
+            crate::TerminalFontFamily::IosevkaTerm,
+            crate::TerminalFontFamily::JuliaMono,
+            crate::TerminalFontFamily::MapleMono,
+        ];
+        let scenarios = [
+            (
+                "regular",
+                "ASCII text 12345\r\nnext line".as_bytes(),
+                RenderGridScenario {
+                    pixels_per_point: 1.5,
+                    origin: Pos2::new(5.25, 7.125),
+                    ..RenderGridScenario::default()
+                },
+            ),
+            (
+                "bold",
+                "\x1b[1mBOLD ASCII 12345\x1b[0m".as_bytes(),
+                RenderGridScenario {
+                    pixels_per_point: 2.0,
+                    origin: Pos2::new(1.5, 2.5),
+                    ..RenderGridScenario::default()
+                },
+            ),
+            (
+                "italic",
+                "\x1b[3mitalic ASCII 12345\x1b[0m".as_bytes(),
+                RenderGridScenario {
+                    pixels_per_point: 1.0,
+                    origin: Pos2::new(3.5, 4.0),
+                    ..RenderGridScenario::default()
+                },
+            ),
+            (
+                "ligatures",
+                "== != -> => :: <= ===".as_bytes(),
+                RenderGridScenario {
+                    ligatures: true,
+                    shape_cell_runs: true,
+                    pixels_per_point: 1.5,
+                    origin: Pos2::new(5.25, 7.125),
+                    ..RenderGridScenario::default()
+                },
+            ),
+            (
+                "unicode",
+                "wide 界 combining e\u{301}\r\nbox ┌─┐\r\n└─┘".as_bytes(),
+                RenderGridScenario {
+                    pixels_per_point: 2.0,
+                    origin: Pos2::new(4.25, 6.5),
+                    ..RenderGridScenario::default()
+                },
+            ),
+        ];
+
+        for family in families {
+            for (name, content, scenario) in scenarios {
+                let scenario = RenderGridScenario { family, ..scenario };
+                assert_eq!(
+                    render_grid_pixels(
+                        dimensions,
+                        content,
+                        scenario,
+                        GridTextClipOverride::AlwaysCell,
+                    ),
+                    render_grid_pixels(dimensions, content, scenario, GridTextClipOverride::Auto),
+                    "pixel output changed for {family:?} / {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glyph_clip_batching_falls_back_for_overflow_transforms_debug_and_viewport_edges() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+
+        let overflow = RenderGridScenario {
+            metrics: CellMetrics::new(4.0, 20.0).unwrap(),
+            pixels_per_point: 1.5,
+            origin: Pos2::new(5.25, 7.125),
+            ..RenderGridScenario::default()
+        };
+        let overflow_baseline = render_grid_capture(
+            dimensions,
+            "\x1b[3mWWWWWWWW\x1b[0m".as_bytes(),
+            overflow,
+            GridTextClipOverride::AlwaysCell,
+        );
+        let overflow_optimized = render_grid_capture(
+            dimensions,
+            "\x1b[3mWWWWWWWW\x1b[0m".as_bytes(),
+            overflow,
+            GridTextClipOverride::Auto,
+        );
+        assert_eq!(overflow_baseline.counts, overflow_optimized.counts);
+        assert_eq!(
+            render_grid_pixels(
+                dimensions,
+                "\x1b[3mWWWWWWWW\x1b[0m".as_bytes(),
+                overflow,
+                GridTextClipOverride::AlwaysCell,
+            ),
+            render_grid_pixels(
+                dimensions,
+                "\x1b[3mWWWWWWWW\x1b[0m".as_bytes(),
+                overflow,
+                GridTextClipOverride::Auto,
+            )
+        );
+
+        let viewport_edge = RenderGridScenario {
+            pixels_per_point: 2.0,
+            origin: Pos2::new(2.5, 3.5),
+            viewport_clip: Some(Rect::from_min_max(
+                Pos2::new(2.5, 3.5),
+                Pos2::new(2.5 + 6.25 * 10.0, 3.5 + 2.0 * 20.0),
+            )),
+            ..RenderGridScenario::default()
+        };
+        assert_eq!(
+            render_grid_pixels(
+                dimensions,
+                "ABCDEFZH".as_bytes(),
+                viewport_edge,
+                GridTextClipOverride::AlwaysCell,
+            ),
+            render_grid_pixels(
+                dimensions,
+                "ABCDEFZH".as_bytes(),
+                viewport_edge,
+                GridTextClipOverride::Auto,
+            )
+        );
+
+        let transformed = RenderGridScenario {
+            transform: Some(egui::emath::TSTransform::from_translation(Vec2::new(
+                1.0, 0.0,
+            ))),
+            ..RenderGridScenario::default()
+        };
+        let transformed_baseline = render_grid_capture(
+            dimensions,
+            "transformed".as_bytes(),
+            transformed,
+            GridTextClipOverride::AlwaysCell,
+        );
+        let transformed_optimized = render_grid_capture(
+            dimensions,
+            "transformed".as_bytes(),
+            transformed,
+            GridTextClipOverride::Auto,
+        );
+        assert_eq!(transformed_baseline.counts, transformed_optimized.counts);
+
+        for scenario in [
+            RenderGridScenario {
+                debug_clip_rects: true,
+                ..RenderGridScenario::default()
+            },
+            RenderGridScenario {
+                debug_text_rects: true,
+                ..RenderGridScenario::default()
+            },
+            RenderGridScenario {
+                debug_ignore_clip_rects: true,
+                ..RenderGridScenario::default()
+            },
+        ] {
+            let baseline = render_grid_capture(
+                dimensions,
+                "debug view".as_bytes(),
+                scenario,
+                GridTextClipOverride::AlwaysCell,
+            );
+            let optimized = render_grid_capture(
+                dimensions,
+                "debug view".as_bytes(),
+                scenario,
+                GridTextClipOverride::Auto,
+            );
+            assert_eq!(baseline.counts, optimized.counts);
+        }
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]

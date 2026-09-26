@@ -86,6 +86,10 @@ pub(crate) fn unicode_emoji_15_1_fully_qualified() -> Vec<String> {
 }
 
 pub(crate) fn is_color_emoji(text: &str) -> bool {
+    // Even ASCII keycap bases need non-ASCII sequence markers to be emoji.
+    if text.is_ascii() {
+        return false;
+    }
     if text.contains('\u{fe0e}') {
         return false;
     }
@@ -587,6 +591,20 @@ mod tests {
                 !is_color_emoji(text),
                 "{text} is plain ASCII and must not use emoji presentation"
             );
+        }
+    }
+
+    #[test]
+    fn every_ascii_scalar_stays_text_but_keycap_sequences_stay_emoji() {
+        assert!(!is_color_emoji(""));
+        for byte in 0..=127u8 {
+            let character = char::from(byte);
+            assert!(!is_color_emoji(&character.to_string()), "{byte}");
+        }
+        for base in "0123456789#*".chars() {
+            assert!(is_color_emoji(&format!("{base}\u{20e3}")));
+            assert!(is_color_emoji(&format!("{base}\u{fe0f}\u{20e3}")));
+            assert!(!is_color_emoji(&format!("{base}\u{fe0e}")));
         }
     }
 

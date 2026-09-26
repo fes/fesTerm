@@ -90,6 +90,40 @@ fn rendering(c: &mut Criterion) {
             measured
         });
     });
+
+    let mut sparse =
+        RenderState::with_terminal(Terminal::new(Dimensions::new(COLUMNS, ROWS).unwrap()).unwrap());
+    sparse.terminal.ingest(b"prompt> ");
+    c.bench_function("rendering/sparse_frame_submission", |bencher| {
+        bencher.iter(|| black_box(sparse.frame()));
+    });
+
+    for (name, styles) in [
+        ("styled_frame_submission", 64),
+        ("truecolor_churn_submission", COLUMNS * ROWS),
+    ] {
+        let mut state = RenderState::with_terminal(styled_terminal(styles));
+        c.bench_function(&format!("rendering/{name}"), |bencher| {
+            bencher.iter(|| black_box(state.frame()));
+        });
+    }
+
+    let mut tessellated = RenderState::new();
+    c.bench_function("rendering/steady_frame_tessellation", |bencher| {
+        bencher.iter(|| black_box(tessellated.tessellated_frame()));
+    });
+}
+
+fn styled_terminal(styles: usize) -> Terminal {
+    let mut terminal = Terminal::new(Dimensions::new(COLUMNS, ROWS).unwrap()).unwrap();
+    for row in 0..ROWS {
+        terminal.ingest(format!("\x1b[{};1H", row + 1).as_bytes());
+        for column in 0..COLUMNS {
+            let style = (row * COLUMNS + column) % styles;
+            terminal.ingest(format!("\x1b[38;2;{};{};127mx", style % 256, style / 256).as_bytes());
+        }
+    }
+    terminal
 }
 
 fn emoji_rendering(c: &mut Criterion) {
@@ -202,12 +236,16 @@ impl EmojiRenderState {
 
 impl RenderState {
     fn new() -> Self {
+        Self::with_terminal(seeded_terminal())
+    }
+
+    fn with_terminal(terminal: Terminal) -> Self {
         let context = Context::default();
         install_terminal_fonts(&context);
         let mut state = Self {
             context,
             view: TerminalView::default(),
-            terminal: seeded_terminal(),
+            terminal,
             sink: Sink,
         };
         assert!(
@@ -219,6 +257,17 @@ impl RenderState {
     }
 
     fn frame(&mut self) -> usize {
+        self.frame_output().shapes.len()
+    }
+
+    fn tessellated_frame(&mut self) -> usize {
+        let output = self.frame_output();
+        self.context
+            .tessellate(output.shapes, output.pixels_per_point)
+            .len()
+    }
+
+    fn frame_output(&mut self) -> egui::FullOutput {
         let context = self.context.clone();
         let mut output = context.run_ui(
             RawInput {
@@ -232,9 +281,8 @@ impl RenderState {
                 self.view.show_in_ui(ui, &mut self.terminal, &mut self.sink);
             },
         );
-        let shape_count = output.shapes.len();
         output.textures_delta.clear();
-        shape_count
+        output
     }
 }
 

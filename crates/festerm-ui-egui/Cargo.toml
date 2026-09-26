@@ -10,6 +10,7 @@ description = "egui terminal presentation for the GUI-independent fesTerm core."
 [dependencies]
 egui = "0"
 festerm-core = { path = "../festerm-core" }
+hashbrown = { version = "=0.17.1", default-features = false, features = ["raw-entry"] }
 icu_properties = { version = "=2.2.0", default-features = false, features = ["compiled_data"] }
 swash = "=0.2.10"
 
