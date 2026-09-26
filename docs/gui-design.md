@@ -546,8 +546,11 @@ target under the pointer, not application or session administration. An
 explicit OSC 8 link contributes **Open link** and **Copy link**. A detected
 file path contributes **Open in viewer** when fesTerm can resolve that target
 honestly; its preview line freezes the local or remote path under the pointer,
-and a disabled button explains when trustworthy cwd, host-key, or credential
-metadata is missing. A non-empty
+and **Copy path** copies that resolved path (or the detected path when resolution
+is unavailable). A disabled Open button explains when trustworthy cwd, host-key,
+or credential metadata is missing. A plain-text HTTP(S) address contributes
+**Go** and **Copy URL**; Go passes through the same validated external-link
+handler as an OSC 8 link. A non-empty
 terminal selection contributes **Copy**. A live session that currently accepts
 input contributes **Paste**. **Find in terminal** remains available in every
 retained terminal viewport, including an exited or disconnected read-only
@@ -2661,9 +2664,9 @@ read acknowledgment.
 
 ### Explicit terminal hyperlinks
 
-Explicit OSC 8 hyperlinks and plain-text path opening remain separate
+Explicit OSC 8 hyperlinks and plain-text path and URL detection remain separate
 features. OSC 8 parsing stays restricted to explicit hyperlinks; plain-text
-path detection is bounded by visible terminal cells, frozen when the context
+target detection is bounded by visible terminal cells, frozen when the context
 menu opens, and resolved without shell evaluation.
 
 Explicit links expose their normalized ASCII target in the context menu and

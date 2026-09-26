@@ -91,6 +91,8 @@ pub struct TerminalContextMenuAction {
     pub preview: String,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    /// A frozen value copied without invoking the application's open action.
+    pub copy: Option<(String, String)>,
 }
 
 /// Frozen content hit that opened the current context menu.
@@ -1146,6 +1148,12 @@ impl TerminalView {
                     if action.enabled && clicked {
                         self.pending_context_action_request = true;
                         ui.close();
+                    }
+                    if let Some((label, value)) = &action.copy {
+                        if ui.button(label).clicked() {
+                            ui.ctx().copy_text(value.clone());
+                            ui.close();
+                        }
                     }
                 } else if self.context_target.is_some()
                     && self.context_link.is_none()
@@ -2899,6 +2907,7 @@ mod tests {
                                 preview: "/tmp/guide.md".to_owned(),
                                 enabled: true,
                                 disabled_reason: None,
+                                copy: Some(("Copy path".to_owned(), "/tmp/guide.md".to_owned())),
                             }),
                             history_snapshot_actions: true,
                             ..TerminalViewOptions::default()
@@ -2912,12 +2921,20 @@ mod tests {
         harness.get_by_label("Terminal viewport").click_secondary();
         harness.run();
         assert!(harness.query_by_label("Open in viewer").is_some());
+        assert!(harness.query_by_label("Copy path").is_some());
 
         harness.get_by_label("Open in viewer").click();
         harness.run();
 
         assert!(harness.state_mut().view.take_context_action_request());
         assert!(harness.state_mut().view.take_history_actions().is_empty());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        harness.get_by_label("Copy path").click();
+        harness.run();
+        assert!(!harness.state_mut().view.take_context_action_request());
         assert!(harness.state().sink.0.is_empty());
 
         harness.get_by_label("Terminal viewport").click_secondary();

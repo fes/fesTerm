@@ -1283,10 +1283,6 @@ impl SessionTab {
             let cleared = self.terminal_path.menu.take().is_some();
             return cleared;
         };
-        let Some(origin) = self.terminal_path.origin.as_ref() else {
-            let cleared = self.terminal_path.menu.take().is_some();
-            return cleared;
-        };
         if self
             .terminal_path
             .menu
@@ -1295,7 +1291,8 @@ impl SessionTab {
         {
             return false;
         }
-        let next = resolve_context_menu_action(&self.terminal, target, origin);
+        let next =
+            resolve_context_menu_action(&self.terminal, target, self.terminal_path.origin.as_ref());
         let changed = self.terminal_path.menu != next;
         self.terminal_path.menu = next;
         changed
@@ -3953,6 +3950,16 @@ impl AppState {
         match request {
             TerminalPathOpenRequest::Local(request) => {
                 self.dispatch(open_local_command(&request), context);
+            }
+            TerminalPathOpenRequest::Web(target) => {
+                if let Some(target) = festerm_core::normalize_external_web_url(&target) {
+                    self.dispatch(
+                        AppCommand::OpenExternalLink {
+                            target: ExternalLinkTarget::new(target),
+                        },
+                        context,
+                    );
+                }
             }
             TerminalPathOpenRequest::Remote(request) => {
                 let Some(session) = self.session_tab(tab_id) else {

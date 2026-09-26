@@ -67,6 +67,7 @@ struct TerminalResolvedPathAction {
 pub(crate) enum TerminalPathOpenRequest {
     Local(LocalTerminalPathOpenRequest),
     Remote(RemoteTerminalPathOpenRequest),
+    Web(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -158,6 +159,7 @@ impl Clone for TerminalPathOpenRequest {
         match self {
             Self::Local(request) => Self::Local(request.clone()),
             Self::Remote(request) => Self::Remote(request.clone()),
+            Self::Web(target) => Self::Web(target.clone()),
         }
     }
 }
@@ -178,13 +180,41 @@ impl PartialEq for TerminalResolvedPathAction {
 
 impl Eq for TerminalResolvedPathAction {}
 
-pub(crate) fn resolve_context_menu_action(
+pub(crate) fn resolve_context_menu_action<'a>(
     terminal: &Terminal,
     target: TerminalContextTarget,
-    origin: &TerminalFilesystemOrigin,
+    origin: impl Into<Option<&'a TerminalFilesystemOrigin>>,
 ) -> Option<TerminalPathMenuState> {
-    let hit = detect_terminal_path_hit(terminal, target.content_position)?;
-    let action = resolve_candidate(hit, origin);
+    let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, 0);
+    let capture = capture_logical_line(snapshot, target.content_position)?;
+    let action = if let Some((display, target)) = web_url_candidate(&capture) {
+        TerminalResolvedPathAction {
+            ui: TerminalContextMenuAction {
+                label: "Go".to_owned(),
+                preview: display.clone(),
+                enabled: true,
+                disabled_reason: None,
+                copy: Some(("Copy URL".to_owned(), display)),
+            },
+            request: Some(TerminalPathOpenRequest::Web(target)),
+        }
+    } else {
+        let hit = candidate_from_line(&capture.text, capture.clicked_range)?;
+        let origin = origin.into()?;
+        let mut action = resolve_candidate(
+            TerminalPathHit {
+                text: hit.text.clone(),
+            },
+            origin,
+        );
+        let copy_path = match action.request.as_ref() {
+            Some(TerminalPathOpenRequest::Local(request)) => request.display_path.clone(),
+            Some(TerminalPathOpenRequest::Remote(request)) => request.remote_path.clone(),
+            _ => hit.text,
+        };
+        action.ui.copy = Some(("Copy path".to_owned(), copy_path));
+        action
+    };
     Some(TerminalPathMenuState {
         generation: target.generation,
         action,
@@ -244,16 +274,51 @@ struct TerminalPathHit {
     text: String,
 }
 
-fn detect_terminal_path_hit(
-    terminal: &Terminal,
-    position: ContentPosition,
-) -> Option<TerminalPathHit> {
-    let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, 0);
-    let capture = capture_logical_line(snapshot, position)?;
-    let candidate = candidate_from_line(&capture.text, capture.clicked_range)?;
-    Some(TerminalPathHit {
-        text: candidate.text,
-    })
+/// Detect a plain-text web address at the clicked cell. Keep the displayed
+/// spelling for Copy URL and use the core's normalized target for launch.
+fn web_url_candidate(capture: &CapturedLogicalLine) -> Option<(String, String)> {
+    let line = &capture.text;
+    for (start, _) in line.char_indices() {
+        let tail = &line[start..];
+        if !(tail
+            .get(..7)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("http://"))
+            || tail
+                .get(..8)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://")))
+        {
+            continue;
+        }
+        if start > 0
+            && line[..start]
+                .chars()
+                .last()
+                .is_some_and(|ch| ch.is_alphanumeric())
+        {
+            continue;
+        }
+        let end = start
+            + tail
+                .find(|ch: char| ch.is_whitespace() || "<>\"'[]{}".contains(ch))
+                .unwrap_or(tail.len());
+        if capture.clicked_range.start < start || capture.clicked_range.start >= end {
+            continue;
+        }
+        let mut display = line[start..end].trim_end_matches([',', '.', ';', '!']);
+        while display.ends_with(')')
+            && display.bytes().filter(|byte| *byte == b')').count()
+                > display.bytes().filter(|byte| *byte == b'(').count()
+        {
+            display = &display[..display.len() - 1];
+        }
+        if capture.clicked_range.start >= start + display.len() {
+            continue;
+        }
+        if let Some(target) = festerm_core::normalize_external_web_url(display) {
+            return Some((display.to_owned(), target));
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -535,6 +600,9 @@ fn looks_like_path(candidate: &str) -> bool {
     if candidate.is_empty() || candidate.starts_with('$') || candidate.starts_with('%') {
         return false;
     }
+    if candidate.contains("://") && !candidate.to_ascii_lowercase().starts_with("file://") {
+        return false;
+    }
     if candidate.contains("$(") || candidate.contains('`') || candidate.contains("${") {
         return false;
     }
@@ -685,6 +753,7 @@ fn resolve_remote_candidate(
             preview: display_path.clone(),
             enabled: true,
             disabled_reason: None,
+            copy: None,
         },
         request: Some(TerminalPathOpenRequest::Remote(
             RemoteTerminalPathOpenRequest {
@@ -708,6 +777,7 @@ fn enabled_local_action(path: PathBuf) -> TerminalResolvedPathAction {
             preview: display_path.clone(),
             enabled: true,
             disabled_reason: None,
+            copy: None,
         },
         request: Some(TerminalPathOpenRequest::Local(
             LocalTerminalPathOpenRequest { path, display_path },
@@ -722,6 +792,7 @@ fn disabled_action(preview: String, reason: impl Into<String>) -> TerminalResolv
             preview,
             enabled: false,
             disabled_reason: Some(reason.into()),
+            copy: None,
         },
         request: None,
     }
@@ -1142,6 +1213,60 @@ mod tests {
         let action = resolve_context_menu_action(&terminal, target(6, 0), &local_origin()).unwrap();
         assert!(action.ui_action().enabled);
         assert_eq!(action.ui_action().preview, "/tmp/report.md");
+        assert_eq!(
+            action.ui_action().copy,
+            Some(("Copy path".to_owned(), "/tmp/report.md".to_owned()))
+        );
+    }
+
+    #[test]
+    fn plain_web_url_has_copy_and_browser_actions_even_without_file_origin() {
+        let terminal = terminal_with("see (https://example.com/docs?a=1&b=2), next\n", 80);
+        let action = resolve_context_menu_action(&terminal, target(27, 0), None).unwrap();
+        assert_eq!(action.ui_action().label, "Go");
+        assert_eq!(
+            action.ui_action().preview,
+            "https://example.com/docs?a=1&b=2"
+        );
+        assert_eq!(
+            action.ui_action().copy,
+            Some((
+                "Copy URL".to_owned(),
+                "https://example.com/docs?a=1&b=2".to_owned(),
+            ))
+        );
+        assert!(
+            matches!(action.open_request(), Some(TerminalPathOpenRequest::Web(target)) if target == "https://example.com/docs?a=1&b=2")
+        );
+        assert!(resolve_context_menu_action(&terminal, target(4, 0), None).is_none());
+        assert!(resolve_context_menu_action(&terminal, target(40, 0), None).is_none());
+    }
+
+    #[test]
+    fn malformed_or_unsupported_web_addresses_do_not_become_file_paths() {
+        for address in [
+            "https://",
+            "https://example.com:bad/path",
+            "ftp://example.com/file",
+        ] {
+            let terminal = terminal_with(&format!("see {address}\n"), 80);
+            assert!(
+                resolve_context_menu_action(&terminal, target(7, 0), &local_origin()).is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn uppercase_web_scheme_keeps_original_copy_and_normalizes_launch() {
+        let terminal = terminal_with("HTTPS://Example.COM/path\n", 80);
+        let action = resolve_context_menu_action(&terminal, target(12, 0), None).unwrap();
+        assert_eq!(
+            action.ui_action().copy,
+            Some(("Copy URL".to_owned(), "HTTPS://Example.COM/path".to_owned()))
+        );
+        assert!(
+            matches!(action.open_request(), Some(TerminalPathOpenRequest::Web(target)) if target == "https://example.com/path")
+        );
     }
 
     #[test]
@@ -1160,6 +1285,10 @@ mod tests {
             resolve_context_menu_action(&terminal, target(12, 0), &local_origin()).unwrap();
         assert_eq!(action.ui_action().preview, "docs/My File.md");
         assert!(!action.ui_action().enabled);
+        assert_eq!(
+            action.ui_action().copy,
+            Some(("Copy path".to_owned(), "docs/My File.md".to_owned()))
+        );
     }
 
     #[test]
@@ -1209,6 +1338,10 @@ mod tests {
         assert_eq!(
             action.ui_action().preview,
             "deploy@ssh.example.test · /srv/app/logs/today.txt"
+        );
+        assert_eq!(
+            action.ui_action().copy,
+            Some(("Copy path".to_owned(), "/srv/app/logs/today.txt".to_owned()))
         );
     }
 
