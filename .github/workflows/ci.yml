@@ -107,6 +107,9 @@ jobs:
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Check native application-window selection
+        if: matrix.os == 'windows-latest'
+        run: python -m unittest discover -s scripts/tests -p "test_windows_application_window.py"
       - name: Check the shared Direct2D replay probe
         if: matrix.os == 'windows-latest'
         shell: pwsh

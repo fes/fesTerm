@@ -48,6 +48,14 @@ This remains **experimental**, under proposed ADR-0039 and CP-18.
 
 ## Actual application measurements
 
+**Historical qualification caveat (#242):** The first tables below predate
+explicit application-window selection. `Process.MainWindowHandle` can select
+winit's visible event-target tool window instead of the fesTerm UI, so those
+observations alone do not prove maximized-window qualification. Their recorded
+numbers are retained, not silently replaced. The window-verified follow-up is
+reported separately below. Offscreen framebuffer comparisons and isolated replay
+measurements do not use this HWND lookup and are unaffected.
+
 The staged release application was measured sequentially with the experiment
 set to `0` and `1`, on the same 16-logical-processor Windows x64 WARP host and
 driver listed below. Each isolated window was maximized and settled for 15
@@ -85,6 +93,48 @@ The unresolved defect and failed samples are tracked separately in
 
 These single-host observations justify continuing the opt-in experiment, not
 a default switch or a general speed guarantee.
+
+### Window-verified follow-up
+
+The #242 follow-up used release code at `0a31e88` and the corrected probe on
+the same host/driver, with the real `Window Class` HWND verified by PID, owner,
+visibility and extended styles. Its client was 3548 x 2150 pixels at 192 DPI
+and remained foreground and responsive. The fixed 15-second warmup and
+5% idle / 30% output / five-GUI-frame/s budgets were not increased.
+
+| Observation | Result |
+|---|---|
+| Unchanged #240 (`6b526fb`), 30-second idle samples | Launcher 0.003%, background unread 0.013%; zero GUI frames in both |
+| Current main, guarded ten-second samples | Launcher 0.010%, background unread 0.010%; zero GUI frames, no warmup/sample input |
+| Current main, sparse output | 23.535% CPU, 13.394 GUI frames/s |
+| Current main, dense output, default -> Direct2D | 55.402% -> 23.720% CPU; 5.557 -> 11.790 GUI frames/s |
+| Direct2D-enabled background-idle failure | **10.638% CPU**, zero new GUI frames, no input during sampling |
+
+The dense native sample produced 11.790 native surfaces/s and passed its
+output budget; the default-renderer dense sample failed the CPU ceiling.
+End-of-sample working set was 273.14 -> 250.64 MiB and private bytes
+426.81 -> 519.41 MiB. These are snapshots, not memory-saving or peak claims.
+
+The native-enabled **run as a whole failed** because of the background-idle
+case. The captured post-sample stacks were already waiting, not hot, and the
+cause remains open in #242. That intermediate run recorded input during
+sampling but not during warmup; the final guard now records both. Do not
+retroactively assume either input contamination or a startup GPU backlog.
+Three subsequent early-capture attempts stayed quiet and are not a fix.
+
+A later pre-publication run measured Launcher 0.010% and background unread
+0.029%, both input-free with zero GUI frames. Its sparse-output case detected
+input during warmup and was correctly marked `invalid-input`: the whole run
+failed qualification. Its 24.508% / 12.388-GUI-frame/s observation is retained
+but is not counted as a passing controlled measurement.
+
+The final probe records one-second CPU/GUI-frame intervals, rejects
+input-contaminated runs, and optionally invokes an explicitly supplied CDB
+via `-DebuggerPath` after a failed budget, before terminating the isolated
+process. A deliberately injected warmup-input negative check correctly failed
+the run with `invalid-input`. The shared window selector has a deterministic
+native Win32 regression in Windows CI. These changes correct the evidence
+harness, not the production rendering policy.
 
 ## Review of the earlier CPU fixes
 
