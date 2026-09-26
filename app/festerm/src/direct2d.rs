@@ -1,43 +1,76 @@
 use eframe::{egui, egui_wgpu, wgpu};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Preference {
+    Automatic,
+    Disabled,
+    Enabled,
+}
+
+impl Preference {
+    fn from_environment(value: Option<&std::ffi::OsStr>) -> Result<Self, &'static str> {
+        match value {
+            None => Ok(Self::Automatic),
+            Some(value) if value == "0" => Ok(Self::Disabled),
+            Some(value) if value == "1" => Ok(Self::Enabled),
+            _ => Err("FESTERM_EXPERIMENTAL_DIRECT2D expects 0 or 1; retaining egui-wgpu"),
+        }
+    }
+
+    fn selects(
+        self,
+        windows_x64: bool,
+        device: wgpu::DeviceType,
+        backend: wgpu::Backend,
+        format: wgpu::TextureFormat,
+    ) -> bool {
+        self != Self::Disabled && windows_x64 && eligible(device, backend, format)
+    }
+}
+
 pub(crate) fn install_from_environment(
     context: &egui::Context,
     state: Option<&egui_wgpu::RenderState>,
 ) {
-    match std::env::var("FESTERM_EXPERIMENTAL_DIRECT2D") {
-        Err(std::env::VarError::NotPresent) => return,
-        Ok(value) if value == "0" => return,
-        Ok(value) if value == "1" => {}
-        _ => {
-            tracing::warn!(target: "festerm::rendering",
-                "FESTERM_EXPERIMENTAL_DIRECT2D expects 0 or 1; retaining egui-wgpu");
+    let preference = match Preference::from_environment(
+        std::env::var_os("FESTERM_EXPERIMENTAL_DIRECT2D").as_deref(),
+    ) {
+        Ok(Preference::Disabled) => return,
+        Ok(preference) => preference,
+        Err(message) => {
+            tracing::warn!(target: "festerm::rendering", "{message}");
             return;
         }
-    }
+    };
     let Some(state) = state else {
-        tracing::warn!(target: "festerm::rendering", "Direct2D requires wgpu; retaining the current renderer");
+        if preference == Preference::Enabled {
+            tracing::warn!(target: "festerm::rendering", "Direct2D requires wgpu; retaining the current renderer");
+        }
         return;
     };
     let info = state.adapter.get_info();
-    if !eligible(info.device_type, info.backend, state.target_format) {
-        tracing::info!(target: "festerm::rendering",
-            "Direct2D requires a DX12 CPU adapter and 8-bit gamma target; retaining egui-wgpu");
+    if !preference.selects(
+        cfg!(all(windows, target_arch = "x86_64")),
+        info.device_type,
+        info.backend,
+        state.target_format,
+    ) {
+        if preference == Preference::Enabled {
+            tracing::info!(target: "festerm::rendering",
+                "Direct2D requires Windows x64, a DX12 CPU adapter and 8-bit gamma target; retaining egui-wgpu");
+        }
         return;
     }
     #[cfg(all(windows, target_arch = "x86_64"))]
     match native::install(context, state) {
         Ok(_) => {
-            tracing::info!(target: "festerm::rendering", "experimental Direct2D terminal painter enabled")
+            tracing::info!(target: "festerm::rendering", ?preference, "Direct2D terminal painter enabled")
         }
         Err(error) => tracing::warn!(target: "festerm::rendering", %error,
             "Direct2D initialization failed; retaining egui-wgpu"),
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
-    {
-        let _ = context;
-        tracing::warn!(target: "festerm::rendering",
-            "experimental Direct2D currently supports Windows x64 only; retaining egui-wgpu");
-    }
+    let _ = context;
 }
 
 fn eligible(device: wgpu::DeviceType, backend: wgpu::Backend, format: wgpu::TextureFormat) -> bool {
@@ -324,6 +357,76 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy() {
+        for (value, preference) in [
+            (None, Preference::Automatic),
+            (Some("0"), Preference::Disabled),
+            (Some("1"), Preference::Enabled),
+        ] {
+            let parsed = Preference::from_environment(value.map(std::ffi::OsStr::new)).unwrap();
+            assert_eq!(parsed, preference);
+            for windows_x64 in [false, true] {
+                for device in [
+                    wgpu::DeviceType::Cpu,
+                    wgpu::DeviceType::DiscreteGpu,
+                    wgpu::DeviceType::IntegratedGpu,
+                    wgpu::DeviceType::VirtualGpu,
+                    wgpu::DeviceType::Other,
+                ] {
+                    for backend in [
+                        wgpu::Backend::Dx12,
+                        wgpu::Backend::Metal,
+                        wgpu::Backend::Vulkan,
+                        wgpu::Backend::Gl,
+                    ] {
+                        for format in [
+                            wgpu::TextureFormat::Bgra8Unorm,
+                            wgpu::TextureFormat::Rgba8Unorm,
+                            wgpu::TextureFormat::Bgra8UnormSrgb,
+                            wgpu::TextureFormat::Rgba8UnormSrgb,
+                            wgpu::TextureFormat::Rgba16Float,
+                        ] {
+                            assert_eq!(
+                                parsed.selects(windows_x64, device, backend, format),
+                                preference != Preference::Disabled
+                                    && windows_x64
+                                    && device == wgpu::DeviceType::Cpu
+                                    && backend == wgpu::Backend::Dx12
+                                    && matches!(
+                                        format,
+                                        wgpu::TextureFormat::Bgra8Unorm
+                                            | wgpu::TextureFormat::Rgba8Unorm
+                                    ),
+                                "{value:?}, {windows_x64}, {device:?}, {backend:?}, {format:?}",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn direct2d_invalid_overrides_do_not_enable_the_default() {
+        for value in ["", "true", "false", "auto", "2", " 1", "0 "] {
+            assert!(Preference::from_environment(Some(std::ffi::OsStr::new(value))).is_err());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert!(
+                Preference::from_environment(Some(std::ffi::OsStr::from_bytes(&[0xff]))).is_err()
+            );
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let value = std::ffi::OsString::from_wide(&[0xd800]);
+            assert!(Preference::from_environment(Some(&value)).is_err());
+        }
+    }
 
     #[test]
     fn direct2d_selection_preserves_hardware_other_backends_and_srgb() {

@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Default-selecting Direct2D on the supported WARP path
+
+The Direct2D terminal painter is no longer only an explicit opt-in. With the
+owner's approval, fesTerm now selects that path by default when the exact
+supported selection conditions are met: Windows x64, a
+DX12 CPU adapter, and a `Bgra8Unorm` or `Rgba8Unorm` terminal target.
+`FESTERM_EXPERIMENTAL_DIRECT2D=0` explicitly keeps ordinary egui-wgpu, while
+`1` remains a compatibility request for the same supported path and cannot
+force hardware or other unsupported configurations. Invalid or non-Unicode
+values warn and retain ordinary egui-wgpu.
+
+That default-selection amendment is deliberately narrow. It does not change
+macOS, Linux, Windows ARM64, hardware-GPU routing, queue ownership, terminal
+ownership, immutable published surfaces, timings, or the same-frame/per-process
+fallback rules. It also does not close qualification: issue #244 still owns the
+remaining mixed-DPI, multi-window, device-loss, latency, memory, and
+representative-hardware native evidence, and ADR-0039 remains Proposed.
+
 ## Removing work from warm terminal frames
 
 A rendering profile found that cache hits were not cheap: every visible cell
@@ -121,7 +139,7 @@ glyph copies resample. Shared bitmap opacity masks and explicit raster-grid
 coordinates restored the pixel comparisons without replacing fonts or weakening
 the visual threshold.
 
-The resulting implementation is deliberately default-off. An application-owned
+The first integrated implementation was deliberately default-off. An application-owned
 hook receives completed egui primitives, not terminal state. A narrow Windows
 SDK boundary renders into immutable committed surfaces, then imports those
 already-initialized pixels into wgpu for composition. Sparse content uses a
@@ -137,9 +155,9 @@ single-host figures are not presentation latency or hardware-GPU evidence.
 Intermittent idle baseline failures remain a separate investigation in #242.
 Native performance, hardware and window-system evidence are kept separate
 under CP-18 and proposed ADR-0039. The earlier repaint and
-background fixes remain in place for the default path and composition; this
-experiment is not a default renderer replacement or completed platform
-qualification.
+background fixes remain in place for the default path and composition; these
+historical measurements did not, by themselves, justify a broader renderer
+family switch or completed platform qualification.
 
 ## Making software-rendered terminal backgrounds cheap
 

@@ -2,27 +2,30 @@
 
 Investigation for [#241](https://github.com/fes/fesTerm/issues/241).
 This directory contains the isolated Windows render-stage experiment and
-controlled-output qualification fixtures for the default-off application
-prototype. It is not a complete egui backend.
+controlled-output qualification fixtures for the bounded supported-path
+application prototype. It is not a complete egui backend.
 
 ## Recommendation
 
-**Go for a bounded, explicitly opt-in Windows terminal-only implementation.**
-Keep egui-wgpu for window composition, chrome, other platforms, hardware
-adapters, unsupported surfaces, and failure recovery. Do not switch the default
-renderer. A full egui-backend replacement is not justified by this experiment.
+**Go for a bounded Windows terminal-only implementation that defaults on only
+for the supported Windows x64 WARP path.** Keep egui-wgpu for window
+composition, chrome, other platforms, hardware adapters, unsupported surfaces,
+and failure recovery. `FESTERM_EXPERIMENTAL_DIRECT2D=0` remains the ordinary
+egui-wgpu baseline, and `1` remains a compatibility request for the same
+supported path. A full egui-backend replacement is not justified by this
+experiment.
 
 The implementation below adds immutable shared-surface composition and
 end-to-end measurements. Native resize, device-loss recovery and hardware
-qualification remain open. Architectural review of proposed ADR-0039 is
-required before adoption.
+qualification remain open under CP-18 and issue #244.
 
-## Opt-in implementation
+## Current implementation
 
 The application now includes an experimental root-terminal painter:
 
 ```powershell
-$env:FESTERM_EXPERIMENTAL_DIRECT2D = '1'
+# Supported default path
+Remove-Item Env:FESTERM_EXPERIMENTAL_DIRECT2D -ErrorAction SilentlyContinue
 cargo run --release -p festerm
 ```
 
@@ -40,13 +43,27 @@ a later paint. Integrated pixel tests exercise the actual callback/composition
 path, verify it really ran, and separately verify same-frame ordinary painting
 when the native palette budget is exceeded.
 
-The environment variable is not persisted. Unset it or use `0` to retain the
-default renderer. Native errors are logged and disable the optional painter
-until restart. Secondary viewports, translucent/transformed painters, hardware
-adapters and unsupported backends/formats retain the current renderer.
-This remains **experimental**, under proposed ADR-0039 and CP-18.
+The environment variable is not persisted. Unset now selects Direct2D only on
+that supported path. `0` explicitly keeps ordinary egui-wgpu. `1` requests the
+same supported path but cannot force hardware adapters, unsupported formats, or
+unsupported platforms. Invalid or non-Unicode override values warn and retain
+ordinary egui-wgpu. Automatic unset mode quietly keeps ordinary egui-wgpu on
+unsupported adapters, platforms, or formats; explicit `1` still reports why
+selection was ineligible. Native errors are logged and disable the optional
+painter until restart. Secondary viewports, translucent/transformed painters,
+hardware adapters and unsupported backends/formats retain the current
+renderer. This remains **experimental**, under proposed ADR-0039 and CP-18.
 
 ## Actual application measurements
+
+**Current policy note (2026-09-26):** On supported Windows x64 WARP hosts, the
+candidate path now defaults on when `FESTERM_EXPERIMENTAL_DIRECT2D` is unset.
+`FESTERM_EXPERIMENTAL_DIRECT2D=1` remains a compatibility request for the same
+bounded path, and `0` is the ordinary egui-wgpu baseline. The measurements
+below predate that default-selection amendment and should be read as
+`0`-baseline versus `1`-candidate runs on the same supported host, not as
+native qualification of hardware adapters, unsupported platforms, or the still
+open issue #244 native evidence.
 
 **Historical qualification caveat (#242):** The first tables below predate
 explicit application-window selection. `Process.MainWindowHandle` can select
@@ -56,21 +73,24 @@ numbers are retained, not silently replaced. The window-verified follow-up is
 reported separately below. Offscreen framebuffer comparisons and isolated replay
 measurements do not use this HWND lookup and are unaffected.
 
-The staged release application was measured sequentially with the experiment
-set to `0` and `1`, on the same 16-logical-processor Windows x64 WARP host and
-driver listed below. Each isolated window was maximized and settled for 15
-seconds after maximizing, then sampled for ten seconds. No concurrent builds
-ran during measurement. Both modes include #239 and #240. The final dense
-repeat recorded matching 3548 x 2150 physical client areas at 192 DPI (200%).
+The staged release application was measured sequentially with
+`FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) and
+`FESTERM_EXPERIMENTAL_DIRECT2D=1` (the historical candidate, equivalent to the
+current supported unset/`1` path), on the same 16-logical-processor Windows
+x64 WARP host and driver listed below. Each isolated window was maximized and
+settled for 15 seconds after maximizing, then sampled for ten seconds. No
+concurrent builds ran during measurement. Both modes include #239 and #240.
+The final dense repeat recorded matching 3548 x 2150 physical client areas at
+192 DPI (200%).
 
-| Controlled foreground workload | Total-machine CPU, default -> Direct2D | GUI frames/s, default -> Direct2D |
+| Controlled foreground workload | Total-machine CPU, env=0 baseline -> Direct2D candidate | GUI frames/s, env=0 baseline -> Direct2D candidate |
 |---|---:|---:|
 | One changing line, requested 10 Hz | 23.924% -> 23.314% | 13.093 -> 13.379 |
 | 79 columns x 24 rows, requested 10 Hz, first run | 57.581% -> 24.531% | 5.797 -> 11.586 |
 | Same dense workload, instrumented repeat | 58.186% -> 24.227% | 5.467 -> 10.795 |
 
 The dense candidate passed the unchanged 30% CPU ceiling and five-GUI-frame/s
-floor; the default-renderer dense sample failed the CPU ceiling. The probe
+floor; the ordinary egui-wgpu dense baseline failed the CPU ceiling. The probe
 verified a real shell child, logged native frame production, and no native
 failure/fallback. The sparse full-application difference is not material.
 GUI frame construction is **not** physical presentation rate or latency.
@@ -79,10 +99,11 @@ layout and window composition, but exclude the separate PowerShell producer.
 
 The instrumented repeat built 10.795 native surfaces/s during the sample,
 matching its GUI frame count. End-of-sample working set was 269.52 MiB for
-the default renderer and 204.58 MiB for Direct2D, while private bytes increased
-from 424.68 MiB to 476.07 MiB. These are process snapshots, not peaks or a
-memory-saving claim; the extra native device/cache has a cost. Both modes'
-idle cases passed in this repeat, without resolving the earlier failures.
+the ordinary egui-wgpu baseline and 204.58 MiB for the Direct2D candidate,
+while private bytes increased from 424.68 MiB to 476.07 MiB. These are process
+snapshots, not peaks or a memory-saving claim; the extra native device/cache
+has a cost. Both modes' idle cases passed in this repeat, without resolving
+the earlier failures.
 
 Idle results were intermittent in the default-renderer baseline, including
 an 86.360% background-tab failure in the dense comparison. Other repeats were
@@ -91,8 +112,8 @@ does not paint the Launcher. Do not attribute the idle difference to Direct2D.
 The unresolved defect and failed samples are tracked separately in
 [#242](https://github.com/fes/fesTerm/issues/242).
 
-These single-host observations justify continuing the opt-in experiment, not
-a default switch or a general speed guarantee.
+These single-host observations justify continuing the bounded experiment, not a
+general speed guarantee or completion of native qualification.
 
 ### Window-verified follow-up
 
@@ -107,11 +128,11 @@ and remained foreground and responsive. The fixed 15-second warmup and
 | Unchanged #240 (`6b526fb`), 30-second idle samples | Launcher 0.003%, background unread 0.013%; zero GUI frames in both |
 | Current main, guarded ten-second samples | Launcher 0.010%, background unread 0.010%; zero GUI frames, no warmup/sample input |
 | Current main, sparse output | 23.535% CPU, 13.394 GUI frames/s |
-| Current main, dense output, default -> Direct2D | 55.402% -> 23.720% CPU; 5.557 -> 11.790 GUI frames/s |
+| Current main, dense output, env=0 baseline -> Direct2D candidate | 55.402% -> 23.720% CPU; 5.557 -> 11.790 GUI frames/s |
 | Direct2D-enabled background-idle failure | **10.638% CPU**, zero new GUI frames, no input during sampling |
 
 The dense native sample produced 11.790 native surfaces/s and passed its
-output budget; the default-renderer dense sample failed the CPU ceiling.
+output budget; the env=0 ordinary baseline failed the CPU ceiling.
 End-of-sample working set was 273.14 -> 250.64 MiB and private bytes
 426.81 -> 519.41 MiB. These are snapshots, not memory-saving or peak claims.
 
@@ -272,11 +293,13 @@ shader-resource state, and compose at the original terminal paint position.
 The implementation must include composition costs and must not perform a
 per-frame CPU readback/upload.
 
-The recommended initial selection policy is explicit opt-in, Windows x64,
-DX12 CPU adapters, and supported 8-bit gamma surfaces. Keep the default path
-for hardware GPUs, other platforms/backends/formats, unsupported primitives,
-and failed initialization or rendering. Do not change clear colors, terminal
-semantics, frame scheduling, output consumption, or queue bounds.
+The current selection policy is default-on only for Windows x64, DX12 CPU
+adapters, and supported 8-bit gamma surfaces when
+`FESTERM_EXPERIMENTAL_DIRECT2D` is unset or `1`; `0` explicitly keeps the
+ordinary egui-wgpu path. Keep the ordinary path for hardware GPUs, other
+platforms/backends/formats, unsupported primitives, and failed initialization
+or rendering. Do not change clear colors, terminal semantics, frame
+scheduling, output consumption, or queue bounds.
 
 [Windows Terminal's selection](https://github.com/microsoft/terminal/blob/fda72a070905570cd44e022658c7b9d1ee89322a/src/renderer/atlas/AtlasEngine.r.cpp#L171-L298)
 uses Direct2D automatically for WARP and certain limited hardware capabilities,
@@ -322,7 +345,7 @@ $env:FESTERM_EXPERIMENTAL_DIRECT2D = '0'
 .\scripts\check-windows-idle-rendering.ps1 -Executable target\release\festerm.exe `
   -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer `
   -ResultPath target\direct2d-app-default.json
-$env:FESTERM_EXPERIMENTAL_DIRECT2D = '1'
+Remove-Item Env:FESTERM_EXPERIMENTAL_DIRECT2D -ErrorAction SilentlyContinue
 .\scripts\check-windows-idle-rendering.ps1 -Executable target\release\festerm.exe `
   -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer -RequireDirect2D `
   -ResultPath target\direct2d-app-native.json
@@ -332,14 +355,26 @@ Preserve failing baseline results; do not relax budgets or retry until green.
 Omit `-DenseOutput` for the existing sparse-line fixture. `-RequireDirect2D`
 requires native frame production during the measurement interval and rejects
 native initialization/render failures, so a Launcher or silently fallen-back
-run cannot stand in for a native terminal measurement. Results also record
-end-of-sample process working set and private bytes, not peak memory.
-The aggregate optional Windows runner selects this dense/native-required
-application check when `FESTERM_EXPERIMENTAL_DIRECT2D=1`; set
+run cannot stand in for a native terminal measurement. On a known eligible
+Windows x64 WARP host, use `-RequireDirect2D` with the variable unset to
+validate the automatic/default selection path; explicit `1` remains the
+retained compatibility request and should be equivalent on that same host,
+while `0` or invalid values are rejected. Results also record end-of-sample
+process working set and private bytes, not peak memory. The aggregate optional
+Windows runner keeps this dense/native-required application check explicitly
+gated behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or
+ARM64 machines still run their ordinary optional suite. Set
 `FESTERM_RUN_DIRECT2D_PROBE=1` as well to include the isolated replay.
+
+Windows CI also runs the deterministic Python test
+`test_default_and_explicit_selection_reach_executable_validation`, which
+exercises the probe's executable validation path without opening a GUI. That
+guard now accepts the supported unset default as well as explicit `1`, and
+rejects `0` or invalid overrides.
 
 Remaining evidence: broader composed application workloads; hardware GPU routing
 and performance; native resize/device-loss recovery; selection/input workflows;
 mixed-DPI monitor transitions; multiple and transparent windows; actual
-presentation latency; and architectural review. Passing this replay experiment
-does not mark those acceptance criteria complete.
+presentation latency; memory characterization; and representative hardware
+qualification under issue #244. Passing this replay experiment does not mark
+those acceptance criteria complete.

@@ -269,14 +269,25 @@ and initial renderer styling are stable.
 ### Rules
 
 The Windows Direct2D experiment adds paired **integrated** framebuffer checks,
-not just replay snapshots. They compare the ordinary #240 path with actual
-shared-surface composition at 100%, 125%, and 200% scale, enabled/disabled and
-clipped/unclipped, including ligatures, color/faint emoji, a cursor and an alpha
-overlay. Tests assert that native painting really executed where eligible and
-did not silently fall back. A >256-color fixture separately verifies explicit
+not just replay snapshots. They install the ordinary or native painter directly
+and compare actual shared-surface composition at 100%, 125%, and 200% scale,
+with enabled/disabled painters and clipped/unclipped scenes, including
+ligatures, color/faint emoji, a cursor and an alpha overlay. Separate selection
+tests cover the unset/`0`/`1` environment policy.
+Tests assert that native painting really executed where eligible and did not
+silently fall back. A >256-color fixture separately verifies explicit
 same-frame fallback with unchanged pixels. Surface-ownership tests retain an
 older frame while rendering the next. These checks do not replace CP-18's
 native-window, hardware, or presentation-latency evidence.
+
+Selection-policy coverage now includes deterministic default/override tests
+(`direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy`
+and `direct2d_invalid_overrides_do_not_enable_the_default`) plus the Windows
+Python probe test
+`test_default_and_explicit_selection_reach_executable_validation`, which
+exercises the `-RequireDirect2D` executable guard without opening a GUI. In
+automatic unset mode, unsupported-adapter cases are expected to stay quiet;
+explicit `1` still reports ineligibility.
 
 The Windows WARP Launcher fill path reuses egui's rounded/feathered geometry
 with a textureless shader. Paired framebuffer tests require exact RGBA equality

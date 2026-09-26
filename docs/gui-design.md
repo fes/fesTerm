@@ -467,14 +467,19 @@ Translucent UI and other framebuffer formats retain ordinary egui painting.
 This is not retained-pixel or partial-frame rendering; CP-17 tracks its native
 performance and visual evidence.
 
-The default-off Windows x64 Direct2D experiment may replace eligible root
-terminal content with an immutable shared surface while leaving chrome and
-composition in egui-wgpu. It reuses the existing glyph/emoji pixels and cell
-geometry. The ordinary full background still clears old content before the
-cropped native surface is composed. Hardware, secondary windows, translucent
-or transformed painters, and rejected native frames retain ordinary painting.
-Input, session ownership and frame scheduling do not change. See proposed
-ADR-0039 and CP-18; this is not a default renderer replacement.
+On supported Windows x64 DX12 CPU-adapter targets with `Bgra8Unorm` or
+`Rgba8Unorm`, Direct2D now replaces eligible root terminal content with an
+immutable shared surface by default unless
+`FESTERM_EXPERIMENTAL_DIRECT2D=0` disables it; an explicit `1` requests the
+same bounded path. Chrome and composition remain in egui-wgpu, reusing the
+existing glyph/emoji pixels and cell geometry. The ordinary full background
+still clears old content before the cropped native surface is composed.
+Hardware, secondary windows, translucent or transformed painters, invalid
+environment values, and rejected native frames retain ordinary painting.
+Automatic unsupported-adapter cases stay quiet and keep ordinary painting;
+explicit `1` still explains why the request was ineligible. Input, session
+ownership and frame scheduling do not change. See proposed
+ADR-0039 and CP-18; issue #244 keeps native qualification open.
 
 ### Launcher lifecycle
 
