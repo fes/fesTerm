@@ -6,4 +6,4 @@
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod renderer;
 #[cfg(all(windows, target_arch = "x86_64"))]
-pub use renderer::{Error, Renderer, Surface};
+pub use renderer::{Error, RenderTimings, Renderer, Surface};

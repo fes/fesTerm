@@ -49,6 +49,42 @@ fn eligible(device: wgpu::DeviceType, backend: wgpu::Backend, format: wgpu::Text
         )
 }
 
+#[cfg_attr(not(all(windows, target_arch = "x86_64")), allow(dead_code))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TimingConfig {
+    Disabled,
+    EveryFrame,
+    EveryNthFrame(u64),
+}
+
+#[cfg_attr(not(all(windows, target_arch = "x86_64")), allow(dead_code))]
+impl TimingConfig {
+    fn from_environment(value: Option<&str>) -> Result<Self, &'static str> {
+        match value {
+            None | Some("") | Some("0") => Ok(Self::Disabled),
+            Some("1") => Ok(Self::EveryFrame),
+            Some(raw) => raw
+                .parse::<u64>()
+                .ok()
+                .filter(|interval| *interval > 1)
+                .map(Self::EveryNthFrame)
+                .ok_or("FESTERM_DIRECT2D_TIMINGS expects 0, 1, or an integer interval >= 2"),
+        }
+    }
+
+    fn enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    fn should_log(self, frame_number: u64) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::EveryFrame => true,
+            Self::EveryNthFrame(interval) => frame_number.is_multiple_of(interval),
+        }
+    }
+}
+
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod native {
     use super::*;
@@ -56,6 +92,7 @@ mod native {
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     };
+    use std::time::Instant;
     use wgpu::util::DeviceExt;
 
     pub(super) struct Status {
@@ -103,6 +140,15 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         context: &egui::Context,
         state: &egui_wgpu::RenderState,
     ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
+        let timings = match TimingConfig::from_environment(
+            std::env::var("FESTERM_DIRECT2D_TIMINGS").ok().as_deref(),
+        ) {
+            Ok(config) => config,
+            Err(message) => {
+                tracing::warn!(target: "festerm::rendering", "{message}; timing logs disabled");
+                TimingConfig::Disabled
+            }
+        };
         let renderer = Mutex::new(festerm_windows_direct2d::Renderer::new(
             state.device.clone(),
             state.queue.clone(),
@@ -176,6 +222,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         });
         let observed = status.clone();
         festerm_ui_egui::install_root_terminal_painter(context, move |context, frame| {
+            let total_started = timings.enabled().then(Instant::now);
+            let mut render_timings = timings
+                .enabled()
+                .then(festerm_windows_direct2d::RenderTimings::default);
             let result = match renderer.lock() {
                 Ok(mut renderer) => renderer.render(
                     frame.rect,
@@ -183,6 +233,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     festerm_ui_egui::theme::SURFACE_TERMINAL,
                     &frame.primitives,
                     &frame.textures,
+                    render_timings.as_mut(),
                 ),
                 Err(_) => {
                     observed.active.store(false, Ordering::Relaxed);
@@ -204,10 +255,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
-            let offset = [surface.origin[0], surface.origin[1], 0, 0]
-                .into_iter()
-                .flat_map(u32::to_le_bytes)
-                .collect::<Vec<_>>();
+            let mut offset = [0u8; 16];
+            offset[0..4].copy_from_slice(&surface.origin[0].to_le_bytes());
+            offset[4..8].copy_from_slice(&surface.origin[1].to_le_bytes());
+            let composite_started = timings.enabled().then(Instant::now);
             let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("festerm Direct2D origin"),
                 contents: &offset,
@@ -229,8 +280,34 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 ],
             });
             let number = observed.frames.fetch_add(1, Ordering::Relaxed) + 1;
-            tracing::debug!(target: "festerm::rendering", direct2d_frame_number = number,
-                "built Direct2D terminal surface");
+            if timings.should_log(number) {
+                let render_timings = render_timings.as_ref().expect("timing capture enabled");
+                tracing::info!(
+                    target: "festerm::rendering",
+                    direct2d_frame_number = number,
+                    surface_width = render_timings.surface_width,
+                    surface_height = render_timings.surface_height,
+                    mesh_count = render_timings.mesh_count,
+                    vertex_count = render_timings.vertex_count,
+                    index_count = render_timings.index_count,
+                    texture_count = render_timings.texture_count,
+                    uploaded_texture_count = render_timings.uploaded_texture_count,
+                    analysis_ms = render_timings.analysis.as_secs_f64() * 1000.0,
+                    texture_upload_ms = render_timings.texture_upload.as_secs_f64() * 1000.0,
+                    geometry_prepare_ms = render_timings.geometry_prepare.as_secs_f64() * 1000.0,
+                    native_draw_ms = render_timings.native_draw.as_secs_f64() * 1000.0,
+                    composite_ms = composite_started
+                        .map(|started| started.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default(),
+                    total_ms = total_started
+                        .map(|started| started.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default(),
+                    "Direct2D production frame timings"
+                );
+            } else {
+                tracing::debug!(target: "festerm::rendering", direct2d_frame_number = number,
+                    "built Direct2D terminal surface");
+            }
             Some(egui_wgpu::Callback::new_paint_callback(
                 surface.rect,
                 Paint {
@@ -284,6 +361,34 @@ mod tests {
                 supported
             );
         }
+    }
+
+    #[test]
+    fn direct2d_timing_gate_requires_explicit_valid_values() {
+        assert_eq!(
+            TimingConfig::from_environment(None),
+            Ok(TimingConfig::Disabled)
+        );
+        assert_eq!(
+            TimingConfig::from_environment(Some("0")),
+            Ok(TimingConfig::Disabled)
+        );
+        assert_eq!(
+            TimingConfig::from_environment(Some("1")),
+            Ok(TimingConfig::EveryFrame)
+        );
+        assert_eq!(
+            TimingConfig::from_environment(Some("120")),
+            Ok(TimingConfig::EveryNthFrame(120))
+        );
+        assert!(TimingConfig::from_environment(Some("2"))
+            .unwrap()
+            .should_log(4));
+        assert!(!TimingConfig::from_environment(Some("2"))
+            .unwrap()
+            .should_log(3));
+        assert!(TimingConfig::from_environment(Some("abc")).is_err());
+        assert!(TimingConfig::from_environment(Some("-1")).is_err());
     }
 
     #[cfg(all(windows, target_arch = "x86_64"))]

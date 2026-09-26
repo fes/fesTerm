@@ -461,7 +461,8 @@ static bool quad(const std::array<Vertex, 6>& vertices, Draw& result, const Text
 }
 
 static Group prepare_group(Renderer& renderer, const Texture& texture, D2D1_RECT_F clip,
-    std::span<const Vertex> source, std::span<const uint32_t> indices) {
+    std::span<const Vertex> source, std::span<const uint32_t> indices,
+    bool normalized_positions, std::vector<Vertex>& scratch_vertices) {
     if (source.size() > 1000000 || indices.size() > 3000000 || indices.size() % 3)
         throw std::runtime_error("Invalid mesh size");
     Group group{};
@@ -472,18 +473,38 @@ static Group prepare_group(Renderer& renderer, const Texture& texture, D2D1_RECT
         std::clamp(std::round(clip.bottom), 0.0f, float(renderer.height))};
     if (group.clip.right <= group.clip.left || group.clip.bottom <= group.clip.top)
         return group;
-    std::vector<Vertex> vertices(source.begin(), source.end());
-    for (auto& vertex : vertices) {
-        if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) ||
-            !std::isfinite(vertex.u) || !std::isfinite(vertex.v) ||
-            std::abs(vertex.x) > 1000000 || std::abs(vertex.y) > 1000000)
-            throw std::runtime_error("Invalid vertex coordinates");
-        if (vertex.u < 0 || vertex.u > 1 || vertex.v < 0 || vertex.v > 1 ||
-            vertex.color.r > vertex.color.a || vertex.color.g > vertex.color.a ||
-            vertex.color.b > vertex.color.a)
-            throw std::runtime_error("Unsupported texture coordinates or additive color");
-        vertex.x = raster_position(vertex.x);
-        vertex.y = raster_position(vertex.y);
+    std::span<const Vertex> vertices = source;
+    if (!normalized_positions) {
+        scratch_vertices.clear();
+        scratch_vertices.insert(scratch_vertices.end(), source.begin(), source.end());
+        vertices = scratch_vertices;
+    }
+    if (normalized_positions) {
+        for (const auto& vertex : vertices) {
+            if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) ||
+                !std::isfinite(vertex.u) || !std::isfinite(vertex.v) ||
+                std::abs(vertex.x) > 1000000 || std::abs(vertex.y) > 1000000)
+                throw std::runtime_error("Invalid vertex coordinates");
+            if (vertex.u < 0 || vertex.u > 1 || vertex.v < 0 || vertex.v > 1 ||
+                vertex.color.r > vertex.color.a || vertex.color.g > vertex.color.a ||
+                vertex.color.b > vertex.color.a)
+                throw std::runtime_error("Unsupported texture coordinates or additive color");
+            if (vertex.x != raster_position(vertex.x) || vertex.y != raster_position(vertex.y))
+                throw std::runtime_error("Vertices must be raster-normalized before crossing the Direct2D boundary");
+        }
+    } else {
+        for (auto& vertex : scratch_vertices) {
+            if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) ||
+                !std::isfinite(vertex.u) || !std::isfinite(vertex.v) ||
+                std::abs(vertex.x) > 1000000 || std::abs(vertex.y) > 1000000)
+                throw std::runtime_error("Invalid vertex coordinates");
+            if (vertex.u < 0 || vertex.u > 1 || vertex.v < 0 || vertex.v > 1 ||
+                vertex.color.r > vertex.color.a || vertex.color.g > vertex.color.a ||
+                vertex.color.b > vertex.color.a)
+                throw std::runtime_error("Unsupported texture coordinates or additive color");
+            vertex.x = raster_position(vertex.x);
+            vertex.y = raster_position(vertex.y);
+        }
     }
     for (auto index : indices)
         if (index >= vertices.size()) throw std::runtime_error("Invalid mesh index");
@@ -527,6 +548,7 @@ struct Bridge {
     std::unique_ptr<Renderer> renderer;
     std::map<uint64_t, Texture> textures;
     Frame frame;
+    std::vector<Vertex> scratch_vertices;
     Color clear{};
     char error[512]{};
 };
@@ -592,7 +614,7 @@ extern "C" HRESULT festerm_d2d_prune(Bridge* bridge, const uint64_t* ids, size_t
 }
 
 extern "C" HRESULT festerm_d2d_prepare(Bridge* bridge, uint32_t width, uint32_t height,
-    Color clear, const MeshInput* meshes, size_t count) {
+    Color clear, bool normalized_positions, const MeshInput* meshes, size_t count) {
     if (!bridge || (!meshes && count) || !width || !height ||
         width > 8192 || height > 8192 || count > 250000) return E_INVALIDARG;
     return boundary(bridge, [&] {
@@ -608,7 +630,8 @@ extern "C" HRESULT festerm_d2d_prepare(Bridge* bridge, uint32_t width, uint32_t 
             const auto texture = bridge->textures.find(mesh.texture);
             if (texture == bridge->textures.end()) throw std::runtime_error("Missing texture pixels");
             frame.push_back(prepare_group(renderer, texture->second, mesh.clip,
-                std::span(mesh.vertices, mesh.vertex_count), std::span(mesh.indices, mesh.index_count)));
+                std::span(mesh.vertices, mesh.vertex_count), std::span(mesh.indices, mesh.index_count),
+                normalized_positions, bridge->scratch_vertices));
         }
         bridge->frame = std::move(frame);
         bridge->clear = clear;
@@ -668,7 +691,9 @@ static std::vector<Frame> frames(std::istream& stream, Renderer& renderer,
                 std::vector<uint32_t> indices(count(stream, 3000000));
                 for (auto& vertex : vertices) vertex = read<Vertex>(stream);
                 for (auto& index : indices) index = read<uint32_t>(stream);
-                group = prepare_group(renderer, texture, group.clip, vertices, indices);
+                std::vector<Vertex> scratch_vertices;
+                group = prepare_group(renderer, texture, group.clip, vertices, indices,
+                    false, scratch_vertices);
             } else throw std::runtime_error("Unknown primitive");
         }
     }
@@ -707,8 +732,20 @@ static void self_test() {
     reversed.u = -1;
     if (quad({a,reversed,c,a,c,d}, draw, texture))
         throw std::runtime_error("Invalid texture mapping accepted");
-    std::istringstream truncated(std::string(1, '\0'));
+    Renderer renderer(64, 64);
+    std::vector<Vertex> scratch_vertices;
+    auto off_grid = b;
+    off_grid.x += 0.0001f;
+    const std::array<Vertex, 4> quad_vertices{a, off_grid, c, d};
+    const std::array<uint32_t, 6> quad_indices{0, 1, 2, 0, 2, 3};
     bool rejected = false;
+    try {
+        prepare_group(renderer, texture, {0,0,64,64}, quad_vertices, quad_indices, true,
+            scratch_vertices);
+    } catch (const std::runtime_error&) { rejected = true; }
+    if (!rejected) throw std::runtime_error("Unnormalized production vertices accepted");
+    std::istringstream truncated(std::string(1, '\0'));
+    rejected = false;
     try { read<uint32_t>(truncated); } catch (const std::runtime_error&) { rejected = true; }
     if (!rejected) throw std::runtime_error("Truncated input accepted");
     std::istringstream oversized(std::string(4, '\xff'));
