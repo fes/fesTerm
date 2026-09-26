@@ -1733,7 +1733,12 @@ fn drain_ready_pty_output(
     pending: &mut PendingOutput,
     handle: &mut impl FnMut(ClientCommand) -> io::Result<()>,
 ) -> io::Result<Option<()>> {
-    while !pending.is_pending() {
+    // A bounded channel can stay full while its producer refills it. Yield to
+    // client acceptance and input handling even when PTY output never pauses.
+    for _ in 0..PTY_EVENT_CHANNEL_CAPACITY {
+        if pending.is_pending() {
+            break;
+        }
         match pty_rx.try_recv() {
             Ok(PtyEvent::Data(data)) => {
                 let replies = mirror_terminal_output(terminal, &data);
@@ -3511,6 +3516,67 @@ mod tests {
             festerm_sessiond::encode_server_output_frame(b"uninterrupted output")
         );
         assert!(stream.input_received);
+    }
+
+    #[test]
+    fn pty_output_batches_yield_even_when_the_producer_keeps_refilling() {
+        let (sender, output) = mpsc::sync_channel(PTY_EVENT_CHANNEL_CAPACITY);
+        let data = || PtyEvent::Data(b"x\x1b[6n".to_vec());
+        for _ in 0..PTY_EVENT_CHANNEL_CAPACITY {
+            sender.send(data()).unwrap();
+        }
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        let mut handled = 0;
+        assert_eq!(
+            drain_ready_pty_output(
+                &output,
+                &mut terminal,
+                None,
+                &mut None,
+                &mut Vec::new(),
+                &mut PendingOutput::default(),
+                &mut |command| {
+                    assert!(matches!(command, ClientCommand::Input(_)));
+                    handled += 1;
+                    assert!(handled <= PTY_EVENT_CHANNEL_CAPACITY);
+                    sender.try_send(data()).unwrap();
+                    Ok(())
+                },
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(handled, PTY_EVENT_CHANNEL_CAPACITY);
+        assert_eq!(output.try_iter().count(), PTY_EVENT_CHANNEL_CAPACITY);
+    }
+
+    #[test]
+    fn pty_output_batches_preserve_bytes_before_eof() {
+        let (sender, output) = mpsc::sync_channel(PTY_EVENT_CHANNEL_CAPACITY + 2);
+        let mut expected = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        for index in 0..=PTY_EVENT_CHANNEL_CAPACITY {
+            let data = format!("{index:03}\r\n").into_bytes();
+            expected.ingest(&data);
+            sender.send(PtyEvent::Data(data)).unwrap();
+        }
+        sender.send(PtyEvent::Eof).unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        let drain = |terminal: &mut Terminal| {
+            drain_ready_pty_output(
+                &output,
+                terminal,
+                None,
+                &mut None,
+                &mut Vec::new(),
+                &mut PendingOutput::default(),
+                &mut |_| panic!("fixture does not issue terminal queries"),
+            )
+            .unwrap()
+        };
+        assert_eq!(drain(&mut terminal), None);
+        assert_ne!(terminal, expected);
+        assert_eq!(drain(&mut terminal), Some(()));
+        assert_eq!(terminal, expected);
     }
 
     #[test]

@@ -1626,6 +1626,8 @@
         "client_input_coalesced_burst_keeps_native_socket_attached",
         "client_input_is_read_while_client_output_writes_are_blocked",
         "client_input_batches_yield_even_when_the_producer_keeps_refilling",
+        "pty_output_batches_yield_even_when_the_producer_keeps_refilling",
+        "pty_output_batches_preserve_bytes_before_eof",
         "a_client_output_batch_yields_with_its_offset_intact",
         "stalled_writes_keep_outbound_commands_bounded_and_ordered",
         "pending_resize_events_are_bounded_without_blocking_prior_input",

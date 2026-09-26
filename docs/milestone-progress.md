@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Yielding to reattachment during continuous PTY output
+
+A post-integration macOS native run timed out waiting for a recovery header
+while a fixture produced a large output burst. Investigation found that the
+daemon's bounded PTY channel did not bound a drain pass: a producer could
+refill it continuously, keeping the daemon away from client acceptance and
+input handling. Detached sessions had no client backpressure to interrupt it.
+
+Each pass now consumes at most one channel-capacity batch before returning to
+the existing service loop. No output is dropped, reordered, or rate-limited;
+the next pass continues the stream, including terminal query replies and EOF.
+Deterministic refilling-producer and multi-batch ordering regressions expose
+the old behavior without sleeps. Native smoke timeouts remain unchanged.
+This restores the existing bounded-work contract rather than changing
+terminal ownership or the recovery protocol.
+
 ## Correcting the Windows native recovery smoke oracles
 
 The first nightly native run after snapshot recovery exposed two test
