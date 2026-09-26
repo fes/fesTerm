@@ -865,7 +865,9 @@ fn native_daemon_snapshot_matches_fresh_terminal_after_large_output() {
     let scrollback_limit = 4 * 1024 * 1024usize;
     let repeat_count = 120_000usize;
     let repeat_text = "0123456789";
-    let prefix = b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[HREADY:";
+    // ConPTY enables focus reporting with mouse input. Request it explicitly
+    // so the raw fixture and the PTY stream have the same mode on every platform.
+    let prefix = b"\x1b[?1049h\x1b[?1000h\x1b[?1004h\x1b[?1006h\x1b[?2004h\x1b[HREADY:";
     let suffix_bytes = b"\x1b[3;5HEND";
     let arguments = [
         format!("emit-bytes-hex:{}", hex_encode_bytes(prefix)),
@@ -913,6 +915,7 @@ fn native_daemon_snapshot_matches_fresh_terminal_after_large_output() {
         MouseTrackingMode::None
     );
     assert!(client.snapshot.modes().sgr_mouse());
+    assert!(client.snapshot.modes().focus_reporting());
     assert!(client.snapshot.modes().bracketed_paste());
 
     let mut expected = Terminal::with_scrollback_limit(
@@ -1786,6 +1789,19 @@ fn assert_eof(stream: &mut dyn ClientStream) {
     }
 }
 
+#[test]
+fn framed_client_accepts_eof_after_stolen_notice() {
+    let mut client = ConnectedClient {
+        snapshot: Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap(),
+        stream: Box::new(io::Cursor::new(b"FSO1\x03\0\0\0\0".to_vec())),
+        pending: Vec::new(),
+    };
+    assert_contains(&mut client, STOLEN_NOTICE);
+    assert_eof(&mut client);
+    assert!(!is_eof_error(&io::Error::from(io::ErrorKind::TimedOut)));
+    assert!(!is_eof_error(&io::Error::from(io::ErrorKind::InvalidData)));
+}
+
 #[cfg(unix)]
 fn is_eof_error(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::UnexpectedEof
@@ -1793,7 +1809,7 @@ fn is_eof_error(error: &io::Error) -> bool {
 
 #[cfg(windows)]
 fn is_eof_error(error: &io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(109 | 233))
+    error.kind() == io::ErrorKind::UnexpectedEof || matches!(error.raw_os_error(), Some(109 | 233))
 }
 
 #[cfg(unix)]

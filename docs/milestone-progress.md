@@ -3,6 +3,18 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Correcting the Windows native recovery smoke oracles
+
+The first nightly native run after snapshot recovery exposed two test
+assumptions, not lost terminal state. The framed test client reports a closed
+stream as `UnexpectedEof`, while its Windows assertion only recognized raw
+named-pipe errors. A deterministic stolen-notice/EOF fixture now covers that
+path. The large-output snapshot differed only in focus reporting, which ConPTY
+enabled with mouse input. The fixture now requests that mode explicitly on
+every platform and still compares the entire recovered terminal exactly.
+Neither correction changes runtime behavior or substitutes for native GUI
+qualification.
+
 ## Making software-rendered terminal backgrounds cheap
 
 The idle repaint fix did not make sustained output cheap on WARP. A controlled
