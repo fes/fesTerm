@@ -41,7 +41,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
-- [ADR 0039: Opt-In Direct2D Terminal Composition on Windows](0039-opt-in-direct2d-terminal-composition.md) — experimental; native graphics review and CP-18 qualification remain required
+- [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) — Proposed; owner-approved default selection is bounded to supported Windows x64 WARP, while CP-18 and issue #244 qualification remain open
 - [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
 - [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38
 - [ADR 0028: Text-Mode SFTP Session Tabs via `russh-sftp`](0028-text-mode-sftp-session-tabs-via-russh-sftp.md)

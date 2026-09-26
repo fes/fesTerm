@@ -1,8 +1,11 @@
-# ADR 0039: Opt-In Direct2D Terminal Composition on Windows
+# ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP
 
 - **Status:** Proposed
 - **Date:** 2026-09-26
 - **Supersedes:** None
+- **Owner-approved amendment:** 2026-09-26 bounded default selection on the
+  supported Windows x64 WARP path; CP-18 and issue #244 qualification remain
+  open.
 
 ## Context
 
@@ -11,7 +14,12 @@ render-stage experiment shows materially cheaper completed dense frames than
 egui-wgpu including #240. A controlled full-application dense-output sample
 also reduces CPU while increasing GUI frame construction; sparse output is
 approximately unchanged. Neither establishes hardware-GPU behavior or
-presentation latency. See
+presentation latency. Those Direct2D measurements remain historical evidence
+for the opt-in investigation, not qualification of a broader default. The
+Launcher mitigation in #254 is independent of Direct2D terminal composition.
+The project owner has now approved enabling the same bounded path by default
+when its exact supported conditions are met, while leaving native qualification
+work open under CP-18 and issue #244. See
 [the investigation and reproducible probe](../../validation/direct2d/README.md).
 
 The app owns terminal mutation and input policy; `festerm-ui-egui` owns layout,
@@ -21,11 +29,21 @@ under the architecture-stability policy.
 
 ## Decision
 
-Add an **experimental, default-off** terminal painter selected only by
-`FESTERM_EXPERIMENTAL_DIRECT2D=1`, on Windows x64 DX12 CPU adapters with an
-8-bit gamma target. Preserve egui-wgpu for chrome, composition, the default
-path, hardware adapters, other platforms, secondary viewports, translucent
-or transformed painters, unsupported content, and failure recovery.
+Add an **experimental** terminal painter that is selected by default only when
+all of the following are true: the process is running on Windows x64, wgpu is
+using a DX12 CPU adapter, the terminal target is `Bgra8Unorm` or
+`Rgba8Unorm`, and `FESTERM_EXPERIMENTAL_DIRECT2D` is either unset or `1`.
+`FESTERM_EXPERIMENTAL_DIRECT2D=0` explicitly disables the painter and keeps the
+ordinary egui-wgpu renderer. `FESTERM_EXPERIMENTAL_DIRECT2D=1` is retained for
+compatibility and requests the same supported path, but cannot force hardware
+adapters, unsupported platforms, unsupported formats, or other ineligible
+conditions. Invalid or non-Unicode override values warn and retain ordinary
+egui-wgpu. Automatic unset mode quietly keeps ordinary egui-wgpu on unsupported
+adapters, platforms, or formats; explicit `1` still reports why selection was
+ineligible.
+Preserve egui-wgpu for chrome, composition, hardware adapters, other
+platforms, secondary viewports, translucent or transformed painters,
+unsupported content, and failure recovery.
 
 The UI exposes an optional root-viewport paint hook. It snapshots already
 laid-out primitives and egui-owned glyph/emoji pixels; no terminal or session
@@ -85,10 +103,14 @@ device-loss handling; native-window recovery remains qualification work.
 
 ## Consequences
 
-There is no configuration-schema migration, default renderer switch, new
-terminal writer, output throttling, frame-rate policy, or non-Windows renderer
-change. #239's idle scheduling and #240's solid backgrounds remain relevant
-to both ordinary painting and composition/fallback.
+There is no configuration-schema migration, new dependency, new saved setting,
+new terminal writer, output throttling, frame-rate policy, or non-Windows
+renderer change. The only default-selection change is the owner-approved
+Windows x64 WARP path above; hardware GPUs, Windows ARM64, macOS, Linux, and
+other unsupported conditions remain on ordinary egui-wgpu unless an eligible
+future design changes that deliberately. #239's idle scheduling and #240's
+solid backgrounds remain relevant to both ordinary painting and
+composition/fallback.
 
 The initial capability envelope is deliberately bounded: at most 4096 pixels
 per surface dimension, 250,000 primitives, two million vertices, six million
@@ -100,8 +122,10 @@ The C++ boundary and native wgpu access increase maintenance/review cost.
 wgpu upgrades must revalidate resource states, initialization, queue selection,
 and lifetime guarantees. Fresh surfaces and CPU font snapshots have costs
 that must be measured in the actual application. Native window/device-loss,
-mixed-DPI, multi-window, and hardware qualification remain open. This ADR is
-not an acceptance declaration or approval to enable the renderer by default.
+mixed-DPI, multi-window, memory/latency characterization, and representative
+hardware qualification remain open in issue #244. This ADR is not an
+acceptance declaration or a claim that native qualification is complete merely
+because the supported WARP path now defaults on.
 
 ## Validation impact
 
@@ -112,13 +136,16 @@ not an acceptance declaration or approval to enable the renderer by default.
   selection semantics retained.
 - **Automated tests required:** `native_bounds_crop_sparse_paints_and_validate_indices`,
   `shared_surfaces_preserve_pixels_and_previous_frame_ownership`,
-  `direct2d_selection_preserves_hardware_other_backends_and_srgb`,
+  `direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy`,
+  `direct2d_invalid_overrides_do_not_enable_the_default`,
   `integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`,
   `unsupported_native_palette_keeps_the_current_frame_pixels`,
   `declined_native_paint_keeps_original_shapes`,
   `native_paint_replaces_only_its_scope_and_preserves_order`, and
   `translucent_and_invisible_painters_never_enter_native_capture`.
 - **Native/manual evidence required:** `CP-18`, alongside the retained `CP-16`
-  and `CP-17` budgets. Hardware and window-system evidence is not inferred from
+  and `CP-17` budgets. Issue #244 retains the remaining mixed-DPI,
+  multi-window, device-loss, latency, memory, and representative-hardware
+  qualification work; hardware and window-system evidence is not inferred from
   offscreen captures.
 - **Coverage superseded:** None.

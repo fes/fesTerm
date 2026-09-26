@@ -44,11 +44,15 @@ remain identical. `CP-17` pairs a native CPU ceiling with a minimum GUI
 frame-building rate under controlled output; neither is a production frame
 limit or a claim about OS presentation latency.
 
-The default-off Direct2D experiment also affects `TERM-01`: eligible root
-terminal paints may use an immutable native surface, but input ownership,
-geometry, clipping, colors and output consumption remain unchanged. A rejected
-native frame keeps ordinary painting in the same frame. CP-18 tracks the
-remaining native qualification; ADR-0039 remains Proposed.
+The Direct2D experiment also affects `TERM-01`: on supported Windows x64 WARP
+targets it is now the default eligible root-terminal path unless
+`FESTERM_EXPERIMENTAL_DIRECT2D=0` disables it; `1` requests the same supported
+path and invalid values retain ordinary painting. Automatic unsupported-adapter
+cases stay on ordinary painting without a selection warning; explicit `1`
+still reports ineligibility. Input ownership, geometry, clipping, colors and
+output consumption remain unchanged. A rejected native frame keeps ordinary
+painting in the same frame. CP-18 tracks the remaining
+native qualification; ADR-0039 remains Proposed and issue #244 remains open.
 
 ## How to use the graph
 

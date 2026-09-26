@@ -35,9 +35,9 @@ eight-bit gamma framebuffers, it draws their original egui-tessellated rounded
 and feathered meshes with a textureless color shader. Clipping, color packing,
 blending, dithering, margins and child-widget order are retained. Hardware,
 other backends, sRGB/HDR targets, secondary/transformed viewports, translucent
-painters, shadows and strokes retain ordinary frame painting. No Direct2D
-opt-in policy, discovery scheduling, unread indication, or terminal painting
-policy changes.
+painters, shadows and strokes retain ordinary frame painting. This Launcher
+mitigation does not alter Direct2D selection, discovery scheduling, unread
+indication, or terminal painting policy.
 
 ## Native evidence
 

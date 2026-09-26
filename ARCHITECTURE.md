@@ -48,10 +48,14 @@ festerm-document -----> (no workspace dependencies)
 
 `festerm-core` must not depend on GUI, PTY, SSH, operating-system keychain, cloud identity, or persistence implementations.
 
-The default-off Windows Direct2D experiment adds an app-owned
+The Windows Direct2D experiment adds an app-owned
 `festerm-windows-direct2d` graphics boundary consuming egui primitives, not
-terminal state. The UI retains layout, input, fonts and paint order; the
-native crate owns SDK interop and immutable shared surfaces. See proposed
+terminal state. On supported Windows x64 DX12 CPU-adapter targets with
+`Bgra8Unorm` or `Rgba8Unorm`, it is now the default root-terminal path when
+`FESTERM_EXPERIMENTAL_DIRECT2D` is unset or `1`; `0`, invalid values,
+hardware adapters, unsupported formats, and other platforms retain ordinary
+egui-wgpu. The UI retains layout, input, fonts and paint order; the native
+crate owns SDK interop and immutable shared surfaces. See proposed
 [ADR 0039](docs/adr/0039-opt-in-direct2d-terminal-composition.md).
 
 ## Current and Target Workspace Layout
