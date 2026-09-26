@@ -71,6 +71,18 @@ pub struct NativeWindowSmoke {
 }
 
 impl NativeWindowSmoke {
+    fn os_input_complete(
+        &self,
+        terminal: &Terminal,
+        resize_applied: bool,
+        input_matches: bool,
+    ) -> bool {
+        self.focus_observed
+            && resize_applied
+            && terminal_text_including_scrollback(terminal).contains("OS-INPUT-ACK")
+            && (!self.keyboard_mode || (self.keyboard_palette_seen && input_matches))
+    }
+
     pub const fn requires_color_emoji(&self) -> bool {
         matches!(self.kind, SmokeKind::Emoji)
     }
@@ -222,9 +234,15 @@ impl NativeWindowSmoke {
                 "spin",
             ],
             // The OS driver sends Tab, Up, a fixed token, and Enter. The
-            // child cannot emit its post-read line until those real window
-            // events make it through the UI and PTY input path.
-            SmokeKind::OsInput => &["emit:READY", "read-line", "echo:OS-INPUT", "spin"],
+            // child acknowledges only after reading the token and newline,
+            // independently of ConPTY's startup, resize and focus output.
+            SmokeKind::OsInput => &[
+                "emit:READY",
+                "read-line",
+                "expect-line-suffix:os-input-ok",
+                "emit:OS-INPUT-ACK",
+                "spin",
+            ],
             // The macOS driver performs a real, rapid corner drag while this
             // child emits for three seconds. Keeping the source independent
             // from the UI driver makes any lost frame observable in terminal
@@ -343,11 +361,11 @@ impl NativeWindowSmoke {
                 let resize_applied = generations
                     .iter()
                     .any(|generation| generation.applied && generation.visible_nonblank_cells > 0);
-                if self.focus_observed
-                    && resize_applied
-                    && (!self.keyboard_mode
-                        || (self.keyboard_palette_seen && controller.native_input_matches()))
-                {
+                if self.os_input_complete(
+                    terminal,
+                    resize_applied,
+                    controller.native_input_matches(),
+                ) {
                     self.finish(
                         context,
                         "pass",
@@ -616,6 +634,25 @@ fn test_child_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn os_input_smoke_never_passes_on_startup_output_alone() {
+        let mut smoke = NativeWindowSmoke::finished_for_test();
+        smoke.focus_observed = true;
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(80, 4).unwrap()).unwrap();
+        terminal.ingest(b"READY\r\n\x1b[?1004h\x1b[2Jos-input-ok\r\n");
+        assert!(!smoke.os_input_complete(&terminal, true, true));
+        terminal.ingest(b"OS-INPUT-ACK\r\n");
+        assert!(smoke.os_input_complete(&terminal, true, false));
+        assert!(!smoke.os_input_complete(&terminal, false, true));
+        smoke.keyboard_mode = true;
+        assert!(!smoke.os_input_complete(&terminal, true, true));
+        smoke.keyboard_palette_seen = true;
+        assert!(!smoke.os_input_complete(&terminal, true, false));
+        assert!(smoke.os_input_complete(&terminal, true, true));
+        smoke.focus_observed = false;
+        assert!(!smoke.os_input_complete(&terminal, true, true));
+    }
 
     #[test]
     fn smoke_mode_requires_an_explicit_environment_variable() {

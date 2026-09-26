@@ -211,6 +211,21 @@ The Windows guest's known graphics limitation and macOS Accessibility
 prerequisite remain distinct from successful synthesized routing checks.
 All dedicated guests were stopped after their runs.
 
+The Windows OS-input driver now enumerates the PID's visible, unowned,
+activating application window and excludes tool windows. It does not use
+`Process.MainWindowHandle`, which can identify winit's internal event target.
+It verifies foreground activation before injecting input; this does not
+replace the isolated-desktop requirement for clipboard-specific checks.
+Window/activation errors now terminate the driver, and stdout/stderr logs
+are retained beside its result. Basic OS-input success requires the controlled
+PTY child to acknowledge a complete line ending in `os-input-ok`; startup,
+resize, focus reports and ordinary input echo cannot pass the oracle.
+ConPTY can send legitimate focus bytes before the keystrokes, so the basic
+check verifies child acknowledgment rather than requiring a focus-free raw
+byte stream. The optional keyboard-routing check additionally retains its
+exact byte and palette assertions. The corrected basic Windows native run
+passed; clipboard-mutating mode was not run on the shared desktop.
+
 The candidate's Settings captures use the production `show_settings` renderer
 at normal/narrow widths; captures are review artifacts, not new cross-platform
 golden baselines. No native user application or ordinary user configuration is
@@ -482,6 +497,26 @@ these tests. A replacement handshake can pause daemon processing for up to
 | CP-17 | On a Windows software-rendered desktop, run the controlled 10 Hz foreground-output fixture in a maximized window without interacting with it. Confirm reduced CPU while output keeps updating and the terminal background, text, cursor, clipping, overlays and window transparency remain correct. Repeat moving between DPI scales and opening another window. | Native performance + visual | `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -RequireSoftwareRenderer` measures CPU and GUI frame construction (defaults: at most 30% total CPU and at least 5 GUI frames/s). Headless GPU readback compares native and ordinary painting pixel-for-pixel, with a visible colored-text oracle, at 100%, 125% and 200% scale, clipped/unclipped and enabled/disabled, including a translucent overlay. sRGB/other formats retain the ordinary path. Native multi-window/mixed-DPI interaction and dense-output workloads remain additional evidence; the frame counter is not an OS presentation-latency measurement. |
 
 ### Experimental Direct2D qualification
+
+**Window-identity correction (#242):** The Windows CPU and OS-input probes
+share `scripts/windows-application-window.ps1`. A native Win32 regression
+(`test_windows_application_window.py`, run by Windows CI) covers visible helper,
+hidden, owned, wrong-PID, stale and ambiguous windows without desktop input.
+CP-16/17/18 CPU samples require the actual application HWND to remain
+foreground, responsive and maximized at unchanged physical size/DPI.
+Desktop input during the fixed warmup or measurement is recorded as
+`invalid-input`, not a pass or a confirmed CPU regression. JSON includes
+window identity and approximately one-second CPU/GUI-frame intervals.
+`-DebuggerPath <path-to-cdb.exe>` optionally captures thread times and stacks
+after a budget failure, before cleanup; a post-sample capture may already be
+cold and must not be described as a hot stack. No warmup or CPU/FPS budget
+has been relaxed. Forced cleanup after a pending close is reported explicitly.
+
+Earlier native results did not record this window identity and are not
+complete maximized-window qualification. Fresh observations are recorded in
+`validation/direct2d/README.md`. A verified-window 10.638% background-idle
+failure remains unresolved under #242; correcting the probe is not a claim
+that the rendering issue is fixed.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
