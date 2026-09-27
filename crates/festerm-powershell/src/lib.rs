@@ -466,8 +466,9 @@ fn run_worker(
                 match started {
                     Ok(handle) => {
                         let _ = ack_tx.send(Ok(()));
-                        let health =
-                            runtime.block_on(drive_pipeline(handle, message_tx, cancel, &options));
+                        let health = runtime.block_on(drive_pipeline(
+                            handle, message_tx, cancel, &options, &status,
+                        ));
                         if matches!(health, WorkerHealth::Invalidated) {
                             *status.lock().expect("status mutex poisoned") =
                                 PowerShellSessionStatus::Invalidated;
@@ -552,6 +553,7 @@ async fn drive_pipeline(
     message_tx: SyncSender<PowerShellCommandMessage>,
     cancel: CancellationToken,
     options: &PowerShellOptions,
+    status: &Arc<Mutex<PowerShellSessionStatus>>,
 ) -> WorkerHealth {
     let mut budget = CommandBudget::new(options);
     let mut pipeline_errors = Vec::new();
@@ -567,8 +569,12 @@ async fn drive_pipeline(
                 NextPipelineEvent::Event(Ok(event)) => event,
                 NextPipelineEvent::Event(Err(error)) => {
                     let cancel_requested = cancel.is_cancelled();
-                    emit_cancel_diagnostic(&error, cancel_requested);
                     let kind = failure_kind_for_pipeline_error(&error, cancel_requested);
+                    let invalidates = pipeline_error_invalidates_worker(&error, cancel_requested);
+                    if invalidates {
+                        *status.lock().expect("status mutex poisoned") =
+                            PowerShellSessionStatus::Invalidated;
+                    }
                     let _ = message_tx.try_send(PowerShellCommandMessage::Failed(
                         PowerShellCommandFailure {
                             kind,
@@ -576,13 +582,15 @@ async fn drive_pipeline(
                             errors: pipeline_errors,
                         },
                     ));
-                    return if pipeline_error_invalidates_worker(&error, cancel_requested) {
+                    return if invalidates {
                         WorkerHealth::Invalidated
                     } else {
                         WorkerHealth::Healthy
                     };
                 }
                 NextPipelineEvent::DeadlineElapsed => {
+                    *status.lock().expect("status mutex poisoned") =
+                        PowerShellSessionStatus::Invalidated;
                     let _ = message_tx.try_send(PowerShellCommandMessage::Failed(
                         PowerShellCommandFailure {
                             kind: timeout_failure_kind(
@@ -670,6 +678,10 @@ async fn drive_pipeline(
                     ..
                 })
             );
+            if invalidated {
+                *status.lock().expect("status mutex poisoned") =
+                    PowerShellSessionStatus::Invalidated;
+            }
             let _ = message_tx.try_send(terminal);
             return if invalidated {
                 WorkerHealth::Invalidated
@@ -946,43 +958,6 @@ fn pipeline_error_invalidates_worker(error: &psrp_rs::PsrpError, cancel_requeste
     }
 }
 
-fn emit_cancel_diagnostic(error: &psrp_rs::PsrpError, cancel_requested: bool) {
-    if !cancel_requested {
-        return;
-    }
-    eprintln!(
-        "festerm-psrp-cancel-diagnostic cancel_requested=true error_kind={}",
-        psrp_error_kind(error)
-    );
-}
-
-fn psrp_error_kind(error: &psrp_rs::PsrpError) -> &'static str {
-    match error {
-        psrp_rs::PsrpError::Winrm(error) => winrm_error_kind(error),
-        psrp_rs::PsrpError::Protocol(_) => "psrp-protocol",
-        psrp_rs::PsrpError::Clixml(_) => "psrp-clixml",
-        psrp_rs::PsrpError::Fragment(_) => "psrp-fragment",
-        psrp_rs::PsrpError::BadState { .. } => "psrp-bad-state",
-        psrp_rs::PsrpError::Stopped => "psrp-stopped",
-        psrp_rs::PsrpError::PipelineFailed(_) => "psrp-pipeline-failed",
-        psrp_rs::PsrpError::Cancelled => "psrp-cancelled",
-    }
-}
-
-fn winrm_error_kind(error: &WinrmError) -> &'static str {
-    match error {
-        WinrmError::AuthFailed(_) => "winrm-auth-failed",
-        WinrmError::Timeout(_) => "winrm-timeout",
-        WinrmError::Cancelled => "winrm-cancelled",
-        WinrmError::ResponseTooLarge { .. } => "winrm-response-too-large",
-        WinrmError::Http(_) => "winrm-http",
-        WinrmError::Transfer(_) => "winrm-transfer",
-        WinrmError::Soap(_) => "winrm-soap",
-        WinrmError::Ntlm(_) => "winrm-ntlm",
-        WinrmError::CredSsp(_) => "winrm-credssp",
-    }
-}
-
 fn invalidates_psrp(error: &psrp_rs::PsrpError) -> bool {
     matches!(
         error,
@@ -1247,14 +1222,5 @@ mod tests {
             PowerShellCommandFailureKind::Cancelled
         );
         assert!(!pipeline_error_invalidates_worker(&error, true));
-    }
-
-    #[test]
-    fn cancellation_diagnostic_uses_static_error_categories() {
-        assert_eq!(
-            psrp_error_kind(&psrp_rs::PsrpError::Protocol("details omitted".into())),
-            "psrp-protocol"
-        );
-        assert_eq!(winrm_error_kind(&WinrmError::Timeout(7)), "winrm-timeout");
     }
 }

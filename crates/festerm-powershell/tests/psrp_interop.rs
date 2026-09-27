@@ -458,7 +458,7 @@ fn native_psrp_cancellation_is_bounded_and_does_not_claim_uncertain_success() {
 
     let mut command = start_script_bounded(
         &session,
-        "'cancel-ready'; Start-Sleep -Seconds 30; 'unexpected-success'",
+        "$global:FestermCancelMarker = 'cancel-session'; 'cancel-ready'; Start-Sleep -Seconds 30; 'unexpected-success'",
         Duration::from_secs(15),
     );
     wait_for_output(&mut command, "cancel-ready", Duration::from_secs(10));
@@ -472,32 +472,21 @@ fn native_psrp_cancellation_is_bounded_and_does_not_claim_uncertain_success() {
     assert!(
         matches!(
             kind,
-            PowerShellCommandFailureKind::Cancelled
-                | PowerShellCommandFailureKind::Stopped
-                | PowerShellCommandFailureKind::Invalidated
+            PowerShellCommandFailureKind::Cancelled | PowerShellCommandFailureKind::Stopped
         ),
-        "unexpected cancellation failure kind: {kind:?}"
+        "cancellation on the isolated endpoint must confirm a remote stop, got {kind:?}"
     );
-    if kind == PowerShellCommandFailureKind::Invalidated {
-        assert_eq!(session.status(), PowerShellSessionStatus::Invalidated);
-        assert!(matches!(
-            session.start_script("'after-invalidated-cancel'"),
-            Err(PowerShellSessionError::Invalidated)
-        ));
-        assert_close_after_failure(&session);
-    } else {
-        assert_eq!(
-            output_strings(&run_script(
-                &session,
-                "'after-cancel'",
-                Duration::from_secs(15)
-            )),
-            ["after-cancel"]
-        );
-        session
-            .close()
-            .expect("close PSRP session after cancellation");
-    }
+    assert_eq!(
+        output_strings(&run_script(
+            &session,
+            "$global:FestermCancelMarker; 'after-cancel'",
+            Duration::from_secs(15)
+        )),
+        ["cancel-session", "after-cancel"]
+    );
+    session
+        .close()
+        .expect("close PSRP session after cancellation");
 }
 
 #[test]

@@ -279,12 +279,13 @@ impl<'a> Shell<'a> {
     pub async fn signal_ctrl_c(&self, command_id: &str) -> Result<(), WinrmError> {
         let endpoint = self.client.endpoint(&self.host);
         let config = self.client.config();
-        let envelope = soap::signal_ctrl_c_request(
+        let envelope = soap::signal_ctrl_c_request_with_uri(
             &endpoint,
             &self.shell_id,
             command_id,
             config.operation_timeout_secs,
             config.max_envelope_size,
+            &self.resource_uri,
         );
         self.client.send_soap_raw(&self.host, envelope).await?;
         Ok(())
@@ -479,7 +480,7 @@ mod tests {
     use crate::client::WinrmClient;
     use crate::config::{AuthMethod, WinrmConfig, WinrmCredentials};
     use crate::error::WinrmError;
-    use wiremock::matchers::method;
+    use wiremock::matchers::{body_string_contains, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn test_creds() -> WinrmCredentials {
@@ -1180,6 +1181,46 @@ mod tests {
         let client = WinrmClient::new(basic_config(port), test_creds()).unwrap();
         let shell = client.open_shell("127.0.0.1").await.unwrap();
         shell.signal_ctrl_c("CMD-1").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shell_signal_ctrl_c_uses_shell_resource_uri() {
+        let server = MockServer::start().await;
+        let port = server.address().port();
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                crate::soap::namespaces::RESOURCE_URI_PSRP,
+            ))
+            .and(body_string_contains("/Reconnect"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("<s:Envelope><s:Body/></s:Envelope>"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                crate::soap::namespaces::RESOURCE_URI_PSRP,
+            ))
+            .and(body_string_contains("signal/ctrl_c"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("<s:Envelope><s:Body/></s:Envelope>"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = WinrmClient::new(basic_config(port), test_creds()).unwrap();
+        let shell = client
+            .reconnect_shell(
+                "127.0.0.1",
+                "SH-PSRP",
+                crate::soap::namespaces::RESOURCE_URI_PSRP,
+            )
+            .await
+            .unwrap();
+        shell.signal_ctrl_c("CMD-PSRP").await.unwrap();
     }
 
     #[tokio::test]

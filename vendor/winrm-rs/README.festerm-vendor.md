@@ -21,7 +21,9 @@ local patches remain deliberately narrow:
    contents at verbose log levels;
 4. bounded cancellation during execute/receive and best-effort stop/delete
    cleanup, without treating a stalled receive as a completed command;
-5. standalone vendored-crate buildability in this repository with the required
+5. Ctrl+C signals use the shell's actual ResourceURI, so a PSRP cancellation
+   is not incorrectly routed to the CMD plugin;
+6. standalone vendored-crate buildability in this repository with the required
    Rust 1.98 toolchain.
 
 fesTerm's native backend only enables HTTPS + NTLM initially and does not claim

@@ -2653,3 +2653,12 @@ unsupported prompt and closed idempotently. It also exposed two failures that
 the mock suites had missed: an empty decoded warning message and a protocol
 failure during in-flight cancellation. Those failures are recorded rather
 than treating successful setup or three passing cases as complete acceptance.
+
+The stream fix reads the actual `InformationalRecord_Message` field for
+warning, verbose and debug messages. Cancellation required more than changing
+an error label: the WinRM dependency was routing a PSRP shell's Ctrl+C signal
+to the CMD plugin's ResourceURI. Signals now retain their shell's resource
+identity. The native acceptance case requires a confirmed stop and surviving
+runspace state afterward, while separate regressions retain fail-closed
+invalidation for genuinely uncertain outcomes. Invalidation is published
+before its terminal failure message, avoiding an observable status race.

@@ -720,16 +720,38 @@ pub(crate) fn send_psrp_request(
 ///
 /// Sends a Ctrl+C signal to the command identified by `command_id` within
 /// `shell_id`, requesting graceful interruption.
-pub(crate) fn signal_ctrl_c_request(
+#[cfg(test)]
+fn signal_ctrl_c_request(
     endpoint: &str,
     shell_id: &str,
     command_id: &str,
     timeout_secs: u64,
     max_envelope_size: u32,
 ) -> String {
-    let header = build_header(
+    signal_ctrl_c_request_with_uri(
+        endpoint,
+        shell_id,
+        command_id,
+        timeout_secs,
+        max_envelope_size,
+        RESOURCE_URI_CMD,
+    )
+}
+
+/// Build a WS-Management Signal (Ctrl+C) SOAP envelope for a specific
+/// shell ResourceURI.
+pub(crate) fn signal_ctrl_c_request_with_uri(
+    endpoint: &str,
+    shell_id: &str,
+    command_id: &str,
+    timeout_secs: u64,
+    max_envelope_size: u32,
+    resource_uri: &str,
+) -> String {
+    let header = build_header_for(
         endpoint,
         ACTION_SIGNAL,
+        resource_uri,
         Some(shell_id),
         timeout_secs,
         max_envelope_size,
@@ -1041,6 +1063,21 @@ mod tests {
         assert!(xml.contains("C1"));
         assert!(xml.contains("signal/ctrl_c"));
         assert!(xml.contains("153600"));
+    }
+
+    #[test]
+    fn signal_ctrl_c_with_uri_uses_powershell_resource_uri() {
+        let xml = signal_ctrl_c_request_with_uri(
+            "http://host:5985/wsman",
+            "S1",
+            "C1",
+            60,
+            153_600,
+            RESOURCE_URI_PSRP,
+        );
+        assert!(xml.contains(RESOURCE_URI_PSRP));
+        assert!(!xml.contains(RESOURCE_URI_CMD));
+        assert!(xml.contains("signal/ctrl_c"));
     }
 
     #[test]
