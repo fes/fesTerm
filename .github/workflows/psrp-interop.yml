@@ -33,6 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: psrp-interop
+          cache-on-failure: true
 
       - name: Check PSRP provisioning harness guards
         shell: powershell

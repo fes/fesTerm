@@ -24,7 +24,9 @@ function Write-Result([string]$Line) {
 
 function Write-SanitizedDiagnostic([string]$Category, $ErrorRecord) {
     $exceptionType = if ($ErrorRecord -and $ErrorRecord.Exception) { $ErrorRecord.Exception.GetType().FullName } else { 'unknown' }
-    [Console]::Error.WriteLine("psrp-interop diagnostic category=$Category exception_type=$exceptionType")
+    $line = if ($ErrorRecord -and $ErrorRecord.InvocationInfo) { $ErrorRecord.InvocationInfo.ScriptLineNumber } else { 0 }
+    $hresult = if ($ErrorRecord -and $ErrorRecord.Exception) { $ErrorRecord.Exception.HResult } else { 0 }
+    [Console]::Error.WriteLine("psrp-interop diagnostic category=$Category exception_type=$exceptionType line=$line hresult=$hresult")
 }
 
 function Add-CleanupError([System.Collections.Generic.List[string]]$Errors, [string]$Step, [scriptblock]$Action) {
@@ -165,6 +167,7 @@ try {
         Start-Service WinRM
     }
 
+    $failureReason = 'read-wsman-settings-failed'
     $originalIPv4Filter = (Get-Item WSMan:\localhost\Service\IPv4Filter).Value
     $originalIPv6Filter = (Get-Item WSMan:\localhost\Service\IPv6Filter).Value
     $originalAllowUnencrypted = (Get-Item WSMan:\localhost\Service\AllowUnencrypted).Value
@@ -193,12 +196,14 @@ try {
     Set-Item WSMan:\localhost\Service\IPv4Filter '127.0.0.1'
     Set-Item WSMan:\localhost\Service\IPv6Filter '::1'
 
+    $failureReason = 'create-account-failed'
     $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
     New-LocalUser -Name $userName -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires | Out-Null
     $createdUser = $true
     Add-LocalGroupMember -Group 'Remote Management Users' -Member $userName
     $sid = (Get-LocalUser -Name $userName).Sid
 
+    $failureReason = 'create-certificates-failed'
     $caCert = New-SelfSignedCertificate `
         -Type Custom `
         -Subject "CN=fesTerm PSRP Interop CA $nonce" `
@@ -227,6 +232,7 @@ try {
     try { $store.Add($caCert); $rootStoreAdded = $true } finally { $store.Close() }
     Export-CertificatePem -Certificate $caCert -Path $caPemPath
 
+    $failureReason = 'create-listener-failed'
     $listener = New-Item -Path WSMan:\localhost\Listener `
         -Address 'IP:127.0.0.1' `
         -Transport HTTPS `
@@ -238,6 +244,7 @@ try {
     }
     if (-not $verified) { throw 'created-listener-verification-failed' }
 
+    $failureReason = 'configure-endpoint-failed'
     $endpoint = Get-PSSessionConfiguration -Name Microsoft.PowerShell
     $originalEndpointSddl = $endpoint.SecurityDescriptorSddl
     $updatedSddl = Add-EndpointExecuteAce -Sddl $originalEndpointSddl -Sid $sid
