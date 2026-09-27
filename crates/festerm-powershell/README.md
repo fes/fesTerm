@@ -6,6 +6,7 @@ Current scope:
 
 - WSMan/WinRM over HTTPS only
 - explicit NTLM credential mode only
+- default `Microsoft.PowerShell` endpoint configuration
 - one persistent runspace pool and one active pipeline at a time
 - incremental PSRP stream events with bounded command/event budgets
 - non-interactive host behavior only
@@ -16,7 +17,8 @@ Not claimed yet:
 - SSH transport
 - CredSSP or delegation
 - GUI/sessiond bridge integration
-- live interoperability evidence beyond repository-owned tests
+- alternate/JEA and PowerShell 7 endpoint selection
+- cross-host or corporate interoperability qualification
 
 Example:
 

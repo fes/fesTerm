@@ -566,14 +566,17 @@ async fn drive_pipeline(
             {
                 NextPipelineEvent::Event(Ok(event)) => event,
                 NextPipelineEvent::Event(Err(error)) => {
+                    let cancel_requested = cancel.is_cancelled();
+                    emit_cancel_diagnostic(&error, cancel_requested);
+                    let kind = failure_kind_for_pipeline_error(&error, cancel_requested);
                     let _ = message_tx.try_send(PowerShellCommandMessage::Failed(
                         PowerShellCommandFailure {
-                            kind: map_failure_kind(&error),
+                            kind,
                             state: None,
                             errors: pipeline_errors,
                         },
                     ));
-                    return if invalidates_psrp(&error) {
+                    return if pipeline_error_invalidates_worker(&error, cancel_requested) {
                         WorkerHealth::Invalidated
                     } else {
                         WorkerHealth::Healthy
@@ -917,6 +920,69 @@ fn map_failure_kind(error: &psrp_rs::PsrpError) -> PowerShellCommandFailureKind 
     }
 }
 
+fn failure_kind_for_pipeline_error(
+    error: &psrp_rs::PsrpError,
+    cancel_requested: bool,
+) -> PowerShellCommandFailureKind {
+    if cancel_requested {
+        return match error {
+            psrp_rs::PsrpError::Cancelled | psrp_rs::PsrpError::Stopped => {
+                PowerShellCommandFailureKind::Cancelled
+            }
+            _ => PowerShellCommandFailureKind::Invalidated,
+        };
+    }
+    map_failure_kind(error)
+}
+
+fn pipeline_error_invalidates_worker(error: &psrp_rs::PsrpError, cancel_requested: bool) -> bool {
+    if cancel_requested {
+        !matches!(
+            error,
+            psrp_rs::PsrpError::Cancelled | psrp_rs::PsrpError::Stopped
+        )
+    } else {
+        invalidates_psrp(error)
+    }
+}
+
+fn emit_cancel_diagnostic(error: &psrp_rs::PsrpError, cancel_requested: bool) {
+    if !cancel_requested {
+        return;
+    }
+    eprintln!(
+        "festerm-psrp-cancel-diagnostic cancel_requested=true error_kind={}",
+        psrp_error_kind(error)
+    );
+}
+
+fn psrp_error_kind(error: &psrp_rs::PsrpError) -> &'static str {
+    match error {
+        psrp_rs::PsrpError::Winrm(error) => winrm_error_kind(error),
+        psrp_rs::PsrpError::Protocol(_) => "psrp-protocol",
+        psrp_rs::PsrpError::Clixml(_) => "psrp-clixml",
+        psrp_rs::PsrpError::Fragment(_) => "psrp-fragment",
+        psrp_rs::PsrpError::BadState { .. } => "psrp-bad-state",
+        psrp_rs::PsrpError::Stopped => "psrp-stopped",
+        psrp_rs::PsrpError::PipelineFailed(_) => "psrp-pipeline-failed",
+        psrp_rs::PsrpError::Cancelled => "psrp-cancelled",
+    }
+}
+
+fn winrm_error_kind(error: &WinrmError) -> &'static str {
+    match error {
+        WinrmError::AuthFailed(_) => "winrm-auth-failed",
+        WinrmError::Timeout(_) => "winrm-timeout",
+        WinrmError::Cancelled => "winrm-cancelled",
+        WinrmError::ResponseTooLarge { .. } => "winrm-response-too-large",
+        WinrmError::Http(_) => "winrm-http",
+        WinrmError::Transfer(_) => "winrm-transfer",
+        WinrmError::Soap(_) => "winrm-soap",
+        WinrmError::Ntlm(_) => "winrm-ntlm",
+        WinrmError::CredSsp(_) => "winrm-credssp",
+    }
+}
+
 fn invalidates_psrp(error: &psrp_rs::PsrpError) -> bool {
     matches!(
         error,
@@ -1161,5 +1227,34 @@ mod tests {
             timeout_failure_kind(true, None),
             PowerShellCommandFailureKind::Invalidated
         );
+    }
+
+    #[test]
+    fn cancellation_protocol_error_invalidates_session() {
+        let error = psrp_rs::PsrpError::Protocol("receive aborted after signal".into());
+        assert_eq!(
+            failure_kind_for_pipeline_error(&error, true),
+            PowerShellCommandFailureKind::Invalidated
+        );
+        assert!(pipeline_error_invalidates_worker(&error, true));
+    }
+
+    #[test]
+    fn acknowledged_cancellation_does_not_invalidate_session() {
+        let error = psrp_rs::PsrpError::Stopped;
+        assert_eq!(
+            failure_kind_for_pipeline_error(&error, true),
+            PowerShellCommandFailureKind::Cancelled
+        );
+        assert!(!pipeline_error_invalidates_worker(&error, true));
+    }
+
+    #[test]
+    fn cancellation_diagnostic_uses_static_error_categories() {
+        assert_eq!(
+            psrp_error_kind(&psrp_rs::PsrpError::Protocol("details omitted".into())),
+            "psrp-protocol"
+        );
+        assert_eq!(winrm_error_kind(&WinrmError::Timeout(7)), "winrm-timeout");
     }
 }

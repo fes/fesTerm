@@ -2643,3 +2643,13 @@ and restores the resources it changes. This narrows the native evidence gap;
 it does not turn same-host NTLM into cross-host, PowerShell 7, or Entra/broker
 qualification. Normal optional runs record a skip unless isolated provisioning
 is explicitly requested.
+
+The hosted runner made the distinction between fixtures and interoperability
+concrete. Windows required range syntax even for single-address WinRM filters,
+and its `New-Item` listener provider raised a null reference; the explicit
+WSMan resource API created the same tightly scoped listener successfully.
+The first native run then preserved state across commands, rejected an
+unsupported prompt and closed idempotently. It also exposed two failures that
+the mock suites had missed: an empty decoded warning message and a protocol
+failure during in-flight cancellation. Those failures are recorded rather
+than treating successful setup or three passing cases as complete acceptance.

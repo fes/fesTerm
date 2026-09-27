@@ -28,6 +28,21 @@ fn property_str(obj: &PsObject, name: &str) -> Option<String> {
     obj.get(name).and_then(PsValue::as_str).map(str::to_string)
 }
 
+fn property_str_any(obj: &PsObject, names: &[&str]) -> Option<String> {
+    let mut first = None;
+    for name in names {
+        if let Some(value) = property_str(obj, name) {
+            if first.is_none() {
+                first = Some(value.clone());
+            }
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    first
+}
+
 fn property_i32(obj: &PsObject, name: &str) -> Option<i32> {
     obj.get(name).and_then(PsValue::as_i32)
 }
@@ -166,7 +181,8 @@ impl FromPsObject for WarningRecord {
                 invocation_info: None,
             }),
             PsValue::Object(obj) => Some(Self {
-                message: property_str(obj, "Message").unwrap_or_default(),
+                message: property_str_any(obj, &["Message", "InformationalRecord_Message"])
+                    .unwrap_or_default(),
                 invocation_info: obj
                     .get("InvocationInfo")
                     .and_then(InvocationInfo::from_ps_object),
@@ -265,7 +281,8 @@ impl FromPsObject for TraceRecord {
                 invocation_info: None,
             }),
             PsValue::Object(obj) => Some(Self {
-                message: property_str(obj, "Message").unwrap_or_default(),
+                message: property_str_any(obj, &["Message", "InformationalRecord_Message"])
+                    .unwrap_or_default(),
                 invocation_info: obj
                     .get("InvocationInfo")
                     .and_then(InvocationInfo::from_ps_object),
@@ -290,6 +307,18 @@ mod tests {
     #[test]
     fn warning_record_from_object() {
         let obj = PsObject::new().with("Message", PsValue::String("careful".into()));
+        let w = WarningRecord::from_ps_object(&PsValue::Object(obj)).unwrap();
+        assert_eq!(w.message, "careful");
+    }
+
+    #[test]
+    fn warning_record_from_psrp_wire_prefixed_object() {
+        let obj = PsObject::new()
+            .with("Message", PsValue::String(String::new()))
+            .with(
+                "InformationalRecord_Message",
+                PsValue::String("careful".into()),
+            );
         let w = WarningRecord::from_ps_object(&PsValue::Object(obj)).unwrap();
         assert_eq!(w.message, "careful");
     }
@@ -373,6 +402,32 @@ mod tests {
         let obj = PsObject::new().with("Message", PsValue::String("n".into()));
         let o = TraceRecord::from_ps_object(&PsValue::Object(obj)).unwrap();
         assert_eq!(o.message, "n");
+    }
+
+    #[test]
+    fn trace_record_from_psrp_wire_prefixed_object() {
+        let verbose = PsObject::new()
+            .with("Message", PsValue::String(String::new()))
+            .with(
+                "InformationalRecord_Message",
+                PsValue::String("verbose".into()),
+            );
+        let debug = PsObject::new().with(
+            "InformationalRecord_Message",
+            PsValue::String("debug".into()),
+        );
+        assert_eq!(
+            TraceRecord::from_ps_object(&PsValue::Object(verbose))
+                .unwrap()
+                .message,
+            "verbose"
+        );
+        assert_eq!(
+            TraceRecord::from_ps_object(&PsValue::Object(debug))
+                .unwrap()
+                .message,
+            "debug"
+        );
     }
 
     #[test]

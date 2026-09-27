@@ -23,7 +23,10 @@ narrow patches needed before adoption:
    aggregation helpers;
 4. small local manifest adjustments so the vendored crate can be built and
    tested standalone in this repository with the required Rust 1.98 toolchain
-   after local validation.
+   after local validation;
+5. decoding the native `InformationalRecord_Message` wire property for
+   warning, verbose and debug records, which the real Windows endpoint emits
+   instead of the ordinary serialized object's `Message` property.
 
 These patches are intentionally scoped for fesTerm's native backend and should
 not be treated as upstream provenance changes.

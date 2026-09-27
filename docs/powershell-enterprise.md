@@ -83,6 +83,9 @@ CredSSP/delegation, PSRP-over-SSH, brokered logon, interactive credential prompt
 and reconnect/continuity are not supported connection modes here. Corporate
 qualification still requires CP-20; NTLM being implemented does not mean the
 organization permits it or that an Entra-only Dev Box accepts it.
+The resource URI currently selects the default `Microsoft.PowerShell`
+configuration. Alternate/JEA and PowerShell 7 configurations are not selectable
+through this API yet.
 
 ### Isolated native interoperability
 

@@ -57,6 +57,8 @@
         "map_winrm_error_redacts_response_details",
         "cancel_drain_deadline_applies_to_in_flight_wait",
         "cancellation_timeout_becomes_invalidated",
+        "cancellation_protocol_error_invalidates_session",
+        "acknowledged_cancellation_does_not_invalidate_session",
         "every_stream_variant_escapes_terminal_controls",
         "native_psrp_persists_state_across_commands",
         "native_psrp_reports_typed_success_streams",
