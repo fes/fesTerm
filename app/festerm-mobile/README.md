@@ -43,7 +43,8 @@ python3 scripts/smoke-ios-simulator.py --run
 python3 scripts/smoke-ios-simulator.py --run --build
 ```
 
-This creates fresh iPhone and iPad Simulators using an installed iOS runtime,
+This creates fresh iPhone and iPad Simulators using an installed iOS runtime
+matching the selected Xcode Simulator SDK,
 installs only the offline spike, checks process survival after launch and
 relaunch, and captures both screens. It shuts down and deletes only its own
 devices. Existing Simulators are never selected for mutation. Every command

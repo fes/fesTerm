@@ -3,6 +3,8 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
+import subprocess
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "smoke-ios-simulator.py"
@@ -42,19 +44,29 @@ class FakeRunner:
 class IosSimulatorSmokeTests(unittest.TestCase):
     def test_ios_smoke_selects_available_matching_phone_and_ipad_runtime(self):
         inventory = {"runtimes": [], "devices": {}}
-        for version, available in [("18.5", True), ("26.0", False), ("18.6", True)]:
+        for version, available in [("18.5", True), ("26.0", True), ("18.6", True)]:
             runtime = "com.apple.CoreSimulator.SimRuntime.iOS-" + version.replace(".", "-")
             inventory["runtimes"].append({"identifier": runtime, "version": version, "isAvailable": available})
             inventory["devices"][runtime] = [
                 {"name": family, "deviceTypeIdentifier": family, "isAvailable": True}
                 for family in (["iPhone"] if version == "18.6" else ["iPhone", "iPad"])
             ]
-        devices = smoke.choose_devices(inventory)
+        devices = smoke.choose_devices(inventory, "18.5")
         self.assertEqual([d["family"] for d in devices], ["iPhone", "iPad"])
         self.assertTrue(all(d["ios"] == "18.5" for d in devices))
         inventory["devices"] = {}
         with self.assertRaisesRegex(RuntimeError, "Install an iOS"):
-            smoke.choose_devices(inventory)
+                smoke.choose_devices(inventory, "18.5")
+
+    def test_ios_smoke_keeps_partial_timeout_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "commands.log"
+            error = subprocess.TimeoutExpired(["xcrun"], 1, output=b"partial diagnostic")
+            with patch.object(smoke.subprocess, "run", side_effect=error):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    smoke.Runner(log)("xcrun", timeout=1)
+            self.assertIn("partial diagnostic", log.read_text())
+            self.assertIn("timeout=1s", log.read_text())
 
     def test_ios_smoke_launch_and_relaunch_only_mutate_the_created_simulator(self):
         run = FakeRunner()

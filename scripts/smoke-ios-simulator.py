@@ -25,10 +25,12 @@ BUNDLE_ID = "org.festerm.mobile-spike"
 EXECUTABLE = "festerm-mobile"
 
 
-def choose_devices(inventory: dict) -> list[dict]:
-    """Select both families from one installed, available iOS runtime."""
+def choose_devices(inventory: dict, sdk_version: str) -> list[dict]:
+    """Select both families from an installed runtime matching the selected SDK."""
+    sdk_release = tuple(int(n) for n in sdk_version.split("."))[:2]
     runtimes = [r for r in inventory["runtimes"]
-                if r.get("isAvailable") and ".iOS-" in r["identifier"]]
+                if r.get("isAvailable") and ".iOS-" in r["identifier"]
+                and tuple(int(n) for n in r["version"].split("."))[:2] == sdk_release]
     runtimes.sort(key=lambda r: tuple(int(n) for n in r["version"].split(".")), reverse=True)
     for runtime in runtimes:
         chosen = []
@@ -44,7 +46,7 @@ def choose_devices(inventory: dict) -> list[dict]:
                                "runtime": runtime["identifier"], "ios": runtime["version"]})
         if len(chosen) == 2:
             return chosen
-    raise RuntimeError("Install an iOS Simulator runtime with available iPhone and iPad device types")
+    raise RuntimeError(f"Install an iOS {sdk_version} Simulator runtime with available iPhone and iPad device types")
 
 
 class Runner:
@@ -52,11 +54,19 @@ class Runner:
         self.log = log
 
     def __call__(self, *args: str, timeout: int = 45, check: bool = True) -> str:
+        print("[ios-smoke] " + shlex.join(args), flush=True)
         with self.log.open("a", encoding="utf-8") as stream:
             stream.write("$ " + shlex.join(args) + "\n")
             stream.flush()
-            result = subprocess.run(args, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, timeout=timeout)
+            try:
+                result = subprocess.run(args, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, timeout=timeout)
+            except subprocess.TimeoutExpired as error:
+                output = error.stdout or ""
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", errors="replace")
+                stream.write(output + f"\ntimeout={timeout}s\n")
+                raise
             stream.write(result.stdout + f"\nexit={result.returncode}\n")
         if check and result.returncode:
             raise RuntimeError(f"Command failed ({result.returncode}): {shlex.join(args)}")
@@ -96,9 +106,9 @@ def exercise_device(run, spec: dict, bundle: Path, output: Path,
         result["udid"] = owned
         run("xcrun", "simctl", "boot", owned)
         run("xcrun", "simctl", "bootstatus", owned, "-b", timeout=180)
-        run("xcrun", "simctl", "install", owned, str(bundle))
+        run("xcrun", "simctl", "install", owned, str(bundle), timeout=120)
         for phase in ("launch", "relaunch"):
-            launched = run("xcrun", "simctl", "launch", owned, BUNDLE_ID)
+            launched = run("xcrun", "simctl", "launch", owned, BUNDLE_ID, timeout=120)
             match = re.search(re.escape(BUNDLE_ID) + r":\s*(\d+)\s*$", launched)
             if not match or int(match[1]) <= 0:
                 raise RuntimeError("simctl launch did not return a valid application PID")
@@ -158,6 +168,7 @@ def main() -> int:
         report["commit"] = run("git", "rev-parse", "HEAD").strip()
         report["xcode"] = run("xcodebuild", "-version").strip()
         report["host_arch"] = platform.machine()
+        report["simulator_sdk"] = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-version").strip()
         if args.build:
             run(sys.executable, str(ROOT / "scripts/build-ios-spike.py"), timeout=1200)
         bundle = args.bundle.resolve()
@@ -167,7 +178,7 @@ def main() -> int:
             raise RuntimeError("Only the offline fesTerm spike bundle may be exercised")
         inventory = json.loads(run("xcrun", "simctl", "list", "--json"))
         existing = {d["udid"] for group in inventory["devices"].values() for d in group}
-        for spec in choose_devices(inventory):
+        for spec in choose_devices(inventory, report["simulator_sdk"]):
             report["devices"].append(exercise_device(run, spec, bundle, output, existing))
             manifest.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         report["status"] = "pass" if all(d["status"] == "pass" for d in report["devices"]) else "fail"
