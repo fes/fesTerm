@@ -2670,3 +2670,9 @@ subsequent shell-not-found fault. Cancellation now uses PowerShell's specific
 signal code and the active pipeline UUID rather than the receive cursor.
 The temporary diagnostic switch was removed instead of leaving debug output
 enabled in production.
+
+A deterministic follow-up fixture also exposed repeated cancellation: the
+incremental API reset its stop-sent flag on each event read, so an error record
+followed by the stopped-state record caused two signals for one cancellation.
+That state now belongs to the pipeline handle, including explicit stop calls,
+and the fixture requires exactly one signal while both records are drained.

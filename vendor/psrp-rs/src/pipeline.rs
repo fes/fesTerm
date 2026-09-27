@@ -362,6 +362,7 @@ impl Pipeline {
             rpid,
             input_closed: self.no_input,
             pending_events: Vec::new(),
+            stop_signalled: false,
         })
     }
 
@@ -432,6 +433,7 @@ pub struct PipelineHandle<'p, T: PsrpTransport> {
     rpid: Uuid,
     input_closed: bool,
     pending_events: Vec<PipelineEvent>,
+    stop_signalled: bool,
 }
 
 impl<T: PsrpTransport> std::fmt::Debug for PipelineHandle<'_, T> {
@@ -495,7 +497,11 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
     /// Ask the server to stop the pipeline. Returns immediately; call
     /// [`collect`](Self::collect) afterwards to drain the `Stopped` ACK.
     pub async fn stop(&mut self) -> Result<()> {
-        self.pool.signal_transport_stop(self.pid).await
+        if !self.stop_signalled {
+            self.pool.signal_transport_stop(self.pid).await?;
+            self.stop_signalled = true;
+        }
+        Ok(())
     }
 
     /// Return the next incremental event for this pipeline.
@@ -510,20 +516,17 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
         &mut self,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<PipelineEvent> {
-        let mut cancel_signalled = false;
         loop {
             if let Some(event) = self.pending_events.pop() {
                 return Ok(event);
             }
-            if !cancel_signalled && cancel.is_cancelled() {
-                self.pool.signal_transport_stop(self.pid).await?;
-                cancel_signalled = true;
+            if !self.stop_signalled && cancel.is_cancelled() {
+                self.stop().await?;
             }
             let msg = tokio::select! {
                 biased;
-                () = cancel.cancelled(), if !cancel_signalled => {
-                    self.pool.signal_transport_stop(self.pid).await?;
-                    cancel_signalled = true;
+                () = cancel.cancelled(), if !self.stop_signalled => {
+                    self.stop().await?;
                     continue;
                 }
                 msg = self.pool.next_message() => msg?,
@@ -1042,6 +1045,50 @@ mod tests {
         assert!(*t.stopped.lock().unwrap());
         assert_eq!(*t.stopped_pipeline_ids.lock().unwrap(), vec![pid]);
         let _ = pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn pipeline_cancel_signals_once_while_draining_error_and_stopped_events() {
+        let t = MockTransport::new();
+        let mut pool = opened_pool_with(&t).await;
+        let rpid = pool.id();
+        let pid = Uuid::new_v4();
+        t.push_incoming(encode_message(
+            10,
+            &make_data_message(
+                MessageType::ErrorRecord,
+                "<S>pipeline stopped</S>".into(),
+                rpid,
+                pid,
+            ),
+        ));
+        t.push_incoming(encode_message(
+            11,
+            &make_state_message(
+                MessageType::PipelineState,
+                "PipelineState",
+                PipelineState::Stopped as i32,
+                rpid,
+                pid,
+            ),
+        ));
+        let handle = Pipeline::new("long-running")
+            .__with_forced_pid_for_test(pid)
+            .start(&mut pool)
+            .await
+            .unwrap();
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            handle.collect_with_cancel(token),
+        )
+        .await
+        .expect("cancel drain must finish")
+        .unwrap_err();
+        assert!(matches!(error, PsrpError::Cancelled));
+        assert_eq!(*t.stopped_pipeline_ids.lock().unwrap(), vec![pid]);
+        pool.close().await.unwrap();
     }
 
     #[tokio::test]

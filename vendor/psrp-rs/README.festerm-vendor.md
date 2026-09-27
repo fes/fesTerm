@@ -28,7 +28,8 @@ narrow patches needed before adoption:
    warning, verbose and debug records, which the real Windows endpoint emits
    instead of the ordinary serialized object's `Message` property;
 6. passing the active pipeline UUID through the stop operation, independently
-   of the transport's current receive command, with canonical WSMan ID casing.
+   of the transport's current receive command, with canonical WSMan ID casing,
+   and retaining the stop-sent state while incremental events are drained.
 
 These patches are intentionally scoped for fesTerm's native backend and should
 not be treated as upstream provenance changes.
