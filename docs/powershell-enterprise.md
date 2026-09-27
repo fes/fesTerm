@@ -112,6 +112,22 @@ PowerShell/HTTPS/NTLM. It does not qualify PowerShell 7, cross-host macOS/Linux
 clients, domain authentication, a corporate Dev Box, or enrolled-device policy.
 CP-20 remains partial until those separately claimed combinations have evidence.
 
+The first passing run with strict cancellation continuity is
+[36355786297](https://github.com/fes/fesTerm/actions/runs/36355786297), at
+`a7b0d12ef203f4b113c55d4fb2b282712c69c389`. All five native cases passed:
+state across commands, typed streams, unsupported-prompt rejection, bounded
+cancellation, and idempotent close. Cancellation required a confirmed stop
+followed by reading the pre-cancellation global variable in the same runspace;
+invalidation or a replacement connection could not satisfy that assertion.
+The harness also completed its resource cleanup successfully.
+
+The cancellation fix uses the PowerShell-specific Signal resource/code and
+active pipeline ID, sends stop only once, and treats the successful Signal
+response as acknowledgement rather than receiving again from the removed
+command. Failed signals and unconfirmed timeouts remain failures, not local
+success. Earlier runs that only invalidated the session do not establish this
+continuity result.
+
 ## Enterprise backend example
 
 The `festerm-enterprise` development backend has a standalone desktop example;

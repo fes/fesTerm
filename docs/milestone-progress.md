@@ -2644,6 +2644,13 @@ it does not turn same-host NTLM into cross-host, PowerShell 7, or Entra/broker
 qualification. Normal optional runs record a skip unless isolated provisioning
 is explicitly requested.
 
+Native run [36355786297](https://github.com/fes/fesTerm/actions/runs/36355786297)
+at `a7b0d12ef203f4b113c55d4fb2b282712c69c389` now passes all five cases,
+including confirmed cancellation followed by the retained pre-cancellation
+runspace variable. Cleanup also succeeded. This closes the isolated native
+cancellation failure described below, not the cross-host, PowerShell 7,
+corporate authentication, GUI or remote-attachment gates.
+
 The hosted runner made the distinction between fixtures and interoperability
 concrete. Windows required range syntax even for single-address WinRM filters,
 and its `New-Item` listener provider raised a null reference; the explicit

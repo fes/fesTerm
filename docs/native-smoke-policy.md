@@ -88,6 +88,9 @@ developer machines and self-hosted runners. See
 [the scope and opt-in contract](powershell-enterprise.md#isolated-native-interoperability).
 This is same-host Windows PowerShell evidence, not corporate access or
 cross-host/macOS/Linux qualification, and remains separate from required CI.
+The [recorded native result](powershell-enterprise.md#isolated-native-interoperability)
+includes confirmed cancellation followed by retained runspace state; an
+invalidated session is not a passing cancellation-continuity result.
 
 The transition from nightly-only to PR-blocking requires:
 
