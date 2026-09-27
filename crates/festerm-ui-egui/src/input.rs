@@ -421,6 +421,7 @@ pub(crate) struct InputAdapterState<'a> {
     /// The user's scroll-speed preference, applied to wheel reports sent to
     /// a mouse-reporting application exactly as it is to local scrollback.
     pub(crate) scroll_speed_multiplier: f32,
+    pub(crate) persistent_keyboard_focus: bool,
 }
 
 /// Which parts of terminal input `route_egui_events` should suppress this
@@ -452,6 +453,7 @@ pub(crate) fn route_egui_events(
         pointer,
         viewport_offset_rows,
         scroll_speed_multiplier,
+        persistent_keyboard_focus,
     } = input;
     // Whether the terminal should currently accept keyboard input.
     //
@@ -684,7 +686,9 @@ pub(crate) fn route_egui_events(
     if terminal_key_routed {
         // egui uses Tab and arrows for widget navigation. A terminal-owned
         // key must retain the grid's keyboard ownership after routing.
-        response.request_focus();
+        if !persistent_keyboard_focus || !response.has_focus() {
+            response.request_focus();
+        }
     } else if !suppress.blackout && keyboard.reclaim_focus_due(Instant::now(), response.has_focus())
     {
         // See `KeyboardOwnership::reclaim_until`'s doc comment: keep

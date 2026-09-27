@@ -23,6 +23,13 @@ to build only. It does not create or erase Simulators.
 The adjacent `fesTermSpike-simulator.tar.gz` preserves executable permissions
 for CI artifact downloads; extract it before installing the `.app` bundle.
 
+For software-keyboard evidence in Xcode 27's Device Hub, select the intended
+Simulator and open **Device > Keyboard**, then uncheck **Simulate Hardware
+Keyboard**. The submenu is populated when opened; querying it while closed
+can misleadingly report only a disabled software-keyboard toggle.
+**Keyboard Capture** is a separate control, not the hardware-keyboard setting.
+Older Simulator.app preferences do not configure Device Hub.
+
 The generated app bundle is a local development artifact, not an IPA or
 TestFlight build. Physical devices still require a separately provisioned and
 signed application; that packaging is outside this slice. Device compilation
@@ -81,6 +88,12 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   use the same vertical arrangement on iPhone and iPad, including landscape
   and Split View. A UIKit keyboard-layout guide measures available space;
   hardware-keyboard use reclaims system-keyboard space but retains the row.
+  The mobile host retains egui focus without re-requesting existing focus or
+  blurring on accessory taps. Repeated focus requests interrupt egui IME
+  composition and make UIKit repeatedly hide/reopen the keyboard, even when
+  the app sets `should_interrupt_composition` to false inside its UI callback.
+  The regression checks the final platform output after egui completes the
+  frame, including accessory taps, keyboard events, geometry changes and resume.
   One-shot Ctrl/Alt chords and ordinary hardware input use the core encoder. Counters
   retain no typed text; nothing executes. Reset returns to a known fixture.
 - Native resume/suspend/memory-warning counters. No rendering while suspended;
@@ -121,3 +134,11 @@ inter-stage variables versus 15 supported). The mobile configuration now uses
 wgpu's downlevel limits and preserves adapter texture dimensions; native rerun
 and visual review are still required. See ADR 0040 and issue #261;
 rendering, keyboard and gesture acceptance remain open.
+
+A later local iPhone 17 / iOS 26.5 run using the Xcode 27 SDK paints the
+fixture and reproduces the repeated-focus keyboard restart loop described
+above. With the focus correction and simulated hardware keyboard disconnected,
+the software keyboard stays visible while idle, after native character,
+Return and Delete actions, and after background/foreground. This is bounded
+local evidence, not SDK-matched CI or iPad/physical-device qualification;
+native accessory-touch, complex IME and gesture acceptance remain open.

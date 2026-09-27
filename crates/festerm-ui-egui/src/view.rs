@@ -50,6 +50,9 @@ pub struct TerminalViewOptions {
     /// remain available so a read-only/dead session's history stays
     /// inspectable.
     pub keyboard_input_enabled: bool,
+    /// Keep an active terminal focused without restarting IME composition
+    /// when it already owns focus. Opt-in for persistent keyboard surfaces.
+    pub persistent_keyboard_focus: bool,
     /// Clipboard text is returned to the application policy layer instead of
     /// being encoded immediately. This lets the composition root apply paste
     /// confirmation without exposing session identity to this crate. Local
@@ -76,6 +79,7 @@ impl Default for TerminalViewOptions {
             paste_available: true,
             terminal_input_enabled: true,
             keyboard_input_enabled: true,
+            persistent_keyboard_focus: false,
             defer_paste_to_application: false,
             scroll_speed_multiplier: 1.0,
             context_menu_action: None,
@@ -695,9 +699,14 @@ impl TerminalView {
             viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
         self.diagnostics.grid_rect = Some(vp_layout.grid);
         if options.terminal_input_enabled
-            && (response.clicked() || !self.has_requested_initial_focus)
+            && (response.clicked()
+                || !self.has_requested_initial_focus
+                || options.persistent_keyboard_focus)
         {
-            response.request_focus();
+            // egui interrupts IME even when requesting the current focus.
+            if !options.persistent_keyboard_focus || !response.has_focus() {
+                response.request_focus();
+            }
             self.has_requested_initial_focus = true;
         }
         ui.memory_mut(|memory| {
@@ -1270,6 +1279,7 @@ impl TerminalView {
                 pointer: &mut self.pointer,
                 viewport_offset_rows: self.history.offset_rows,
                 scroll_speed_multiplier: options.scroll_speed_multiplier,
+                persistent_keyboard_focus: options.persistent_keyboard_focus,
             },
             sink,
             InputSuppression {
@@ -2782,6 +2792,7 @@ mod tests {
                             paste_available: false,
                             terminal_input_enabled: true,
                             keyboard_input_enabled: true,
+                            persistent_keyboard_focus: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
                             context_menu_action: None,
@@ -2823,6 +2834,7 @@ mod tests {
                             paste_available: false,
                             terminal_input_enabled: true,
                             keyboard_input_enabled: false,
+                            persistent_keyboard_focus: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
                             context_menu_action: None,

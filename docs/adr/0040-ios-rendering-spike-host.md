@@ -63,6 +63,14 @@ latches to text/IME commits and preserves composition completion events without
 sending the text twice. Existing unmodified desktop dispatch is unchanged.
 Native keyboard appearance, frame animation and IME remain qualification gates.
 
+Persistent input opts into the shared view's idempotent keyboard-focus policy;
+desktop callers keep their existing default. Mobile accessory controls do not
+take keyboard focus, and outside clicks do not automatically blur the terminal.
+This avoids egui's explicit composition interruption on every `request_focus`,
+which the winit integration implements by disabling and re-enabling native IME.
+Do not mask that loop with UIKit polling or an upstream fork. Regression
+assertions inspect final egui platform output, not just the UI callback's request.
+
 The owner-requested arrow interaction lives in the mobile adapter: stationary
 hold then directional drag, transient helper and three repeat speeds. It emits
 core key intents, consumes synthesized pointer duplicates while captured, and
@@ -116,6 +124,15 @@ desktop configuration is unchanged. A regression reproduces the rejected default
 request and verifies the mobile descriptor against constrained limits. Native
 presentation still requires a successful rerun; track the gate in issue #261.
 
+A later local iPhone 17 / iOS 26.5 run with the Xcode 27 SDK renders the fixture.
+Native responder tracing identified repeated egui focus requests as the cause
+of continual keyboard hide/show animation. The idempotent focus policy removes
+that loop; local software-keyboard evidence covers idle presentation, native
+character/Return/Delete actions and background/foreground. The Simulator's
+hardware-keyboard emulation must be disconnected for this software-keyboard
+case. This does not replace SDK-matched CI, iPad, physical-device, complex IME
+or native accessory/gesture qualification; the ADR remains Proposed.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** additive mobile composition root;
@@ -129,6 +146,7 @@ presentation still requires a successful rerun; track the gate in issue #261.
   `mobile_probe_uses_core_encoding_without_echoing_or_retaining_input`,
   `mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning`;
   `mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard`,
+  `mobile_persistent_keyboard_does_not_restart_ime_between_frames`,
   `mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries`,
   `explicit_modifiers_encode_control_meta_and_cursor_chords_atomically`;
   `mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release`,

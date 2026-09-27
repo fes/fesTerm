@@ -101,7 +101,10 @@ pub fn fixture_terminal() -> Terminal {
     terminal.ingest(b"Offline fixture. No SSH connection or local shell.\r\n");
     for row in 1..=80 {
         terminal.ingest(
-            format!("\x1b[32m{row:02}\x1b[0m  ANSI  \u{00e9}  \u{03bb}  \u{4e2d}\u{6587}  \u{1f680}\r\n").as_bytes(),
+            format!(
+                "\x1b[32m{row:02}\x1b[0m  ANSI  \u{00e9}  \u{03bb}  \u{4e2d}\u{6587}  \u{1f680}\r\n"
+            )
+            .as_bytes(),
         );
     }
     terminal.ingest(b"Input is counted and discarded, never executed.\r\n");
@@ -155,6 +158,10 @@ impl MobileApp {
     }
 
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
+        // Accessory taps must not blur the terminal and restart UIKit's keyboard.
+        ui.ctx().options_mut(|options| {
+            options.input_options.surrender_focus_on = egui::SurrenderFocusOn::Never;
+        });
         let mut safe_rect = ui.ctx().content_rect().intersect(ui.max_rect());
         let viewport = ui.ctx().viewport_rect();
         safe_rect.max.y = safe_rect
@@ -183,7 +190,6 @@ impl MobileApp {
         );
         self.control = false;
         self.alt = false;
-        self.view.request_focus_on_next_frame();
     }
 
     fn consume_sticky_text(&mut self, events: &mut Vec<egui::Event>) {
@@ -238,7 +244,10 @@ impl MobileApp {
                 self.sink.diagnostics.byte_count,
             ));
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Reset fixture").clicked() {
+                if ui
+                    .add(egui::Button::new("Reset fixture").sense(egui::Sense::CLICK))
+                    .clicked()
+                {
                     self.gestures.cancel();
                     self.terminal = fixture_terminal();
                     self.view = TerminalView::default();
@@ -255,14 +264,30 @@ impl MobileApp {
                     .show(ui, |ui| {
                         ui.spacing_mut().interact_size.y = 44.0;
                         ui.horizontal(|ui| {
-                            if ui.selectable_label(self.control, "Ctrl").clicked() {
+                            // Terminal keys act like a keyboard, not focus targets.
+                            if ui
+                                .add(
+                                    egui::Button::selectable(self.control, "Ctrl")
+                                        .sense(egui::Sense::CLICK),
+                                )
+                                .clicked()
+                            {
                                 self.control = !self.control;
                             }
-                            if ui.selectable_label(self.alt, "Alt").clicked() {
+                            if ui
+                                .add(
+                                    egui::Button::selectable(self.alt, "Alt")
+                                        .sense(egui::Sense::CLICK),
+                                )
+                                .clicked()
+                            {
                                 self.alt = !self.alt;
                             }
                             for (label, key) in [("Esc", Key::Escape), ("Tab", Key::Tab)] {
-                                if ui.button(label).clicked() {
+                                if ui
+                                    .add(egui::Button::new(label).sense(egui::Sense::CLICK))
+                                    .clicked()
+                                {
                                     self.send_key(key);
                                 }
                             }
@@ -272,9 +297,6 @@ impl MobileApp {
         });
         self.toolbar_rect = Some(toolbar.response.rect);
         ui.input_mut(|input| self.consume_sticky_text(&mut input.events));
-        if lifecycle.active {
-            self.view.request_focus_on_next_frame();
-        }
         let terminal_rect = ui.available_rect_before_wrap();
         let gesture = ui.input_mut(|input| {
             let any_touches = input.any_touches();
@@ -304,6 +326,7 @@ impl MobileApp {
                 paste_available: false,
                 terminal_input_enabled: lifecycle.active && !gesture.block_pointer,
                 keyboard_input_enabled: lifecycle.active,
+                persistent_keyboard_focus: lifecycle.active,
                 // No clipboard/paste policy is implemented by this probe.
                 defer_paste_to_application: true,
                 ..Default::default()
@@ -546,6 +569,116 @@ mod tests {
             assert!(app.gestures.helper().is_none());
             assert!(app.terminal.queued_input().is_empty());
         }
+    }
+
+    #[test]
+    fn mobile_persistent_keyboard_does_not_restart_ime_between_frames() {
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new(lifecycle.clone());
+        let ctx = egui::Context::default();
+        let render = |app: &mut MobileApp, occlusion, events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(390.0, 844.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.show_with_occlusion(ui, occlusion),
+            )
+        };
+        for _ in 0..2 {
+            render(&mut app, 0.0, vec![]).drop_without_applying_deltas();
+        }
+        assert!(ctx.memory(|memory| memory.focused().is_some()));
+        let mut checked_frames = 0;
+        let mut assert_stable = |output: egui::FullOutput| {
+            checked_frames += 1;
+            let interrupt = output
+                .platform_output
+                .ime
+                .as_ref()
+                .map(|ime| ime.should_interrupt_composition);
+            output.drop_without_applying_deltas();
+            assert_eq!(
+                interrupt,
+                Some(false),
+                "final platform output must not hide/reopen the native keyboard (frame {checked_frames})"
+            );
+        };
+        for occlusion in [0.0, 0.2, 0.36, 0.36, 0.0, 0.36] {
+            assert_stable(render(&mut app, occlusion, vec![]));
+        }
+        let toolbar = app.toolbar_rect.unwrap();
+        let grid = app.view.diagnostics().grid_rect.unwrap();
+        for point in [
+            toolbar.min + egui::vec2(22.0, 22.0),
+            toolbar.min + egui::vec2(57.0, 22.0),
+            toolbar.min + egui::vec2(92.0, 22.0),
+            toolbar.min + egui::vec2(128.0, 22.0),
+            grid.center(),
+        ] {
+            for pressed in [true, false] {
+                assert_stable(render(
+                    &mut app,
+                    0.36,
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                ));
+            }
+            assert_stable(render(&mut app, 0.36, vec![]));
+        }
+        assert!(app.sink.diagnostics.byte_count > 0);
+        for event in [
+            egui::Event::Text("x".into()),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "x".into(),
+                active_range_chars: None,
+            }),
+            egui::Event::Ime(egui::ImeEvent::Commit("x".into())),
+        ] {
+            assert_stable(render(&mut app, 0.36, vec![event]));
+        }
+        for key in [
+            egui::Key::Enter,
+            egui::Key::Backspace,
+            egui::Key::Tab,
+            egui::Key::ArrowUp,
+        ] {
+            assert_stable(render(
+                &mut app,
+                0.36,
+                vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ));
+        }
+        let mut state = lifecycle.get();
+        state.suspend();
+        lifecycle.set(state);
+        let output = render(&mut app, 0.0, vec![]);
+        assert!(output.platform_output.ime.is_none());
+        output.drop_without_applying_deltas();
+        state.resume();
+        lifecycle.set(state);
+        render(&mut app, 0.36, vec![]).drop_without_applying_deltas();
+        assert_stable(render(&mut app, 0.36, vec![]));
     }
 
     #[test]
