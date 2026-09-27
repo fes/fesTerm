@@ -107,7 +107,14 @@ therefore cannot qualify even startup. The smoke now captures application
 stdout/stderr and requires the first UI callback marker, preserving screenshots
 on failure. The marker proves UI construction only, not presentation or keyboard
 correctness. Host/renderer warnings are logged without retaining typed input.
-Renderer initialization versus window presentation remains under investigation.
+The diagnostic run at `c7ecb14` captured the same initialization error on both
+families: default `max_inter_stage_shader_variables=16` exceeds the Simulator
+Metal adapter's limit of 15. The mobile host now requests wgpu's downlevel
+baseline, retaining adapter texture dimensions for full-resolution surfaces.
+This uses the public device descriptor callback; validation remains enabled and
+desktop configuration is unchanged. A regression reproduces the rejected default
+request and verifies the mobile descriptor against constrained limits. Native
+presentation still requires a successful rerun; track the gate in issue #261.
 
 ## Validation impact
 
@@ -117,6 +124,7 @@ Renderer initialization versus window presentation remains under investigation.
 - **GUI/action edges affected:** `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04` (isolated spike);
   `ZOOM-02` shares the existing size bounds.
 - **Automated tests required:**
+  `mobile_gpu_limits_accept_simulator_downlevel_capabilities`,
   `mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend`,
   `mobile_probe_uses_core_encoding_without_echoing_or_retaining_input`,
   `mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning`;

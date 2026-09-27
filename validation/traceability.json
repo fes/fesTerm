@@ -2155,6 +2155,7 @@
         "mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend",
         "mobile_probe_uses_core_encoding_without_echoing_or_retaining_input",
         "mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning",
+        "mobile_gpu_limits_accept_simulator_downlevel_capabilities",
         "mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard",
         "mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries",
         "mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release",

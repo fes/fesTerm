@@ -10,6 +10,30 @@ use festerm_ui_egui::{
 };
 use std::{cell::Cell, rc::Rc};
 
+/// The egui mesh renderer does not need the full WebGPU limits. In particular,
+/// iOS Simulator Metal exposes 15 inter-stage variables, below the default 16.
+/// Keep device validation enabled and request the portable downlevel baseline,
+/// retaining adapter texture dimensions for full-resolution phone/iPad surfaces.
+fn mobile_device_descriptor(
+    supported: eframe::wgpu::Limits,
+) -> eframe::wgpu::DeviceDescriptor<'static> {
+    eframe::wgpu::DeviceDescriptor {
+        label: Some("fesTerm mobile renderer"),
+        required_limits: eframe::wgpu::Limits::downlevel_defaults().using_resolution(supported),
+        ..Default::default()
+    }
+}
+
+pub fn mobile_wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
+    let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    setup.device_descriptor =
+        std::sync::Arc::new(|adapter| mobile_device_descriptor(adapter.limits()));
+    eframe::egui_wgpu::WgpuConfiguration {
+        wgpu_setup: setup.into(),
+        ..Default::default()
+    }
+}
+
 pub const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
 /// Only content-free lifecycle observations cross the event-loop/UI seam.
@@ -323,6 +347,21 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_gpu_limits_accept_simulator_downlevel_capabilities() {
+        let simulator = eframe::wgpu::Limits {
+            max_texture_dimension_2d: 8192,
+            ..eframe::wgpu::Limits::downlevel_defaults()
+        };
+        // Reproduce the rejected default request, then check the descriptor
+        // used by the mobile host against the same constrained adapter.
+        assert!(!eframe::wgpu::Limits::default().check_limits(&simulator));
+        let device = mobile_device_descriptor(simulator.clone());
+        assert!(device.required_limits.check_limits(&simulator));
+        assert!(device.required_features.is_empty());
+        assert!(device.required_limits.max_texture_dimension_2d >= 4096);
+    }
 
     #[test]
     fn mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning() {

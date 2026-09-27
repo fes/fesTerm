@@ -116,5 +116,8 @@ require an upstream fork.
 The SDK-matched iOS 18.5 run at `7670d52` did not pass: iPhone launch timed
 out and iPad launch/relaunch screenshots were black. The runner now captures
 app stdout/stderr and rejects a live process that never builds its first UI.
-This marker still requires visual review of the captured frame. See ADR 0040;
+The diagnostic run found a rejected GPU limit on both devices (16 requested
+inter-stage variables versus 15 supported). The mobile configuration now uses
+wgpu's downlevel limits and preserves adapter texture dimensions; native rerun
+and visual review are still required. See ADR 0040 and issue #261;
 rendering, keyboard and gesture acceptance remain open.

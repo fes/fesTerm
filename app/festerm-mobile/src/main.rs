@@ -115,6 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "fesTerm Mobile Spike",
         eframe::NativeOptions {
             renderer: eframe::Renderer::Wgpu,
+            wgpu_options: festerm_mobile::mobile_wgpu_configuration(),
             run_and_return: false,
             viewport,
             ..Default::default()

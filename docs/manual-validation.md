@@ -101,7 +101,10 @@ capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
 cover ownership, failure reporting and cleanup; actual execution is an iOS CI
 gate. The manifest and PNGs are review evidence, not automatic rendering,
 keyboard or lifecycle acceptance. Physical-device and interaction evidence
-above remains pending. SSH recovery and Keychain are **deferred** behind
+above remains pending. The `c7ecb14` run diagnosed a renderer initialization
+limit mismatch on both Simulators (16 requested inter-stage variables, 15
+supported). The mobile downlevel-limit fix requires native rerun and image
+review; issue #261 tracks this MOB-01 startup blocker. SSH recovery and Keychain are **deferred** behind
 the Phase 1 decision, not missing evidence for an implemented connection.
 
 ## Deferred desktop Store qualification
