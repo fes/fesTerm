@@ -171,6 +171,21 @@ stateDiagram-v2
     Sessions --> Launcher: close final surface
 ```
 
+## PowerShell and enterprise backend prerequisites (no Launcher route yet)
+
+The following IDs track the standalone backend/example contract under
+ADR-0041, not implemented GUI tabs or saved accounts. Headless protocol
+fixtures cover the `P` layer; real PSRP, sign-in and tenant access remain
+CP-20/CP-21.
+Future application integration must add its invocation, focus and recovery
+edges rather than treating these backend checks as GUI acceptance.
+
+| ID | From -> To | Action / guard | Oracle | Return | Layer |
+| --- | --- | --- | --- | --- | --- |
+| `PSRP-01` | Configured native client -> structured command events or explicit failure | Connect to an approved HTTPS/NTLM endpoint, execute in one persistent runspace, consume events, cancel or close. | No external remoting client or VT decoding; bounded transport/expanded values/events; cancellation tightens the pending wait and invalidates unconfirmed state; CLI display escapes controls in every stream. | Cancel the command and explicitly close; never silently recreate or claim continuity. | P,N |
+| `ENTRA-01` | Configured public client -> transient token or explicit denial | Begin system-browser PKCE with an approved tenant/application and loopback redirect. | Bind loopback before browser launch; validate callback/state; bound pending sockets and HTTP; cancellation/deadline releases the attempt; no client secret, token persistence, broker claim or weaker fallback. | Cancel/drop the authorization attempt; start a new independent attempt explicitly. | P,N |
+| `ENTRA-02` | Authorized Dev Center client -> bounded owned-resource inventory | Query projects and permitted current-user Dev Boxes at the configured endpoint; fetch a connection URL only as a separate authorized operation. | Token scope/lifetime stays with its client; no cross-origin redirects/continuations; bounds/cycles/errors are explicit; listing does not require connection permission; sensitive handoff URLs are not logged or auto-launched. | Cancel the operation or drop the client/token; no resource mutation to undo. | P,N |
+
 ## A. Root, Launcher, and surface lifecycle
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |

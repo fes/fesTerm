@@ -2597,3 +2597,40 @@ inside protocol decoding and streaming consumption, not just truncation after
 an unbounded library collector has already allocated its results. The branch
 does not advertise a completed PowerShell tab or remote daemon bridge from
 these foundations alone.
+
+The first native backends made that distinction concrete. The PSRP adapter
+retains one runspace and consumes typed events, while a pinned vendor patch
+bounds wire assembly and CLIXML reference expansion before large clones.
+Review found that merely noticing cancellation after the next event arrived
+did not bound a stalled receive; the cancellation deadline now governs the
+already-pending wait. Even the CLI example must escape remote control
+characters rather than passing structured PowerShell strings into a terminal.
+
+The enterprise client uses public-client PKCE with a loopback callback and
+read-only Dev Center APIs. A cancellation check before a request was not
+enough: an accepted idle callback socket, stalled response, or blocking DNS
+lookup could still hold it up. Its deadlines now cover those in-flight
+operations; async DNS is explicitly enabled, and the client owns the runtime
+used by its resolver across requests. Tokens carry immutable sign-in scope
+and expiry, and owned sensitive buffers are wiped on failure as well as success.
+Listing permission remains distinct from connection permission, and the CLI
+bounds its total output across projects rather than multiplying per-project
+limits into an oversized result.
+
+These are usable backend examples, not accepted graphical connection types.
+The existing Windows lab could not be reached and its local Parallels
+executable was unavailable; no host trust or corporate policy was bypassed
+to turn that missing evidence into a pass.
+
+Workspace validation also exposed a pre-existing picker fixture using a
+Cancel-button position from before submitting a path cleared its error rows.
+A controlled prior error reproduced the same failure without relying on
+timing. The fixture now owns an isolated directory and renders the changed
+layout before looking up Cancel; its original cancellation and stale-result
+assertions remain intact. No production picker behavior was changed.
+
+The new loopback fixtures also needed portable socket setup: accepted sockets
+can inherit a listener's nonblocking mode on macOS, so fixture readers now
+explicitly use blocking sockets with bounded I/O. Callback deadline scenarios
+connect their peers before starting the short read deadline, rather than
+racing HTTP-client construction and a newly scheduled connector thread.

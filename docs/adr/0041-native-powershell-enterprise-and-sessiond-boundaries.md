@@ -33,8 +33,9 @@ the application owns presentation and typed user commands. A dedicated result
 surface preserves stream identity and structured values before rendering.
 Spawning an external `pwsh` remoting client is not this implementation.
 
-Assess WSMan/WinRM and PSRP-over-SSH independently. Choose the initial transport
-only after source review and controlled interoperability evidence establish
+Assess WSMan/WinRM and PSRP-over-SSH independently. A pre-GUI prototype may
+evaluate the source-reviewed WSMan candidate; promotion to an application
+connection type requires controlled interoperability evidence establishing
 runspace reuse, authentication, bounds, cancellation and cleanup. A normal SSH
 terminal is not a substitute for the PowerShell SSH subsystem. Unsupported host
 calls, secure prompts, delegation and endpoint capabilities fail explicitly;

@@ -7578,8 +7578,14 @@ mod tests {
 
     #[test]
     fn markdown_file_picker_path_focus_shortcut_and_cancel_own_pending_results() {
-        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
+        let directory = tempfile::tempdir().unwrap();
+        let mut picker =
+            MarkdownFilePicker::new(directory.path().to_owned(), egui::Context::default());
         wait_for_picker_load(&mut picker);
+        picker.pane.set_error(
+            "A previous lookup failed.".to_owned(),
+            "Controlled fixture detail.".to_owned(),
+        );
         let mut harness = Harness::builder()
             .with_size(egui::vec2(800.0, 650.0))
             .build_ui_state(
@@ -7606,6 +7612,8 @@ mod tests {
         harness.state_mut().0.local_loader = LocalDirectoryLoader::paused_for_test();
         harness.state_mut().0.submit_path();
         let request_id = harness.state().0.pane.pending_request_id;
+        // Submitting clears the prior error rows and moves the footer.
+        harness.run();
         harness.get_by_label("Cancel").click();
         harness.run();
         assert!(matches!(
@@ -7618,7 +7626,7 @@ mod tests {
             .event_sender
             .send(MarkdownPickerEvent::PathResolved {
                 request_id,
-                result: Ok((std::env::temp_dir().join("must-not-open.txt"), false)),
+                result: Ok((directory.path().join("must-not-open.txt"), false)),
             })
             .unwrap();
         harness.state_mut().0.poll();

@@ -1,0 +1,58 @@
+# Build artifacts
+/target
+/mutants.out
+/mutants.out.old
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vagrant
+.vagrant/
+Vagrantfile
+tests/scripts/vm-*.sh
+
+# Coverage
+lcov.info
+*.profraw
+*.profdata
+tarpaulin-report.html
+
+# Claude Code local workspace
+.claude/
+CLAUDE.md
+
+# Serena MCP project metadata
+.serena/
+
+# Network debug captures
+*.pcap
+*.pcapng
+*.etl
+*.keys
+
+# Local notes / scratch
+TODO.local.md
+*.local.md
+notes.md
+/todo/
+
+# Fuzz artefacts (seeds/ and dict/ are tracked)
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
+# SonarQube scanner working directory
+/.scannerwork/
+
+# Python bytecode (scripts/)
+__pycache__/
+*.pyc

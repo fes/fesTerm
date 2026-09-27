@@ -3,6 +3,8 @@ members = [
     "app/festerm",
     "crates/festerm-core",
     "crates/festerm-config",
+    "crates/festerm-enterprise",
+    "crates/festerm-powershell",
     "crates/festerm-linux-power",
     "crates/festerm-macos-window",
     "crates/festerm-pty",
@@ -24,7 +26,7 @@ members = [
     "crates/festerm-syntax",
 ]
 resolver = "2"
-exclude = ["vendor/egui-winit", "fuzz"]
+exclude = ["vendor/egui-winit", "vendor/psrp-rs", "vendor/winrm-rs", "fuzz"]
 
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }

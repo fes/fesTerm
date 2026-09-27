@@ -9,6 +9,14 @@ fesTerm uses capability-based milestones rather than calendar-based commitments.
 
 The roadmap is foundation-first. Early milestones may produce little visible UI progress because they establish the terminal model, fixtures, diagnostics, and CI needed to build later features without guesswork.
 
+The owner has separately authorized desktop native PowerShell and enterprise
+development on `feat/powershell` for #256/#255. The current work establishes
+structured-session, public-client identity and current-user daemon-discovery
+boundaries under [ADR 0041](docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md).
+It does not mark any existing milestone complete or imply that PowerShell
+tabs, Dev Box Windows logon, embedded RDP or enrolled-phone access are accepted.
+See [the implementation and prerequisite guide](docs/powershell-enterprise.md).
+
 ## Milestone Issue Review
 
 At the start and before release of every milestone, review open GitHub issues

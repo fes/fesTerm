@@ -39,6 +39,10 @@ Read `README.md`, then use the document that matches the task:
   and bounded reconnect/recovery.
 - `crates/festerm-serial`: serial-port discovery/configuration and bounded
   worker-thread transport.
+- `crates/festerm-enterprise`: pre-GUI public-client identity and read-only
+  Dev Center discovery; no broker/device-compliance or Windows-logon claim.
+- `crates/festerm-powershell`: pre-GUI structured native PSRP boundary under
+  ADR 0041; PSRP/CLIXML never enters the terminal byte-stream parser.
 - `crates/festerm-config`: strict versioned TOML profiles and metadata-only
   workspace persistence with startup validation and transactional autosave.
 - `crates/festerm-macos-window`: cfg-gated macOS custom-window integration.

@@ -1,4 +1,7 @@
 /target
+/crates/festerm-powershell/target
+/vendor/psrp-rs/target
+/vendor/winrm-rs/target
 /fuzz/target
 /fuzz/corpus/
 /fuzz/artifacts/

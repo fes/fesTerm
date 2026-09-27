@@ -1,0 +1,222 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (kerberos)
+        run: |
+          sudo apt-get update && sudo apt-get install -y libkrb5-dev
+          cargo clippy --all-targets --features kerberos -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Run tests
+        run: cargo nextest run
+      - name: Run doc tests
+        run: cargo test --doc
+
+  test-kerberos:
+    name: Test (kerberos)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Install libkrb5-dev
+        run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
+      - run: cargo nextest run --features kerberos
+      - run: cargo test --doc --features kerberos
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      # The `kerberos` feature pulls `cross-krb5` which needs krb5 dev
+      # headers (gssapi.h) to build its `libgssapi-sys` bindings.
+      - name: Install krb5 dev headers
+        run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
+      - run: cargo doc --no-deps --all-features
+
+  msrv:
+    name: MSRV (1.98.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  deny:
+    name: Dependency check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans
+
+  fuzz:
+    name: Fuzz (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      # NOT `taiki-e/install-action@cargo-fuzz`: that branch is an unmaintained
+      # 2024-03 snapshot that resolves, exits in 19ms and installs nothing, and
+      # cargo-fuzz is no longer in the action's tool manifest. `cargo install`
+      # is slower but cannot silently no-op; rust-cache keeps ~/.cargo/bin
+      # warm across runs.
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Install OpenSSL headers (credssp feature)
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - name: Build every target
+        run: scripts/fuzz.sh build
+      # Deterministic: replays the committed seeds plus whatever the caches
+      # hold. Fails only when a known input has started to crash.
+      - name: Replay seed corpora
+        run: scripts/fuzz.sh smoke
+      # Short mutation budget per target — enough to catch an obviously broken
+      # invariant on a PR. The real campaign runs nightly in fuzz.yml.
+      - name: Fuzz each target briefly
+        run: FUZZ_TIME=20 scripts/fuzz.sh run
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
+  semver:
+    name: Semver check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  # Gate job — add this to branch protection rules
+  ci-pass:
+    name: CI passed
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - test
+      - test-kerberos
+      - coverage
+      - doc
+      - msrv
+      - audit
+      - deny
+      - fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          results=( \
+            "${{ needs.fmt.result }}" \
+            "${{ needs.clippy.result }}" \
+            "${{ needs.test.result }}" \
+            "${{ needs.test-kerberos.result }}" \
+            "${{ needs.coverage.result }}" \
+            "${{ needs.doc.result }}" \
+            "${{ needs.msrv.result }}" \
+            "${{ needs.audit.result }}" \
+            "${{ needs.deny.result }}" \
+            "${{ needs.fuzz.result }}" \
+          )
+          for r in "${results[@]}"; do
+            if [[ "$r" != "success" ]]; then
+              echo "::error::One or more required jobs failed"
+              exit 1
+            fi
+          done
+          echo "All required jobs passed"

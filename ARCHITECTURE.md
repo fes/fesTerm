@@ -58,6 +58,24 @@ egui-wgpu. The UI retains layout, input, fonts and paint order; the native
 crate owns SDK interop and immutable shared surfaces. See proposed
 [ADR 0039](docs/adr/0039-opt-in-direct2d-terminal-composition.md).
 
+### PowerShell and enterprise development boundaries
+
+Owner-authorized development under
+[ADR 0041](docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md)
+adds separate backend foundations rather than changing the terminal byte
+contract. `festerm-enterprise` owns transient public-client identity and bounded
+Dev Center queries; `festerm-powershell` owns native structured PSRP operations.
+Both reuse the secret-byte boundary. Neither makes the terminal core depend on
+cloud identity, nor feeds PSRP/CLIXML through the VT parser.
+
+These backends are not yet application tabs, persisted accounts/profiles, or
+automatic workspace connections. Future GUI integration must use typed
+application commands and keep network operations off the frame thread.
+Entra discovery does not authenticate a Windows shell. Sessiond's versioned
+JSON helper is a read-only prerequisite, not a network listener or implemented
+remote attachment bridge. Native interoperability and broker/compliance gates
+remain explicit in CP-19 through CP-21.
+
 ## Current and Target Workspace Layout
 
 The repository is a Cargo workspace. The initial core, test-support, and

@@ -50,6 +50,88 @@ authentication have separate qualification gates.
 No native PowerShell profile, connected tab, enterprise account or remote
 attachment is advertised until its corresponding implementation exists.
 
+### Native backend example
+
+```sh
+cargo +1.98.0 run -p festerm-powershell --example psrp-shell -- \
+  HOST USERNAME DOMAIN /path/to/trusted-ca.pem
+```
+
+`DOMAIN` and the CA file are optional trailing arguments. The example uses
+verified HTTPS on port 5986 and prompts for the password rather than accepting
+it as an argument. It runs PSRP in-process; it does not spawn a local `pwsh`
+remoting client. Use only an explicitly authorized test endpoint.
+
+The library exposes endpoint/credential types, a session with explicit
+connect/status/close operations, and command handles for bounded event reads
+and cancellation. Defaults include a 10-second connection timeout, 30-second
+WSMan operation timeout, 4 MiB HTTP/output bound, 64 KiB error-body bound,
+32 queued messages, 512 events, 16,384 expanded nodes, 2 MiB expanded-value
+budget, and separate 5-second cancellation-drain and shutdown budgets.
+The WSMan operation timeout is not a promise that an entire script completes
+within 30 seconds.
+
+The source-reviewed dependency patches are pinned at `psrp-rs` 2.0.2
+(`4a79189d61ce4c33312c40c32cb8eb628c6a478f`) and `winrm-rs` 1.2.2
+(`8ce77d236fdede2e323a6b88d132bce133b8e3dc`). Their provenance documents retain
+upstream attribution and describe the bounded decode/transport deviations.
+Their regression suites run separately in CI because these vendored libraries
+are not workspace members; their test dependencies have separate lockfiles.
+
+Only HTTPS plus explicit NTLM credentials is in this prototype. Kerberos,
+CredSSP/delegation, PSRP-over-SSH, brokered logon, interactive credential prompts,
+and reconnect/continuity are not supported connection modes here. Corporate
+qualification still requires CP-20; NTLM being implemented does not mean the
+organization permits it or that an Entra-only Dev Box accepts it.
+
+## Enterprise backend example
+
+The `festerm-enterprise` development backend has a standalone desktop example;
+it is not yet a Launcher connection type or saved account.
+
+```sh
+cargo run -p festerm-enterprise --example devbox-discovery -- \
+  --tenant-guid "YOUR_TENANT_GUID" \
+  --client-guid "YOUR_APPLICATION_GUID" \
+  --dev-center-uri "https://YOUR_DEV_CENTER.REGION.devcenter.azure.com" \
+  --project "YOUR_PROJECT"
+```
+
+Replace the placeholders with approved, non-secret configuration. Register the
+application as a public desktop client with the `http://localhost` redirect
+and authorized Dev Center delegated permissions. The example binds an
+ephemeral IPv4 loopback port before opening the system browser and requests
+`https://devcenter.azure.com/.default` using PKCE S256. There is no client
+secret, borrowed Microsoft application identity, password flow or device-code
+fallback. Omit `--project` to enumerate the accessible projects first.
+
+This is standards-based OAuth, not an MSAL/broker integration. Tokens are
+transient and are not saved to profiles, workspaces or a refresh-token cache.
+Cancellation, policy denial and unsupported claims challenges terminate the
+attempt rather than selecting a weaker sign-in method.
+
+The read-only client uses Dev Center API `2025-02-01` for projects, current-user
+abilities, owned Dev Boxes and remote-connection metadata. It does not create,
+start, stop or delete a Dev Box. Pagination stays on the configured
+authenticated origin, rejects redirects/cycles, and has finite body/page/item
+limits. `ReadDevBoxes` and `ReadRemoteConnections` authorize separate actions.
+Remote-connection URLs have redacted, non-serializable wrappers; this example
+does not print, fetch or launch them.
+
+The example also caps its combined display across projects at 1 MiB and 8,192
+lines, rather than multiplying a per-project limit into an unbounded retained
+result. Exceeding a limit or failing any project query exits nonzero.
+
+Library entrypoints are synchronous and belong on a blocking worker, never a
+GUI frame or async-executor thread. Each HTTP client owns its runtime; async
+DNS and HTTP allow cancellation during resolution, headers and body reads
+without leaving a blocking lookup behind. Platform-specific VPN, proxy trust
+and split-DNS behavior still require native qualification.
+
+Local HTTP fixtures exercise the protocol contracts without any tenant
+credentials. They are not evidence of corporate consent, live Dev Center
+interoperability, device compliance or broker support; see CP-21.
+
 ## Machine-readable sessiond discovery
 
 The initial helper interface is deliberately independent of the remoting
@@ -109,3 +191,9 @@ evidence before attempting corporate access. The owned VM lab's existing
 SSH control channel is not itself a PSRP or WinRM qualification endpoint.
 Native macOS, Windows and Linux results, and eventual enrolled-phone results,
 must be recorded separately.
+
+During this implementation the local Parallels executable was unavailable
+(its installed command symlink had no application target), and the existing
+dedicated Windows lab SSH connection timed out. No host trust was bypassed,
+guest reset performed, or corporate endpoint configured to conceal that
+missing native environment.

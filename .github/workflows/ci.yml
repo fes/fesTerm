@@ -88,6 +88,7 @@ jobs:
       # in Cargo.toml, so local developer builds keep full debug info.
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
@@ -107,6 +108,14 @@ jobs:
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Test native PowerShell and enterprise CLI boundaries
+        run: cargo test -p festerm-powershell -p festerm-enterprise --examples --locked
+      - name: Test the pinned PSRP dependency patches
+        timeout-minutes: 15
+        run: cargo test --manifest-path vendor/psrp-rs/Cargo.toml --tests --locked
+      - name: Test the pinned WinRM dependency patches
+        timeout-minutes: 15
+        run: cargo test --manifest-path vendor/winrm-rs/Cargo.toml --tests --locked
       - name: Check Windows window selection and rendering policies
         if: matrix.os == 'windows-latest'
         run: python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v

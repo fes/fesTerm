@@ -35,6 +35,82 @@
   ],
   "coverage": [
     {
+      "id": "native-powershell-foundation",
+      "edges": [
+        "PSRP-01"
+      ],
+      "requirements": [
+        "docs/powershell-enterprise.md#native-backend-example",
+        "docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": [
+        "ADR-0041"
+      ],
+      "automated_tests": [
+        "credentials_debug_redacts_password",
+        "unsupported_auth_is_rejected_before_network_use",
+        "endpoint_validation_rejects_url_shaped_hosts",
+        "empty_trusted_ca_pem_is_rejected",
+        "zero_bounds_are_rejected_before_worker_start",
+        "command_budget_rejects_reference_amplification_like_growth",
+        "map_winrm_error_redacts_response_details",
+        "cancel_drain_deadline_applies_to_in_flight_wait",
+        "cancellation_timeout_becomes_invalidated",
+        "every_stream_variant_escapes_terminal_controls"
+      ],
+      "manual_scenarios": [
+        "CP-20"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "controlled reachable Windows PowerShell/PowerShell 7 HTTPS/WSMan endpoints with approved credentials and TLS trust",
+        "native repeated-command state, streams/host behavior and cleanup evidence before application-tab/profile integration",
+        "authenticated generation-bound sessiond bridge and recovery remain separate CP-19 work"
+      ]
+    },
+    {
+      "id": "enterprise-public-client-foundation",
+      "edges": [
+        "ENTRA-01",
+        "ENTRA-02"
+      ],
+      "requirements": [
+        "docs/powershell-enterprise.md#enterprise-backend-example",
+        "docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": [
+        "ADR-0041"
+      ],
+      "automated_tests": [
+        "auth_flow_completes_after_loopback_callback_and_cleans_up_listener",
+        "auth_flow_can_be_cancelled_after_an_idle_socket_is_accepted",
+        "auth_flow_times_out_on_slow_partial_headers_and_cleans_up_listener",
+        "token_exchange_rejects_claims_challenge_errors",
+        "token_exchange_rejects_oversized_error_body",
+        "http_client_cancels_during_async_dns_resolution_without_hanging_runtime_drop",
+        "http_client_reuses_runtime_for_dns_state_across_requests",
+        "http_client_cancels_while_waiting_for_headers",
+        "http_client_cancels_during_chunked_body_reads",
+        "http_client_enforces_subsecond_deadlines",
+        "dev_center_lists_projects_and_dev_boxes_across_pages",
+        "dev_center_parses_remote_connections_without_exposing_debug_urls",
+        "dev_center_rejects_expired_tokens_before_network",
+        "dev_center_allows_listing_without_remote_connection_ability_but_blocks_link_fetch",
+        "dev_center_does_not_accept_partial_inventory_or_hide_http_failures",
+        "combined_inventory_enforces_byte_bounds_before_growing",
+        "combined_inventory_bounds_apply_across_projects",
+        "parse_options_rejects_invalid_project_before_sign_in"
+      ],
+      "manual_scenarios": [
+        "CP-21"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "approved public-client tenant/application/redirect registration and Dev Center account/endpoint for native service evidence",
+        "separate application-command/GUI integration, platform broker and enrolled-device Conditional Access qualification"
+      ]
+    },
+    {
       "id": "root-lifecycle",
       "edges": [
         "ROOT-*"

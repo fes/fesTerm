@@ -132,6 +132,8 @@ reference-application acceptance; P5 remains a manual release gate.
 | Local PTY | Run, resize, exit, and shut down a local application | passing | M5 Unix PTY and Windows ConPTY integration tests; CI runs the Windows test |
 | SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | passing | Controlled OpenSSH integration test (`controlled_openssh_interoperability`, `controlled_openssh_manual_reconnect_interoperability`) |
 | OpenSSH config | Map supported host directives into an internal profile | planned | Configuration fixtures; M8 owns OpenSSH-config import UI |
+| Native PowerShell | Persistent structured PSRP execution over verified HTTPS/NTLM, bounded events and cancellation | partial; pre-GUI backend | ADR 0041, bounded dependency/adapter regressions; CP-20 requires a real Windows endpoint before native interoperability or GUI support is claimed |
+| Enterprise discovery | Public-client PKCE and bounded read-only Dev Center queries | partial; pre-GUI backend | Loopback protocol, cancellation, expiry and origin/privacy regressions; CP-21 still requires approved tenant/application configuration and real platform evidence; no broker or embedded RDP claim |
 
 ## Reference Applications
 
