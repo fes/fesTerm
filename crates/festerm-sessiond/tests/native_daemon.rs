@@ -7,6 +7,7 @@ use std::{
 };
 
 use festerm_core::{MouseTrackingMode, Terminal};
+use fs2::FileExt;
 
 #[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
@@ -94,6 +95,393 @@ fn native_start_failure_removes_generation_artifacts_before_root_cleanup() {
         }),
         "failed startup left generation artifacts"
     );
+}
+
+#[test]
+fn native_capabilities_json_is_exact_and_read_only() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("capabilities");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["capabilities", "--json"])
+        .output()
+        .unwrap();
+    assert_success("capabilities --json", &output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "schema_version": festerm_sessiond::MACHINE_READABLE_SCHEMA_VERSION,
+            "package_version": env!("CARGO_PKG_VERSION"),
+            "platform": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "daemon_protocol": {
+                "minimum": festerm_sessiond::MIN_SUPPORTED_PROTOCOL_VERSION,
+                "maximum": festerm_sessiond::PROTOCOL_VERSION
+            },
+            "recovery_snapshot_schema": {
+                "supported_versions": [festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
+            },
+            "remote_attachment": false
+        })
+    );
+    assert!(!runtime_registry_root(&runtime).exists());
+}
+
+#[test]
+fn native_discover_json_is_empty_and_read_only_without_a_registry() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-empty");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    assert_success("discover --json", &output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "schema_version": festerm_sessiond::MACHINE_READABLE_SCHEMA_VERSION,
+            "package_version": env!("CARGO_PKG_VERSION"),
+            "inventory": {
+                "record_count": 0,
+                "serialized_bytes": 0,
+                "status_counts": {}
+            },
+            "sessions": []
+        })
+    );
+    assert!(!runtime_registry_root(&runtime).exists());
+}
+
+#[test]
+fn native_discover_json_reports_session_statuses_without_leaking_sensitive_fields() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-metadata");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+
+    let pid = std::process::id();
+    let live_generation = 700_u128;
+    let attached_generation = 701_u128;
+    let stale_generation = 702_u128;
+    let live_endpoint = discovery_endpoint(&registry, pid, live_generation);
+    let attached_endpoint = discovery_endpoint(&registry, pid, attached_generation);
+    let stale_endpoint = discovery_endpoint(&registry, pid, stale_generation);
+    create_discovery_endpoint(&live_endpoint);
+    create_discovery_endpoint(&attached_endpoint);
+    create_discovery_endpoint(&stale_endpoint);
+    let live_lease = lock_discovery_lease(&registry, pid, live_generation);
+    let attached_lease = lock_discovery_lease(&registry, pid, attached_generation);
+    #[cfg(unix)]
+    fs::remove_file(&stale_endpoint).unwrap();
+    let registry_bytes = serde_json::to_vec(&serde_json::json!({
+        "sessions": {
+            "available": {
+                "name": "available",
+                "pid": pid,
+                "socket": live_endpoint,
+                "created_at_unix_ms": live_generation,
+                "attached": false,
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                "shell": "/bin/echo",
+                "arguments": ["--token=secret-token"],
+                "working_directory": "/very/secret",
+            },
+            "attached": {
+                "name": "attached",
+                "pid": pid,
+                "socket": attached_endpoint,
+                "created_at_unix_ms": attached_generation,
+                "attached": true,
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            },
+            "future": {
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION + 9,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
+                "pid": pid,
+                "created_at_unix_ms": 703_u128,
+                "attached": true,
+                "secret": "hunter2",
+            },
+            "stale": {
+                "name": "stale",
+                "pid": pid,
+                "socket": stale_endpoint,
+                "created_at_unix_ms": stale_generation,
+                "attached": false,
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            }
+        }
+    }))
+    .unwrap();
+    fs::write(registry.join("registry.json"), &registry_bytes).unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    drop((live_lease, attached_lease));
+    assert_success("discover --json", &output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["inventory"]["record_count"], 4);
+    assert_eq!(parsed["inventory"]["status_counts"]["available"], 1);
+    assert_eq!(parsed["inventory"]["status_counts"]["attached"], 1);
+    assert_eq!(parsed["inventory"]["status_counts"]["stale"], 1);
+    assert_eq!(parsed["inventory"]["status_counts"]["unreadable"], 1);
+    assert_eq!(
+        parsed["sessions"],
+        serde_json::json!([
+            {
+                "name": "attached",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": attached_generation,
+                "attached": true,
+                "status": "attached",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION,
+                    "supported": true
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    "supported": true
+                }
+            },
+            {
+                "name": "available",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": live_generation,
+                "attached": false,
+                "status": "available",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION,
+                    "supported": true
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    "supported": true
+                }
+            },
+            {
+                "name": "future",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": 703_u128,
+                "attached": true,
+                "status": "unreadable",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION + 9,
+                    "supported": false
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
+                    "supported": false
+                }
+            },
+            {
+                "name": "stale",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": stale_generation,
+                "attached": false,
+                "status": "stale",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION,
+                    "supported": true
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    "supported": true
+                }
+            }
+        ])
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("secret-token"));
+    assert!(!stdout.contains("hunter2"));
+    assert!(!stdout.contains("/very/secret"));
+    assert!(!stdout.contains("socket"));
+    assert!(!stdout.contains("working_directory"));
+    assert!(!stdout.contains("arguments"));
+    assert!(!stdout.contains("shell"));
+    assert_eq!(
+        fs::read(registry.join("registry.json")).unwrap(),
+        registry_bytes
+    );
+}
+
+#[test]
+fn native_discover_json_rejects_unsupported_flags_and_bounded_failures_emit_no_json() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-failures");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+
+    let bad_flag = daemon_command(&executable, &runtime)
+        .args(["discover", "--bogus"])
+        .output()
+        .unwrap();
+    assert!(!bad_flag.status.success());
+    assert!(String::from_utf8_lossy(&bad_flag.stderr)
+        .contains("usage: festerm-sessiond discover --json"));
+
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+
+    let oversized_registry = registry.join("registry.json");
+    fs::write(&oversized_registry, vec![b'a'; 4 * 1024 * 1024 + 1]).unwrap();
+    let oversized = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    assert!(!oversized.status.success());
+    assert!(oversized.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&oversized.stderr).contains("exceeds 4194304 bytes"));
+
+    let mut sessions = serde_json::Map::new();
+    for index in 0..=4096 {
+        sessions.insert(
+            format!("session-{index:04}"),
+            serde_json::json!({
+                "pid": 1_u32,
+                "socket": format!("legacy-{index}"),
+            }),
+        );
+    }
+    fs::write(
+        &oversized_registry,
+        serde_json::to_vec(&serde_json::json!({ "sessions": sessions })).unwrap(),
+    )
+    .unwrap();
+    let count_limited = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    assert!(!count_limited.status.success());
+    assert!(count_limited.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&count_limited.stderr);
+    assert!(stderr.contains("contains 4097 records"));
+    assert!(stderr.contains("limit is 4096"));
+}
+
+#[test]
+fn native_discover_json_rejects_zero_byte_registry_without_success_shaped_output() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-zero");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+    fs::write(registry.join("registry.json"), []).unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("could not parse session registry at line"));
+}
+
+#[test]
+fn native_discover_json_parse_errors_do_not_echo_registry_contents() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-redacted");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+    let sentinel = r#"{"sessions":"secret-token"}"#;
+    fs::write(registry.join("registry.json"), sentinel).unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("could not parse session registry at line"));
+    assert!(!stderr.contains("secret-token"));
+    assert!(!stderr.contains(sentinel));
+}
+
+#[test]
+fn native_discover_json_enforces_serialized_output_cap_without_partial_json() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-output-cap");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+
+    let mut sessions = serde_json::Map::new();
+    for index in 0..4096 {
+        let name = format!("session-{index:04}");
+        sessions.insert(
+            name.clone(),
+            serde_json::json!({
+                "name": name,
+                "pid": 1_u32,
+                "socket": format!("legacy-{index}"),
+                "created_at_unix_ms": index,
+                "attached": false,
+                "protocol_version": 1,
+                "snapshot_schema_version": 0,
+            }),
+        );
+    }
+    fs::write(
+        registry.join("registry.json"),
+        serde_json::to_vec(&serde_json::json!({ "sessions": sessions })).unwrap(),
+    )
+    .unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("machine-readable response exceeds 524288 bytes"));
 }
 
 fn assert_generation_artifacts_removed(
@@ -1595,6 +1983,47 @@ fn registry_endpoint(path: &Path, name: &str) -> String {
         .as_str()
         .unwrap()
         .to_owned()
+}
+
+fn runtime_registry_root(runtime_root: &Path) -> PathBuf {
+    runtime_root
+        .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
+        .join("sessiond")
+}
+
+fn discovery_endpoint(registry: &Path, pid: u32, generation: u128) -> String {
+    #[cfg(unix)]
+    {
+        registry
+            .join(format!("{pid}-{generation}.sock"))
+            .to_string_lossy()
+            .into_owned()
+    }
+    #[cfg(windows)]
+    {
+        format!(r"\\.\pipe\festerm-sessiond-{pid}-{generation}")
+    }
+}
+
+fn create_discovery_endpoint(endpoint: &str) {
+    #[cfg(unix)]
+    {
+        fs::write(endpoint, b"").unwrap();
+    }
+    #[cfg(windows)]
+    {
+        let _ = endpoint;
+    }
+}
+
+fn lock_discovery_lease(registry: &Path, pid: u32, generation: u128) -> fs::File {
+    let lease = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(registry.join(format!("lease-{pid}-{generation}")))
+        .unwrap();
+    lease.lock_exclusive().unwrap();
+    lease
 }
 
 fn hex_encode_bytes(bytes: &[u8]) -> String {

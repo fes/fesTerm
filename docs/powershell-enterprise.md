@@ -58,6 +58,27 @@ registry metadata as versioned JSON. A future PSRP caller must invoke the
 trusted installed helper as an executable, not interpolate a session name into
 a command string or treat PowerShell's formatted output as terminal bytes.
 
+```sh
+festerm-sessiond capabilities --json
+festerm-sessiond discover --json
+```
+
+Both require the explicit `--json` flag. Capabilities reports schema version
+`1`, helper package version, platform/architecture, daemon protocol range,
+supported recovery schemas and `remote_attachment: false`, without accessing
+the registry or cleaning up installed helpers.
+
+Discovery reports schema/package versions, inventory counts and per-session
+name, PID/creation time, attachment state and independent protocol/schema
+compatibility. Status distinguishes available, attached, stale, incompatible
+protocol/schema, invalid identity and unreadable records. Unknown records are
+not dropped or dumped as raw JSON. `status_counts` contains the observed,
+nonzero status counts; `serialized_bytes` measures the source registry.
+Missing registries are empty inventories; corrupt, inaccessible, oversized or
+busy registries are errors. Limits are 4 MiB of registry input, 4,096 records
+and 512 KiB of complete JSON output. A failure exits nonzero without partial
+success JSON.
+
 Discovery is an observation, not an attachment reservation. Between listing
 and selecting a session, its process, generation, endpoint, attachment state or
 helper can change. The eventual attachment operation must revalidate them and

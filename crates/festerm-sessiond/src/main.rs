@@ -210,6 +210,8 @@ enum CommandSpec {
         scrollback_limit_bytes: usize,
     },
     List,
+    CapabilitiesJson,
+    DiscoverJson,
     Kill {
         name: String,
     },
@@ -341,9 +343,6 @@ fn apply_recovery_sync_command(
 }
 
 fn main() {
-    if let Err(error) = festerm_sessiond::cleanup_superseded_package_helpers() {
-        eprintln!("festerm-sessiond: could not clean up superseded helpers: {error}");
-    }
     if let Err(error) = run() {
         eprintln!("festerm-sessiond: {error}");
         process::exit(1);
@@ -352,6 +351,14 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let spec = parse_args(env::args().skip(1).collect())?;
+    if !matches!(
+        spec,
+        CommandSpec::CapabilitiesJson | CommandSpec::DiscoverJson
+    ) {
+        if let Err(error) = festerm_sessiond::cleanup_superseded_package_helpers() {
+            eprintln!("festerm-sessiond: could not clean up superseded helpers: {error}");
+        }
+    }
     match spec {
         CommandSpec::Start {
             name,
@@ -368,6 +375,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             scrollback_limit_bytes,
         } => run_daemon(name, shell, cols, rows, scrollback_limit_bytes),
         CommandSpec::List => run_list(),
+        CommandSpec::CapabilitiesJson => run_capabilities_json(),
+        CommandSpec::DiscoverJson => run_discover_json(),
         CommandSpec::Kill { name } => run_kill(name),
         CommandSpec::Attach { name } => run_attach(name),
     }
@@ -375,7 +384,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Error>> {
     if args.is_empty() {
-        return Err("usage: festerm-sessiond <start|daemon|list|kill|attach> ...".into());
+        return Err(
+            "usage: festerm-sessiond <start|daemon|list|capabilities|discover|kill|attach> ..."
+                .into(),
+        );
     }
 
     match args[0].as_str() {
@@ -387,6 +399,10 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
             }
             Ok(CommandSpec::List)
         }
+        "capabilities" => {
+            parse_json_only(&args[1..], "capabilities", CommandSpec::CapabilitiesJson)
+        }
+        "discover" => parse_json_only(&args[1..], "discover", CommandSpec::DiscoverJson),
         "kill" => {
             let name = parse_name_only(&args[1..], "kill")?;
             Ok(CommandSpec::Kill { name })
@@ -396,6 +412,18 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
             Ok(CommandSpec::Attach { name })
         }
         other => Err(format!("unknown command: {other}").into()),
+    }
+}
+
+fn parse_json_only(
+    args: &[String],
+    command: &str,
+    spec: CommandSpec,
+) -> Result<CommandSpec, Box<dyn std::error::Error>> {
+    if args.len() == 1 && args[0] == "--json" {
+        Ok(spec)
+    } else {
+        Err(format!("usage: festerm-sessiond {command} --json").into())
     }
 }
 
@@ -2252,6 +2280,31 @@ fn run_list() -> Result<(), Box<dyn std::error::Error>> {
             record.name, record.pid, record.socket, record.shell, record.attached
         );
     }
+    Ok(())
+}
+
+fn run_capabilities_json() -> Result<(), Box<dyn std::error::Error>> {
+    write_json_response(&festerm_sessiond::capabilities())
+}
+
+fn run_discover_json() -> Result<(), Box<dyn std::error::Error>> {
+    write_json_response(&festerm_sessiond::discover_current_user_sessions()?)
+}
+
+fn write_json_response(response: &impl serde::Serialize) -> Result<(), Box<dyn std::error::Error>> {
+    const MAX_JSON_RESPONSE_BYTES: usize = 512 * 1024;
+
+    let mut payload = serde_json::to_vec(response)?;
+    payload.push(b'\n');
+    if payload.len() > MAX_JSON_RESPONSE_BYTES {
+        return Err(format!(
+            "machine-readable response exceeds {} bytes",
+            MAX_JSON_RESPONSE_BYTES
+        )
+        .into());
+    }
+    io::stdout().write_all(&payload)?;
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -4442,6 +4495,36 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("does not recognize"));
+    }
+
+    #[test]
+    fn parser_preserves_legacy_list_and_accepts_machine_readable_commands() {
+        assert!(matches!(
+            parse_args(vec!["list".into()]).unwrap(),
+            CommandSpec::List
+        ));
+        assert!(matches!(
+            parse_args(vec!["capabilities".into(), "--json".into()]).unwrap(),
+            CommandSpec::CapabilitiesJson
+        ));
+        assert!(matches!(
+            parse_args(vec!["discover".into(), "--json".into()]).unwrap(),
+            CommandSpec::DiscoverJson
+        ));
+    }
+
+    #[test]
+    fn parser_rejects_machine_readable_commands_without_exact_json_flag() {
+        for args in [
+            vec!["capabilities".into()],
+            vec!["capabilities".into(), "--bogus".into()],
+            vec!["discover".into()],
+            vec!["discover".into(), "--json".into(), "--extra".into()],
+        ] {
+            let error = parse_args(args).unwrap_err().to_string();
+            assert!(error.contains("usage: festerm-sessiond"));
+            assert!(error.contains("--json"));
+        }
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::{
     fmt,
     fs::OpenOptions,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -18,10 +18,7 @@ use std::{
 
 use bincode::Options;
 #[cfg(any(windows, test))]
-use std::{
-    fs::{self, File},
-    path::Path,
-};
+use std::fs::{self, File};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -60,12 +57,16 @@ const RECOVERY_HEADER_BYTES: usize = 12;
 /// Allows the largest supported 256 MiB scrollback setting plus bounded
 /// screen/history serialization overhead without trusting arbitrary lengths.
 const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 768 * 1024 * 1024;
+const MAX_REGISTRY_SERIALIZED_BYTES: usize = 4 * 1024 * 1024;
+const MAX_DISCOVERY_RECORD_COUNT: usize = 4096;
 /// Compatibility epoch for registry records and the persistent-session client protocol.
 ///
 /// This changes only when the daemon introduces an incompatible wire format.
 pub const PROTOCOL_VERSION: u16 = 2;
 /// Recovery snapshot schema used by protocol-v2 sessions started by this build.
 pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 2;
+/// Schema version for machine-readable helper metadata.
+pub const MACHINE_READABLE_SCHEMA_VERSION: u32 = 1;
 const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
 /// Oldest daemon protocol this client can attach to safely.
 ///
@@ -225,6 +226,202 @@ pub fn list_unattached_sessions_in(
     Ok(sessions)
 }
 
+/// Returns machine-readable helper capabilities without touching the runtime registry.
+pub fn capabilities() -> SessiondCapabilities {
+    SessiondCapabilities {
+        schema_version: MACHINE_READABLE_SCHEMA_VERSION,
+        package_version: env!("CARGO_PKG_VERSION"),
+        platform: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        daemon_protocol: SupportedVersionRange {
+            minimum: MIN_SUPPORTED_PROTOCOL_VERSION,
+            maximum: PROTOCOL_VERSION,
+        },
+        recovery_snapshot_schema: SupportedVersions {
+            supported_versions: vec![RECOVERY_SNAPSHOT_SCHEMA_VERSION],
+        },
+        remote_attachment: false,
+    }
+}
+
+/// Discovers current-user daemon metadata without starting, pruning, or attaching.
+pub fn discover_current_user_sessions() -> Result<SessionDiscovery, PersistentSessionError> {
+    discover_current_user_sessions_in(&runtime_root()?)
+}
+
+/// Explicit runtime-root seam for isolated machine-readable discovery validation.
+pub fn discover_current_user_sessions_in(
+    root: &std::path::Path,
+) -> Result<SessionDiscovery, PersistentSessionError> {
+    discover_current_user_sessions_in_with_limits(
+        root,
+        MAX_DISCOVERY_RECORD_COUNT,
+        MAX_REGISTRY_SERIALIZED_BYTES,
+    )
+}
+
+fn discover_current_user_sessions_in_with_limits(
+    root: &std::path::Path,
+    record_limit: usize,
+    max_registry_bytes: usize,
+) -> Result<SessionDiscovery, PersistentSessionError> {
+    let bytes =
+        load_registry_bytes_in_with_cancel(root, &AtomicBool::new(false), max_registry_bytes)?;
+    let serialized_bytes = bytes.as_ref().map_or(0, Vec::len);
+    let sessions = parse_registry_entries(bytes.as_deref())?;
+    if sessions.len() > record_limit {
+        return Err(PersistentSessionError::new(format!(
+            "session discovery aborted: registry contains {} records, limit is {}",
+            sessions.len(),
+            record_limit
+        )));
+    }
+    let mut discovered = Vec::with_capacity(sessions.len());
+    let mut status_counts = BTreeMap::<String, usize>::new();
+    for (name, value) in sessions {
+        let session = classify_discovered_session(root, name, value)?;
+        *status_counts
+            .entry(session.status.as_count_key().to_owned())
+            .or_default() += 1;
+        discovered.push(session);
+    }
+    Ok(SessionDiscovery {
+        schema_version: MACHINE_READABLE_SCHEMA_VERSION,
+        package_version: env!("CARGO_PKG_VERSION"),
+        inventory: DiscoveryInventory {
+            record_count: discovered.len(),
+            serialized_bytes,
+            status_counts,
+        },
+        sessions: discovered,
+    })
+}
+
+fn parse_registry_entries(
+    bytes: Option<&[u8]>,
+) -> Result<BTreeMap<String, serde_json::Value>, PersistentSessionError> {
+    #[derive(Default, Deserialize)]
+    struct RawRegistry {
+        #[serde(default)]
+        sessions: BTreeMap<String, serde_json::Value>,
+    }
+
+    match bytes {
+        None => Ok(BTreeMap::new()),
+        Some(bytes) => serde_json::from_slice::<RawRegistry>(bytes)
+            .map(|registry| registry.sessions)
+            .map_err(registry_parse_error),
+    }
+}
+
+fn classify_discovered_session(
+    root: &std::path::Path,
+    name: String,
+    value: serde_json::Value,
+) -> Result<DiscoveredSession, PersistentSessionError> {
+    match serde_json::from_value::<SessionRecord>(value.clone()) {
+        Ok(record) => classify_parsed_discovered_session(root, name, record),
+        Err(_) => Ok(classify_unreadable_discovered_session(name, &value)),
+    }
+}
+
+fn classify_parsed_discovered_session(
+    root: &std::path::Path,
+    name: String,
+    record: SessionRecord,
+) -> Result<DiscoveredSession, PersistentSessionError> {
+    let validated_name = record.name == name && PersistentSessionName::new(&name).is_ok();
+    let daemon_protocol = DiscoveredVersion {
+        version: Some(record.protocol_version),
+        supported: protocol_is_supported(record.protocol_version),
+    };
+    let recovery_snapshot_schema = DiscoveredVersion {
+        version: Some(record.snapshot_schema_version),
+        supported: snapshot_schema_is_supported(record.snapshot_schema_version),
+    };
+    let status = if !validated_name {
+        DiscoveryStatus::InvalidIdentity
+    } else if !record_is_live(root, &record)? {
+        DiscoveryStatus::Stale
+    } else if !daemon_protocol.supported {
+        DiscoveryStatus::IncompatibleProtocol
+    } else if record.protocol_version >= 2 && !recovery_snapshot_schema.supported {
+        DiscoveryStatus::IncompatibleRecoverySchema
+    } else if record.attached {
+        DiscoveryStatus::Attached
+    } else {
+        DiscoveryStatus::Available
+    };
+    Ok(DiscoveredSession {
+        name,
+        validated_name,
+        pid: Some(record.pid),
+        created_at_unix_ms: Some(record.created_at_unix_ms),
+        attached: Some(record.attached),
+        status,
+        daemon_protocol,
+        recovery_snapshot_schema,
+    })
+}
+
+fn classify_unreadable_discovered_session(
+    name: String,
+    value: &serde_json::Value,
+) -> DiscoveredSession {
+    let metadata = raw_record_metadata(value);
+    DiscoveredSession {
+        validated_name: PersistentSessionName::new(&name).is_ok(),
+        name,
+        pid: metadata.pid,
+        created_at_unix_ms: metadata.created_at_unix_ms,
+        attached: metadata.attached,
+        status: DiscoveryStatus::Unreadable,
+        daemon_protocol: DiscoveredVersion {
+            version: metadata.protocol_version,
+            supported: metadata.protocol_version.is_some_and(protocol_is_supported),
+        },
+        recovery_snapshot_schema: DiscoveredVersion {
+            version: metadata.snapshot_schema_version,
+            supported: metadata
+                .snapshot_schema_version
+                .is_some_and(snapshot_schema_is_supported),
+        },
+    }
+}
+
+fn raw_record_metadata(value: &serde_json::Value) -> RawRecordMetadata {
+    let Some(record) = value.as_object() else {
+        return RawRecordMetadata::default();
+    };
+    RawRecordMetadata {
+        pid: record
+            .get("pid")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        created_at_unix_ms: record
+            .get("created_at_unix_ms")
+            .and_then(serde_json::Value::as_u64)
+            .map(u128::from),
+        attached: record.get("attached").and_then(serde_json::Value::as_bool),
+        protocol_version: record
+            .get("protocol_version")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok()),
+        snapshot_schema_version: record
+            .get("snapshot_schema_version")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok()),
+    }
+}
+
+fn registry_parse_error(error: serde_json::Error) -> PersistentSessionError {
+    PersistentSessionError::new(format!(
+        "could not parse session registry at line {}, column {}",
+        error.line(),
+        error.column()
+    ))
+}
+
 fn record_is_live(
     root: &std::path::Path,
     record: &SessionRecord,
@@ -311,6 +508,100 @@ impl fmt::Display for PersistentSessionError {
 }
 
 impl std::error::Error for PersistentSessionError {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SessiondCapabilities {
+    pub schema_version: u32,
+    pub package_version: &'static str,
+    pub platform: &'static str,
+    pub arch: &'static str,
+    pub daemon_protocol: SupportedVersionRange,
+    pub recovery_snapshot_schema: SupportedVersions,
+    pub remote_attachment: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SupportedVersionRange {
+    pub minimum: u16,
+    pub maximum: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SupportedVersions {
+    pub supported_versions: Vec<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SessionDiscovery {
+    pub schema_version: u32,
+    pub package_version: &'static str,
+    pub inventory: DiscoveryInventory,
+    pub sessions: Vec<DiscoveredSession>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DiscoveryInventory {
+    pub record_count: usize,
+    pub serialized_bytes: usize,
+    pub status_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DiscoveredSession {
+    pub name: String,
+    pub validated_name: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at_unix_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attached: Option<bool>,
+    pub status: DiscoveryStatus,
+    pub daemon_protocol: DiscoveredVersion,
+    pub recovery_snapshot_schema: DiscoveredVersion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryStatus {
+    Available,
+    Attached,
+    Stale,
+    IncompatibleProtocol,
+    IncompatibleRecoverySchema,
+    InvalidIdentity,
+    Unreadable,
+}
+
+impl DiscoveryStatus {
+    fn as_count_key(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Attached => "attached",
+            Self::Stale => "stale",
+            Self::IncompatibleProtocol => "incompatible_protocol",
+            Self::IncompatibleRecoverySchema => "incompatible_recovery_schema",
+            Self::InvalidIdentity => "invalid_identity",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DiscoveredVersion {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u16>,
+    pub supported: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RawRecordMetadata {
+    pid: Option<u32>,
+    created_at_unix_ms: Option<u128>,
+    attached: Option<bool>,
+    protocol_version: Option<u16>,
+    snapshot_schema_version: Option<u16>,
+}
 
 enum SessionCommand {
     Input(Vec<u8>),
@@ -2378,6 +2669,18 @@ fn load_registry_in_with_cancel(
     root: &std::path::Path,
     cancelled: &AtomicBool,
 ) -> Result<SessionRegistry, PersistentSessionError> {
+    let bytes = load_registry_bytes_in_with_cancel(root, cancelled, MAX_REGISTRY_SERIALIZED_BYTES)?;
+    match bytes {
+        Some(bytes) => serde_json::from_slice(&bytes).map_err(registry_parse_error),
+        None => Ok(SessionRegistry::default()),
+    }
+}
+
+fn load_registry_bytes_in_with_cancel(
+    root: &std::path::Path,
+    cancelled: &AtomicBool,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
@@ -2386,7 +2689,7 @@ fn load_registry_in_with_cancel(
     let lock = match OpenOptions::new().read(true).open(&lock_path) {
         Ok(lock) => lock,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return read_registry(&registry_path)
+            return read_registry_bytes(&registry_path, max_bytes)
         }
         Err(error) => return Err(PersistentSessionError::new(error.to_string())),
     };
@@ -2407,25 +2710,29 @@ fn load_registry_in_with_cancel(
             }
         }
     }
-    let registry = read_registry(&registry_path);
+    let registry = read_registry_bytes(&registry_path, max_bytes);
     FileExt::unlock(&lock).map_err(|error| PersistentSessionError::new(error.to_string()))?;
     registry
 }
 
-fn read_registry(path: &PathBuf) -> Result<SessionRegistry, PersistentSessionError> {
+fn read_registry_bytes(
+    path: &Path,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, PersistentSessionError> {
     let bytes = std::fs::File::open(path).and_then(|file| {
         let mut bytes = Vec::new();
-        file.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-        if bytes.len() > 4 * 1024 * 1024 {
-            return Err(io::Error::other("session registry exceeds 4 MiB"));
+        file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > max_bytes {
+            return Err(io::Error::other(format!(
+                "session registry exceeds {} bytes",
+                max_bytes
+            )));
         }
         Ok(bytes)
     });
     match bytes {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
-            PersistentSessionError::new(format!("could not parse session registry: {error}"))
-        }),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SessionRegistry::default()),
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(PersistentSessionError::new(error.to_string())),
     }
 }
@@ -4060,6 +4367,76 @@ mod registry_filtering_tests {
         }
     }
 
+    fn write_registry_document(fixture: &RegistryFixture, document: &serde_json::Value) {
+        std::fs::write(
+            fixture.0.join("registry.json"),
+            serde_json::to_vec(document).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn live_endpoint(fixture: &RegistryFixture, pid: u32, generation: u128) -> String {
+        let endpoint = fixture.0.join(format!("{pid}-{generation}.sock"));
+        std::fs::write(&endpoint, b"").unwrap();
+        endpoint.to_string_lossy().into_owned()
+    }
+
+    fn live_lease(fixture: &RegistryFixture, pid: u32, generation: u128) -> std::fs::File {
+        let lease = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join(format!("lease-{pid}-{generation}")))
+            .unwrap();
+        lease.lock_exclusive().unwrap();
+        lease
+    }
+
+    #[test]
+    fn capabilities_are_explicit_and_do_not_advertise_remote_attachment() {
+        let capabilities = capabilities();
+        assert_eq!(capabilities.schema_version, MACHINE_READABLE_SCHEMA_VERSION);
+        assert_eq!(capabilities.package_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(capabilities.platform, std::env::consts::OS);
+        assert_eq!(capabilities.arch, std::env::consts::ARCH);
+        assert_eq!(
+            capabilities.daemon_protocol,
+            SupportedVersionRange {
+                minimum: MIN_SUPPORTED_PROTOCOL_VERSION,
+                maximum: PROTOCOL_VERSION,
+            }
+        );
+        assert_eq!(
+            capabilities.recovery_snapshot_schema,
+            SupportedVersions {
+                supported_versions: vec![RECOVERY_SNAPSHOT_SCHEMA_VERSION],
+            }
+        );
+        assert!(!capabilities.remote_attachment);
+    }
+
+    #[test]
+    fn discovery_of_a_missing_registry_is_empty_and_read_only() {
+        let fixture = RegistryFixture::new();
+
+        let discovery = discover_current_user_sessions_in(&fixture.0).unwrap();
+
+        assert_eq!(
+            discovery,
+            SessionDiscovery {
+                schema_version: MACHINE_READABLE_SCHEMA_VERSION,
+                package_version: env!("CARGO_PKG_VERSION"),
+                inventory: DiscoveryInventory {
+                    record_count: 0,
+                    serialized_bytes: 0,
+                    status_counts: BTreeMap::new(),
+                },
+                sessions: Vec::new(),
+            }
+        );
+        assert!(!fixture.0.join("registry.json").exists());
+        assert!(!fixture.0.join("registry.lock").exists());
+    }
+
     #[test]
     fn registry_absence_corruption_and_lock_contention_have_distinct_bounded_results() {
         let fixture = RegistryFixture::new();
@@ -4195,6 +4572,334 @@ mod registry_filtering_tests {
             .unwrap()
             .to_string()
             .contains("cancelled"));
+    }
+
+    #[test]
+    fn discovery_classifies_live_stale_attached_and_incompatible_records() {
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        let _available_lease = live_lease(&fixture, pid, 100);
+        let available_endpoint = live_endpoint(&fixture, pid, 100);
+        let _attached_lease = live_lease(&fixture, pid, 101);
+        let attached_endpoint = live_endpoint(&fixture, pid, 101);
+        let _incompatible_lease = live_lease(&fixture, pid, 102);
+        let incompatible_endpoint = live_endpoint(&fixture, pid, 102);
+        let stale_endpoint = live_endpoint(&fixture, pid, 103);
+        std::fs::remove_file(&stale_endpoint).unwrap();
+        write_registry_document(
+            &fixture,
+            &serde_json::json!({
+                "sessions": {
+                    "available": {
+                        "name": "available",
+                        "pid": pid,
+                        "socket": available_endpoint,
+                        "created_at_unix_ms": 100_u128,
+                        "attached": false,
+                        "protocol_version": PROTOCOL_VERSION,
+                        "snapshot_schema_version": RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    },
+                    "attached": {
+                        "name": "attached",
+                        "pid": pid,
+                        "socket": attached_endpoint,
+                        "created_at_unix_ms": 101_u128,
+                        "attached": true,
+                        "protocol_version": PROTOCOL_VERSION,
+                        "snapshot_schema_version": RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    },
+                    "stale": {
+                        "name": "stale",
+                        "pid": pid,
+                        "socket": stale_endpoint,
+                        "created_at_unix_ms": 103_u128,
+                        "attached": false,
+                        "protocol_version": PROTOCOL_VERSION,
+                        "snapshot_schema_version": RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    },
+                    "protocol-future": {
+                        "name": "protocol-future",
+                        "pid": pid,
+                        "socket": incompatible_endpoint,
+                        "created_at_unix_ms": 102_u128,
+                        "attached": false,
+                        "protocol_version": PROTOCOL_VERSION + 1,
+                        "snapshot_schema_version": RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    }
+                }
+            }),
+        );
+
+        let discovery = discover_current_user_sessions_in(&fixture.0).unwrap();
+
+        assert_eq!(discovery.inventory.record_count, 4);
+        assert_eq!(discovery.inventory.status_counts["available"], 1);
+        assert_eq!(discovery.inventory.status_counts["attached"], 1);
+        assert_eq!(discovery.inventory.status_counts["stale"], 1);
+        assert_eq!(
+            discovery.inventory.status_counts["incompatible_protocol"],
+            1
+        );
+        assert_eq!(
+            discovery.sessions,
+            vec![
+                DiscoveredSession {
+                    name: "attached".into(),
+                    validated_name: true,
+                    pid: Some(pid),
+                    created_at_unix_ms: Some(101),
+                    attached: Some(true),
+                    status: DiscoveryStatus::Attached,
+                    daemon_protocol: DiscoveredVersion {
+                        version: Some(PROTOCOL_VERSION),
+                        supported: true,
+                    },
+                    recovery_snapshot_schema: DiscoveredVersion {
+                        version: Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION),
+                        supported: true,
+                    },
+                },
+                DiscoveredSession {
+                    name: "available".into(),
+                    validated_name: true,
+                    pid: Some(pid),
+                    created_at_unix_ms: Some(100),
+                    attached: Some(false),
+                    status: DiscoveryStatus::Available,
+                    daemon_protocol: DiscoveredVersion {
+                        version: Some(PROTOCOL_VERSION),
+                        supported: true,
+                    },
+                    recovery_snapshot_schema: DiscoveredVersion {
+                        version: Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION),
+                        supported: true,
+                    },
+                },
+                DiscoveredSession {
+                    name: "protocol-future".into(),
+                    validated_name: true,
+                    pid: Some(pid),
+                    created_at_unix_ms: Some(102),
+                    attached: Some(false),
+                    status: DiscoveryStatus::IncompatibleProtocol,
+                    daemon_protocol: DiscoveredVersion {
+                        version: Some(PROTOCOL_VERSION + 1),
+                        supported: false,
+                    },
+                    recovery_snapshot_schema: DiscoveredVersion {
+                        version: Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION),
+                        supported: true,
+                    },
+                },
+                DiscoveredSession {
+                    name: "stale".into(),
+                    validated_name: true,
+                    pid: Some(pid),
+                    created_at_unix_ms: Some(103),
+                    attached: Some(false),
+                    status: DiscoveryStatus::Stale,
+                    daemon_protocol: DiscoveredVersion {
+                        version: Some(PROTOCOL_VERSION),
+                        supported: true,
+                    },
+                    recovery_snapshot_schema: DiscoveredVersion {
+                        version: Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION),
+                        supported: true,
+                    },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_surfaces_unreadable_and_invalid_identity_records_without_blobs() {
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        let _invalid_identity_lease = live_lease(&fixture, pid, 200);
+        let invalid_identity_endpoint = live_endpoint(&fixture, pid, 200);
+        write_registry_document(
+            &fixture,
+            &serde_json::json!({
+                "sessions": {
+                    "bad/name": {
+                        "name": "bad/name",
+                        "pid": pid,
+                        "socket": invalid_identity_endpoint,
+                        "created_at_unix_ms": 200_u128,
+                        "attached": false,
+                        "protocol_version": PROTOCOL_VERSION,
+                        "snapshot_schema_version": RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                        "arguments": ["secret-token", "--password=hunter2"],
+                    },
+                    "future": {
+                        "protocol_version": PROTOCOL_VERSION + 7,
+                        "snapshot_schema_version": RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
+                        "pid": pid,
+                        "created_at_unix_ms": 201_u128,
+                        "attached": true,
+                        "secret": "do-not-leak"
+                    },
+                    "malformed": "not-an-object"
+                }
+            }),
+        );
+
+        let discovery = discover_current_user_sessions_in(&fixture.0).unwrap();
+        let serialized = serde_json::to_value(&discovery).unwrap();
+
+        assert_eq!(discovery.inventory.record_count, 3);
+        assert_eq!(discovery.inventory.status_counts["invalid_identity"], 1);
+        assert_eq!(discovery.inventory.status_counts["unreadable"], 2);
+        assert_eq!(
+            discovery.sessions[0],
+            DiscoveredSession {
+                name: "bad/name".into(),
+                validated_name: false,
+                pid: Some(pid),
+                created_at_unix_ms: Some(200),
+                attached: Some(false),
+                status: DiscoveryStatus::InvalidIdentity,
+                daemon_protocol: DiscoveredVersion {
+                    version: Some(PROTOCOL_VERSION),
+                    supported: true,
+                },
+                recovery_snapshot_schema: DiscoveredVersion {
+                    version: Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION),
+                    supported: true,
+                },
+            }
+        );
+        assert_eq!(
+            discovery.sessions[1],
+            DiscoveredSession {
+                name: "future".into(),
+                validated_name: true,
+                pid: Some(pid),
+                created_at_unix_ms: Some(201),
+                attached: Some(true),
+                status: DiscoveryStatus::Unreadable,
+                daemon_protocol: DiscoveredVersion {
+                    version: Some(PROTOCOL_VERSION + 7),
+                    supported: false,
+                },
+                recovery_snapshot_schema: DiscoveredVersion {
+                    version: Some(RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1),
+                    supported: false,
+                },
+            }
+        );
+        assert_eq!(
+            discovery.sessions[2],
+            DiscoveredSession {
+                name: "malformed".into(),
+                validated_name: true,
+                pid: None,
+                created_at_unix_ms: None,
+                attached: None,
+                status: DiscoveryStatus::Unreadable,
+                daemon_protocol: DiscoveredVersion {
+                    version: None,
+                    supported: false,
+                },
+                recovery_snapshot_schema: DiscoveredVersion {
+                    version: None,
+                    supported: false,
+                },
+            }
+        );
+        let document = serialized.to_string();
+        assert!(!document.contains("secret-token"));
+        assert!(!document.contains("hunter2"));
+        assert!(!document.contains("do-not-leak"));
+        assert!(!document.contains("socket"));
+        assert!(!document.contains("arguments"));
+    }
+
+    #[test]
+    fn discovery_reports_legacy_schema_as_unsupported_but_keeps_protocol_v1_session_available() {
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        let _lease = live_lease(&fixture, pid, 300);
+        let endpoint = live_endpoint(&fixture, pid, 300);
+        write_registry_document(
+            &fixture,
+            &serde_json::json!({
+                "sessions": {
+                    "legacy": {
+                        "name": "legacy",
+                        "pid": pid,
+                        "socket": endpoint,
+                        "created_at_unix_ms": 300_u128,
+                        "attached": false,
+                        "protocol_version": 1,
+                        "snapshot_schema_version": 0
+                    }
+                }
+            }),
+        );
+
+        let discovery = discover_current_user_sessions_in(&fixture.0).unwrap();
+
+        assert_eq!(discovery.inventory.status_counts["available"], 1);
+        assert_eq!(
+            discovery.sessions,
+            vec![DiscoveredSession {
+                name: "legacy".into(),
+                validated_name: true,
+                pid: Some(pid),
+                created_at_unix_ms: Some(300),
+                attached: Some(false),
+                status: DiscoveryStatus::Available,
+                daemon_protocol: DiscoveredVersion {
+                    version: Some(1),
+                    supported: true,
+                },
+                recovery_snapshot_schema: DiscoveredVersion {
+                    version: Some(0),
+                    supported: false,
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn discovery_parse_errors_are_content_free() {
+        let fixture = RegistryFixture::new();
+        let sentinel = r#"{"sessions":"secret-token"}"#;
+        std::fs::write(fixture.0.join("registry.json"), sentinel).unwrap();
+
+        let error = discover_current_user_sessions_in(&fixture.0)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("could not parse session registry at line"));
+        assert!(!error.contains("secret-token"));
+        assert!(!error.contains(sentinel));
+    }
+
+    #[test]
+    fn discovery_enforces_record_count_and_registry_size_bounds() {
+        let fixture = RegistryFixture::new();
+        write_registry_document(
+            &fixture,
+            &serde_json::json!({
+                "sessions": {
+                    "first": {"pid": 1_u32, "socket": "one.sock"},
+                    "second": {"pid": 2_u32, "socket": "two.sock"}
+                }
+            }),
+        );
+
+        let count_error = discover_current_user_sessions_in_with_limits(&fixture.0, 1, 1024)
+            .unwrap_err()
+            .to_string();
+        assert!(count_error.contains("contains 2 records"));
+        assert!(count_error.contains("limit is 1"));
+
+        let size_error = discover_current_user_sessions_in_with_limits(&fixture.0, 8, 8)
+            .unwrap_err()
+            .to_string();
+        assert!(size_error.contains("exceeds 8 bytes"));
     }
 
     #[test]

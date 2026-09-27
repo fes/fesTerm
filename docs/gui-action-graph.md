@@ -18,6 +18,12 @@ frame when inventory and provider errors are unchanged. Explicit refresh,
 generation invalidation, and disabled-work cancellation still apply. Visible
 relative-age labels refresh independently at minute scale.
 
+The machine-readable sessiond helper in ADR-0041 shares the registry/liveness
+contracts covered alongside `LAUNCH-12`; CP-19 adds read-only capability and
+metadata oracles. It does not introduce a Launcher route, change local resume
+policy, or implement remote PSRP discovery/attachment. PowerShell/enterprise
+GUI edges must be added when those application commands are wired.
+
 For `SET-07`, the 2.4-second unread pulse has at most 30 animation frames per
 second. An unfocused window or a reduced-motion style shows a static
 ring-and-dot unread marker instead; CPU/software rendering adapters select

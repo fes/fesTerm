@@ -2572,3 +2572,28 @@ for an active run. A duplicated-descriptor regression reproduces the failure
 without relying on scheduling. Diagnostic lock guards now explicitly unlock
 when their last real owner finishes; log writers still retain lifetime
 ownership, and catalog/probe locks use the same release rule.
+
+## Separating enterprise discovery from a remote shell
+
+The PowerShell work began with three boundaries that are easy to conflate:
+signing into Entra, discovering a Dev Box, and authenticating to a shell on
+that box. None grants the next. A fourth boundary appears when the destination
+already has a durable terminal: the remoting account must actually own that
+daemon, and selecting a stale name must not start a replacement session.
+
+ADR 0041 records those contracts before adding new transports. The first
+daemon slice is a versioned, bounded JSON capability/inventory interface. It
+reuses current-user registry and generation checks, preserves unknown records,
+omits command arguments and IPC paths, and does not attach or clean up as a
+side effect. Helper package version, wire protocol and recovery schema are
+reported independently rather than pretending that matching version strings
+prove compatibility.
+
+The next backends remain separate from terminal bytes and GUI ownership.
+Public-client PKCE and Dev Center discovery can be exercised against bounded
+local protocol fixtures, but actual tenant consent, broker/device compliance
+and Windows-logon evidence are separate gates. Native PSRP also needs limits
+inside protocol decoding and streaming consumption, not just truncation after
+an unbounded library collector has already allocated its results. The branch
+does not advertise a completed PowerShell tab or remote daemon bridge from
+these foundations alone.
