@@ -68,6 +68,8 @@ pub enum SoapError {
     Fault {
         /// Fault code, typically a WS-Addressing or WS-Management URI.
         code: String,
+        /// Numeric `WSManFault Code` detail when present.
+        detail_code: Option<u32>,
         /// Human-readable fault reason from the server.
         reason: String,
     },

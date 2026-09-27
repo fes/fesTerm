@@ -312,7 +312,11 @@ fn extract_soap_fault(xml: &str) -> Option<SoapError> {
         .or_else(|| extract_element_text(xml, "faultstring"))
         .unwrap_or_else(|| "SOAP fault".into());
 
-    Some(SoapError::Fault { code, reason })
+    Some(SoapError::Fault {
+        code,
+        detail_code: extract_wsman_fault_code(xml),
+        reason,
+    })
 }
 
 /// Extract the `<s:Subcode><s:Value>…</s:Value></s:Subcode>` text,
@@ -326,6 +330,15 @@ fn extract_subcode_value(xml: &str) -> Option<String> {
         return None;
     }
     Some(inner)
+}
+
+fn extract_wsman_fault_code(xml: &str) -> Option<u32> {
+    let wsman_pos = xml.find("WSManFault")?;
+    let tag_start = xml[..wsman_pos].rfind('<')?;
+    let tag_end = xml[wsman_pos..].find('>')? + wsman_pos;
+    extract_attribute(&xml[tag_start..=tag_end], "Code")
+        .filter(|code| !code.is_empty() && code.chars().all(|ch| ch.is_ascii_digit()))
+        .and_then(|code| code.parse().ok())
 }
 
 #[cfg(test)]
@@ -393,8 +406,13 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
-            SoapError::Fault { code, reason } => {
+            SoapError::Fault {
+                code,
+                detail_code,
+                reason,
+            } => {
                 assert_eq!(code, "s:Receiver");
+                assert_eq!(detail_code, None);
                 assert_eq!(reason, "Access denied");
             }
             _ => panic!("expected SoapFault"),
@@ -468,6 +486,7 @@ mod tests {
 
         let e = SoapError::Fault {
             code: "s:Sender".into(),
+            detail_code: None,
             reason: "bad".into(),
         };
         assert_eq!(format!("{e}"), "SOAP fault [s:Sender]: bad");
@@ -865,9 +884,35 @@ mod tests {
         </s:Fault></s:Body></s:Envelope>";
         let fault = extract_soap_fault(xml).expect("fault parsed");
         match fault {
-            SoapError::Fault { code, reason } => {
+            SoapError::Fault {
+                code,
+                detail_code,
+                reason,
+            } => {
                 assert_eq!(code, "soap:Server");
+                assert_eq!(detail_code, None);
                 assert_eq!(reason, "old style");
+            }
+            _ => panic!("expected Fault variant"),
+        }
+    }
+
+    #[test]
+    fn extract_soap_fault_captures_wsman_fault_detail_code() {
+        let xml = r#"<s:Envelope><s:Body><s:Fault>
+            <s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>w:TimedOut</s:Value></s:Subcode></s:Code>
+            <s:Reason><s:Text>The operation timed out.</s:Text></s:Reason>
+            <s:Detail><f:WSManFault Code="2150858793" Machine="runner">
+              <f:Message>omitted</f:Message>
+            </f:WSManFault></s:Detail>
+        </s:Fault></s:Body></s:Envelope>"#;
+        let fault = extract_soap_fault(xml).expect("fault parsed");
+        match fault {
+            SoapError::Fault {
+                code, detail_code, ..
+            } => {
+                assert_eq!(code, "w:TimedOut");
+                assert_eq!(detail_code, Some(2150858793));
             }
             _ => panic!("expected Fault variant"),
         }

@@ -157,27 +157,65 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
                     }
                     return Ok(out.stdout);
                 }
-                Err(WinrmError::Timeout(_)) => continue,
+                Err(WinrmError::Timeout(_)) => {
+                    emit_psrp_cancel_diagnostic(
+                        "receive-client-timeout",
+                        shell,
+                        Some(&self.command_id),
+                        None,
+                        None,
+                    );
+                    continue;
+                }
                 Err(WinrmError::Soap(SoapError::Fault {
                     ref code,
-                    ref reason,
+                    detail_code,
+                    ..
                 })) if code.contains("TimedOut") => {
                     // PSRP long-polling: the WinRM server returns a SOAP
                     // fault with code `w:TimedOut` when there's nothing to
                     // read yet. This is the normal long-poll cycle and MUST
                     // be retried (briefing §5 P7). Only fatal SOAP faults
                     // (e.g. shell died, access denied) should propagate.
-                    debug!(%code, %reason, "PSRP recv_chunk: w:TimedOut — retrying");
+                    emit_psrp_cancel_diagnostic(
+                        "receive-timeout",
+                        shell,
+                        Some(&self.command_id),
+                        Some(code),
+                        detail_code,
+                    );
+                    debug!("PSRP receive operation timed out; retrying");
                     continue;
                 }
-                Err(WinrmError::Soap(SoapError::Fault { code, reason })) => {
-                    warn!(%code, %reason, "PSRP transport SOAP fault — shell likely dead");
+                Err(WinrmError::Soap(SoapError::Fault {
+                    code,
+                    detail_code,
+                    reason,
+                })) => {
+                    emit_psrp_cancel_diagnostic(
+                        "receive-fault",
+                        shell,
+                        Some(&self.command_id),
+                        Some(&code),
+                        detail_code,
+                    );
+                    warn!("PSRP transport SOAP fault; aborting receive");
                     return Err(PsrpError::Winrm(WinrmError::Soap(SoapError::Fault {
                         code,
+                        detail_code,
                         reason,
                     })));
                 }
-                Err(e) => return Err(PsrpError::Winrm(e)),
+                Err(e) => {
+                    emit_psrp_cancel_diagnostic(
+                        receive_error_stage(&e),
+                        shell,
+                        Some(&self.command_id),
+                        None,
+                        None,
+                    );
+                    return Err(PsrpError::Winrm(e));
+                }
             }
         }
     }
@@ -202,7 +240,42 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
     }
 
     async fn signal_stop(&self) -> Result<()> {
-        self.shell()?.signal_ctrl_c(&self.command_id).await?;
+        let shell = self.shell()?;
+        emit_psrp_cancel_diagnostic("signal-start", shell, Some(&self.command_id), None, None);
+        match shell.signal_ctrl_c(&self.command_id).await {
+            Ok(()) => {
+                emit_psrp_cancel_diagnostic("signal-ok", shell, Some(&self.command_id), None, None);
+                Ok(())
+            }
+            Err(WinrmError::Soap(SoapError::Fault {
+                code,
+                detail_code,
+                reason,
+            })) => {
+                emit_psrp_cancel_diagnostic(
+                    "signal-fault",
+                    shell,
+                    Some(&self.command_id),
+                    Some(&code),
+                    detail_code,
+                );
+                Err(PsrpError::Winrm(WinrmError::Soap(SoapError::Fault {
+                    code,
+                    detail_code,
+                    reason,
+                })))
+            }
+            Err(error) => {
+                emit_psrp_cancel_diagnostic(
+                    signal_error_stage(&error),
+                    shell,
+                    Some(&self.command_id),
+                    None,
+                    None,
+                );
+                Err(PsrpError::Winrm(error))
+            }
+        }?;
         Ok(())
     }
 
@@ -220,6 +293,112 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
             .ok_or_else(|| PsrpError::protocol("transport closed"))?;
         let id = shell.disconnect().await?;
         Ok(id)
+    }
+}
+
+fn emit_psrp_cancel_diagnostic(
+    stage: &'static str,
+    shell: &Shell<'_>,
+    command_id: Option<&str>,
+    soap_code: Option<&str>,
+    wsman_detail_code: Option<u32>,
+) {
+    if std::env::var_os("FESTERM_PSRP_CANCEL_DIAGNOSTICS").as_deref()
+        != Some(std::ffi::OsStr::new("1"))
+    {
+        return;
+    }
+    eprintln!(
+        "festerm-psrp-cancel-diagnostic stage={stage} resource_uri={} command_id={} command_id_fingerprint={} soap_code={} wsman_detail_code={}",
+        resource_uri_category(shell.resource_uri()),
+        command_id_category(command_id),
+        command_id_fingerprint(command_id),
+        soap_code_category(soap_code),
+        wsman_detail_code.map_or_else(|| "none".to_owned(), |code| code.to_string()),
+    );
+}
+
+fn signal_error_stage(error: &WinrmError) -> &'static str {
+    error_stage("signal", error)
+}
+
+fn receive_error_stage(error: &WinrmError) -> &'static str {
+    error_stage("receive", error)
+}
+
+fn error_stage(prefix: &'static str, error: &WinrmError) -> &'static str {
+    match error {
+        WinrmError::Timeout(_) if prefix == "signal" => "signal-timeout",
+        WinrmError::Cancelled if prefix == "signal" => "signal-cancelled",
+        WinrmError::Http(_) if prefix == "signal" => "signal-http",
+        WinrmError::AuthFailed(_) if prefix == "signal" => "signal-auth",
+        WinrmError::Ntlm(_) if prefix == "signal" => "signal-ntlm",
+        WinrmError::ResponseTooLarge { .. } if prefix == "signal" => "signal-response-too-large",
+        WinrmError::Transfer(_) if prefix == "signal" => "signal-transfer",
+        WinrmError::CredSsp(_) if prefix == "signal" => "signal-credssp",
+        WinrmError::Soap(_) if prefix == "signal" => "signal-soap",
+        WinrmError::Timeout(_) => "receive-client-timeout",
+        WinrmError::Cancelled => "receive-cancelled",
+        WinrmError::Http(_) => "receive-http",
+        WinrmError::AuthFailed(_) => "receive-auth",
+        WinrmError::Ntlm(_) => "receive-ntlm",
+        WinrmError::ResponseTooLarge { .. } => "receive-response-too-large",
+        WinrmError::Transfer(_) => "receive-transfer",
+        WinrmError::CredSsp(_) => "receive-credssp",
+        WinrmError::Soap(_) => "receive-soap",
+    }
+}
+
+fn resource_uri_category(uri: &str) -> &'static str {
+    if uri == RESOURCE_URI_PSRP {
+        "psrp"
+    } else if uri.contains("/cmd") {
+        "cmd"
+    } else {
+        "other"
+    }
+}
+
+fn command_id_category(command_id: Option<&str>) -> &'static str {
+    match command_id {
+        Some(value) if uuid::Uuid::parse_str(value).is_ok() => "uuid",
+        Some("") => "empty",
+        Some(_) => "non-uuid",
+        None => "none",
+    }
+}
+
+fn command_id_fingerprint(command_id: Option<&str>) -> String {
+    let Some(value) = command_id else {
+        return "none".into();
+    };
+    if uuid::Uuid::parse_str(value).is_err() {
+        return "non-uuid".into();
+    }
+    let suffix_start = value.len().saturating_sub(8);
+    format!("uuid-suffix-{}", &value[suffix_start..])
+}
+
+fn soap_code_category(code: Option<&str>) -> &'static str {
+    let Some(code) = code else {
+        return "none";
+    };
+    if code.contains("TimedOut") {
+        "w:TimedOut"
+    } else if code.contains("InvalidSelectors") {
+        "w:InvalidSelectors"
+    } else if code.contains("InvalidResourceURI") {
+        "w:InvalidResourceURI"
+    } else if code.contains("DestinationUnreachable") {
+        "a:DestinationUnreachable"
+    } else if code.contains("ActionNotSupported") {
+        "a:ActionNotSupported"
+    } else if code == "s:Sender" || code == "env:Sender" || code == "soap:Sender" {
+        "soap:Sender"
+    } else if code == "s:Receiver" || code == "env:Receiver" || code == "soap:Receiver" {
+        "soap:Receiver"
+    } else {
+        "other"
     }
 }
 

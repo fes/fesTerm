@@ -99,6 +99,7 @@ jobs:
         shell: powershell
         env:
           FESTERM_RUN_OPTIONAL_VALIDATION: '1'
+          FESTERM_PSRP_CANCEL_DIAGNOSTICS: '1'
         run: .\scripts\run-psrp-interop.ps1 -ProvisionIsolatedRunner
 
       - name: Upload safe PSRP result on failure
