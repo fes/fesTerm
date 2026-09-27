@@ -142,7 +142,7 @@ $createdUser = $false
 $caCert = $null
 $leafCert = $null
 $rootStoreAdded = $false
-$listenerPath = $null
+$listenerCreationAttempted = $false
 $originalEndpointSddl = $null
 $scriptFailure = $null
 $failureReason = 'setup-failed'
@@ -240,14 +240,12 @@ try {
     Export-CertificatePem -Certificate $caCert -Path $caPemPath
 
     $failureReason = 'create-listener-failed'
-    $listener = New-Item -Path WSMan:\localhost\Listener `
-        -Address 'IP:127.0.0.1' `
-        -Transport HTTPS `
-        -HostName '127.0.0.1' `
-        -CertificateThumbprint $leafCert.Thumbprint
-    $listenerPath = $listener.PSPath
+    $listenerCreationAttempted = $true
+    New-WSManInstance -ResourceURI 'winrm/config/Listener' `
+        -SelectorSet @{ Address = 'IP:127.0.0.1'; Transport = 'HTTPS' } `
+        -ValueSet @{ Hostname = '127.0.0.1'; CertificateThumbprint = $leafCert.Thumbprint; Enabled = $true; Port = 5986 } | Out-Null
     $verified = Get-ChildItem WSMan:\localhost\Listener | Where-Object {
-        $_.PSPath -eq $listenerPath -and $_.Keys -contains 'Transport=HTTPS' -and $_.Keys -contains 'Address=IP:127.0.0.1'
+        $_.Keys -contains 'Transport=HTTPS' -and $_.Keys -contains 'Address=IP:127.0.0.1'
     }
     if (-not $verified) { throw 'created-listener-verification-failed' }
 
@@ -284,8 +282,18 @@ try {
             Set-PSSessionConfiguration -Name Microsoft.PowerShell -SecurityDescriptorSddl $originalEndpointSddl -Force | Out-Null
         }
     }
-    if ($listenerPath) {
-        Add-CleanupError $cleanupErrors 'remove-loopback-listener' { Remove-Item -LiteralPath $listenerPath -Recurse -Force -ErrorAction Stop }
+    if ($listenerCreationAttempted) {
+        Add-CleanupError $cleanupErrors 'remove-loopback-listener' {
+            $ownedListener = Get-ChildItem WSMan:\localhost\Listener | Where-Object {
+                $_.Keys -contains 'Transport=HTTPS' -and $_.Keys -contains 'Address=IP:127.0.0.1'
+            }
+            if ($ownedListener) {
+                $thumbprint = (Get-Item -LiteralPath "$($ownedListener.PSPath)\CertificateThumbprint").Value
+                if ($thumbprint -ne $leafCert.Thumbprint) { throw 'listener-identity-changed' }
+                Remove-WSManInstance -ResourceURI 'winrm/config/Listener' `
+                    -SelectorSet @{ Address = 'IP:127.0.0.1'; Transport = 'HTTPS' } | Out-Null
+            }
+        }
     }
     if ($wsmanCaptured) {
         Add-CleanupError $cleanupErrors 'restore-ipv4-filter' { Set-Item WSMan:\localhost\Service\IPv4Filter $originalIPv4Filter }
