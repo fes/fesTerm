@@ -2001,6 +2001,7 @@ fn discovery_endpoint(registry: &Path, pid: u32, generation: u128) -> String {
     }
     #[cfg(windows)]
     {
+        let _ = registry;
         format!(r"\\.\pipe\festerm-sessiond-{pid}-{generation}")
     }
 }
