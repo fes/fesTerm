@@ -19,7 +19,8 @@ DEVICE = {"family": "iPhone", "model": "iPhone Test", "device_type": "phone",
 
 
 class FakeRunner:
-    def __init__(self, fail=None, created=OWNED):
+    def __init__(self, fail=None, created=OWNED, first_ui=True):
+        self.first_ui = first_ui
         self.calls = []
         self.fail = fail
         self.created = created
@@ -34,6 +35,8 @@ class FakeRunner:
         if command == "create":
             return self.created + "\n"
         if command == "launch":
+            stderr = next(a.split("=", 1)[1] for a in args if a.startswith("--stderr="))
+            Path(stderr).write_text("festerm-mobile: first UI built\n" if self.first_ui else "renderer failed\n")
             return smoke.BUNDLE_ID + ": 1234\n"
         if command == "io":
             Path(args[-1]).write_bytes(b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13)
@@ -99,6 +102,17 @@ class IosSimulatorSmokeTests(unittest.TestCase):
                                                {EXISTING}, pause=lambda _: None)
             self.assertEqual(result["status"], "fail")
             self.assertFalse(any(EXISTING in call for call in run.calls))
+
+    def test_ios_smoke_live_process_without_ui_fails_and_preserves_capture(self):
+        run = FakeRunner(first_ui=False)
+        with tempfile.TemporaryDirectory() as directory:
+            result = smoke.exercise_device(run, DEVICE, Path("fixture.app"), Path(directory),
+                                           {EXISTING}, pause=lambda _: None)
+            self.assertEqual(result["status"], "fail")
+            self.assertFalse(result["captures"][0]["first_ui_built"])
+            self.assertTrue((Path(directory) / result["captures"][0]["screenshot"]).exists())
+            self.assertIn("first UI", result["error"])
+        self.assertEqual(run.calls[-1], ("xcrun", "simctl", "delete", OWNED))
 
     def test_ios_smoke_rejects_missing_or_invalid_capture(self):
         with tempfile.TemporaryDirectory() as directory:

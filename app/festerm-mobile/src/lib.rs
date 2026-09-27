@@ -85,6 +85,7 @@ pub fn fixture_terminal() -> Terminal {
 }
 
 pub struct MobileApp {
+    reported_first_ui: bool,
     terminal: Terminal,
     view: TerminalView,
     sink: ProbeSink,
@@ -101,6 +102,7 @@ pub struct MobileApp {
 impl MobileApp {
     pub fn new(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
         Self {
+            reported_first_ui: false,
             terminal: fixture_terminal(),
             view: TerminalView::default(),
             sink: ProbeSink::default(),
@@ -311,6 +313,10 @@ impl MobileApp {
 impl eframe::App for MobileApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+        if !self.reported_first_ui {
+            eprintln!("festerm-mobile: first UI built");
+            self.reported_first_ui = true;
+        }
     }
 }
 

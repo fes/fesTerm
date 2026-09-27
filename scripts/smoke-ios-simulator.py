@@ -108,7 +108,10 @@ def exercise_device(run, spec: dict, bundle: Path, output: Path,
         run("xcrun", "simctl", "bootstatus", owned, "-b", timeout=180)
         run("xcrun", "simctl", "install", owned, str(bundle), timeout=120)
         for phase in ("launch", "relaunch"):
-            launched = run("xcrun", "simctl", "launch", owned, BUNDLE_ID, timeout=120)
+            stderr = output / f"{spec['family'].lower()}-{phase}.stderr.log"
+            stdout = output / f"{spec['family'].lower()}-{phase}.stdout.log"
+            launched = run("xcrun", "simctl", "launch", f"--stdout={stdout}",
+                           f"--stderr={stderr}", owned, BUNDLE_ID, timeout=120)
             match = re.search(re.escape(BUNDLE_ID) + r":\s*(\d+)\s*$", launched)
             if not match or int(match[1]) <= 0:
                 raise RuntimeError("simctl launch did not return a valid application PID")
@@ -121,7 +124,13 @@ def exercise_device(run, spec: dict, bundle: Path, output: Path,
             verify_process(run, pid)
             result["captures"].append({"phase": phase, "pid": pid,
                                        "screenshot": screenshot.name, "pixels": dimensions})
+            # A live process can have failed renderer initialization. Preserve
+            # its screenshot and logs, but never pass without reaching the UI.
+            first_ui = stderr.exists() and "festerm-mobile: first UI built" in stderr.read_text(errors="replace")
+            result["captures"][-1].update(first_ui_built=first_ui, stderr=stderr.name)
             run("xcrun", "simctl", "terminate", owned, BUNDLE_ID)
+            if not first_ui:
+                raise RuntimeError(f"Application never built its first UI; inspect {stderr.name}")
         result["status"] = "pass"
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
         result["status"] = "fail"
@@ -158,7 +167,7 @@ def main() -> int:
     output = args.output.resolve() / uuid.uuid4().hex
     output.mkdir(parents=True, exist_ok=False)
     report = {"schema": 1, "status": "running", "devices": [],
-              "scope": "install, launch survival, PNG capture, terminate/relaunch; visual review required",
+              "scope": "install, launch survival, first UI callback, PNG capture, terminate/relaunch; visual review required",
               "unverified": ["rendering correctness", "native keyboard/IME", "touch gestures",
                              "background/resume", "physical-device behavior"]}
     run = Runner(output / "commands.log")

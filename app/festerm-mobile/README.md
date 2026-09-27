@@ -110,3 +110,11 @@ process-survival success is not a passed native interaction gate. Use
 the scenarios in [manual validation](../../docs/manual-validation.md); record
 failures and reassess the hosting path before Phase 2 if input/lifecycle would
 require an upstream fork.
+
+### Native checkpoint
+
+The SDK-matched iOS 18.5 run at `7670d52` did not pass: iPhone launch timed
+out and iPad launch/relaunch screenshots were black. The runner now captures
+app stdout/stderr and rejects a live process that never builds its first UI.
+This marker still requires visual review of the captured frame. See ADR 0040;
+rendering, keyboard and gesture acceptance remain open.

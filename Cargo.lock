@@ -2157,6 +2157,7 @@ dependencies = [
  "festerm-core",
  "festerm-ios-window",
  "festerm-ui-egui",
+ "log",
  "raw-window-handle",
  "winit",
 ]

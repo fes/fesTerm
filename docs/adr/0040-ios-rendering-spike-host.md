@@ -98,6 +98,17 @@ durable resume, Android and TestFlight remain later work. Accepting this ADR
 does not accept mobile product support. Architectural review and native
 feasibility evidence are required before moving beyond this experiment.
 
+## Native evidence checkpoint (2026-09-27)
+
+The SDK-matched iOS 18.5 Simulator run at `7670d52` failed the native gate:
+iPhone launch timed out; iPad launch and relaunch survived but both screenshots
+were black. Desktop CI and native package smoke passed. Process survival alone
+therefore cannot qualify even startup. The smoke now captures application
+stdout/stderr and requires the first UI callback marker, preserving screenshots
+on failure. The marker proves UI construction only, not presentation or keyboard
+correctness. Host/renderer warnings are logged without retaining typed input.
+Renderer initialization versus window presentation remains under investigation.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** additive mobile composition root;
@@ -122,8 +133,9 @@ feasibility evidence are required before moving beyond this experiment.
   `terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link;
   `scripts/tests/test_ios_simulator_smoke.py` for isolated device ownership,
-  runtime selection, failure/cleanup behavior; `scripts/smoke-ios-simulator.py
-  --run` for iPhone/iPad launch-survival, terminate/relaunch and PNG capture.
+  runtime selection, failure/cleanup behavior and live-process-without-UI rejection; `scripts/smoke-ios-simulator.py
+  --run` for iPhone/iPad launch-survival, first UI callback, terminate/relaunch
+  and PNG capture.
   Only devices created by that invocation may be shut down/deleted. Artifacts
   identify the commit/runtime and never count screenshots as visual acceptance.
 - **Native/manual evidence required:** `MOB-01` through `MOB-04` in

@@ -10,6 +10,26 @@ use winit::{
     window::WindowId,
 };
 
+// Capture startup failures even when eframe cannot construct the application.
+// This offline probe never logs terminal input; only host/renderer warnings.
+struct StartupLogger;
+
+impl log::Log for StartupLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("{} {}: {}", record.level(), record.target(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static STARTUP_LOGGER: StartupLogger = StartupLogger;
+
 struct MobileHost<'a> {
     app: eframe::EframeWinitApplication<'a>,
     lifecycle: Rc<Cell<Lifecycle>>,
@@ -81,6 +101,9 @@ impl ApplicationHandler<eframe::UserEvent> for MobileHost<'_> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    log::set_logger(&STARTUP_LOGGER).expect("single mobile logger");
+    log::set_max_level(log::LevelFilter::Warn);
+    eprintln!("festerm-mobile: starting native host");
     let event_loop = EventLoop::<eframe::UserEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let lifecycle = Rc::new(Cell::new(Lifecycle::default()));
@@ -97,6 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
         Box::new(move |cc| {
+            eprintln!("festerm-mobile: renderer initialized");
             let context = cc.egui_ctx.clone();
             let keyboard = cc.window_handle().ok().and_then(|handle| {
                 festerm_ios_window::KeyboardBridge::new(handle, move || context.request_repaint())
