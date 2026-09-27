@@ -617,17 +617,20 @@ fn settings_card_response(
     title: &str,
     body: impl FnOnce(&mut Ui),
 ) -> egui::InnerResponse<()> {
-    egui::Frame::new()
-        .fill(theme::SURFACE_TAB_INACTIVE)
-        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_TAB_INACTIVE)
+            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::same(16)),
+        |ui| {
             ui.set_min_width(ui.available_width());
             ssh_section_heading(ui, title);
             ui.add_space(6.0);
             body(ui);
-        })
+        },
+    )
 }
 
 /// One labeled on/off preference row: a fixed title and state-independent

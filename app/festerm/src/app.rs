@@ -413,6 +413,7 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    local_persistence_provider: PersistenceProviderKind,
     /// The deterministic local tab created only for native-window smoke. The
     /// ordinary no-workspace product path starts at Launcher instead.
     primary_tab: Option<TabId>,
@@ -867,6 +868,7 @@ impl FesTermApp {
         };
         Self {
             state,
+            local_persistence_provider: detect_default_local_persistence_provider(),
             primary_tab,
             window_was_focused: true,
             window_title: APPLICATION_TITLE.to_owned(),
@@ -5520,7 +5522,7 @@ impl FesTermApp {
                         self.state.configuration(),
                         pending_edit,
                         pending_create,
-                        detect_default_local_persistence_provider(),
+                        self.local_persistence_provider,
                     );
                 }
                 TabContent::MarkdownViewer(tab) => {
@@ -6141,6 +6143,7 @@ impl FesTermApp {
         let state = AppState::for_test_with_configuration(configuration);
         Self {
             state,
+            local_persistence_provider: PersistenceProviderKind::FestermSessiond,
             primary_tab: None,
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke: None,
@@ -6242,6 +6245,38 @@ mod tests {
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         (harness, transport)
+    }
+
+    #[test]
+    fn profiles_repaints_reuse_the_composition_root_provider_default() {
+        for (provider, label) in [
+            (PersistenceProviderKind::FestermSessiond, "fesTerm native"),
+            (PersistenceProviderKind::Tmux, "tmux"),
+            (PersistenceProviderKind::Screen, "GNU screen"),
+        ] {
+            let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+            app.local_persistence_provider = provider;
+            app.state
+                .dispatch(AppCommand::OpenProfiles, &egui::Context::default());
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 1000.0))
+                .with_max_steps(16)
+                .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            harness.run();
+            harness.run_steps(5);
+            harness.get_by_label("New Profile").click();
+            harness.run();
+            harness.get_by_label("Local").click();
+            harness.run();
+            harness.get_by_label("Use a durable local session").click();
+            harness.run();
+            harness.run_steps(5);
+            assert_eq!(
+                harness.get_by_label(label).accesskit_node().toggled(),
+                Some(accesskit::Toggled::True),
+                "repainting Profiles must use the captured default, not rescan the host PATH",
+            );
+        }
     }
 
     #[test]

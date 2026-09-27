@@ -282,7 +282,6 @@ pub(crate) fn show_frame<R>(
         .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()));
     let Some(renderer) = renderer.filter(|_| {
         frame.fill.is_opaque()
-            && frame.stroke == egui::Stroke::NONE
             && frame.shadow == egui::Shadow::NONE
             && ui.painter().opacity() == 1.0
             && ui.painter().is_visible()
@@ -424,7 +423,7 @@ pub(crate) fn install(context: &egui::Context, render_state: &egui_wgpu::RenderS
                 egui_wgpu::RendererOptions::default().dithering,
             ) {
                 context.data_mut(|data| data.insert_temp(panel_renderer_id(), renderer));
-                tracing::info!(target: "festerm::app", "using textureless Launcher panel backgrounds on Windows WARP");
+                tracing::info!(target: "festerm::app", "using textureless application panel backgrounds on Windows WARP");
             }
         }
         tracing::info!(
@@ -574,7 +573,7 @@ mod tests {
         if let Some(renderer) = &renderer {
             assert_eq!(
                 renderer.paints.load(std::sync::atomic::Ordering::Relaxed) > 0,
-                opacity == 1.0 && !bordered,
+                opacity == 1.0,
                 "the pixel comparison must exercise the selected rendering path",
             );
         }
@@ -604,10 +603,29 @@ mod tests {
     }
 
     #[test]
-    fn textureless_panel_fill_preserves_opacity_stroke_and_srgb_fallback() {
-        for (opacity, bordered, srgb) in
-            [(0.5, false, false), (1.0, true, false), (1.0, false, true)]
-        {
+    fn textureless_bordered_panels_match_pixels_across_dpi() {
+        for scale in [1.0, 1.25, 2.0] {
+            for clipped in [false, true] {
+                for dithering in [false, true] {
+                    let ordinary = panel_image(false, scale, 1.0, clipped, true, false, dithering);
+                    let native = panel_image(true, scale, 1.0, clipped, true, false, dithering);
+                    assert_eq!(
+                        ordinary, native,
+                        "scale={scale}, clipped={clipped}, dithering={dithering}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn textureless_panel_fill_preserves_opacity_and_srgb_fallback() {
+        for (opacity, bordered, srgb) in [
+            (0.5, false, false),
+            (0.5, true, false),
+            (1.0, false, true),
+            (1.0, true, true),
+        ] {
             let ordinary = panel_image(false, 1.25, opacity, true, bordered, srgb, true);
             let native = panel_image(true, 1.25, opacity, true, bordered, srgb, true);
             assert_eq!(ordinary, native);
