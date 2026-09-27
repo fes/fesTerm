@@ -505,6 +505,15 @@ reproduces its draw cost without desktop input. Native measurements and their
 limits are in `validation/windows-warp/README.md`. This does not replace CP-16's
 accelerated-device, mixed-DPI or usability review.
 
+The same path now covers bordered Settings/Profiles panels, connection forms,
+and running-session groups. `replay_warp_ui_surfaces` renders the real
+application UI at 3548 x 2150 pixels, separately times UI construction and
+completed drawing/readback, and can compare every pixel against a preserved
+baseline. `textureless_bordered_panels_match_pixels_across_dpi` covers border
+geometry in normal CI. Native Settings scrolling, profile interaction, window
+drag/resize responsiveness, and Windows Terminal comparison remain additional
+evidence: an offscreen replay does not establish their latency or parity.
+
 ### Experimental Direct2D qualification
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes

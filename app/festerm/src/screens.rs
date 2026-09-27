@@ -1303,12 +1303,14 @@ fn ssh_field_id(ui: &Ui, tab_id: TabId, field: &'static str) -> egui::Id {
 fn show_local_form(ui: &mut Ui, tab_id: TabId, form: &mut LocalLauncherForm) -> Option<AppCommand> {
     ui.add_space(16.0);
     let mut result = None;
-    egui::Frame::new()
-        .fill(theme::SURFACE_TAB_INACTIVE)
-        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_TAB_INACTIVE)
+            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::same(16)),
+        |ui| {
             ui.set_width(340.0);
             local_executable_field(
                 ui,
@@ -1349,7 +1351,8 @@ fn show_local_form(ui: &mut Ui, tab_id: TabId, form: &mut LocalLauncherForm) -> 
                     }
                 }
             });
-        });
+        },
+    );
     result
 }
 
@@ -1752,12 +1755,14 @@ fn show_port_forward_drafts(
     let mut remove_forward = None;
     for (index, forward) in port_forwards.iter_mut().enumerate() {
         ui.add_space(8.0);
-        egui::Frame::new()
-            .fill(theme::SURFACE_TAB_ACTIVE)
-            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, |ui| {
+        crate::software_background::show_frame(
+            ui,
+            egui::Frame::new()
+                .fill(theme::SURFACE_TAB_ACTIVE)
+                .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::same(12)),
+            |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("Forward {}", index + 1))
@@ -1809,7 +1814,8 @@ fn show_port_forward_drafts(
                     "Destination port",
                     &mut forward.destination_port,
                 );
-            });
+            },
+        );
     }
     if let Some(index) = remove_forward {
         port_forwards.remove(index);
@@ -1998,12 +2004,14 @@ fn show_ssh_form(
     // Username wins if both are somehow armed: it is the earlier field, so
     // focusing the password would strand the user mid-form.
     let focus_password = std::mem::take(&mut form.focus_password) && !focus_quick_connect;
-    egui::Frame::new()
-        .fill(theme::SURFACE_TAB_INACTIVE)
-        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_TAB_INACTIVE)
+            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::same(16)),
+        |ui| {
             let card_width = ui.available_width().clamp(340.0, 720.0);
             ui.set_min_width(card_width);
             ui.set_max_width(card_width);
@@ -2098,7 +2106,8 @@ fn show_ssh_form(
                     }
                 });
             }
-        });
+        },
+    );
     result
 }
 
@@ -2114,12 +2123,14 @@ fn show_sftp_form(
     form.focus_username = false;
     // See `show_ssh_form`: username wins if both are armed.
     let focus_password = std::mem::take(&mut form.focus_password) && !focus_username;
-    egui::Frame::new()
-        .fill(theme::SURFACE_TAB_INACTIVE)
-        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_TAB_INACTIVE)
+            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::same(16)),
+        |ui| {
             ui.set_width(340.0);
             // See the matching comment in `show_ssh_form`: rendered once in
             // a fixed spot so toggling never moves the checkbox itself.
@@ -2209,7 +2220,8 @@ fn show_sftp_form(
                     ui.colored_label(theme::STATUS_ERROR, feedback);
                 }
             }
-        });
+        },
+    );
     result
 }
 
@@ -2971,11 +2983,13 @@ fn show_session_group(
     if items.is_empty() {
         return;
     }
-    egui::Frame::new()
-        .fill(theme::SURFACE_CARD)
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .show(ui, |ui| {
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_CARD)
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::symmetric(10, 8)),
+        |ui| {
             ui.set_width((width - 20.0).max(0.0));
             ui.horizontal(|ui| {
                 let (chevron, _) = ui.allocate_exact_size(egui::Vec2::splat(16.0), Sense::hover());
@@ -3057,7 +3071,8 @@ fn show_session_group(
                 });
             }
             ui.add_space((items.len() - end) as f32 * stride);
-        });
+        },
+    );
 }
 
 /// Renders one reattachable session: its mark, its name, how long it has been
@@ -4483,10 +4498,12 @@ pub fn show_ssh_live_password_prompt(
         egui::RichText::new(text).font(font.clone()).color(color)
     };
     let mut command = None;
-    egui::Frame::new()
-        .fill(theme::SURFACE_TERMINAL)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
+    crate::software_background::show_frame(
+        ui,
+        egui::Frame::new()
+            .fill(theme::SURFACE_TERMINAL)
+            .inner_margin(egui::Margin::same(16)),
+        |ui| {
             ui.set_min_size(ui.available_size());
             ui.label(mono(
                 format!("ssh {}@{}", prompt.username(), prompt.host()),
@@ -4501,7 +4518,8 @@ pub fn show_ssh_live_password_prompt(
                 ui.label(mono(prompt_line, theme::TEXT_PRIMARY));
                 ui.label(mono(pty_cursor_glyph(ui).to_owned(), theme::TEXT_PRIMARY));
             });
-        });
+        },
+    );
 
     // Keyboard-driven and unechoed, matching real `ssh`: no terminal view
     // or text field is shown this frame to compete for these keys, and

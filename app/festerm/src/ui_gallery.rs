@@ -938,6 +938,132 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
     }
 }
 
+#[test]
+#[ignore = "optional full-resolution Windows WARP UI replay, not a native latency measurement"]
+fn replay_warp_ui_surfaces() {
+    use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+    use egui_kittest::TestRenderer;
+    use std::time::Instant;
+
+    assert_eq!(
+        std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
+        Ok("1"),
+        "set FESTERM_RUN_OPTIONAL_VALIDATION=1",
+    );
+    let output =
+        PathBuf::from(std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"));
+    fs::create_dir_all(&output).expect("create replay output directory");
+    for surface in ["launcher", "settings", "profiles", "terminal"] {
+        let state = create_render_state(
+            default_wgpu_setup(),
+            eframe::egui_wgpu::RendererOptions::default(),
+        );
+        let info = state.adapter.get_info();
+        assert!(
+            cfg!(windows)
+                && info.backend == eframe::wgpu::Backend::Dx12
+                && info.device_type == eframe::wgpu::DeviceType::Cpu,
+            "replay requires Windows DX12 WARP, got {info:?}",
+        );
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let mut app =
+            crate::app::FesTermApp::for_test_with_configuration(synthetic_configuration());
+        let mut terminal = Terminal::new(Dimensions::new(160, 48).unwrap()).unwrap();
+        terminal.ingest(SSH_TRANSCRIPT.as_bytes());
+        let mut view = TerminalView::default();
+        let mut sink = GallerySink;
+        let context = egui::Context::default();
+        context.set_theme(egui::ThemePreference::Dark);
+        context.set_visuals(festerm_ui_egui::theme::default_visuals());
+        context.all_styles_mut(|style| {
+            style.visuals.text_cursor.blink = false;
+            style.animation_time = 0.0;
+        });
+        crate::software_background::install(&context, &state);
+        crate::direct2d::install_from_environment(&context, Some(&state));
+        match surface {
+            "settings" => app.dispatch_for_test(AppCommand::OpenSettings, &context),
+            "profiles" => app.dispatch_for_test(AppCommand::OpenProfiles, &context),
+            _ => {}
+        }
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1774.0, 1075.0),
+            )),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(2.0);
+        // Use eframe's root-UI entry point. Harness::build_ui adds another large
+        // filled frame around the app, which would dominate this measurement.
+        let mut step = || {
+            context.run_ui(input.clone(), |ui| {
+                if surface == "terminal" {
+                    view.show(ui, &mut terminal, &mut sink);
+                } else {
+                    app.ui_content(ui);
+                }
+            })
+        };
+        for _ in 0..8 {
+            let mut frame = step();
+            renderer.handle_delta(&mut frame.textures_delta);
+        }
+        let mut frame = step();
+        renderer.handle_delta(&mut frame.textures_delta);
+        let image = renderer
+            .render(&context, &frame)
+            .expect("surface replay warmup");
+        assert_eq!(image.dimensions(), (3548, 2150));
+        image
+            .save(output.join(format!("{surface}.png")))
+            .expect("save surface replay pixels");
+        if let Some(reference) = std::env::var_os("FESTERM_WARP_UI_REFERENCE") {
+            let reference = image::open(PathBuf::from(reference).join(format!("{surface}.png")))
+                .expect("open reference replay image")
+                .into_rgba8();
+            assert_eq!(image.dimensions(), reference.dimensions());
+            let mismatches = image
+                .pixels()
+                .zip(reference.pixels())
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(mismatches, 0, "{surface} framebuffer changed");
+        }
+        let started = Instant::now();
+        for _ in 0..20 {
+            frame = step();
+            renderer.handle_delta(&mut frame.textures_delta);
+        }
+        let ui_ms = started.elapsed().as_secs_f64() * 1000.0 / 20.0;
+        let started = Instant::now();
+        for _ in 0..20 {
+            std::hint::black_box(
+                context.tessellate(frame.shapes.clone(), context.pixels_per_point()),
+            );
+        }
+        let tessellate_ms = started.elapsed().as_secs_f64() * 1000.0 / 20.0;
+        renderer
+            .render(&context, &frame)
+            .expect("settled surface replay");
+        let started = Instant::now();
+        for _ in 0..5 {
+            renderer
+                .render(&context, &frame)
+                .expect("completed surface replay frame");
+        }
+        eprintln!(
+            "warp-ui-replay surface={surface} pixels=3548x2150 ui_ms={ui_ms:.3} \
+             tessellate_ms={tessellate_ms:.3} draw_and_readback_ms={:.3}",
+            started.elapsed().as_secs_f64() * 1000.0 / 5.0,
+        );
+    }
+}
+
 /// Renders the whole Settings page tall enough for every card to be laid
 /// out (so the cropped band below is always available), then crops to the
 /// vertical band from `top_label` (or the very top when `None`) up to just

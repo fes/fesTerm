@@ -834,12 +834,14 @@ pub(crate) fn show_profiles(
                 // viewport-measured scroll budget the profile editors use.
                 show_bounded_content_scroll(ui, (tab_id, "profiles_list_scroll"), |ui| {
                 let table_width = ui.available_width().max(0.0);
-                egui::Frame::new()
+                crate::software_background::show_frame(
+                    ui,
+                    egui::Frame::new()
                     .fill(theme::SURFACE_PANEL)
                     .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
                     .corner_radius(LAUNCHER_PANEL_CORNER)
-                    .inner_margin(egui::Margin::symmetric(0, 12))
-                    .show(ui, |ui| {
+                    .inner_margin(egui::Margin::symmetric(0, 12)),
+                    |ui| {
                         ui.set_width(table_width);
                         let options = ProfileTableOptions::profiles(table_width);
                         show_profile_column_headers(ui, table_width, table_width, options);
@@ -975,12 +977,14 @@ pub(crate) fn show_profiles(
                         "New Local Profile"
                     });
                     ui.add_space(16.0);
-                    egui::Frame::new()
+                    crate::software_background::show_frame(
+                        ui,
+                        egui::Frame::new()
                         .fill(theme::SURFACE_TAB_INACTIVE)
                         .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
                         .corner_radius(8.0)
-                        .inner_margin(egui::Margin::same(16))
-                        .show(ui, |ui| {
+                        .inner_margin(egui::Margin::same(16)),
+                        |ui| {
                         ui.set_width(340.0);
                         ssh_section_heading(ui, "Profile");
                         if profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name).changed()
@@ -1057,12 +1061,14 @@ pub(crate) fn show_profiles(
                     (RemoteProfileKind::Sftp, false) => "New SFTP Profile",
                 });
                 ui.add_space(16.0);
-                egui::Frame::new()
+                crate::software_background::show_frame(
+                    ui,
+                    egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE)
                     .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
                     .corner_radius(8.0)
-                    .inner_margin(egui::Margin::same(16))
-                    .show(ui, |ui| {
+                    .inner_margin(egui::Margin::same(16)),
+                    |ui| {
                         ui.set_width(340.0);
                         // Private-key authentication adds a tall multiline
                         // secret field that can otherwise push Save/Cancel
