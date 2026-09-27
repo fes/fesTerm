@@ -30,10 +30,10 @@ pub use errors::{
 pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use profiles::{
-    CredentialKind, KnownHostEntry, LocalProfileConfiguration, PersistenceConfiguration,
-    PersistenceProviderKind, Profile, ProfileUsageEntry, RemoteProfileKind, SerialDataBits,
-    SerialFlowControl, SerialParity, SerialProfileConfiguration, SerialStopBits,
-    SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
+    CredentialKind, KnownHostEntry, LocalBindPolicy, LocalProfileConfiguration,
+    PersistenceConfiguration, PersistenceProviderKind, Profile, ProfileUsageEntry,
+    RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity, SerialProfileConfiguration,
+    SerialStopBits, SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use settings::{
     ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
@@ -866,6 +866,110 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind(), ConfigErrorKind::DuplicateSshPortForward);
+    }
+
+    #[test]
+    fn ssh_local_bind_policy_defaults_round_trips_fixed_and_ask() {
+        let automatic = Profile::ssh(
+            "automatic",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        assert_eq!(
+            automatic.as_ssh().unwrap().local_bind_policy(),
+            LocalBindPolicy::Automatic
+        );
+
+        let fixed = Profile::ssh(
+            "fixed",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Address("127.0.0.1".parse().unwrap()))
+        .unwrap();
+        let ask = Profile::sftp("ask", "files.example.test", 22, "deploy", true)
+            .unwrap()
+            .as_ssh()
+            .unwrap()
+            .clone()
+            .with_local_bind_policy(LocalBindPolicy::Ask)
+            .unwrap();
+        let configuration =
+            Configuration::new(vec![automatic, Profile::Ssh(fixed), Profile::Ssh(ask)]).unwrap();
+        let toml = configuration.to_toml().unwrap();
+        assert!(toml.contains("127.0.0.1"));
+        assert!(toml.contains("local_bind_policy = \"ask\""));
+
+        let restored = Configuration::parse(&toml).unwrap();
+        assert_eq!(
+            restored
+                .profile("fixed")
+                .unwrap()
+                .as_ssh()
+                .unwrap()
+                .local_bind_policy(),
+            LocalBindPolicy::Address("127.0.0.1".parse().unwrap())
+        );
+        assert_eq!(
+            restored
+                .profile("ask")
+                .unwrap()
+                .as_ssh()
+                .unwrap()
+                .local_bind_policy(),
+            LocalBindPolicy::Ask
+        );
+        assert!(!toml.contains("automatic\"\nlocal_bind_policy"));
+    }
+
+    #[test]
+    fn ssh_local_bind_policy_rejects_invalid_fixed_addresses_but_allows_ask() {
+        let profile = Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone();
+        assert!(profile
+            .clone()
+            .with_local_bind_policy(LocalBindPolicy::Ask)
+            .is_ok());
+        let unspecified = profile
+            .clone()
+            .with_local_bind_policy(LocalBindPolicy::Address("0.0.0.0".parse().unwrap()))
+            .unwrap_err();
+        assert_eq!(unspecified.kind(), ConfigErrorKind::InvalidSshProfile);
+        let link_local = profile
+            .clone()
+            .with_local_bind_policy(LocalBindPolicy::Address("fe80::1".parse().unwrap()))
+            .unwrap_err();
+        assert_eq!(link_local.kind(), ConfigErrorKind::InvalidSshProfile);
+        let mapped = profile
+            .with_local_bind_policy(LocalBindPolicy::Address(
+                "::ffff:192.0.2.1".parse().unwrap(),
+            ))
+            .unwrap_err();
+        assert_eq!(mapped.kind(), ConfigErrorKind::InvalidSshProfile);
     }
 
     #[test]

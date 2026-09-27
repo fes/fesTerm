@@ -21,6 +21,7 @@ mod documents;
 mod environment;
 mod inspector;
 mod keyboard;
+mod local_bind;
 mod local_command;
 mod markdown_viewer;
 mod multiplexer_sessions;

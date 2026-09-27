@@ -1880,7 +1880,7 @@ impl FesTermApp {
                 Some("This saved SSH profile has invalid port-forward settings.");
             return;
         };
-        self.start_stored_password_profile_with_options(profile_id, options, context);
+        self.start_stored_password_profile_with_options(profile_id, options, None, context);
     }
 
     /// Resolves whether a saved SSH profile has a stored native-secret
@@ -1896,6 +1896,19 @@ impl FesTermApp {
             .profile(&profile_id)
             .and_then(Profile::as_ssh)
             .is_some_and(|profile| profile.credential_reference().is_some());
+        let asks_for_source = self
+            .state
+            .configuration()
+            .profile(&profile_id)
+            .and_then(Profile::as_ssh)
+            .is_some_and(|profile| {
+                profile.local_bind_policy() == festerm_config::LocalBindPolicy::Ask
+            });
+        if asks_for_source {
+            self.state
+                .open_ssh_profile_authentication(&profile_id, context);
+            return;
+        }
         if has_credential {
             self.start_stored_password_profile(profile_id, context);
         } else {
@@ -1913,6 +1926,18 @@ impl FesTermApp {
         else {
             return;
         };
+        if profile.local_bind_policy() == festerm_config::LocalBindPolicy::Ask {
+            if profile.sftp_gui_mode() {
+                self.state.dispatch(
+                    AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id },
+                    context,
+                );
+            } else {
+                self.state
+                    .open_sftp_profile_authentication(&profile_id, context);
+            }
+            return;
+        }
         if profile.sftp_gui_mode() {
             self.state.dispatch(
                 AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id },
@@ -1922,7 +1947,7 @@ impl FesTermApp {
         }
         let has_credential = profile.credential_reference().is_some();
         if has_credential {
-            self.start_stored_sftp_profile(profile_id, context);
+            self.start_stored_sftp_profile(profile_id, None, context);
         } else {
             self.state
                 .start_configured_sftp_profile_interactive(&profile_id, context);
@@ -1933,6 +1958,7 @@ impl FesTermApp {
         &mut self,
         profile_id: String,
         options: festerm_ssh::SshSessionOptions,
+        local_bind: Option<crate::local_bind::ResolvedLocalBind>,
         context: &egui::Context,
     ) {
         let Ok(store) = self.secret_store.as_ref() else {
@@ -1948,6 +1974,7 @@ impl FesTermApp {
             &profile_id,
             Arc::clone(store),
             options,
+            local_bind,
             context,
         ) {
             self.secure_storage_feedback =
@@ -1955,28 +1982,10 @@ impl FesTermApp {
         }
     }
 
-    fn start_stored_sftp_profile(&mut self, profile_id: String, context: &egui::Context) {
-        let Ok(store) = self.secret_store.as_ref() else {
-            self.secure_storage_feedback = self
-                .secret_store
-                .as_ref()
-                .err()
-                .copied()
-                .map(secret_store_message);
-            return;
-        };
-        if !self
-            .state
-            .start_stored_password_sftp_profile(&profile_id, Arc::clone(store), context)
-        {
-            self.secure_storage_feedback =
-                Some("This saved SFTP destination has no stored password. Enter and remember a password first.");
-        }
-    }
-
-    fn start_stored_sftp_file_manager_profile(
+    fn start_stored_sftp_profile(
         &mut self,
         profile_id: String,
+        local_bind: Option<crate::local_bind::ResolvedLocalBind>,
         context: &egui::Context,
     ) {
         let Ok(store) = self.secret_store.as_ref() else {
@@ -1988,11 +1997,35 @@ impl FesTermApp {
                 .map(secret_store_message);
             return;
         };
-        if !self.state.start_stored_sftp_file_manager_profile(
+        if !self.state.start_stored_password_sftp_profile(
             &profile_id,
             Arc::clone(store),
+            local_bind,
             context,
         ) {
+            self.secure_storage_feedback =
+                Some("This saved SFTP destination has no stored password. Enter and remember a password first.");
+        }
+    }
+
+    fn start_stored_sftp_file_manager_target(
+        &mut self,
+        target: crate::sftp_file_manager::SftpFileManagerLaunchTarget,
+        context: &egui::Context,
+    ) {
+        let Ok(store) = self.secret_store.as_ref() else {
+            self.secure_storage_feedback = self
+                .secret_store
+                .as_ref()
+                .err()
+                .copied()
+                .map(secret_store_message);
+            return;
+        };
+        if !self
+            .state
+            .start_stored_sftp_file_manager_target(target, Arc::clone(store), context)
+        {
             self.secure_storage_feedback =
                 Some("This saved SFTP destination has no stored credential.");
         }
@@ -2059,6 +2092,16 @@ impl FesTermApp {
                 Some("A saved SSH credential update is already in progress. Please wait.");
             return;
         }
+        let Some(profile_snapshot) = self
+            .state
+            .configuration()
+            .profile(&profile_id)
+            .and_then(Profile::as_ssh)
+            .cloned()
+        else {
+            self.secure_storage_feedback = Some("The SSH profile is no longer available.");
+            return;
+        };
         let store = Arc::clone(store);
         let worker_store = Arc::clone(&store);
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -2075,6 +2118,9 @@ impl FesTermApp {
                     store,
                     launch_after_store,
                     credential_kind,
+                    launch_tab: self.state.active(),
+                    launch_epoch: self.state.input_ownership_epoch(),
+                    profile_snapshot,
                 });
                 self.secure_storage_feedback =
                     Some("Saving SSH credential in native secure storage…");
@@ -2094,6 +2140,30 @@ impl FesTermApp {
         };
         match pending.receiver.try_recv() {
             Ok(Ok(reference)) => {
+                let current_profile = self
+                    .state
+                    .configuration()
+                    .profile(&pending.profile_id)
+                    .and_then(Profile::as_ssh);
+                if current_profile != Some(&pending.profile_snapshot) {
+                    self.secure_storage_feedback = Some(match pending.store.delete(&reference) {
+                        Ok(_) => "The profile changed while saving. The credential was not linked and no connection was started.",
+                        Err(_) => "The profile changed while saving. No connection was started; removing the unlinked native credential also failed.",
+                    });
+                    return;
+                }
+                let launch_still_current = self.state.active() == pending.launch_tab
+                    && self.state.input_ownership_epoch() == pending.launch_epoch
+                    && match &self.state.active_tab().content {
+                        TabContent::Launcher => true,
+                        TabContent::SshAuthenticationRequired(tab) => {
+                            tab.profile.identifier() == pending.profile_id
+                        }
+                        TabContent::SftpAuthenticationRequired(tab) => {
+                            tab.profile.identifier() == pending.profile_id
+                        }
+                        _ => false,
+                    };
                 let previous_reference = self
                     .state
                     .configuration()
@@ -2124,16 +2194,30 @@ impl FesTermApp {
                         None => Some("SSH credential saved in native secure storage."),
                     };
                     if let Some(launch) = pending.launch_after_store {
+                        if !launch_still_current {
+                            self.secure_storage_feedback = Some(
+                                "Credential saved. The pending connection was cancelled because its setup context changed.",
+                            );
+                            return;
+                        }
                         match launch {
-                            StoredCredentialLaunch::Ssh(options) => {
+                            StoredCredentialLaunch::Ssh {
+                                options,
+                                local_bind,
+                            } => {
                                 self.start_stored_password_profile_with_options(
                                     pending.profile_id,
                                     options,
+                                    Some(local_bind),
                                     context,
                                 );
                             }
-                            StoredCredentialLaunch::Sftp => {
-                                self.start_stored_sftp_profile(pending.profile_id, context);
+                            StoredCredentialLaunch::Sftp { local_bind } => {
+                                self.start_stored_sftp_profile(
+                                    pending.profile_id,
+                                    Some(local_bind),
+                                    context,
+                                );
                             }
                         }
                     }
@@ -4663,6 +4747,7 @@ impl FesTermApp {
                 username,
                 host,
                 port,
+                ..
             } => TransportFacts::Sftp {
                 username,
                 host,
@@ -5723,10 +5808,12 @@ impl FesTermApp {
                 AppCommand::StartStoredPasswordSshProfile {
                     profile_id,
                     options,
+                    local_bind,
                 } => {
                     self.start_stored_password_profile_with_options(
                         profile_id,
                         options,
+                        Some(local_bind),
                         &ui.ctx().clone(),
                     );
                 }
@@ -5740,27 +5827,35 @@ impl FesTermApp {
                     profile_id,
                     password,
                     options,
+                    local_bind,
                 } => self.store_password_for_profile(
                     profile_id,
                     password,
                     festerm_ssh::SshSessionOptions::new(),
-                    Some(StoredCredentialLaunch::Ssh(options)),
+                    Some(StoredCredentialLaunch::Ssh {
+                        options,
+                        local_bind,
+                    }),
                     &ui.ctx().clone(),
                 ),
-                AppCommand::StartStoredPasswordSftpProfile { profile_id } => {
-                    self.start_stored_sftp_profile(profile_id, &ui.ctx().clone());
+                AppCommand::StartStoredPasswordSftpProfile {
+                    profile_id,
+                    local_bind,
+                } => {
+                    self.start_stored_sftp_profile(profile_id, Some(local_bind), &ui.ctx().clone());
                 }
-                AppCommand::StartStoredSftpFileManagerProfile { profile_id } => {
-                    self.start_stored_sftp_file_manager_profile(profile_id, &ui.ctx().clone());
+                AppCommand::StartStoredSftpFileManagerProfile { target } => {
+                    self.start_stored_sftp_file_manager_target(target, &ui.ctx().clone());
                 }
                 AppCommand::StoreSftpPassword {
                     profile_id,
                     password,
+                    local_bind,
                 } => self.store_password_for_profile(
                     profile_id,
                     password,
                     festerm_ssh::SshSessionOptions::new(),
-                    Some(StoredCredentialLaunch::Sftp),
+                    Some(StoredCredentialLaunch::Sftp { local_bind }),
                     &ui.ctx().clone(),
                 ),
                 AppCommand::StoreProfilePassword {
@@ -6258,6 +6353,7 @@ mod tests {
             username: "deploy".to_owned(),
             host: "web-1.example.test".to_owned(),
             port: 22,
+            local_bind: crate::local_bind::ResolvedLocalBind::Automatic,
             persistence: Some(crate::tabs::InspectorPersistence {
                 provider_label: festerm_config::PersistenceProviderKind::Tmux.label(),
                 session_name: "deploy-watch".to_owned(),
@@ -10875,11 +10971,12 @@ mod tests {
             festerm_ssh::SshSessionOptions::manual_recovery(
                 festerm_ssh::SessionStrategy::PlainShell,
             ),
-            Some(StoredCredentialLaunch::Ssh(
-                festerm_ssh::SshSessionOptions::manual_recovery(
+            Some(StoredCredentialLaunch::Ssh {
+                options: festerm_ssh::SshSessionOptions::manual_recovery(
                     festerm_ssh::SessionStrategy::PlainShell,
                 ),
-            )),
+                local_bind: crate::local_bind::ResolvedLocalBind::Automatic,
+            }),
             &context,
         );
         harness.step();
@@ -10922,6 +11019,184 @@ mod tests {
         assert!(saved.contains("credential_id"));
         assert!(!saved.contains("memory-only-password"));
         fs::remove_dir_all(directory).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn remember_password_completion_retains_source_on_current_tab() {
+        let source = "127.0.0.1".parse().unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")])
+        .expect("test configuration is valid");
+        let directory = std::env::current_dir()
+            .expect("test working directory is available")
+            .join(format!(
+                ".festerm-stored-password-source-test-{}",
+                std::process::id()
+            ));
+        fs::create_dir(&directory).expect("test directory can be created");
+        let path = directory.join("config.toml");
+        let mut harness = harness_with_configuration(configuration);
+        harness.state_mut().configuration_reloader =
+            ConfigurationReloader::from_path_for_test(path.clone());
+        harness.run();
+        let context = egui::Context::default();
+        let origin = harness.state().state.active();
+        harness.state_mut().store_password_for_profile(
+            "production".to_owned(),
+            crate::tabs::PasswordToStore::new("memory-only-password".to_owned()),
+            festerm_ssh::SshSessionOptions::manual_recovery(
+                festerm_ssh::SessionStrategy::PlainShell,
+            ),
+            Some(StoredCredentialLaunch::Ssh {
+                options: festerm_ssh::SshSessionOptions::manual_recovery(
+                    festerm_ssh::SessionStrategy::PlainShell,
+                ),
+                local_bind: crate::local_bind::ResolvedLocalBind::Address(source),
+            }),
+            &context,
+        );
+        for _ in 0..50 {
+            harness.step();
+            if matches!(
+                harness.state().state.active_tab().content,
+                TabContent::Session(_)
+            ) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(harness.state().state.active(), origin);
+        let crate::tabs::TabContent::Session(session) = &harness.state().state.active_tab().content
+        else {
+            panic!("remember-and-connect should replace the originating tab with SSH");
+        };
+        let crate::tabs::InspectorTransport::Ssh { local_bind, .. } = session.inspector_transport
+        else {
+            panic!("remember-and-connect should launch SSH transport metadata");
+        };
+        assert_eq!(
+            local_bind,
+            crate::local_bind::ResolvedLocalBind::Address(source)
+        );
+        fs::remove_dir_all(directory).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn deferred_source_connection_is_cancelled_after_switch_close_cancel_or_profile_change() {
+        for scenario in 0..5 {
+            let profile = Profile::ssh(
+                "source-fixture",
+                "ssh.example.test",
+                22,
+                "fixture",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap();
+            let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+            let mut harness = harness_with_configuration(configuration);
+            let directory = std::env::current_dir().unwrap().join(format!(
+                ".festerm-source-cancel-{}-{scenario}",
+                std::process::id()
+            ));
+            fs::create_dir(&directory).unwrap();
+            harness.state_mut().configuration_reloader =
+                ConfigurationReloader::from_path_for_test(directory.join("config.toml"));
+            let store = Arc::clone(harness.state().secret_store.as_ref().unwrap());
+            let reference = store
+                .put(&festerm_secret_store::SecretBytes::copy_from_slice(
+                    b"fixture",
+                ))
+                .unwrap();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            sender
+                .send(Ok(reference.duplicate_for_transport()))
+                .unwrap();
+            let origin = harness.state().state.active();
+            harness.state_mut().overlays.pending_password_store = Some(PendingPasswordStore {
+                receiver,
+                profile_id: "source-fixture".to_owned(),
+                store: Arc::clone(&store),
+                launch_after_store: Some(StoredCredentialLaunch::Ssh {
+                    options: festerm_ssh::SshSessionOptions::new(),
+                    local_bind: crate::local_bind::ResolvedLocalBind::Address(
+                        "127.0.0.1".parse().unwrap(),
+                    ),
+                }),
+                credential_kind: festerm_config::CredentialKind::Password,
+                launch_tab: origin,
+                launch_epoch: harness.state().state.input_ownership_epoch(),
+                profile_snapshot: profile.as_ssh().unwrap().clone(),
+            });
+            let context = egui::Context::default();
+            match scenario {
+                0 | 1 => {
+                    harness
+                        .state_mut()
+                        .state
+                        .dispatch(AppCommand::OpenSettings, &context);
+                    if scenario == 1 {
+                        harness
+                            .state_mut()
+                            .state
+                            .dispatch(AppCommand::ActivateTab(origin), &context);
+                    }
+                }
+                2 => harness.state_mut().state.dispatch(
+                    AppCommand::CancelConnectionSetup { tab_id: origin },
+                    &context,
+                ),
+                3 => harness
+                    .state_mut()
+                    .state
+                    .dispatch(AppCommand::CloseTab(origin), &context),
+                4 => harness
+                    .state_mut()
+                    .state
+                    .replace_configuration(Configuration::empty()),
+                _ => unreachable!(),
+            }
+            let active_after_change = harness.state().state.active();
+            harness.state_mut().process_pending_password_store(&context);
+            assert_eq!(harness.state().state.active(), active_after_change);
+            assert!(!harness
+                .state()
+                .state
+                .tabs()
+                .iter()
+                .any(|tab| matches!(tab.content, TabContent::Session(_))));
+            if scenario == 4 {
+                assert!(
+                    store.get(&reference).is_err(),
+                    "unlinked credential must be removed"
+                );
+            } else {
+                let saved = harness
+                    .state()
+                    .state
+                    .configuration()
+                    .profile("source-fixture")
+                    .unwrap()
+                    .as_ssh()
+                    .unwrap();
+                assert!(saved.credential_reference().is_some());
+                assert_eq!(
+                    saved.local_bind_policy(),
+                    festerm_config::LocalBindPolicy::Automatic
+                );
+            }
+            fs::remove_dir_all(directory).unwrap();
+        }
     }
 
     /// Produces a production-widget Launcher capture for explicit visual

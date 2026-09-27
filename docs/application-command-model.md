@@ -85,6 +85,18 @@ owned by the composition root so stable session identity/generation and UI
 focus can be enforced before one ordered paste is returned to the terminal
 encoder.
 
+An SSH/SFTP profile's **Ask on first connection** source-address choice is
+also application-owned preconnection policy. All launch surfaces must reach
+the same decision before opening a transport; stored credentials and provider
+probes cannot bypass it. Confirmation belongs to the original tab/request,
+not whichever tab happens to be active later. The resolved source then belongs
+to the live session and its related SFTP/retry connections, not to mutable
+profile metadata. Cancelling leaves the connection unopened. Deferred
+remember-password completion verifies the originating tab, ownership epoch,
+and profile snapshot; a changed setup context cancels the launch rather than
+activating an old tab or using the current tab. See
+[local source address selection](gui-design.md#local-source-address-selection).
+
 ## Invocation Surfaces
 
 The following surfaces should reuse the command model:

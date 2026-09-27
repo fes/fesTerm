@@ -51,6 +51,15 @@ deviation. Do not advertise the stock libraries as satisfying these limits.
 The native adapter belongs in a separate `festerm-powershell` crate; introducing
 it does not change the existing byte-stream session trait.
 
+An optional local source IP is connection policy, not enterprise identity or
+adapter enforcement. Preserve Automatic as the default; an explicit source
+must bind every underlying HTTP connection and fail rather than retry unbound.
+It does not select the Entra browser's interface, route DNS requests, or imply
+VPN/device-compliance guarantees. The shared SSH/SFTP profile and session
+selection contract is in
+[GUI design](../gui-design.md#local-source-address-selection); PSRP exposes
+the transport option without advertising a PowerShell GUI profile.
+
 ### Enterprise identity and Dev Box
 
 Use an explicitly configured, authorized public-client application identity.
@@ -151,15 +160,20 @@ acceptance criteria pass.
 - **Invariants introduced or changed:** structured PSRP is separate from VT
   bytes; enterprise identity is separate from endpoint authorization; remote
   daemon access preserves current-user isolation and generation identity.
-- **GUI/action edges affected:** none in the initial helper/CLI foundation.
-  Add product workflow edges before wiring PowerShell or enterprise UI.
+- **GUI/action edges affected:** `PSRP-01` covers the native backend; `NET-01`
+  covers its optional source binding alongside SSH/SFTP. `NET-02` and `NET-03`
+  cover SSH/SFTP first-connect selection and retained session binding, not
+  a new PowerShell or enterprise UI.
 - **Automated tests required:** bounded capability/discovery serialization,
   protocol/schema mismatch, attached/stale/foreign registry records, metadata
   minimization, read-only behavior and unchanged legacy CLI parsing. Later
   slices require real protocol fixtures and cancellation/identity isolation.
+  Source binding requires observed loopback peer addresses and fail-closed
+  mismatched/unavailable-source regressions across HTTP connections.
 - **Native/manual evidence required:** CP-11 remains the local daemon gate.
   Controlled Windows PowerShell and PowerShell 7 endpoints, authorized Dev Box
   tenant access, and enrolled-device/broker evidence are additional prerequisites
   before claiming remote/enterprise support.
+  CP-22 separately tracks native multi-adapter/VPN source-address behavior.
 - **Coverage superseded:** none; existing local/SSH/serial and daemon acceptance
   records remain in force.

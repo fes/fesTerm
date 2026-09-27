@@ -87,6 +87,34 @@ The resource URI currently selects the default `Microsoft.PowerShell`
 configuration. Alternate/JEA and PowerShell 7 configurations are not selectable
 through this API yet.
 
+### Local source address
+
+The native endpoint may use an explicit local source IP instead of the OS
+default. The choice applies to the WinRM HTTP client and all its connections,
+including authentication exchanges, pipelines, cancellation and close.
+Connection failure never authorizes retrying without the requested binding.
+The destination hostname remains the TLS verification and authentication
+identity; binding does not replace it with a resolved IP.
+
+```sh
+cargo +1.98.0 run -p festerm-powershell --example psrp-shell -- \
+  --local-address LOCAL_IP HOST USERNAME DOMAIN /path/to/trusted-ca.pem
+```
+
+Replace `LOCAL_IP` with a local IPv4 or supported IPv6 address. Alternatively,
+use `--ask-local-address` to choose once before password collection and
+connection. An explicitly submitted blank line selects Automatic; closing the
+input cancels rather than silently choosing Automatic. The flags are mutually
+exclusive, and the selected source stays fixed for that PSRP session.
+
+SSH/SFTP profile and per-session selection follows the
+[shared source-address policy](gui-design.md#local-source-address-selection).
+These controls select a source address, not an adapter or VPN-only route.
+They do not configure VPN routes, change DNS policy, bind the external Entra
+sign-in browser, or alter the separate Dev Center client. Wildcard/multicast
+sources and IPv6 link-local sources without scope support are rejected.
+Corporate multi-adapter/VPN behavior still requires CP-22 evidence.
+
 ### Isolated native interoperability
 
 The `psrp-interop.yml` workflow provides an opt-in real-server route without
@@ -127,6 +155,14 @@ response as acknowledgement rather than receiving again from the removed
 command. Failed signals and unconfirmed timeouts remain failures, not local
 success. Earlier runs that only invalidated the session do not establish this
 continuity result.
+
+Source binding is also exercised by native run
+[36358824475](https://github.com/fes/fesTerm/actions/runs/36358824475) at
+`e49cbdf64947cd4df3cef9f6612b207f71783da4`: all five cases passed with the
+client explicitly bound to `127.0.0.1`. This establishes the same-host
+Windows PowerShell path with binding, including cancellation and subsequent
+runspace reuse. It does not establish a VPN, strict adapter enforcement,
+cross-host access, or additional authentication modes.
 
 ## Enterprise backend example
 

@@ -35,12 +35,71 @@
   ],
   "coverage": [
     {
+      "id": "local-source-address-selection",
+      "edges": [
+        "NET-01",
+        "NET-02",
+        "NET-03"
+      ],
+      "requirements": [
+        "docs/gui-design.md#local-source-address-selection",
+        "docs/powershell-enterprise.md#local-source-address"
+      ],
+      "decisions": [
+        "ADR-0041"
+      ],
+      "automated_tests": [
+        "connection_profile_validates_safe_non_secret_inputs",
+        "explicit_ipv4_local_bind_reaches_server_from_configured_source_and_survives_reconnect",
+        "explicit_ipv6_local_bind_reaches_server_from_configured_source_when_available",
+        "automatic_default_connection_remains_unbound_and_reaches_loopback_server",
+        "explicit_local_bind_mismatch_fails_closed_without_unbound_retry",
+        "unavailable_explicit_local_bind_fails_closed_without_unbound_retry",
+        "endpoint_local_bind_address_defaults_to_none_and_can_be_set",
+        "endpoint_local_bind_address_rejects_unsupported_sources",
+        "endpoint_local_bind_failure_is_explicit_and_never_connects_unbound",
+        "psrp_local_bind_cli_preserves_positionals_and_parses_explicit_choice",
+        "psrp_local_bind_cli_rejects_conflicting_or_malformed_options",
+        "psrp_local_bind_prompt_requires_explicit_input_and_bounds_it",
+        "ssh_local_bind_policy_defaults_round_trips_fixed_and_ask",
+        "ssh_local_bind_policy_rejects_invalid_fixed_addresses_but_allows_ask",
+        "source_chooser_requires_choice_and_surfaces_discovery_failure_without_repainting_io",
+        "discovery_filters_unsupported_addresses_and_bounds_results",
+        "ask_ssh_and_sftp_setup_requires_choice_resets_and_cancels_without_launching",
+        "ask_manual_authentication_retains_profile_identity_and_runtime_source",
+        "ask_manual_sessions_restore_profile_reference_without_persisting_source_choice",
+        "gui_sftp_ask_chooser_resolves_stored_launch_and_resets_before_cancellation",
+        "gui_sftp_unresolved_source_keeps_password_until_an_explicit_choice",
+        "cancelling_ask_setup_closes_only_the_prompt_without_starting_a_transport",
+        "remember_password_completion_retains_source_on_current_tab",
+        "deferred_source_connection_is_cancelled_after_switch_close_cancel_or_profile_change",
+        "stored_ssh_explicit_automatic_overrides_fixed_source_profile",
+        "stored_sftp_explicit_automatic_overrides_fixed_source_profile",
+        "gui_sftp_saved_target_applies_explicit_automatic_source_choice",
+        "gui_sftp_manual_password_target_applies_fixed_source_choice",
+        "inspector_sftp_target_uses_live_session_source_not_edited_profile",
+        "inspector_sftp_stored_credential_launch_uses_captured_live_target",
+        "remote_tmux_probe_uses_fixed_source_and_skips_unresolved_ask",
+        "profile_editor_remote_tmux_probe_uses_fixed_source_and_skips_ask"
+      ],
+      "manual_scenarios": [
+        "CP-22"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "native macOS, Windows and Linux multi-address/VPN evidence with authorized IPv4/IPv6 endpoints",
+        "chooser accessibility and disappearance/reconnect usability on real adapters",
+        "strict adapter enforcement, DNS binding and IPv6 link-local scope selection are not implemented"
+      ]
+    },
+    {
       "id": "native-powershell-foundation",
       "edges": [
         "PSRP-01"
       ],
       "requirements": [
         "docs/powershell-enterprise.md#native-backend-example",
+        "docs/powershell-enterprise.md#local-source-address",
         "docs/powershell-enterprise.md#isolated-native-interoperability",
         "docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md"
       ],

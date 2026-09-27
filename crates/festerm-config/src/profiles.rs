@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, net::IpAddr, path::Path};
 use std::{fmt, sync::Arc};
 
 use festerm_pty::LocalProfile;
@@ -129,6 +129,7 @@ impl Profile {
             port_forwards: Vec::new(),
             profile_kind: RemoteProfileKind::Ssh,
             sftp_gui_mode: true,
+            local_bind_policy: LocalBindPolicy::default(),
         });
         profile.validate()?;
         Ok(profile)
@@ -156,6 +157,7 @@ impl Profile {
             port_forwards: Vec::new(),
             profile_kind: RemoteProfileKind::Sftp,
             sftp_gui_mode: gui_mode,
+            local_bind_policy: LocalBindPolicy::default(),
         });
         profile.validate()?;
         Ok(profile)
@@ -488,6 +490,48 @@ impl LocalProfileConfiguration {
     }
 }
 
+/// How a future SSH/SFTP connection selects the local source address used for
+/// the outbound socket. Adapter names are deliberately not persisted: a fixed
+/// value is only an IP address, and `Ask` must be resolved by application UI
+/// before any transport starts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalBindPolicy {
+    #[default]
+    Automatic,
+    Address(IpAddr),
+    Ask,
+}
+
+impl LocalBindPolicy {
+    pub const fn is_automatic(&self) -> bool {
+        matches!(self, Self::Automatic)
+    }
+
+    pub const fn fixed_address(&self) -> Option<IpAddr> {
+        match self {
+            Self::Address(address) => Some(*address),
+            Self::Automatic | Self::Ask => None,
+        }
+    }
+
+    fn validate(self) -> Result<(), ConfigError> {
+        match self {
+            Self::Automatic | Self::Ask => Ok(()),
+            Self::Address(address) => validate_local_bind_address(address),
+        }
+    }
+}
+
+fn validate_local_bind_address(address: IpAddr) -> Result<(), ConfigError> {
+    festerm_ssh::validate_local_bind_address(address)
+        .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))
+}
+
+fn is_default_local_bind_policy(policy: &LocalBindPolicy) -> bool {
+    policy.is_automatic()
+}
+
 /// Distinguishes the kind of secret a profile's native-store credential
 /// reference points at, so a stored credential is resolved with the right
 /// authentication method instead of always being treated as a password.
@@ -635,6 +679,8 @@ pub struct SshProfileConfiguration {
     pub(crate) profile_kind: RemoteProfileKind,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     sftp_gui_mode: bool,
+    #[serde(default, skip_serializing_if = "is_default_local_bind_policy")]
+    local_bind_policy: LocalBindPolicy,
 }
 
 fn is_default_credential_kind(kind: &CredentialKind) -> bool {
@@ -713,6 +759,11 @@ impl SshProfileConfiguration {
         self.sftp_gui_mode
     }
 
+    /// Returns the saved source-address binding policy for future SSH/SFTP launches.
+    pub const fn local_bind_policy(&self) -> LocalBindPolicy {
+        self.local_bind_policy
+    }
+
     /// Converts safe metadata into the SSH backend's connection profile.
     pub fn to_connection_profile(&self) -> Result<SshConnectionProfile, ConfigError> {
         let size = TerminalSize::new(self.initial_columns, self.initial_rows)
@@ -729,9 +780,30 @@ impl SshProfileConfiguration {
         &self,
         size: TerminalSize,
     ) -> Result<SshConnectionProfile, ConfigError> {
+        if self.local_bind_policy == LocalBindPolicy::Ask {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
+        }
+        self.connection_profile_with_size_and_address(size, self.local_bind_policy.fixed_address())
+    }
+
+    /// Converts metadata into an SSH backend profile with an application-resolved source address.
+    pub fn to_connection_profile_with_resolved_local_bind(
+        &self,
+        size: TerminalSize,
+        local_bind_address: Option<IpAddr>,
+    ) -> Result<SshConnectionProfile, ConfigError> {
+        self.connection_profile_with_size_and_address(size, local_bind_address)
+    }
+
+    fn connection_profile_with_size_and_address(
+        &self,
+        size: TerminalSize,
+        local_bind_address: Option<IpAddr>,
+    ) -> Result<SshConnectionProfile, ConfigError> {
         let identity = HostIdentity::new(&self.host, self.port)
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
         SshConnectionProfile::new(identity, &self.username, &self.terminal_type, size)
+            .and_then(|profile| profile.with_local_bind_address(local_bind_address))
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))
     }
 
@@ -756,6 +828,16 @@ impl SshProfileConfiguration {
         Ok(self)
     }
 
+    /// Returns a validated replacement with a new source-address binding policy.
+    pub fn with_local_bind_policy(
+        mut self,
+        local_bind_policy: LocalBindPolicy,
+    ) -> Result<Self, ConfigError> {
+        self.local_bind_policy = local_bind_policy;
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         validate_identifier(&self.id)?;
         if self.host.contains("://")
@@ -767,7 +849,11 @@ impl SshProfileConfiguration {
         {
             return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
         }
-        self.to_connection_profile().map(|_| ())?;
+        let size = TerminalSize::new(self.initial_columns, self.initial_rows)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
+        self.connection_profile_with_size_and_address(size, self.local_bind_policy.fixed_address())
+            .map(|_| ())?;
+        self.local_bind_policy.validate()?;
         self.session_strategy().map(|_| ())?;
         if self.profile_kind == RemoteProfileKind::Sftp
             && (self.persistence.is_some() || !self.port_forwards.is_empty())

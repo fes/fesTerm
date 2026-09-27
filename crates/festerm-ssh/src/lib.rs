@@ -762,7 +762,8 @@ impl SshConnectionProfile {
     }
 }
 
-fn validate_local_bind_address(address: IpAddr) -> Result<(), SshConnectionProfileError> {
+/// Validates a concrete source IP without opening a socket or requiring it to be online.
+pub fn validate_local_bind_address(address: IpAddr) -> Result<(), SshConnectionProfileError> {
     if address.is_unspecified() {
         return Err(SshConnectionProfileError::InvalidLocalBindAddress {
             reason: "must not be an unspecified address",

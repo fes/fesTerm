@@ -407,6 +407,42 @@ ordinary failed-session presentation. This deliberately does not implement
 server-driven keyboard-interactive prompts or 2FA; that remains a separate,
 larger feature (see the SSH keyboard-interactive/2FA follow-up issue).
 
+### Local source address selection
+
+SSH and SFTP profiles may select **Automatic**, a fixed **Local source
+address**, or **Ask on first connection**. Automatic preserves the OS-selected
+source address and route. This is an advanced connection option, separate
+from the listening addresses used by SSH port forwarding.
+
+Ask requires an explicit choice before opening that session's connection.
+The chooser may show adapter names alongside their current addresses, but
+selects an IP address, not an adapter enforcement policy. Discovery happens
+when requested, not on every repaint; Refresh obtains a new snapshot. Cancel
+must not connect. A fixed address may be saved while offline, but malformed,
+unspecified, multicast, or unsupported scoped IPv6 addresses are rejected.
+IPv6 link-local addresses are not supported until scope identifiers are
+carried through the whole transport path. IPv4-mapped IPv6 sources are rejected;
+use the ordinary IPv4 spelling instead, so wildcard aliases cannot evade
+source validation.
+
+The chosen source belongs to the new session. It survives authentication
+retries, manual/automatic reconnect, and SFTP connections opened from that
+session, including separate transfer connections. An Ask choice is not
+silently written back to the profile or workspace; a new session asks again.
+Editing the profile does not change an already-running session's source.
+Closing or switching away from a pending chooser cannot retarget its
+confirmation to another tab. If a remembered-credential save finishes after
+the setup context changes, the credential may still be saved, but the deferred
+connection is cancelled without changing focus. A profile changed during the
+save is not linked to the new credential; the unlinked secret is removed.
+
+If an explicitly selected source becomes unavailable, connecting fails with
+an actionable error; the client never silently falls back to Automatic.
+Source binding does not guarantee a VPN-only path, bind DNS requests, enforce
+an adapter, repair routing, or bypass network policy. The UI must say so.
+Native PSRP exposes the same fixed-source/Automatic transport distinction
+through its pre-GUI endpoint API and CLI, not a new PowerShell profile type.
+
 ### Launcher as a tab
 
 The launcher should use the same tab model as sessions.

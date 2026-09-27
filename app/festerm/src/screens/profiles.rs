@@ -15,7 +15,7 @@ enum ProfilesScreenMode {
     #[default]
     List,
     EditLocal(LocalProfileDraft),
-    EditSsh(SshProfileDraft),
+    EditSsh(Box<SshProfileDraft>),
     EditSerial(SerialProfileDraft),
     ConfirmDelete {
         identifier: String,
@@ -190,6 +190,7 @@ struct SshProfileDraft {
     quick_connect: String,
     destination_expanded: bool,
     profile_kind: RemoteProfileKind,
+    local_bind: LocalBindDraft,
     sftp_gui_mode: bool,
     /// Which credential kind the editor's authentication section is
     /// currently showing entry fields for. Independent of
@@ -235,6 +236,7 @@ impl Default for SshProfileDraft {
             quick_connect: String::new(),
             destination_expanded: false,
             profile_kind: RemoteProfileKind::Ssh,
+            local_bind: LocalBindDraft::default(),
             sftp_gui_mode: true,
             auth_method: SshAuthenticationMethod::Password,
             password: String::new(),
@@ -292,6 +294,7 @@ impl SshProfileDraft {
                 session_name_touched: true,
                 ..Default::default()
             },
+            local_bind: LocalBindDraft::from_policy(seed.local_bind_policy),
             ..Self::default()
         }
     }
@@ -312,6 +315,7 @@ impl SshProfileDraft {
             quick_connect: format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
             destination_expanded: false,
             profile_kind: ssh.profile_kind(),
+            local_bind: LocalBindDraft::from_policy(ssh.local_bind_policy()),
             sftp_gui_mode: ssh.sftp_gui_mode(),
             auth_method: match stored_credential_kind {
                 CredentialKind::Password => SshAuthenticationMethod::Password,
@@ -349,7 +353,8 @@ impl SshProfileDraft {
             "xterm-256color",
             TerminalSize::new(80, 24).expect("profile-editor probe terminal size is valid"),
         )
-        .ok()?;
+        .ok()
+        .and_then(|profile| self.local_bind.apply_to_profile(profile).ok())?;
         let known_host_fingerprint = configuration
             .known_host_fingerprint(profile.identity().host(), profile.identity().port())?
             .to_owned();
@@ -435,6 +440,13 @@ impl SshProfileDraft {
                     .map_err(|error| error.to_string())?,
             ),
             Profile::Ssh(ssh) => Profile::Ssh(ssh),
+            Profile::Local(_) | Profile::Serial(_) => unreachable!("Profile::ssh returns SSH"),
+        };
+        let profile = match profile {
+            Profile::Ssh(ssh) => Profile::Ssh(
+                ssh.with_local_bind_policy(self.local_bind.saved_policy()?)
+                    .map_err(|error| error.to_string())?,
+            ),
             Profile::Local(_) | Profile::Serial(_) => unreachable!("Profile::ssh returns SSH"),
         };
         let profile = match (self.profile_kind, self.durable_session.persistence()?) {
@@ -714,7 +726,7 @@ pub(crate) fn show_profiles(
                     ProfilesScreenMode::EditLocal(LocalProfileDraft::from_profile(local))
                 }
                 Profile::Ssh(ssh) => {
-                    ProfilesScreenMode::EditSsh(SshProfileDraft::from_profile(ssh))
+                    ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::from_profile(ssh)))
                 }
                 Profile::Serial(serial) => {
                     ProfilesScreenMode::EditSerial(SerialProfileDraft::from_profile(serial))
@@ -728,11 +740,13 @@ pub(crate) fn show_profiles(
             NewProfileKind::Local => {
                 ProfilesScreenMode::EditLocal(LocalProfileDraft::new(local_default_provider))
             }
-            NewProfileKind::Ssh => ProfilesScreenMode::EditSsh(SshProfileDraft::default()),
-            NewProfileKind::Sftp => ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp()),
+            NewProfileKind::Ssh => ProfilesScreenMode::EditSsh(Box::default()),
+            NewProfileKind::Sftp => {
+                ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))
+            }
             NewProfileKind::Serial => ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
             NewProfileKind::SshFromDraft(draft) => {
-                ProfilesScreenMode::EditSsh(SshProfileDraft::from_seed(draft))
+                ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::from_seed(draft)))
             }
         };
     }
@@ -807,8 +821,8 @@ pub(crate) fn show_profiles(
                                     local_default_provider,
                                 )),
                             ),
-                            ("SSH", ProfilesScreenMode::EditSsh(SshProfileDraft::default())),
-                            ("SFTP", ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp())),
+                            ("SSH", ProfilesScreenMode::EditSsh(Box::default())),
+                            ("SFTP", ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))),
                             (
                                 "Serial",
                                 ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
@@ -885,7 +899,7 @@ pub(crate) fn show_profiles(
                                                 LocalProfileDraft::from_profile(local),
                                             ),
                                             Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
-                                                SshProfileDraft::from_profile(ssh),
+                                               Box::new(SshProfileDraft::from_profile(ssh)),
                                             ),
                                             Profile::Serial(serial) => ProfilesScreenMode::EditSerial(
                                                 SerialProfileDraft::from_profile(serial),
@@ -905,7 +919,7 @@ pub(crate) fn show_profiles(
                                                 let mut draft = SshProfileDraft::from_profile(ssh);
                                                 draft.original_id = None;
                                                 draft.name = duplicate_name;
-                                                ProfilesScreenMode::EditSsh(draft)
+                                                ProfilesScreenMode::EditSsh(Box::new(draft))
                                             }
                                             Profile::Serial(serial) => {
                                                 let mut draft = SerialProfileDraft::from_profile(serial);
@@ -1149,6 +1163,14 @@ pub(crate) fn show_profiles(
                                     FieldStyle::Inline,
                                 )
                                 .show(ui, false);
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Source address");
+                                show_local_bind_draft(
+                                    ui,
+                                    &mut draft.local_bind,
+                                    true,
+                                    ("profiles_source", tab_id),
+                                );
                                 if draft.profile_kind == RemoteProfileKind::Sftp {
                                     ui.add_space(10.0);
                                     ui.checkbox(
@@ -1718,6 +1740,7 @@ mod tests {
             durable_session_enabled: false,
             durable_session_provider: PersistenceProviderKind::Tmux,
             durable_session_name: "main".to_owned(),
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let configuration =
             festerm_config::Configuration::new(Vec::new()).expect("empty configuration is valid");
@@ -1759,6 +1782,42 @@ mod tests {
         assert_eq!(profile.port(), 2222);
         assert_eq!(profile.username(), "deploy");
         assert!(profile.credential_reference().is_none());
+    }
+
+    #[test]
+    fn profile_editor_remote_tmux_probe_uses_fixed_source_and_skips_ask() {
+        let configuration = Configuration::empty()
+            .with_known_host_trust(
+                "ssh.example.test",
+                22,
+                "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ",
+            )
+            .expect("known host should validate");
+        let mut draft = SshProfileDraft {
+            name: "production".to_owned(),
+            host: "ssh.example.test".to_owned(),
+            port: "22".to_owned(),
+            username: "deploy".to_owned(),
+            password: "transient-password".to_owned(),
+            local_bind: LocalBindDraft::from_policy(LocalBindPolicy::Address(
+                "127.0.0.1".parse().unwrap(),
+            )),
+            ..Default::default()
+        };
+
+        let request = draft
+            .remote_tmux_probe_request(&configuration)
+            .expect("fixed source should permit the profile-editor probe");
+        assert_eq!(
+            request.profile.local_bind_address(),
+            Some("127.0.0.1".parse().unwrap())
+        );
+
+        draft.local_bind = LocalBindDraft::from_policy(LocalBindPolicy::Ask);
+        assert!(
+            draft.remote_tmux_probe_request(&configuration).is_none(),
+            "unresolved Ask must not fall through to an automatic profile-editor probe"
+        );
     }
 
     #[test]

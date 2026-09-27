@@ -210,11 +210,20 @@ pub(crate) struct PendingPasswordStore {
     /// Which kind of secret was just stored, so the saved profile's
     /// `credential_kind` metadata matches what was actually written.
     pub(crate) credential_kind: festerm_config::CredentialKind,
+    /// A changed tab, input owner, or profile cancels the deferred connection.
+    pub(crate) launch_tab: TabId,
+    pub(crate) launch_epoch: u64,
+    pub(crate) profile_snapshot: festerm_config::SshProfileConfiguration,
 }
 
 pub(crate) enum StoredCredentialLaunch {
-    Ssh(festerm_ssh::SshSessionOptions),
-    Sftp,
+    Ssh {
+        options: festerm_ssh::SshSessionOptions,
+        local_bind: crate::local_bind::ResolvedLocalBind,
+    },
+    Sftp {
+        local_bind: crate::local_bind::ResolvedLocalBind,
+    },
 }
 
 /// A file that could not be opened, named so the reader can tell which of
