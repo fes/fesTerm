@@ -84,6 +84,31 @@ and reconnect/continuity are not supported connection modes here. Corporate
 qualification still requires CP-20; NTLM being implemented does not mean the
 organization permits it or that an Entra-only Dev Box accepts it.
 
+### Isolated native interoperability
+
+The `psrp-interop.yml` workflow provides an opt-in real-server route without
+the unavailable Parallels lab. Its dedicated GitHub-hosted Windows runner
+provisions a temporary loopback-only WinRM HTTPS listener and a non-admin
+test account, then exercises the production native backend against Windows
+PowerShell. The client trusts the generated CA explicitly; certificate
+verification is not disabled. Provisioning and cleanup are bounded, and
+credentials and private keys must not appear in published evidence.
+
+`scripts/run-psrp-interop.ps1 -ProvisionIsolatedRunner` requires
+`FESTERM_RUN_OPTIONAL_VALIDATION=1` and an isolated GitHub-hosted Windows
+runner. It rejects ordinary developer machines and self-hosted runners.
+The Windows optional-validation aggregate includes the suite only with its
+additional `-ProvisionPsRpRunner` switch; otherwise it records an explicit
+skip. The Unix aggregate records that a Windows hosted runner is required.
+Neither aggregate silently enables remoting on a local or corporate machine.
+
+The workflow is dispatched manually and also runs for relevant changes on
+`feat/powershell`; it does not add a recurring schedule or a required
+main-branch check. This evidence is limited to same-host Windows
+PowerShell/HTTPS/NTLM. It does not qualify PowerShell 7, cross-host macOS/Linux
+clients, domain authentication, a corporate Dev Box, or enrolled-device policy.
+CP-20 remains partial until those separately claimed combinations have evidence.
+
 ## Enterprise backend example
 
 The `festerm-enterprise` development backend has a standalone desktop example;

@@ -4,7 +4,8 @@ param(
         $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
     } else {
         'optional-validation-result.txt'
-    })
+    }),
+    [switch] $ProvisionPsRpRunner
 )
 
 function Invoke-NativeCommand {
@@ -182,6 +183,22 @@ if ($opensshExitCode -eq 0 -and
 } else {
     Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=fail"
     $status = 'fail'
+}
+
+if ($ProvisionPsRpRunner) {
+    try {
+        & "$PSScriptRoot\run-psrp-interop.ps1" -ProvisionIsolatedRunner
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Isolated native PSRP interoperability failed.'
+        }
+        Add-Content -Path $ResultPath -Value "`nsuite=psrp-interop status=pass"
+    } catch {
+        Write-Warning 'Isolated native PSRP interoperability failed.'
+        Add-Content -Path $ResultPath -Value "`nsuite=psrp-interop status=fail"
+        $status = 'fail'
+    }
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=psrp-interop status=skipped reason=isolated-runner-provisioning-not-requested"
 }
 
 Remove-Item $nativeResultPath -ErrorAction Ignore

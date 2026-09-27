@@ -1,0 +1,107 @@
+name: PSRP Interoperability
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/powershell]
+    paths:
+      - '.github/workflows/psrp-interop.yml'
+      - 'scripts/run-psrp-interop.ps1'
+      - 'crates/festerm-powershell/**'
+      - 'vendor/psrp-rs/**'
+      - 'vendor/winrm-rs/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  psrp-interop:
+    name: Windows native PSRP loopback
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}\target
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: psrp-interop
+
+      - name: Check PSRP provisioning harness guards
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path .\scripts\run-psrp-interop.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.ToString() }
+            throw 'run-psrp-interop.ps1 did not parse'
+          }
+
+          function Invoke-GuardCase($Name, $ExpectedReason, $Configure, $Arguments) {
+            $resultPath = "psrp-interop-guard-$Name.txt"
+            Remove-Item $resultPath -ErrorAction Ignore
+            Remove-Item Env:\FESTERM_RUN_OPTIONAL_VALIDATION -ErrorAction Ignore
+            $env:GITHUB_ACTIONS = 'true'
+            $env:RUNNER_ENVIRONMENT = 'github-hosted'
+            & $Configure
+            $previousPreference = $ErrorActionPreference
+            try {
+              $ErrorActionPreference = 'Continue'
+              $output = powershell -NoProfile -NonInteractive -File .\scripts\run-psrp-interop.ps1 -ResultPath $resultPath @Arguments 2>&1 | Out-String
+              $exitCode = $LASTEXITCODE
+            } finally {
+              $ErrorActionPreference = $previousPreference
+            }
+            if ($exitCode -eq 0) { throw "guard case $Name unexpectedly succeeded" }
+            if ($output -notmatch [regex]::Escape($ExpectedReason)) { throw "guard case $Name did not report $ExpectedReason" }
+            if (Test-Path $resultPath) { throw "guard case $Name wrote a result before provisioning checks" }
+          }
+
+          Invoke-GuardCase 'missing-opt-in' 'global-opt-in-required' { } @('-ProvisionIsolatedRunner')
+          Invoke-GuardCase 'missing-switch' 'isolated-runner-provisioning-not-requested' { $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1' } @()
+          Invoke-GuardCase 'self-hosted' 'github-hosted-runner-required' {
+            $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+            $env:RUNNER_ENVIRONMENT = 'self-hosted'
+          } @('-ProvisionIsolatedRunner')
+
+      - name: Check PowerShell crate formatting
+        run: cargo fmt --all -- --check
+
+      - name: Compile PowerShell interop tests
+        timeout-minutes: 10
+        run: cargo test -p festerm-powershell --test psrp_interop --no-run --locked
+
+      - name: Clippy PowerShell crate
+        timeout-minutes: 10
+        run: cargo clippy -p festerm-powershell --all-targets --locked -- -D warnings
+
+      - name: Run non-provisioning PowerShell crate tests
+        timeout-minutes: 10
+        run: cargo test -p festerm-powershell --locked
+
+      - name: Provision ephemeral loopback WinRM and run ignored native PSRP tests
+        timeout-minutes: 15
+        shell: powershell
+        env:
+          FESTERM_RUN_OPTIONAL_VALIDATION: '1'
+        run: .\scripts\run-psrp-interop.ps1 -ProvisionIsolatedRunner
+
+      - name: Upload safe PSRP result on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: psrp-interop-result
+          path: psrp-interop-result.txt
+          if-no-files-found: ignore

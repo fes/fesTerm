@@ -41,6 +41,7 @@
       ],
       "requirements": [
         "docs/powershell-enterprise.md#native-backend-example",
+        "docs/powershell-enterprise.md#isolated-native-interoperability",
         "docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md"
       ],
       "decisions": [
@@ -56,14 +57,19 @@
         "map_winrm_error_redacts_response_details",
         "cancel_drain_deadline_applies_to_in_flight_wait",
         "cancellation_timeout_becomes_invalidated",
-        "every_stream_variant_escapes_terminal_controls"
+        "every_stream_variant_escapes_terminal_controls",
+        "native_psrp_persists_state_across_commands",
+        "native_psrp_reports_typed_success_streams",
+        "native_psrp_rejects_unsupported_prompt_without_hanging",
+        "native_psrp_cancellation_is_bounded_and_does_not_claim_uncertain_success",
+        "native_psrp_close_is_idempotent_and_prevents_new_commands"
       ],
       "manual_scenarios": [
         "CP-20"
       ],
       "status": "partial",
       "prerequisites": [
-        "controlled reachable Windows PowerShell/PowerShell 7 HTTPS/WSMan endpoints with approved credentials and TLS trust",
+        "isolated hosted Windows PowerShell HTTPS/NTLM interop is separate from cross-host, PowerShell 7 and corporate endpoint qualification",
         "native repeated-command state, streams/host behavior and cleanup evidence before application-tab/profile integration",
         "authenticated generation-bound sessiond bridge and recovery remain separate CP-19 work"
       ]

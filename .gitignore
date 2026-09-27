@@ -2,6 +2,7 @@
 /crates/festerm-powershell/target
 /vendor/psrp-rs/target
 /vendor/winrm-rs/target
+/psrp-interop-result.txt
 /fuzz/target
 /fuzz/corpus/
 /fuzz/artifacts/

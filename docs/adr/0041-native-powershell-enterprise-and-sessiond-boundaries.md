@@ -134,6 +134,13 @@ Implementation proceeds in independently usable, honestly labeled slices on
 ownership and iOS work remain unchanged. No enterprise tenant is modified and
 no remoting listener or delegation is enabled automatically.
 
+An explicitly opted-in interoperability harness may provision a temporary
+loopback-only HTTPS listener and non-admin account on an isolated
+GitHub-hosted Windows runner. It must reject developer machines and
+self-hosted runners, preserve TLS verification, and restore its endpoint,
+account, certificate and service changes. This is test infrastructure, not
+application-driven endpoint enablement or corporate access.
+
 Library versions, supported transport/authentication combinations and remaining
 native prerequisites must be recorded as implementation evidence, not inferred
 from build success. Neither #255 nor #256 is complete until its end-to-end

@@ -79,6 +79,16 @@ test creates a random fesTerm-owned entry, verifies put/get/update/delete, and
 removes only that entry. The separate `.github/workflows/openssh-interop.yml`
 workflow runs the repository-owned Docker/OpenSSH suite daily and on demand.
 
+The separate `psrp-interop.yml` workflow is manual plus path-filtered
+`feat/powershell` pushes, with no recurring schedule. It provisions a
+loopback-only HTTPS/NTLM endpoint on an isolated GitHub-hosted Windows runner
+and exercises the native PowerShell backend with an ephemeral non-admin
+account and verified certificates. The provisioning script rejects normal
+developer machines and self-hosted runners. See
+[the scope and opt-in contract](powershell-enterprise.md#isolated-native-interoperability).
+This is same-host Windows PowerShell evidence, not corporate access or
+cross-host/macOS/Linux qualification, and remains separate from required CI.
+
 The transition from nightly-only to PR-blocking requires:
 
 1. Confirmed stable results across ≥ 7 consecutive nightly runs per platform.

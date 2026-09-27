@@ -69,6 +69,8 @@ else
     status=fail
 fi
 
+printf 'suite=psrp-interop status=skipped reason=windows-hosted-runner-required\n' >>"$result_path"
+
 rm -f "$native_result_path"
 if FESTERM_NATIVE_WINDOW_SMOKE=1 \
     FESTERM_NATIVE_SMOKE_RESULT_PATH="$native_result_path" \

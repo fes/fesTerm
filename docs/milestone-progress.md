@@ -2634,3 +2634,12 @@ can inherit a listener's nonblocking mode on macOS, so fixture readers now
 explicitly use blocking sockets with bounded I/O. Callback deadline scenarios
 connect their peers before starting the short read deadline, rather than
 racing HTTP-client construction and a newly scheduled connector thread.
+
+The unavailable Parallels lab was not the last automation route. A dedicated
+GitHub-hosted Windows runner can supply a real, isolated Windows PowerShell
+endpoint without touching a corporate machine. The opt-in harness therefore
+uses temporary loopback-only HTTPS, explicit CA trust and a non-admin account,
+and restores the resources it changes. This narrows the native evidence gap;
+it does not turn same-host NTLM into cross-host, PowerShell 7, or Entra/broker
+qualification. Normal optional runs record a skip unless isolated provisioning
+is explicitly requested.
