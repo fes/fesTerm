@@ -41,6 +41,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0041: Native PowerShell, Enterprise Identity, and Remote Session Discovery](0041-native-powershell-enterprise-and-sessiond-boundaries.md) - owner-authorized desktop implementation on `feat/powershell`; native PSRP, enterprise access and remote daemon attachment remain qualification gates
 - [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) — Proposed; owner-approved default selection is bounded to supported Windows x64 WARP, while CP-18 and issue #244 qualification remain open
 - [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
 - [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38

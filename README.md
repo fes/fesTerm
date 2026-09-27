@@ -79,6 +79,10 @@ native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
 
 ## Documentation
 
+- [PowerShell and enterprise development](docs/powershell-enterprise.md) -
+  native PSRP, Dev Box identity and existing-session discovery boundaries;
+  not yet a supported connection type.
+
 - [Keyboard bindings and routing](docs/keyboard-shortcuts.md) — persistent
   Settings editor, terminal-tool overlap inventory, clipboard provenance and
   bounded opt-in redacted input recording.
