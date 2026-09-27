@@ -2663,10 +2663,10 @@ runspace state afterward, while separate regressions retain fail-closed
 invalidation for genuinely uncertain outcomes. Invalidation is published
 before its terminal failure message, avoiding an observable status race.
 
-The stricter cancellation case caught a second protocol distinction: the
-generic WinRS Ctrl+C signal terminated the PSRP carrier shell even when sent
-to the right plugin. Content-minimal native diagnostics identified the
-subsequent shell-not-found fault. Cancellation now uses PowerShell's specific
+The stricter cancellation case required another protocol distinction: the
+generic WinRS Ctrl+C operation is not PowerShell's pipeline-stop signal.
+Content-minimal native diagnostics identified the subsequent invalid-selector
+fault. Cancellation now uses PowerShell's specific
 signal code and the active pipeline UUID rather than the receive cursor.
 The temporary diagnostic switch was removed instead of leaving debug output
 enabled in production.
@@ -2676,3 +2676,11 @@ incremental API reset its stop-sent flag on each event read, so an error record
 followed by the stopped-state record caused two signals for one cancellation.
 That state now belongs to the pipeline handle, including explicit stop calls,
 and the fixture requires exactly one signal while both records are drained.
+
+Microsoft's client handles a successful Signal response as a stopped
+acknowledgement; pypsrp does the same rather than receiving again from the
+stopped command. The adapter now models that acknowledgement explicitly,
+instead of requiring a second state message after the server has removed the
+command. Failed signals still fail, and transports that need a later state
+event retain that requirement. The native oracle still requires the same
+runspace's marker to survive cancellation.

@@ -494,12 +494,17 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
         self.drain_loop(cancel).await
     }
 
-    /// Ask the server to stop the pipeline. Returns immediately; call
-    /// [`collect`](Self::collect) afterwards to drain the `Stopped` ACK.
+    /// Ask the server to stop the pipeline. Call [`collect`](Self::collect)
+    /// afterwards to observe the acknowledged or subsequently received state.
     pub async fn stop(&mut self) -> Result<()> {
         if !self.stop_signalled {
-            self.pool.signal_transport_stop(self.pid).await?;
+            let acknowledgement = self.pool.signal_transport_stop(self.pid).await?;
             self.stop_signalled = true;
+            if acknowledgement == crate::transport::StopAcknowledgement::Stopped {
+                self.input_closed = true;
+                self.pending_events
+                    .insert(0, PipelineEvent::State(PipelineState::Stopped));
+            }
         }
         Ok(())
     }
@@ -522,6 +527,7 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
             }
             if !self.stop_signalled && cancel.is_cancelled() {
                 self.stop().await?;
+                continue;
             }
             let msg = tokio::select! {
                 biased;
@@ -1045,6 +1051,51 @@ mod tests {
         assert!(*t.stopped.lock().unwrap());
         assert_eq!(*t.stopped_pipeline_ids.lock().unwrap(), vec![pid]);
         let _ = pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn pipeline_stop_response_acknowledges_without_receiving_removed_command() {
+        let t = MockTransport::new();
+        let mut pool = opened_pool_with(&t).await;
+        *t.stop_acknowledgement.lock().unwrap() = crate::transport::StopAcknowledgement::Stopped;
+        *t.fail_recv.lock().unwrap() = Some(PsrpError::protocol("command no longer exists"));
+        let handle = Pipeline::new("long-running")
+            .start(&mut pool)
+            .await
+            .unwrap();
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            handle.collect_with_cancel(token),
+        )
+        .await
+        .expect("acknowledged stop must finish")
+        .unwrap_err();
+        assert!(matches!(error, PsrpError::Cancelled));
+        assert!(
+            t.fail_recv.lock().unwrap().is_some(),
+            "must not receive after stop acknowledgement"
+        );
+        assert_eq!(t.stopped_pipeline_ids.lock().unwrap().len(), 1);
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pipeline_failed_signal_does_not_acknowledge_stop() {
+        let t = MockTransport::new();
+        let mut pool = opened_pool_with(&t).await;
+        *t.stop_acknowledgement.lock().unwrap() = crate::transport::StopAcknowledgement::Stopped;
+        *t.fail_stop.lock().unwrap() = true;
+        let mut handle = Pipeline::new("long-running")
+            .start(&mut pool)
+            .await
+            .unwrap();
+        assert!(matches!(handle.stop().await, Err(PsrpError::Protocol(_))));
+        assert!(!handle.stop_signalled);
+        assert!(handle.pending_events.is_empty());
+        drop(handle);
+        pool.close().await.unwrap();
     }
 
     #[tokio::test]

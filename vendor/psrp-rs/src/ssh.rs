@@ -387,12 +387,15 @@ impl PsrpTransport for SshPsrpTransport {
         }
     }
 
-    async fn signal_stop(&self, _pipeline_id: uuid::Uuid) -> Result<()> {
+    async fn signal_stop(
+        &self,
+        _pipeline_id: uuid::Uuid,
+    ) -> Result<crate::transport::StopAcknowledgement> {
         // SSH doesn't have a direct Ctrl+C equivalent via the protocol.
         // The best approximation is sending a SIGINT via the "signal"
         // SSH request, but not all servers honor it. Log a warning.
         warn!("signal_stop on SSH transport is a no-op; close the channel to abort");
-        Ok(())
+        Ok(crate::transport::StopAcknowledgement::AwaitPipelineState)
     }
 
     async fn close_shell(&mut self) -> Result<()> {

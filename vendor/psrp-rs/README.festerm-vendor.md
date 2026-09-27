@@ -29,7 +29,14 @@ narrow patches needed before adoption:
    instead of the ordinary serialized object's `Message` property;
 6. passing the active pipeline UUID through the stop operation, independently
    of the transport's current receive command, with canonical WSMan ID casing,
-   and retaining the stop-sent state while incremental events are drained.
+   retaining the stop-sent state across incremental events, and distinguishing
+   a transport-confirmed stop from a stop that still needs a pipeline event.
+
+For WSMan, a successful PowerShell Signal response acknowledges the stop.
+This follows Microsoft's `ClientPowerShellDataStructureHandler.OnSignalCompleted`
+in `RemotingProtocol2.cs` and `pypsrp.PowerShell.stop`; issuing another Receive
+against that stopped command can instead produce an invalid-selector fault.
+Other transport faults are not converted into successful cancellation.
 
 These patches are intentionally scoped for fesTerm's native backend and should
 not be treated as upstream provenance changes.

@@ -11,6 +11,16 @@ use winrm_rs::{RESOURCE_URI_PSRP, Shell, SoapError, WinrmClient, WinrmError};
 
 use crate::error::{PsrpError, Result};
 
+/// Whether the successful stop response itself acknowledges pipeline termination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StopAcknowledgement {
+    /// A later pipeline-state event must confirm termination.
+    #[default]
+    AwaitPipelineState,
+    /// The transport response confirms the pipeline has stopped.
+    Stopped,
+}
+
 /// Abstract transport used by the runspace pool and pipeline.
 ///
 /// `send_fragment` MUST write the pre-encoded fragment bytes as a single
@@ -22,7 +32,7 @@ use crate::error::{PsrpError, Result};
 pub trait PsrpTransport: Send {
     async fn send_fragment(&self, bytes: &[u8]) -> Result<()>;
     async fn recv_chunk(&mut self) -> Result<Vec<u8>>;
-    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<()>;
+    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<StopAcknowledgement>;
     async fn close_shell(&mut self) -> Result<()>;
 
     /// Start a pipeline by executing a WS-Man Command with the first
@@ -206,10 +216,12 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
         Ok(())
     }
 
-    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<()> {
+    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<StopAcknowledgement> {
         let pipeline_command_id = pipeline_command_id(pipeline_id);
         self.shell()?.signal_ctrl_c(&pipeline_command_id).await?;
-        Ok(())
+        // Microsoft's OnSignalCompleted and pypsrp.stop treat this response as
+        // Stopped; the command can disappear before a subsequent Receive.
+        Ok(StopAcknowledgement::Stopped)
     }
 
     async fn close_shell(&mut self) -> Result<()> {
@@ -244,7 +256,7 @@ impl Drop for WinrmPsrpTransport<'_> {
 #[cfg(any(test, feature = "__internal"))]
 #[doc(hidden)]
 pub mod mock {
-    use super::{PsrpError, PsrpTransport, Result, async_trait};
+    use super::{PsrpError, PsrpTransport, Result, StopAcknowledgement, async_trait};
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
     use tokio::sync::Notify;
@@ -256,6 +268,8 @@ pub mod mock {
         pub outbox: Arc<Mutex<Vec<Vec<u8>>>>,     // bytes captured from send_fragment
         pub stopped: Arc<Mutex<bool>>,
         pub stopped_pipeline_ids: Arc<Mutex<Vec<uuid::Uuid>>>,
+        pub stop_acknowledgement: Arc<Mutex<StopAcknowledgement>>,
+        pub fail_stop: Arc<Mutex<bool>>,
         pub closed: Arc<Mutex<bool>>,
         pub fail_send: Arc<Mutex<bool>>,
         pub fail_recv: Arc<Mutex<Option<PsrpError>>>,
@@ -303,10 +317,13 @@ pub mod mock {
             }
         }
 
-        async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<()> {
+        async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<StopAcknowledgement> {
             *self.stopped.lock().unwrap() = true;
             self.stopped_pipeline_ids.lock().unwrap().push(pipeline_id);
-            Ok(())
+            if *self.fail_stop.lock().unwrap() {
+                return Err(PsrpError::protocol("mock stop failed"));
+            }
+            Ok(*self.stop_acknowledgement.lock().unwrap())
         }
 
         async fn close_shell(&mut self) -> Result<()> {

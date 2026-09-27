@@ -10,7 +10,7 @@ use crate::error::{PsrpError, Result};
 use crate::fragment::{Reassembler, encode_message};
 use crate::host::{HostMethodId, NoInteractionHost, PsHost, dispatch_host_call};
 use crate::message::{Destination, MessageType, PsrpMessage};
-use crate::transport::PsrpTransport;
+use crate::transport::{PsrpTransport, StopAcknowledgement};
 
 use super::state::{Action, RunspacePoolState, RunspacePoolStateMachine};
 
@@ -489,7 +489,10 @@ impl<T: PsrpTransport> RunspacePool<T> {
         id
     }
 
-    pub(crate) async fn signal_transport_stop(&mut self, pipeline_id: Uuid) -> Result<()> {
+    pub(crate) async fn signal_transport_stop(
+        &mut self,
+        pipeline_id: Uuid,
+    ) -> Result<StopAcknowledgement> {
         self.transport.signal_stop(pipeline_id).await
     }
 
