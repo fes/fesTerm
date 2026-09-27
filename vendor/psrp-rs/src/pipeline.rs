@@ -495,7 +495,7 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
     /// Ask the server to stop the pipeline. Returns immediately; call
     /// [`collect`](Self::collect) afterwards to drain the `Stopped` ACK.
     pub async fn stop(&mut self) -> Result<()> {
-        self.pool.signal_transport_stop().await
+        self.pool.signal_transport_stop(self.pid).await
     }
 
     /// Return the next incremental event for this pipeline.
@@ -516,13 +516,13 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
                 return Ok(event);
             }
             if !cancel_signalled && cancel.is_cancelled() {
-                self.pool.signal_transport_stop().await?;
+                self.pool.signal_transport_stop(self.pid).await?;
                 cancel_signalled = true;
             }
             let msg = tokio::select! {
                 biased;
                 () = cancel.cancelled(), if !cancel_signalled => {
-                    self.pool.signal_transport_stop().await?;
+                    self.pool.signal_transport_stop(self.pid).await?;
                     cancel_signalled = true;
                     continue;
                 }
@@ -1040,6 +1040,7 @@ mod tests {
         let err = handle.collect_with_cancel(token).await.unwrap_err();
         assert!(matches!(err, PsrpError::Cancelled));
         assert!(*t.stopped.lock().unwrap());
+        assert_eq!(*t.stopped_pipeline_ids.lock().unwrap(), vec![pid]);
         let _ = pool.close().await;
     }
 
@@ -1066,6 +1067,7 @@ mod tests {
             .unwrap();
         handle.stop().await.unwrap();
         assert!(*t.stopped.lock().unwrap());
+        assert_eq!(*t.stopped_pipeline_ids.lock().unwrap(), vec![pid]);
         let err = handle.collect().await.unwrap_err();
         assert!(matches!(err, PsrpError::Stopped));
         let _ = pool.close().await;
@@ -1095,6 +1097,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, PsrpError::Cancelled));
+        assert_eq!(*t.stopped_pipeline_ids.lock().unwrap(), vec![pid]);
         let _ = pool.close().await;
     }
 

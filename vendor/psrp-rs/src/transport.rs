@@ -22,7 +22,7 @@ use crate::error::{PsrpError, Result};
 pub trait PsrpTransport: Send {
     async fn send_fragment(&self, bytes: &[u8]) -> Result<()>;
     async fn recv_chunk(&mut self) -> Result<Vec<u8>>;
-    async fn signal_stop(&self) -> Result<()>;
+    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<()>;
     async fn close_shell(&mut self) -> Result<()>;
 
     /// Start a pipeline by executing a WS-Man Command with the first
@@ -157,33 +157,15 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
                     }
                     return Ok(out.stdout);
                 }
-                Err(WinrmError::Timeout(_)) => {
-                    emit_psrp_cancel_diagnostic(
-                        "receive-client-timeout",
-                        shell,
-                        Some(&self.command_id),
-                        None,
-                        None,
-                    );
-                    continue;
-                }
-                Err(WinrmError::Soap(SoapError::Fault {
-                    ref code,
-                    detail_code,
-                    ..
-                })) if code.contains("TimedOut") => {
+                Err(WinrmError::Timeout(_)) => continue,
+                Err(WinrmError::Soap(SoapError::Fault { ref code, .. }))
+                    if code.contains("TimedOut") =>
+                {
                     // PSRP long-polling: the WinRM server returns a SOAP
                     // fault with code `w:TimedOut` when there's nothing to
                     // read yet. This is the normal long-poll cycle and MUST
                     // be retried (briefing §5 P7). Only fatal SOAP faults
                     // (e.g. shell died, access denied) should propagate.
-                    emit_psrp_cancel_diagnostic(
-                        "receive-timeout",
-                        shell,
-                        Some(&self.command_id),
-                        Some(code),
-                        detail_code,
-                    );
                     debug!("PSRP receive operation timed out; retrying");
                     continue;
                 }
@@ -192,13 +174,6 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
                     detail_code,
                     reason,
                 })) => {
-                    emit_psrp_cancel_diagnostic(
-                        "receive-fault",
-                        shell,
-                        Some(&self.command_id),
-                        Some(&code),
-                        detail_code,
-                    );
                     warn!("PSRP transport SOAP fault; aborting receive");
                     return Err(PsrpError::Winrm(WinrmError::Soap(SoapError::Fault {
                         code,
@@ -206,16 +181,7 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
                         reason,
                     })));
                 }
-                Err(e) => {
-                    emit_psrp_cancel_diagnostic(
-                        receive_error_stage(&e),
-                        shell,
-                        Some(&self.command_id),
-                        None,
-                        None,
-                    );
-                    return Err(PsrpError::Winrm(e));
-                }
+                Err(e) => return Err(PsrpError::Winrm(e)),
             }
         }
     }
@@ -230,8 +196,9 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
         // pypsrp sends: command("", arguments=[b64_first_frag], command_id=pipeline_id)
         // The WS-Man Execute carries the first fragment as the sole argument
         // and uses the pipeline UUID as the CommandId.
+        let pipeline_command_id = pipeline_command_id(pipeline_id);
         let cmd_id = shell
-            .start_command_with_id("", &[&b64], &pipeline_id.hyphenated().to_string())
+            .start_command_with_id("", &[&b64], &pipeline_command_id)
             .await?;
         debug!(cmd_id, "PSRP pipeline Execute started");
         self.command_id = cmd_id;
@@ -239,43 +206,9 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
         Ok(())
     }
 
-    async fn signal_stop(&self) -> Result<()> {
-        let shell = self.shell()?;
-        emit_psrp_cancel_diagnostic("signal-start", shell, Some(&self.command_id), None, None);
-        match shell.signal_ctrl_c(&self.command_id).await {
-            Ok(()) => {
-                emit_psrp_cancel_diagnostic("signal-ok", shell, Some(&self.command_id), None, None);
-                Ok(())
-            }
-            Err(WinrmError::Soap(SoapError::Fault {
-                code,
-                detail_code,
-                reason,
-            })) => {
-                emit_psrp_cancel_diagnostic(
-                    "signal-fault",
-                    shell,
-                    Some(&self.command_id),
-                    Some(&code),
-                    detail_code,
-                );
-                Err(PsrpError::Winrm(WinrmError::Soap(SoapError::Fault {
-                    code,
-                    detail_code,
-                    reason,
-                })))
-            }
-            Err(error) => {
-                emit_psrp_cancel_diagnostic(
-                    signal_error_stage(&error),
-                    shell,
-                    Some(&self.command_id),
-                    None,
-                    None,
-                );
-                Err(PsrpError::Winrm(error))
-            }
-        }?;
+    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<()> {
+        let pipeline_command_id = pipeline_command_id(pipeline_id);
+        self.shell()?.signal_ctrl_c(&pipeline_command_id).await?;
         Ok(())
     }
 
@@ -296,110 +229,8 @@ impl PsrpTransport for WinrmPsrpTransport<'_> {
     }
 }
 
-fn emit_psrp_cancel_diagnostic(
-    stage: &'static str,
-    shell: &Shell<'_>,
-    command_id: Option<&str>,
-    soap_code: Option<&str>,
-    wsman_detail_code: Option<u32>,
-) {
-    if std::env::var_os("FESTERM_PSRP_CANCEL_DIAGNOSTICS").as_deref()
-        != Some(std::ffi::OsStr::new("1"))
-    {
-        return;
-    }
-    eprintln!(
-        "festerm-psrp-cancel-diagnostic stage={stage} resource_uri={} command_id={} command_id_fingerprint={} soap_code={} wsman_detail_code={}",
-        resource_uri_category(shell.resource_uri()),
-        command_id_category(command_id),
-        command_id_fingerprint(command_id),
-        soap_code_category(soap_code),
-        wsman_detail_code.map_or_else(|| "none".to_owned(), |code| code.to_string()),
-    );
-}
-
-fn signal_error_stage(error: &WinrmError) -> &'static str {
-    error_stage("signal", error)
-}
-
-fn receive_error_stage(error: &WinrmError) -> &'static str {
-    error_stage("receive", error)
-}
-
-fn error_stage(prefix: &'static str, error: &WinrmError) -> &'static str {
-    match error {
-        WinrmError::Timeout(_) if prefix == "signal" => "signal-timeout",
-        WinrmError::Cancelled if prefix == "signal" => "signal-cancelled",
-        WinrmError::Http(_) if prefix == "signal" => "signal-http",
-        WinrmError::AuthFailed(_) if prefix == "signal" => "signal-auth",
-        WinrmError::Ntlm(_) if prefix == "signal" => "signal-ntlm",
-        WinrmError::ResponseTooLarge { .. } if prefix == "signal" => "signal-response-too-large",
-        WinrmError::Transfer(_) if prefix == "signal" => "signal-transfer",
-        WinrmError::CredSsp(_) if prefix == "signal" => "signal-credssp",
-        WinrmError::Soap(_) if prefix == "signal" => "signal-soap",
-        WinrmError::Timeout(_) => "receive-client-timeout",
-        WinrmError::Cancelled => "receive-cancelled",
-        WinrmError::Http(_) => "receive-http",
-        WinrmError::AuthFailed(_) => "receive-auth",
-        WinrmError::Ntlm(_) => "receive-ntlm",
-        WinrmError::ResponseTooLarge { .. } => "receive-response-too-large",
-        WinrmError::Transfer(_) => "receive-transfer",
-        WinrmError::CredSsp(_) => "receive-credssp",
-        WinrmError::Soap(_) => "receive-soap",
-    }
-}
-
-fn resource_uri_category(uri: &str) -> &'static str {
-    if uri == RESOURCE_URI_PSRP {
-        "psrp"
-    } else if uri.contains("/cmd") {
-        "cmd"
-    } else {
-        "other"
-    }
-}
-
-fn command_id_category(command_id: Option<&str>) -> &'static str {
-    match command_id {
-        Some(value) if uuid::Uuid::parse_str(value).is_ok() => "uuid",
-        Some("") => "empty",
-        Some(_) => "non-uuid",
-        None => "none",
-    }
-}
-
-fn command_id_fingerprint(command_id: Option<&str>) -> String {
-    let Some(value) = command_id else {
-        return "none".into();
-    };
-    if uuid::Uuid::parse_str(value).is_err() {
-        return "non-uuid".into();
-    }
-    let suffix_start = value.len().saturating_sub(8);
-    format!("uuid-suffix-{}", &value[suffix_start..])
-}
-
-fn soap_code_category(code: Option<&str>) -> &'static str {
-    let Some(code) = code else {
-        return "none";
-    };
-    if code.contains("TimedOut") {
-        "w:TimedOut"
-    } else if code.contains("InvalidSelectors") {
-        "w:InvalidSelectors"
-    } else if code.contains("InvalidResourceURI") {
-        "w:InvalidResourceURI"
-    } else if code.contains("DestinationUnreachable") {
-        "a:DestinationUnreachable"
-    } else if code.contains("ActionNotSupported") {
-        "a:ActionNotSupported"
-    } else if code == "s:Sender" || code == "env:Sender" || code == "soap:Sender" {
-        "soap:Sender"
-    } else if code == "s:Receiver" || code == "env:Receiver" || code == "soap:Receiver" {
-        "soap:Receiver"
-    } else {
-        "other"
-    }
+fn pipeline_command_id(pipeline_id: uuid::Uuid) -> String {
+    pipeline_id.hyphenated().to_string().to_uppercase()
 }
 
 impl Drop for WinrmPsrpTransport<'_> {
@@ -424,6 +255,7 @@ pub mod mock {
         pub inbox: Arc<Mutex<VecDeque<Vec<u8>>>>, // bytes to hand out of recv_chunk
         pub outbox: Arc<Mutex<Vec<Vec<u8>>>>,     // bytes captured from send_fragment
         pub stopped: Arc<Mutex<bool>>,
+        pub stopped_pipeline_ids: Arc<Mutex<Vec<uuid::Uuid>>>,
         pub closed: Arc<Mutex<bool>>,
         pub fail_send: Arc<Mutex<bool>>,
         pub fail_recv: Arc<Mutex<Option<PsrpError>>>,
@@ -471,8 +303,9 @@ pub mod mock {
             }
         }
 
-        async fn signal_stop(&self) -> Result<()> {
+        async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<()> {
             *self.stopped.lock().unwrap() = true;
+            self.stopped_pipeline_ids.lock().unwrap().push(pipeline_id);
             Ok(())
         }
 
@@ -497,7 +330,7 @@ pub mod mock {
         let got = t.recv_chunk().await.unwrap();
         assert_eq!(got, b"world");
 
-        t.signal_stop().await.unwrap();
+        t.signal_stop(uuid::Uuid::new_v4()).await.unwrap();
         t.close_shell().await.unwrap();
         assert!(*t.stopped.lock().unwrap());
         assert!(*t.closed.lock().unwrap());
@@ -533,5 +366,14 @@ pub mod mock {
         let t = MockTransport::new();
         *t.fail_send.lock().unwrap() = true;
         assert!(t.send_fragment(b"x").await.is_err());
+    }
+
+    #[test]
+    fn pipeline_command_id_is_uppercase_uuid() {
+        let id = uuid::Uuid::parse_str("2bfdf32c-97f5-4a3a-aa8c-b0d968b8ee4a").unwrap();
+        assert_eq!(
+            super::pipeline_command_id(id),
+            "2BFDF32C-97F5-4A3A-AA8C-B0D968B8EE4A"
+        );
     }
 }

@@ -387,7 +387,7 @@ impl PsrpTransport for SshPsrpTransport {
         }
     }
 
-    async fn signal_stop(&self) -> Result<()> {
+    async fn signal_stop(&self, _pipeline_id: uuid::Uuid) -> Result<()> {
         // SSH doesn't have a direct Ctrl+C equivalent via the protocol.
         // The best approximation is sending a SIGINT via the "signal"
         // SSH request, but not all servers honor it. Log a warning.

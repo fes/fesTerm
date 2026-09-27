@@ -44,6 +44,9 @@ pub(crate) const SIGNAL_TERMINATE: &str =
 pub(crate) const SIGNAL_CTRL_C: &str =
     "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/signal/ctrl_c";
 
+/// PowerShell plugin signal code: Ctrl+C for an active PSRP pipeline.
+pub(crate) const SIGNAL_PSRP_CTRL_C: &str = "powershell/signal/ctrl_c";
+
 /// Command state indicating completion.
 pub(crate) const COMMAND_STATE_DONE: &str =
     "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/CommandState/Done";

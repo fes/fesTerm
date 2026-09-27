@@ -912,7 +912,7 @@ mod tests {
                 code, detail_code, ..
             } => {
                 assert_eq!(code, "w:TimedOut");
-                assert_eq!(detail_code, Some(2150858793));
+                assert_eq!(detail_code, Some(2_150_858_793));
             }
             _ => panic!("expected Fault variant"),
         }

@@ -26,7 +26,9 @@ narrow patches needed before adoption:
    after local validation;
 5. decoding the native `InformationalRecord_Message` wire property for
    warning, verbose and debug records, which the real Windows endpoint emits
-   instead of the ordinary serialized object's `Message` property.
+   instead of the ordinary serialized object's `Message` property;
+6. passing the active pipeline UUID through the stop operation, independently
+   of the transport's current receive command, with canonical WSMan ID casing.
 
 These patches are intentionally scoped for fesTerm's native backend and should
 not be treated as upstream provenance changes.

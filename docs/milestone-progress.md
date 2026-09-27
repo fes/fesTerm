@@ -2662,3 +2662,11 @@ identity. The native acceptance case requires a confirmed stop and surviving
 runspace state afterward, while separate regressions retain fail-closed
 invalidation for genuinely uncertain outcomes. Invalidation is published
 before its terminal failure message, avoiding an observable status race.
+
+The stricter cancellation case caught a second protocol distinction: the
+generic WinRS Ctrl+C signal terminated the PSRP carrier shell even when sent
+to the right plugin. Content-minimal native diagnostics identified the
+subsequent shell-not-found fault. Cancellation now uses PowerShell's specific
+signal code and the active pipeline UUID rather than the receive cursor.
+The temporary diagnostic switch was removed instead of leaving debug output
+enabled in production.

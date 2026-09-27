@@ -57,7 +57,7 @@ impl PsrpTransport for VecTransport {
             .ok_or_else(|| PsrpError::Protocol("inbox empty".into()))
     }
 
-    async fn signal_stop(&self) -> Result<()> {
+    async fn signal_stop(&self, _pipeline_id: uuid::Uuid) -> Result<()> {
         *self.stopped.lock().unwrap() = true;
         Ok(())
     }

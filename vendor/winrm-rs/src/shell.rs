@@ -1204,7 +1204,10 @@ mod tests {
             .and(body_string_contains(
                 crate::soap::namespaces::RESOURCE_URI_PSRP,
             ))
-            .and(body_string_contains("signal/ctrl_c"))
+            .and(body_string_contains(
+                "<rsp:Code>powershell/signal/ctrl_c</rsp:Code>",
+            ))
+            .and(body_string_contains(r#"CommandId="CMD-PSRP""#))
             .respond_with(
                 ResponseTemplate::new(200).set_body_string("<s:Envelope><s:Body/></s:Envelope>"),
             )

@@ -757,12 +757,17 @@ pub(crate) fn signal_ctrl_c_request_with_uri(
         max_envelope_size,
     );
     let escaped_command_id = xml_escape(command_id);
+    let signal_code = if resource_uri == RESOURCE_URI_PSRP {
+        SIGNAL_PSRP_CTRL_C
+    } else {
+        SIGNAL_CTRL_C
+    };
     format!(
         r#"<s:Envelope {NS_DECL_WITH_RSP}>
 {header}
   <s:Body>
     <rsp:Signal CommandId="{escaped_command_id}">
-      <rsp:Code>{SIGNAL_CTRL_C}</rsp:Code>
+      <rsp:Code>{signal_code}</rsp:Code>
     </rsp:Signal>
   </s:Body>
 </s:Envelope>"#
@@ -1066,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn signal_ctrl_c_with_uri_uses_powershell_resource_uri() {
+    fn signal_ctrl_c_with_uri_uses_powershell_resource_uri_and_signal_code() {
         let xml = signal_ctrl_c_request_with_uri(
             "http://host:5985/wsman",
             "S1",
@@ -1078,6 +1083,10 @@ mod tests {
         assert!(xml.contains(RESOURCE_URI_PSRP));
         assert!(!xml.contains(RESOURCE_URI_CMD));
         assert!(xml.contains("signal/ctrl_c"));
+        assert!(xml.contains("<rsp:Code>powershell/signal/ctrl_c</rsp:Code>"));
+        assert!(!xml.contains(
+            "<rsp:Code>http://schemas.microsoft.com/wbem/wsman/1/windows/shell/signal/ctrl_c</rsp:Code>"
+        ));
     }
 
     #[test]
