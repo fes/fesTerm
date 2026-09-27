@@ -195,12 +195,13 @@ try {
     $password = New-RandomPassword
     Write-Host "::add-mask::$password"
 
+    $failureReason = 'restrict-listeners-failed'
     Set-Item WSMan:\localhost\Service\AllowUnencrypted $false
     Set-Item WSMan:\localhost\Service\Auth\Basic $false
     Set-Item WSMan:\localhost\Service\Auth\CredSSP $false
     Set-Item WSMan:\localhost\Service\Auth\Negotiate $true
-    Set-Item WSMan:\localhost\Service\IPv4Filter '127.0.0.1'
-    Set-Item WSMan:\localhost\Service\IPv6Filter '::1'
+    Set-Item WSMan:\localhost\Service\IPv4Filter '127.0.0.1-127.0.0.1'
+    Set-Item WSMan:\localhost\Service\IPv6Filter '::1-::1'
 
     $failureReason = 'create-account-failed'
     $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
