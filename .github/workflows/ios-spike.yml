@@ -12,6 +12,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/build-ios-spike.py'
+      - 'scripts/smoke-ios-simulator.py'
+      - 'scripts/tests/test_ios_simulator_smoke.py'
       - '.github/workflows/ios-spike.yml'
   workflow_dispatch:
 
@@ -38,8 +40,18 @@ jobs:
       - run: python3 scripts/build-ios-spike.py --check-dependencies
       - run: cargo check --locked -p festerm-mobile --target aarch64-apple-ios
       - run: python3 scripts/build-ios-spike.py
+      - name: Launch and relaunch on isolated iPhone and iPad Simulators
+        timeout-minutes: 12
+        run: python3 scripts/smoke-ios-simulator.py --run
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
         with:
           name: festerm-ios-simulator-spike
           path: target/ios-spike/fesTermSpike-simulator.tar.gz
           if-no-files-found: error
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: festerm-ios-simulator-evidence
+          path: target/ios-smoke/
+          if-no-files-found: warn

@@ -291,5 +291,17 @@ if ($env:OS -eq 'Windows_NT') {
     }
 }
 
+if ($IsMacOS) {
+    Invoke-NativeCommand { python3 "$PSScriptRoot/smoke-ios-simulator.py" --run --build }
+    if ($LASTEXITCODE -eq 0) {
+        Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=pass"
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=fail"
+        $status = 'fail'
+    }
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=skipped reason=macos-required"
+}
+
 Add-Content -Path $ResultPath -Value "`nstatus=$status"
 if ($status -eq 'fail') { exit 1 }

@@ -2175,7 +2175,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "macOS/Xcode Simulator and provisioned physical iPhone/iPad builds for native keyboard, IME, Metal lifecycle and usability evidence; explicit go/no-go before broader mobile product work"
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]

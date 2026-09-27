@@ -120,7 +120,12 @@ feasibility evidence are required before moving beyond this experiment.
   `mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected`,
   `mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning`,
   `terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples`;
-  `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link.
+  `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link;
+  `scripts/tests/test_ios_simulator_smoke.py` for isolated device ownership,
+  runtime selection, failure/cleanup behavior; `scripts/smoke-ios-simulator.py
+  --run` for iPhone/iPad launch-survival, terminate/relaunch and PNG capture.
+  Only devices created by that invocation may be shut down/deleted. Artifacts
+  identify the commit/runtime and never count screenshots as visual acceptance.
 - **Native/manual evidence required:** `MOB-01` through `MOB-04` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.
 - **Coverage superseded:** None; desktop acceptance is unchanged.

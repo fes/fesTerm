@@ -95,7 +95,13 @@ mobile product work remains blocked on this gate and a hosting go/no-go decision
 
 Automated policy/input/headless-grid tests are in `festerm-mobile`; iOS CI
 checks device compilation and Simulator linking, while the build script checks
-normal/build graph exclusions. SSH recovery and Keychain are **deferred** behind
+normal/build graph exclusions. `scripts/smoke-ios-simulator.py --run` adds
+isolated iPhone/iPad install, launch-survival, terminate/relaunch and screenshot
+capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
+cover ownership, failure reporting and cleanup; actual execution is an iOS CI
+gate. The manifest and PNGs are review evidence, not automatic rendering,
+keyboard or lifecycle acceptance. Physical-device and interaction evidence
+above remains pending. SSH recovery and Keychain are **deferred** behind
 the Phase 1 decision, not missing evidence for an implemented connection.
 
 ## Deferred desktop Store qualification

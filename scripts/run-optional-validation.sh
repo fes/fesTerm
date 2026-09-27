@@ -21,6 +21,16 @@ emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
+if [ "$(uname -s)" = Darwin ]; then
+    if python3 scripts/smoke-ios-simulator.py --run --build; then
+        printf 'suite=ios-simulator status=pass\n' >>"$result_path"
+    else
+        printf 'suite=ios-simulator status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=ios-simulator status=skipped reason=macos-required\n' >>"$result_path"
+fi
 cargo build --workspace
 if python3 scripts/check_keyboard_routing.py; then
     printf 'suite=keyboard-routing-synthesized status=pass\n' >>"$result_path"

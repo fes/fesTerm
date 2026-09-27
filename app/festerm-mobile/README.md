@@ -33,6 +33,33 @@ rustup target add aarch64-apple-ios
 IPHONEOS_DEPLOYMENT_TARGET=15.0 cargo check --locked -p festerm-mobile --target aarch64-apple-ios
 ```
 
+## Automated Simulator launch evidence
+
+After building on macOS, run:
+
+```sh
+python3 scripts/smoke-ios-simulator.py --run
+# Or build first in the same command:
+python3 scripts/smoke-ios-simulator.py --run --build
+```
+
+This creates fresh iPhone and iPad Simulators using an installed iOS runtime,
+installs only the offline spike, checks process survival after launch and
+relaunch, and captures both screens. It shuts down and deletes only its own
+devices. Existing Simulators are never selected for mutation. Every command
+has a deadline; failures and cleanup errors fail the run. No runtime downloads,
+provisioning, credentials, or physical devices are involved.
+
+Each run writes `target/ios-smoke/<run-id>/manifest.json`, four PNGs on success,
+and a command/diagnostic log. The manifest includes the commit, Xcode version,
+selected runtime/model, process IDs and screenshot dimensions. A process can
+remain alive while rendering incorrectly: a passing result requires visual
+review and does not qualify keyboard/IME, gestures or background/resume.
+
+The iOS workflow publishes these files as `festerm-ios-simulator-evidence`,
+including partial evidence on failure. The opt-in aggregate validation scripts
+run this suite on macOS and report it skipped on other platforms.
+
 ## Portable checks and desktop harness
 
 ```sh
@@ -77,7 +104,8 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   memory pressure and process death need native evidence under `MOB-01`–`04`.
 
 `.github/workflows/ios-spike.yml` checks device compilation and builds the
-Simulator bundle. Build success is not a passed native interaction gate. Use
+Simulator bundle, then runs the isolated launch evidence suite. Build or
+process-survival success is not a passed native interaction gate. Use
 the scenarios in [manual validation](../../docs/manual-validation.md); record
 failures and reassess the hosting path before Phase 2 if input/lifecycle would
 require an upstream fork.

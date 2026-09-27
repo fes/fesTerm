@@ -61,6 +61,9 @@ native qualification; ADR-0039 remains Proposed and issue #244 remains open.
 These edges belong only to `app/festerm-mobile` (ADR 0040), not the desktop
 application or a supported mobile SSH workflow. Checkpoint: newly launched
 spike with the repository fixture; Reset fixture restores terminal content.
+The iOS workflow's isolated Simulator smoke automates install, launch survival,
+terminate/relaunch and PNG capture for `MOB-01`/`MOB-03`. Its screenshots still
+require visual review; it does not qualify gestures or background/resume.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
