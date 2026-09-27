@@ -41,6 +41,12 @@ Other transport faults are not converted into successful cancellation.
 These patches are intentionally scoped for fesTerm's native backend and should
 not be treated as upstream provenance changes.
 
+The explicit local source-IP binding used by fesTerm's native PSRP backend is
+carried in the vendored `winrm-rs` transport. This crate continues to use the
+provided `WinrmClient` for every WSMan request, so PSRP Create/Send/Receive,
+Signal and Close inherit that single client policy without adding a separate
+transport bypass here.
+
 ## Regression dependencies
 
 The checked-in `Cargo.lock` pins this excluded workspace's test dependencies.

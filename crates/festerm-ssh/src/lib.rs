@@ -9,6 +9,7 @@ mod sftp_transfer;
 use std::{
     collections::VecDeque,
     fmt,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -702,6 +703,7 @@ pub struct SshConnectionProfile {
     username: String,
     terminal_type: String,
     initial_size: TerminalSize,
+    local_bind_address: Option<IpAddr>,
 }
 
 impl SshConnectionProfile {
@@ -724,6 +726,7 @@ impl SshConnectionProfile {
             username,
             terminal_type,
             initial_size,
+            local_bind_address: None,
         })
     }
 
@@ -742,6 +745,49 @@ impl SshConnectionProfile {
     pub const fn initial_size(&self) -> TerminalSize {
         self.initial_size
     }
+
+    pub const fn local_bind_address(&self) -> Option<IpAddr> {
+        self.local_bind_address
+    }
+
+    pub fn with_local_bind_address(
+        mut self,
+        address: Option<IpAddr>,
+    ) -> Result<Self, SshConnectionProfileError> {
+        if let Some(address) = address {
+            validate_local_bind_address(address)?;
+        }
+        self.local_bind_address = address;
+        Ok(self)
+    }
+}
+
+fn validate_local_bind_address(address: IpAddr) -> Result<(), SshConnectionProfileError> {
+    if address.is_unspecified() {
+        return Err(SshConnectionProfileError::InvalidLocalBindAddress {
+            reason: "must not be an unspecified address",
+        });
+    }
+    if address.is_multicast() {
+        return Err(SshConnectionProfileError::InvalidLocalBindAddress {
+            reason: "must not be a multicast address",
+        });
+    }
+    if let IpAddr::V6(address) = address {
+        let segments = address.segments();
+        if segments[..5] == [0, 0, 0, 0, 0] && segments[5] == 0xffff {
+            return Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason: "must not be an IPv4-mapped IPv6 address",
+            });
+        }
+        if (segments[0] & 0xffc0) == 0xfe80 {
+            return Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason:
+                    "must not be an IPv6 link-local address because scoped binding is unsupported",
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_username(username: &str) -> Result<(), SshConnectionProfileError> {
@@ -792,6 +838,7 @@ pub enum SshConnectionProfileError {
     EmptyTerminalType,
     InvalidTerminalType,
     TerminalTypeTooLong { maximum: usize, actual: usize },
+    InvalidLocalBindAddress { reason: &'static str },
 }
 
 impl fmt::Display for SshConnectionProfileError {
@@ -819,6 +866,9 @@ impl fmt::Display for SshConnectionProfileError {
                     formatter,
                     "SSH terminal type is {actual} bytes; maximum is {maximum}"
                 )
+            }
+            Self::InvalidLocalBindAddress { reason } => {
+                write!(formatter, "SSH local bind address {reason}")
             }
         }
     }
@@ -4279,8 +4329,8 @@ enum ConnectionAttempt {
         russh::Channel<russh::client::Msg>,
         tokio::sync::mpsc::Receiver<ForwardedTcpIpConnection>,
     ),
-    Retryable(ConnectionFailure, &'static str),
-    Permanent(ConnectionFailure, &'static str),
+    Retryable(ConnectionFailure, String),
+    Permanent(ConnectionFailure, String),
     Shutdown,
 }
 
@@ -4365,6 +4415,151 @@ async fn wait_for_reconnect_delay(
     }
 }
 
+#[derive(Debug)]
+enum SshConnectError {
+    Resolve(std::io::Error),
+    Configure(std::io::Error),
+    NoMatchingAddressFamily(IpAddr),
+    SocketCreate {
+        local: IpAddr,
+        target: SocketAddr,
+        error: std::io::Error,
+    },
+    Bind {
+        local: IpAddr,
+        target: SocketAddr,
+        error: std::io::Error,
+    },
+    Connect {
+        local: IpAddr,
+        target: SocketAddr,
+        error: std::io::Error,
+    },
+    Ssh,
+}
+
+impl fmt::Display for SshConnectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Resolve(error) => write!(formatter, "could not resolve destination: {error}"),
+            Self::Configure(error) => write!(formatter, "could not configure TCP socket: {error}"),
+            Self::NoMatchingAddressFamily(local) => write!(
+                formatter,
+                "no resolved destination address matches configured local bind address family {local}"
+            ),
+            Self::SocketCreate {
+                local,
+                target,
+                error,
+            } => write!(
+                formatter,
+                "could not create socket for configured local bind address {local} to {target}: {error}"
+            ),
+            Self::Bind {
+                local,
+                target,
+                error,
+            } => write!(
+                formatter,
+                "could not bind configured local address {local} before connecting to {target}: {error}"
+            ),
+            Self::Connect {
+                local,
+                target,
+                error,
+            } => write!(
+                formatter,
+                "could not connect to {target} from configured local bind address {local}: {error}"
+            ),
+            Self::Ssh => formatter.write_str("SSH handshake failed"),
+        }
+    }
+}
+
+async fn connect_ssh_stream(
+    config: Arc<russh::client::Config>,
+    profile: &SshConnectionProfile,
+    handler: SshClientHandler,
+) -> Result<russh::client::Handle<SshClientHandler>, SshConnectError> {
+    let Some(local) = profile.local_bind_address() else {
+        return russh::client::connect(
+            config,
+            (profile.identity().host(), profile.identity().port()),
+            handler,
+        )
+        .await
+        .map_err(|_| SshConnectError::Ssh);
+    };
+    let stream = connect_bound_tcp_stream(profile.identity(), local, config.nodelay).await?;
+    russh::client::connect_stream(config, stream, handler)
+        .await
+        .map_err(|_| SshConnectError::Ssh)
+}
+
+async fn connect_bound_tcp_stream(
+    identity: &HostIdentity,
+    local: IpAddr,
+    nodelay: bool,
+) -> Result<tokio::net::TcpStream, SshConnectError> {
+    let targets = tokio::net::lookup_host((identity.host(), identity.port()))
+        .await
+        .map_err(SshConnectError::Resolve)?;
+    let mut last_error = None;
+    for target in targets.filter(|target| target.is_ipv4() == local.is_ipv4()) {
+        let socket = if target.is_ipv4() {
+            tokio::net::TcpSocket::new_v4()
+        } else {
+            tokio::net::TcpSocket::new_v6()
+        }
+        .map_err(|error| SshConnectError::SocketCreate {
+            local,
+            target,
+            error,
+        })?;
+        socket
+            .bind(SocketAddr::new(local, 0))
+            .map_err(|error| SshConnectError::Bind {
+                local,
+                target,
+                error,
+            })?;
+        match socket.connect(target).await {
+            Ok(stream) => {
+                stream
+                    .set_nodelay(nodelay)
+                    .map_err(SshConnectError::Configure)?;
+                return Ok(stream);
+            }
+            Err(error) => {
+                last_error = Some(SshConnectError::Connect {
+                    local,
+                    target,
+                    error,
+                });
+            }
+        }
+    }
+    Err(last_error.unwrap_or(SshConnectError::NoMatchingAddressFamily(local)))
+}
+
+fn connect_failure_message(local_bind_address: Option<IpAddr>, error: SshConnectError) -> String {
+    match local_bind_address {
+        Some(local) => {
+            format!("SSH connection failed with configured local address binding {local}: {error}")
+        }
+        None => "SSH connection failed".to_owned(),
+    }
+}
+
+fn connect_timeout_message(local_bind_address: Option<IpAddr>) -> String {
+    match local_bind_address {
+        Some(local) => {
+            format!("SSH connection timed out with configured local address binding {local}")
+        }
+        None => "SSH connection timed out".to_owned(),
+    }
+}
+
 /// Establishes one fresh transport. Every invocation creates a new handler;
 /// its host-key callback begins a new gate sequence and emits a new prompt.
 #[allow(clippy::too_many_arguments)]
@@ -4396,11 +4591,7 @@ async fn establish_connection(
         forwarded_tcpip_sender,
         expected_fingerprint: known_host_fingerprint.map(str::to_owned),
     };
-    let connection = russh::client::connect(
-        config,
-        (profile.identity.host(), profile.identity.port()),
-        handler,
-    );
+    let connection = connect_ssh_stream(config, profile, handler);
     tokio::pin!(connection);
     let connection_timeout = tokio::time::sleep(CONNECT_TIMEOUT);
     tokio::pin!(connection_timeout);
@@ -4412,19 +4603,19 @@ async fn establish_connection(
                 Err(_) if host_key_rejected.load(Ordering::Acquire) => {
                     return ConnectionAttempt::Permanent(
                         ConnectionFailure::HostTrust,
-                        "SSH host key was rejected",
+                        "SSH host key was rejected".to_owned(),
                     );
                 }
-                Err(_) => {
+                Err(error) => {
                     return ConnectionAttempt::Retryable(
                         ConnectionFailure::Transport,
-                        "SSH connection failed",
+                        connect_failure_message(profile.local_bind_address(), error),
                     )
                 }
             },
             _ = &mut connection_timeout => return ConnectionAttempt::Retryable(
                 ConnectionFailure::Transport,
-                "SSH connection timed out",
+                connect_timeout_message(profile.local_bind_address()),
             ),
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
                 if process_commands_before_running(command_receiver, shared, host_key_gate) {
@@ -4452,7 +4643,7 @@ async fn establish_connection(
                 Err(error) => {
                     return ConnectionAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        error.message(),
+                        error.message().to_owned(),
                     );
                 }
             };
@@ -4479,7 +4670,8 @@ async fn establish_connection(
                 WorkerWait::Completed(Err(_)) => {
                     return ConnectionAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        "SSH public-key authentication could not select a signature algorithm",
+                        "SSH public-key authentication could not select a signature algorithm"
+                            .to_owned(),
                     );
                 }
                 WorkerWait::Shutdown => {
@@ -4523,7 +4715,7 @@ async fn establish_connection(
                 Err(error) => {
                     return ConnectionAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        error.message(),
+                        error.message().to_owned(),
                     );
                 }
             };
@@ -4539,7 +4731,8 @@ async fn establish_connection(
                 WorkerWait::Completed(Err(_)) => {
                     return ConnectionAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        "SSH public-key authentication could not select a signature algorithm",
+                        "SSH public-key authentication could not select a signature algorithm"
+                            .to_owned(),
                     );
                 }
                 WorkerWait::Shutdown => {
@@ -4620,7 +4813,7 @@ async fn establish_connection(
         WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_)) => {
             return ConnectionAttempt::Permanent(
                 ConnectionFailure::Authentication,
-                "SSH authentication failed",
+                "SSH authentication failed".to_owned(),
             );
         }
         WorkerWait::Shutdown => {
@@ -4650,13 +4843,15 @@ async fn establish_connection(
             ProviderProbeOutcome::Unavailable => {
                 return ConnectionAttempt::Permanent(
                     ConnectionFailure::ProviderUnavailable,
-                    "the configured durable-session provider is not available on the remote host",
+                    "the configured durable-session provider is not available on the remote host"
+                        .to_owned(),
                 );
             }
             ProviderProbeOutcome::ProbeFailed => {
                 return ConnectionAttempt::Permanent(
                     ConnectionFailure::ProviderUnavailable,
-                    "the durable-session provider could not be probed on the remote host",
+                    "the durable-session provider could not be probed on the remote host"
+                        .to_owned(),
                 );
             }
             ProviderProbeOutcome::Shutdown => {
@@ -4678,7 +4873,7 @@ async fn establish_connection(
         WorkerWait::Completed(Err(_)) => {
             return ConnectionAttempt::Permanent(
                 ConnectionFailure::Setup,
-                "SSH session channel could not open",
+                "SSH session channel could not open".to_owned(),
             );
         }
         WorkerWait::Shutdown => {
@@ -4707,7 +4902,10 @@ async fn establish_connection(
     {
         WorkerWait::Completed(Ok(())) => {}
         WorkerWait::Completed(Err(_)) => {
-            return ConnectionAttempt::Permanent(ConnectionFailure::Setup, "SSH PTY request failed")
+            return ConnectionAttempt::Permanent(
+                ConnectionFailure::Setup,
+                "SSH PTY request failed".to_owned(),
+            )
         }
         WorkerWait::Shutdown => {
             let _ = stop_handle(handle, shared).await;
@@ -4721,7 +4919,7 @@ async fn establish_connection(
         ChannelRequestReply::Rejected => {
             return ConnectionAttempt::Permanent(
                 ConnectionFailure::Setup,
-                "SSH PTY request was rejected",
+                "SSH PTY request was rejected".to_owned(),
             );
         }
         ChannelRequestReply::Shutdown => {
@@ -4762,7 +4960,7 @@ async fn establish_connection(
         WorkerWait::Completed(Err(_)) => {
             return ConnectionAttempt::Permanent(
                 ConnectionFailure::Setup,
-                "SSH shell request failed",
+                "SSH shell request failed".to_owned(),
             )
         }
         WorkerWait::Shutdown => {
@@ -4795,7 +4993,7 @@ async fn establish_connection(
                         WorkerWait::Completed(Err(_)) => {
                             return ConnectionAttempt::Permanent(
                                 ConnectionFailure::Setup,
-                                "SSH initial resize failed",
+                                "SSH initial resize failed".to_owned(),
                             );
                         }
                         WorkerWait::Shutdown => {
@@ -4809,9 +5007,10 @@ async fn establish_connection(
             }
             ConnectionAttempt::Established(handle, channel, forwarded_tcpip_receiver)
         }
-        ChannelRequestReply::Rejected => {
-            ConnectionAttempt::Permanent(ConnectionFailure::Setup, "SSH shell request was rejected")
-        }
+        ChannelRequestReply::Rejected => ConnectionAttempt::Permanent(
+            ConnectionFailure::Setup,
+            "SSH shell request was rejected".to_owned(),
+        ),
         ChannelRequestReply::Shutdown => {
             let _ = stop_handle(handle, shared).await;
             ConnectionAttempt::Shutdown
@@ -4821,8 +5020,8 @@ async fn establish_connection(
 
 enum AuthenticatedHandleAttempt {
     Established(russh::client::Handle<SshClientHandler>),
-    Retryable(ConnectionFailure, &'static str),
-    Permanent(ConnectionFailure, &'static str),
+    Retryable(ConnectionFailure, String),
+    Permanent(ConnectionFailure, String),
     Shutdown,
 }
 
@@ -4853,11 +5052,7 @@ async fn establish_authenticated_handle(
         forwarded_tcpip_sender,
         expected_fingerprint: known_host_fingerprint.map(str::to_owned),
     };
-    let connection = russh::client::connect(
-        config,
-        (profile.identity.host(), profile.identity.port()),
-        handler,
-    );
+    let connection = connect_ssh_stream(config, profile, handler);
     tokio::pin!(connection);
     let connection_timeout = tokio::time::sleep(CONNECT_TIMEOUT);
     tokio::pin!(connection_timeout);
@@ -4869,19 +5064,19 @@ async fn establish_authenticated_handle(
                 Err(_) if host_key_rejected.load(Ordering::Acquire) => {
                     return AuthenticatedHandleAttempt::Permanent(
                         ConnectionFailure::HostTrust,
-                        "SSH host key was rejected",
+                        "SSH host key was rejected".to_owned(),
                     );
                 }
-                Err(_) => {
+                Err(error) => {
                     return AuthenticatedHandleAttempt::Retryable(
                         ConnectionFailure::Transport,
-                        "SSH connection failed",
+                        connect_failure_message(profile.local_bind_address(), error),
                     )
                 }
             },
             _ = &mut connection_timeout => return AuthenticatedHandleAttempt::Retryable(
                 ConnectionFailure::Transport,
-                "SSH connection timed out",
+                connect_timeout_message(profile.local_bind_address()),
             ),
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
                 if process_commands_before_running(command_receiver, shared, host_key_gate) {
@@ -4907,7 +5102,7 @@ async fn establish_authenticated_handle(
                 Err(error) => {
                     return AuthenticatedHandleAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        error.message(),
+                        error.message().to_owned(),
                     );
                 }
             };
@@ -4934,7 +5129,8 @@ async fn establish_authenticated_handle(
                 WorkerWait::Completed(Err(_)) => {
                     return AuthenticatedHandleAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        "SSH public-key authentication could not select a signature algorithm",
+                        "SSH public-key authentication could not select a signature algorithm"
+                            .to_owned(),
                     );
                 }
                 WorkerWait::Shutdown => {
@@ -4975,7 +5171,7 @@ async fn establish_authenticated_handle(
                 Err(error) => {
                     return AuthenticatedHandleAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        error.message(),
+                        error.message().to_owned(),
                     );
                 }
             };
@@ -4991,7 +5187,8 @@ async fn establish_authenticated_handle(
                 WorkerWait::Completed(Err(_)) => {
                     return AuthenticatedHandleAttempt::Permanent(
                         ConnectionFailure::Authentication,
-                        "SSH public-key authentication could not select a signature algorithm",
+                        "SSH public-key authentication could not select a signature algorithm"
+                            .to_owned(),
                     );
                 }
                 WorkerWait::Shutdown => {
@@ -5067,7 +5264,7 @@ async fn establish_authenticated_handle(
         WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_)) => {
             AuthenticatedHandleAttempt::Permanent(
                 ConnectionFailure::Authentication,
-                "SSH authentication failed",
+                "SSH authentication failed".to_owned(),
             )
         }
         WorkerWait::Shutdown => {
@@ -5988,7 +6185,7 @@ fn sftp_failure(shared: &WorkerShared, message: impl Into<String>) -> SessionErr
 fn ssh_failure_with_kind(
     shared: &WorkerShared,
     kind: SessionErrorKind,
-    message: &'static str,
+    message: impl Into<String>,
 ) -> SessionError {
     let error = SessionError::new(kind, message);
     let _ = shared.try_emit(SessionEvent::Error(error.clone()));
@@ -6033,8 +6230,11 @@ fn sha256_fingerprint(public_key: &russh::keys::PublicKey) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        net::TcpListener,
-        sync::atomic::{AtomicUsize, Ordering},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
         thread,
         time::Instant,
     };
@@ -6231,8 +6431,66 @@ mod tests {
         assert_eq!(profile.username(), "alice");
         assert_eq!(profile.terminal_type(), "xterm-256color");
         assert_eq!(profile.initial_size().columns(), 80);
+        assert_eq!(profile.local_bind_address(), None);
 
         let identity = HostIdentity::new("example.com", 22).unwrap();
+        assert_eq!(
+            profile
+                .clone()
+                .with_local_bind_address(Some(IpAddr::V4(Ipv4Addr::LOCALHOST)))
+                .unwrap()
+                .local_bind_address(),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        assert_eq!(
+            profile
+                .clone()
+                .with_local_bind_address(Some(IpAddr::V6(Ipv6Addr::LOCALHOST)))
+                .unwrap()
+                .local_bind_address(),
+            Some(IpAddr::V6(Ipv6Addr::LOCALHOST))
+        );
+        assert_eq!(
+            profile
+                .clone()
+                .with_local_bind_address(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED))),
+            Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason: "must not be an unspecified address"
+            })
+        );
+        assert_eq!(
+            profile
+                .clone()
+                .with_local_bind_address(Some(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)))),
+            Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason: "must not be a multicast address"
+            })
+        );
+        assert_eq!(
+            profile
+                .clone()
+                .with_local_bind_address(Some(IpAddr::V6("fe80::1".parse::<Ipv6Addr>().unwrap()))),
+            Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason:
+                    "must not be an IPv6 link-local address because scoped binding is unsupported"
+            })
+        );
+        assert_eq!(
+            profile.clone().with_local_bind_address(Some(IpAddr::V6(
+                "::ffff:0.0.0.0".parse::<Ipv6Addr>().unwrap()
+            ))),
+            Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason: "must not be an IPv4-mapped IPv6 address"
+            })
+        );
+        assert_eq!(
+            profile.clone().with_local_bind_address(Some(IpAddr::V6(
+                "::ffff:127.0.0.1".parse::<Ipv6Addr>().unwrap()
+            ))),
+            Err(SshConnectionProfileError::InvalidLocalBindAddress {
+                reason: "must not be an IPv4-mapped IPv6 address"
+            })
+        );
         assert_eq!(
             SshConnectionProfile::new(
                 identity.clone(),
@@ -6278,6 +6536,318 @@ mod tests {
             ),
             Err(SshConnectionProfileError::TerminalTypeTooLong { .. })
         ));
+    }
+
+    struct PeerRecordingServer {
+        stop: Option<tokio::sync::oneshot::Sender<()>>,
+        join: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Drop for PeerRecordingServer {
+        fn drop(&mut self) {
+            if let Some(stop) = self.stop.take() {
+                let _ = stop.send(());
+            }
+            if let Some(join) = self.join.take() {
+                join.join().unwrap();
+            }
+        }
+    }
+
+    struct PeerRecordingHandler;
+
+    impl russh::server::Handler for PeerRecordingHandler {
+        type Error = russh::Error;
+
+        async fn auth_password(
+            &mut self,
+            user: &str,
+            password: &str,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            Ok(if user == "alice" && password == "test-password" {
+                russh::server::Auth::Accept
+            } else {
+                russh::server::Auth::reject()
+            })
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            _channel: russh::Channel<russh::server::Msg>,
+            reply: russh::server::ChannelOpenHandle,
+            _session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            reply.accept().await;
+            Ok(())
+        }
+
+        async fn pty_request(
+            &mut self,
+            channel: russh::ChannelId,
+            _term: &str,
+            _cols: u32,
+            _rows: u32,
+            _width: u32,
+            _height: u32,
+            _modes: &[(russh::Pty, u32)],
+            session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            session.channel_success(channel)?;
+            Ok(())
+        }
+
+        async fn shell_request(
+            &mut self,
+            channel: russh::ChannelId,
+            session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            session.channel_success(channel)?;
+            Ok(())
+        }
+    }
+
+    fn start_peer_recording_server(
+        bind: IpAddr,
+        max_connections: usize,
+    ) -> (PeerRecordingServer, u16, mpsc::Receiver<IpAddr>) {
+        let (port_sender, port_receiver) = mpsc::channel();
+        let (peer_sender, peer_receiver) = mpsc::channel();
+        let (stop, mut stop_receiver) = tokio::sync::oneshot::channel();
+        let join = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::bind(SocketAddr::new(bind, 0))
+                    .await
+                    .unwrap();
+                let port = listener.local_addr().unwrap().port();
+                port_sender.send(port).unwrap();
+                let config = Arc::new(russh::server::Config {
+                    keys: vec![russh::keys::PrivateKey::random(
+                        &mut russh::keys::key::safe_rng(),
+                        russh::keys::Algorithm::Ed25519,
+                    )
+                    .unwrap()],
+                    auth_rejection_time: Duration::ZERO,
+                    ..Default::default()
+                });
+                let mut sessions = tokio::task::JoinSet::new();
+                let mut accepted = 0;
+                loop {
+                    tokio::select! {
+                        _ = &mut stop_receiver => break,
+                        accepted_connection = listener.accept(), if accepted < max_connections => {
+                            let (stream, peer) = accepted_connection.unwrap();
+                            peer_sender.send(peer.ip()).unwrap();
+                            accepted += 1;
+                            let config = Arc::clone(&config);
+                            sessions.spawn(async move {
+                                let session = russh::server::run_stream(
+                                    config,
+                                    stream,
+                                    PeerRecordingHandler,
+                                )
+                                .await
+                                .unwrap();
+                                let _ = session.await;
+                            });
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(15)) => {
+                            panic!("peer recording fixture server deadline");
+                        }
+                    }
+                }
+                sessions.abort_all();
+            });
+        });
+        let port = port_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        (
+            PeerRecordingServer {
+                stop: Some(stop),
+                join: Some(join),
+            },
+            port,
+            peer_receiver,
+        )
+    }
+
+    fn loopback_profile(port: u16, local_bind_address: Option<IpAddr>) -> SshConnectionProfile {
+        SshConnectionProfile::new(
+            HostIdentity::new("127.0.0.1", port).unwrap(),
+            "alice",
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            TerminalSize::new(80, 24).unwrap(),
+        )
+        .unwrap()
+        .with_local_bind_address(local_bind_address)
+        .unwrap()
+    }
+
+    fn ipv6_loopback_profile(port: u16) -> SshConnectionProfile {
+        SshConnectionProfile::new(
+            HostIdentity::new("::1", port).unwrap(),
+            "alice",
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            TerminalSize::new(80, 24).unwrap(),
+        )
+        .unwrap()
+        .with_local_bind_address(Some(IpAddr::V6(Ipv6Addr::LOCALHOST)))
+        .unwrap()
+    }
+
+    fn accept_host_keys_until_running(session: &SshSession) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match session.try_recv_event() {
+                Ok(SessionEvent::HostKeyVerification(prompt)) => {
+                    session
+                        .host_key_decision_resolver()
+                        .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                        .unwrap();
+                }
+                Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => return,
+                Ok(SessionEvent::Error(error)) => panic!("fixture connection failed: {error}"),
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    assert!(Instant::now() < deadline, "session never started");
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("fixture connection closed"),
+            }
+        }
+    }
+
+    fn wait_for_session_error(session: &SshSession) -> SessionError {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match session.try_recv_event() {
+                Ok(SessionEvent::Error(error)) => return error,
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    assert!(Instant::now() < deadline, "session did not fail");
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("fixture connection closed"),
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_ipv4_local_bind_reaches_server_from_configured_source_and_survives_reconnect() {
+        let (_server, port, peers) =
+            start_peer_recording_server(IpAddr::V4(Ipv4Addr::LOCALHOST), 2);
+        let profile = loopback_profile(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert_eq!(
+            profile.clone().local_bind_address(),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        let session =
+            SshSession::start(profile, SshAuthentication::password("test-password")).unwrap();
+        accept_host_keys_until_running(&session);
+        assert_eq!(
+            peers.recv_timeout(Duration::from_secs(3)).unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+
+        session.try_reconnect().unwrap();
+        accept_host_keys_until_running(&session);
+        assert_eq!(
+            peers.recv_timeout(Duration::from_secs(3)).unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+        session.shutdown(Duration::from_secs(3)).unwrap();
+    }
+
+    #[test]
+    fn explicit_ipv6_local_bind_reaches_server_from_configured_source_when_available() {
+        match TcpListener::bind((Ipv6Addr::LOCALHOST, 0)) {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
+                ) =>
+            {
+                eprintln!("IPv6 loopback unavailable: {error}");
+                return;
+            }
+            Err(error) => panic!("IPv6 fixture could not bind: {error}"),
+        }
+        let (_server, port, peers) =
+            start_peer_recording_server(IpAddr::V6(Ipv6Addr::LOCALHOST), 1);
+        let session = SshSession::start(
+            ipv6_loopback_profile(port),
+            SshAuthentication::password("test-password"),
+        )
+        .unwrap();
+        accept_host_keys_until_running(&session);
+        assert_eq!(
+            peers.recv_timeout(Duration::from_secs(3)).unwrap(),
+            IpAddr::V6(Ipv6Addr::LOCALHOST)
+        );
+        session.shutdown(Duration::from_secs(3)).unwrap();
+    }
+
+    #[test]
+    fn automatic_default_connection_remains_unbound_and_reaches_loopback_server() {
+        let (_server, port, peers) =
+            start_peer_recording_server(IpAddr::V4(Ipv4Addr::LOCALHOST), 1);
+        let session = SshSession::start(
+            loopback_profile(port, None),
+            SshAuthentication::password("test-password"),
+        )
+        .unwrap();
+        accept_host_keys_until_running(&session);
+        assert_eq!(
+            peers.recv_timeout(Duration::from_secs(3)).unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+        session.shutdown(Duration::from_secs(3)).unwrap();
+    }
+
+    #[test]
+    fn explicit_local_bind_mismatch_fails_closed_without_unbound_retry() {
+        let (_server, port, peers) =
+            start_peer_recording_server(IpAddr::V4(Ipv4Addr::LOCALHOST), 1);
+        let session = SshSession::start(
+            loopback_profile(port, Some(IpAddr::V6(Ipv6Addr::LOCALHOST))),
+            SshAuthentication::password("test-password"),
+        )
+        .unwrap();
+        let error = wait_for_session_error(&session);
+        assert!(error
+            .to_string()
+            .contains("configured local address binding ::1"));
+        assert!(peers.recv_timeout(Duration::from_millis(100)).is_err());
+        match session.shutdown(Duration::from_secs(1)) {
+            Err(ShutdownError::Failed(error)) => {
+                assert_eq!(error.kind(), SessionErrorKind::Spawn);
+            }
+            result => panic!("expected failed SSH shutdown, received {result:?}"),
+        }
+    }
+
+    #[test]
+    fn unavailable_explicit_local_bind_fails_closed_without_unbound_retry() {
+        let (_server, port, peers) =
+            start_peer_recording_server(IpAddr::V4(Ipv4Addr::LOCALHOST), 1);
+        let unavailable = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+        let session = SshSession::start(
+            loopback_profile(port, Some(unavailable)),
+            SshAuthentication::password("test-password"),
+        )
+        .unwrap();
+        let error = wait_for_session_error(&session);
+        assert!(error
+            .to_string()
+            .contains("configured local address binding 192.0.2.1"));
+        assert!(peers.recv_timeout(Duration::from_millis(100)).is_err());
+        match session.shutdown(Duration::from_secs(1)) {
+            Err(ShutdownError::Failed(error)) => {
+                assert_eq!(error.kind(), SessionErrorKind::Spawn);
+            }
+            result => panic!("expected failed SSH shutdown, received {result:?}"),
+        }
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::env;
+use std::net::IpAddr;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
@@ -75,7 +76,9 @@ impl InteropConfig {
             .expect("loopback host must be accepted")
             .with_port(self.port)
             .with_trusted_ca_pem(self.ca_pem.clone())
-            .expect("trusted CA PEM must be accepted");
+            .expect("trusted CA PEM must be accepted")
+            .with_local_bind_address(Some(IpAddr::from([127, 0, 0, 1])))
+            .expect("loopback local bind must be accepted");
         let options = PowerShellOptions {
             connect_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),

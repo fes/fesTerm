@@ -2,6 +2,8 @@
 //
 // Contains WinrmConfig, AuthMethod, and WinrmCredentials extracted from client.rs.
 
+use std::net::IpAddr;
+
 use secrecy::SecretString;
 
 /// Configuration for a [`WinrmClient`](crate::WinrmClient) connection.
@@ -59,6 +61,13 @@ pub struct WinrmConfig {
     ///
     /// When set, all WinRM HTTP(S) requests are routed through this proxy.
     pub proxy: Option<String>,
+    /// Optional local source IP address to bind for every outbound WinRM
+    /// connection opened by this client.
+    ///
+    /// This pins only the source address used by the socket. It does not select
+    /// a network interface, alter DNS resolution, disable proxy use, or relax
+    /// TLS hostname verification.
+    pub local_bind_address: Option<IpAddr>,
     /// Console output code page (default: 65001 = UTF-8).
     ///
     /// Controls the `WINRS_CODEPAGE` option in the shell creation envelope.
@@ -117,6 +126,7 @@ impl Default for WinrmConfig {
             client_cert_pem: None,
             client_key_pem: None,
             proxy: None,
+            local_bind_address: None,
             encryption: EncryptionMode::Auto,
             user_agent: None,
             codepage: 65001,
@@ -258,6 +268,12 @@ mod tests {
     fn default_config_has_no_proxy() {
         let config = WinrmConfig::default();
         assert!(config.proxy.is_none());
+    }
+
+    #[test]
+    fn default_config_has_no_local_bind_address() {
+        let config = WinrmConfig::default();
+        assert_eq!(config.local_bind_address, None);
     }
 
     #[test]

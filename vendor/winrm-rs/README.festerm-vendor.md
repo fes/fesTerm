@@ -25,7 +25,11 @@ local patches remain deliberately narrow:
    signal code rather than the generic WinRS control operation;
 6. bounded numeric WSMan fault details remain available without exposing the
    remote fault reason in routine transport diagnostics;
-7. standalone vendored-crate buildability in this repository with the required
+7. optional explicit local source-IP binding for all native WinRM HTTP
+   connections, including pooled reqwest requests and the feature-gated
+   CredSSP direct TCP path, with fail-closed validation for unsupported bind
+   addresses and no unbound fallback;
+8. standalone vendored-crate buildability in this repository with the required
    Rust 1.98 toolchain.
 
 fesTerm's native backend only enables HTTPS + NTLM initially and does not claim
@@ -38,3 +42,10 @@ Run `cargo +1.98.0 test --manifest-path vendor/winrm-rs/Cargo.toml --tests --loc
 from the fesTerm root. CI runs this suite separately from `cargo test --workspace`
 and shares the root target directory for build caching. Do not remove the
 lockfile as temporary output.
+
+Source-binding regressions observe peers on newly opened HTTP connections,
+reject invalid/wildcard source spellings before connection, and require zero
+wrong-family accepts for dual-stack destination and explicit proxy fixtures.
+Unavailable sources fail without an unbound retry. The bounded loopback
+fixtures reset accepted sockets to blocking mode explicitly on macOS; these
+tests are not corporate proxy/VPN or CredSSP interoperability evidence.

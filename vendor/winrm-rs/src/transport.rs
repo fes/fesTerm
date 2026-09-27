@@ -3,6 +3,7 @@
 // Manages the reqwest HTTP client, authentication dispatch, and retry logic.
 // Extracted from client.rs.
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -139,6 +140,18 @@ impl HttpTransport {
         config: WinrmConfig,
         credentials: WinrmCredentials,
     ) -> Result<Self, WinrmError> {
+        Self::new_with_client_builder(config, credentials, |builder| builder)
+    }
+
+    fn new_with_client_builder<F>(
+        config: WinrmConfig,
+        credentials: WinrmCredentials,
+        configure_builder: F,
+    ) -> Result<Self, WinrmError>
+    where
+        F: FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+    {
+        validate_local_bind_address(config.local_bind_address)?;
         if config.accept_invalid_certs {
             tracing::warn!(
                 "TLS certificate verification disabled (accept_invalid_certs=true) — \
@@ -165,6 +178,9 @@ impl HttpTransport {
                     .as_deref()
                     .unwrap_or(concat!("winrm-rs/", env!("CARGO_PKG_VERSION"))),
             );
+        if let Some(address) = config.local_bind_address {
+            builder = builder.local_address(address);
+        }
 
         // Configure TLS client certificate for Certificate auth
         if matches!(config.auth_method, AuthMethod::Certificate) {
@@ -252,6 +268,7 @@ impl HttpTransport {
             None
         };
 
+        let builder = configure_builder(builder);
         let http = builder.build().map_err(WinrmError::Http)?;
 
         Ok(Self {
@@ -351,6 +368,7 @@ impl HttpTransport {
                     domain: self.credentials.domain.clone(),
                     cert_handle: self.cert_handle.clone(),
                     accept_invalid_certs: self.config.accept_invalid_certs,
+                    local_bind_address: self.config.local_bind_address,
                 };
                 auth.send_authenticated(&self.http, &url, body, &self.config)
                     .await?
@@ -515,9 +533,43 @@ impl HttpTransport {
     }
 }
 
+pub(crate) fn validate_local_bind_address(address: Option<IpAddr>) -> Result<(), WinrmError> {
+    let Some(address) = address else {
+        return Ok(());
+    };
+    if address.is_unspecified() {
+        return Err(WinrmError::AuthFailed(
+            "local bind address must not be unspecified".into(),
+        ));
+    }
+    if address.is_multicast() {
+        return Err(WinrmError::AuthFailed(
+            "local bind address must not be multicast".into(),
+        ));
+    }
+    if let IpAddr::V6(address) = address {
+        if address.to_ipv4_mapped().is_some() {
+            return Err(WinrmError::AuthFailed(
+                "IPv4-mapped IPv6 local bind addresses are unsupported".into(),
+            ));
+        }
+        if (address.segments()[0] & 0xffc0) == 0xfe80 {
+            return Err(WinrmError::AuthFailed(
+                "IPv6 link-local local bind addresses require a scope ID, which is unsupported"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
+    use std::sync::mpsc;
+    use std::time::Instant;
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -531,6 +583,160 @@ mod tests {
         };
         let creds = WinrmCredentials::new("admin", "pass", "");
         HttpTransport::new(config, creds).unwrap()
+    }
+
+    fn local_bind_transport(port: u16, local_bind_address: IpAddr) -> HttpTransport {
+        let config = WinrmConfig {
+            auth_method: AuthMethod::Basic,
+            port,
+            use_tls: false,
+            local_bind_address: Some(local_bind_address),
+            ..Default::default()
+        };
+        let creds = WinrmCredentials::new("admin", "pass", "");
+        HttpTransport::new_with_client_builder(config, creds, |builder| builder.no_proxy()).unwrap()
+    }
+
+    fn local_bind_transport_with_dns(
+        port: u16,
+        local_bind_address: IpAddr,
+        dns_name: &'static str,
+        addrs: Vec<SocketAddr>,
+        proxy: Option<String>,
+    ) -> HttpTransport {
+        let config = WinrmConfig {
+            auth_method: AuthMethod::Basic,
+            port,
+            use_tls: false,
+            local_bind_address: Some(local_bind_address),
+            proxy,
+            connect_timeout_secs: 1,
+            operation_timeout_secs: 1,
+            ..Default::default()
+        };
+        let creds = WinrmCredentials::new("admin", "pass", "");
+        let explicit_proxy = config.proxy.is_some();
+        HttpTransport::new_with_client_builder(config, creds, |builder| {
+            let builder = if explicit_proxy {
+                builder
+            } else {
+                builder.no_proxy()
+            };
+            builder.resolve_to_addrs(dns_name, &addrs)
+        })
+        .unwrap()
+    }
+
+    fn spawn_peer_recording_server(
+        expected_requests: usize,
+    ) -> (SocketAddr, mpsc::Receiver<Vec<IpAddr>>) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut peers = Vec::with_capacity(expected_requests);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            for _ in 0..expected_requests {
+                let (stream, peer) = loop {
+                    match listener.accept() {
+                        Ok(connection) => break connection,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "HTTP fixture accept deadline");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("HTTP fixture accept failed: {error}"),
+                    }
+                };
+                peers.push(peer.ip());
+                respond_to_local_bind_request(stream);
+            }
+            tx.send(peers).unwrap();
+        });
+        (addr, rx)
+    }
+
+    fn respond_to_local_bind_request(mut stream: std::net::TcpStream) {
+        // Accepted sockets inherit nonblocking mode on macOS.
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            assert!(request.len() < 8192, "HTTP fixture headers exceeded bound");
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        let content_length = header_content_length(&request);
+        assert!(content_length <= 1024, "HTTP fixture body exceeded bound");
+        let mut body = vec![0; content_length];
+        stream.read_exact(&mut body).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nConnection: close\r\n\r\n\
+                  <s:Envelope><s:Body></s:Body></s:Envelope>",
+            )
+            .unwrap();
+    }
+
+    fn header_content_length(request: &[u8]) -> usize {
+        let request = String::from_utf8_lossy(request);
+        request
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())
+                    .flatten()
+            })
+            .unwrap_or(0)
+    }
+
+    fn loopback_dual_stack_servers() -> (
+        u16,
+        mpsc::Receiver<Option<IpAddr>>,
+        mpsc::Receiver<Option<IpAddr>>,
+    ) {
+        let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        let port = v6.local_addr().unwrap().port();
+        let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let v6_rx = spawn_single_http_server(v6, Duration::from_millis(750));
+        let v4_rx = spawn_single_http_server(v4, Duration::from_millis(750));
+        (port, v4_rx, v6_rx)
+    }
+
+    fn spawn_single_http_server(
+        listener: TcpListener,
+        timeout: Duration,
+    ) -> mpsc::Receiver<Option<IpAddr>> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + timeout;
+            loop {
+                match listener.accept() {
+                    Ok((stream, peer)) => {
+                        respond_to_local_bind_request(stream);
+                        tx.send(Some(peer.ip())).unwrap();
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            tx.send(None).unwrap();
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            }
+        });
+        rx
     }
 
     #[test]
@@ -578,6 +784,32 @@ mod tests {
         let transport = basic_transport(5985);
         assert_eq!(transport.config().port, 5985);
         assert!(matches!(transport.config().auth_method, AuthMethod::Basic));
+    }
+
+    #[test]
+    fn local_bind_address_rejects_unsupported_addresses() {
+        for address in [
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0, 0)),
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 1)),
+        ] {
+            let config = WinrmConfig {
+                local_bind_address: Some(address),
+                ..Default::default()
+            };
+            let creds = WinrmCredentials::new("admin", "pass", "");
+            assert!(
+                matches!(
+                    HttpTransport::new(config, creds),
+                    Err(WinrmError::AuthFailed(_))
+                ),
+                "{address} should be rejected"
+            );
+        }
     }
 
     #[test]
@@ -656,6 +888,164 @@ mod tests {
             .send_soap_with_retry(&addr.ip().to_string(), "<soap/>".into())
             .await;
         assert_eq!(result.unwrap(), "<ok/>");
+    }
+
+    #[tokio::test]
+    async fn local_bind_address_is_used_for_new_http_connections() {
+        let local = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let (addr, peers) = spawn_peer_recording_server(2);
+        let transport = local_bind_transport(addr.port(), local);
+
+        for _ in 0..2 {
+            let result = transport
+                .send_soap_raw(&addr.ip().to_string(), "<soap/>".into())
+                .await
+                .unwrap();
+            assert!(result.contains("<s:Envelope>"));
+        }
+
+        let peers = peers
+            .recv_timeout(Duration::from_secs(5))
+            .expect("server should report peer addresses");
+        assert_eq!(peers, vec![local, local]);
+    }
+
+    #[tokio::test]
+    async fn ipv4_local_bind_never_opens_ipv6_for_dual_stack_host() {
+        let (port, v4_rx, v6_rx) = loopback_dual_stack_servers();
+        let transport = local_bind_transport_with_dns(
+            port,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "dual-stack.test",
+            vec![
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            ],
+            None,
+        );
+
+        let response = transport
+            .send_soap_raw("dual-stack.test", "<soap/>".into())
+            .await
+            .unwrap();
+        assert!(response.contains("<s:Envelope>"));
+        assert_eq!(
+            v4_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        assert_eq!(v6_rx.recv_timeout(Duration::from_secs(2)).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn ipv6_local_bind_never_opens_ipv4_for_dual_stack_host() {
+        let (port, v4_rx, v6_rx) = loopback_dual_stack_servers();
+        let transport = local_bind_transport_with_dns(
+            port,
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            "dual-stack.test",
+            vec![
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+            ],
+            None,
+        );
+
+        let response = transport
+            .send_soap_raw("dual-stack.test", "<soap/>".into())
+            .await
+            .unwrap();
+        assert!(response.contains("<s:Envelope>"));
+        assert_eq!(v4_rx.recv_timeout(Duration::from_secs(2)).unwrap(), None);
+        assert_eq!(
+            v6_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Some(IpAddr::V6(Ipv6Addr::LOCALHOST))
+        );
+    }
+
+    #[tokio::test]
+    async fn ipv4_local_bind_never_opens_ipv6_for_dual_stack_proxy() {
+        let (port, v4_rx, v6_rx) = loopback_dual_stack_servers();
+        let transport = local_bind_transport_with_dns(
+            5985,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "dual-proxy.test",
+            vec![
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            ],
+            Some(format!("http://dual-proxy.test:{port}")),
+        );
+
+        let response = transport
+            .send_soap_raw("target.test", "<soap/>".into())
+            .await
+            .unwrap();
+        assert!(response.contains("<s:Envelope>"));
+        assert_eq!(
+            v4_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        assert_eq!(v6_rx.recv_timeout(Duration::from_secs(2)).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn ipv6_local_bind_never_opens_ipv4_for_dual_stack_proxy() {
+        let (port, v4_rx, v6_rx) = loopback_dual_stack_servers();
+        let transport = local_bind_transport_with_dns(
+            5985,
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            "dual-proxy.test",
+            vec![
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+            ],
+            Some(format!("http://dual-proxy.test:{port}")),
+        );
+
+        let response = transport
+            .send_soap_raw("target.test", "<soap/>".into())
+            .await
+            .unwrap();
+        assert!(response.contains("<s:Envelope>"));
+        assert_eq!(v4_rx.recv_timeout(Duration::from_secs(2)).unwrap(), None);
+        assert_eq!(
+            v6_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Some(IpAddr::V6(Ipv6Addr::LOCALHOST))
+        );
+    }
+
+    #[tokio::test]
+    async fn local_bind_address_fails_closed_for_wrong_family() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepts = spawn_single_http_server(listener, Duration::from_millis(500));
+        let transport = local_bind_transport(addr.port(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+        let err = transport
+            .send_soap_raw(&addr.ip().to_string(), "<soap/>".into())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, WinrmError::Http(_)),
+            "expected HTTP connect failure, got {err}"
+        );
+        assert_eq!(accepts.recv_timeout(Duration::from_secs(2)).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn local_bind_address_fails_closed_for_nonlocal_source() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepts = spawn_single_http_server(listener, Duration::from_millis(500));
+        let transport = local_bind_transport(addr.port(), IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+        let err = transport
+            .send_soap_raw(&addr.ip().to_string(), "<soap/>".into())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, WinrmError::Http(_)),
+            "expected HTTP bind/connect failure, got {err}"
+        );
+        assert_eq!(accepts.recv_timeout(Duration::from_secs(2)).unwrap(), None);
     }
 
     #[tokio::test]

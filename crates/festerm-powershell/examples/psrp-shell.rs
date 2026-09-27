@@ -1,5 +1,6 @@
 use std::env;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -17,27 +18,25 @@ enum OutputStream {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args().skip(1);
-    let host = args
-        .next()
-        .ok_or("usage: psrp-shell <host> <username> [domain] [ca-pem-file]")?;
-    let username = args
-        .next()
-        .ok_or("usage: psrp-shell <host> <username> [domain] [ca-pem-file]")?;
-    let domain = args.next();
-    let ca_pem_file = args.next().map(PathBuf::from);
+    let invocation = Invocation::parse(env::args().skip(1))?;
 
-    let mut endpoint = PowerShellEndpoint::https(host)?;
-    if let Some(path) = ca_pem_file {
+    let mut endpoint = PowerShellEndpoint::https(invocation.host)?;
+    if let Some(path) = invocation.ca_pem_file {
         endpoint = endpoint.with_trusted_ca_pem(std::fs::read_to_string(path)?)?;
     }
+    let local_bind_address = match (invocation.local_address, invocation.ask_local_address) {
+        (Some(address), _) => Some(address),
+        (None, true) => prompt_local_address()?,
+        (None, false) => None,
+    };
+    endpoint = endpoint.with_local_bind_address(local_bind_address)?;
 
     eprint!("Password: ");
     io::stderr().flush()?;
     let password = rpassword::read_password()?;
     let credentials = PowerShellCredentials::with_domain(
-        username,
-        domain,
+        invocation.username,
+        invocation.domain,
         SecretBytes::from_secret_string(password),
     )?;
     let session = PowerShellSession::connect(endpoint, PowerShellOptions::default(), credentials)?;
@@ -78,6 +77,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     session.close()?;
     Ok(())
+}
+
+struct Invocation {
+    host: String,
+    username: String,
+    domain: Option<String>,
+    ca_pem_file: Option<PathBuf>,
+    local_address: Option<IpAddr>,
+    ask_local_address: bool,
+}
+
+impl Invocation {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut local_address = None;
+        let mut ask_local_address = false;
+        let mut positional = Vec::new();
+        let mut args = args;
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--local-address" => {
+                    if local_address.is_some() {
+                        return Err("local source address was supplied more than once".into());
+                    }
+                    let value = args.next().ok_or(USAGE)?;
+                    local_address = Some(value.parse()?);
+                }
+                "--ask-local-address" => {
+                    if ask_local_address {
+                        return Err("local source prompt was requested more than once".into());
+                    }
+                    ask_local_address = true;
+                }
+                "--help" | "-h" => return Err(USAGE.into()),
+                _ if arg.starts_with("--local-address=") => {
+                    if local_address.is_some() {
+                        return Err("local source address was supplied more than once".into());
+                    }
+                    let value = arg.strip_prefix("--local-address=").ok_or(USAGE)?;
+                    local_address = Some(value.parse()?);
+                }
+                _ if arg.starts_with('-') => return Err(USAGE.into()),
+                _ => positional.push(arg),
+            }
+        }
+        if local_address.is_some() && ask_local_address {
+            return Err("choose either --local-address or --ask-local-address, not both".into());
+        }
+        let mut positional = positional.into_iter();
+        let host = positional.next().ok_or(USAGE)?;
+        let username = positional.next().ok_or(USAGE)?;
+        let domain = positional.next();
+        let ca_pem_file = positional.next().map(PathBuf::from);
+        if positional.next().is_some() {
+            return Err(USAGE.into());
+        }
+        Ok(Self {
+            host,
+            username,
+            domain,
+            ca_pem_file,
+            local_address,
+            ask_local_address,
+        })
+    }
+}
+
+const USAGE: &str = "usage: psrp-shell [--local-address IP | --ask-local-address] <host> <username> [domain] [ca-pem-file]";
+
+fn prompt_local_address() -> Result<Option<IpAddr>, Box<dyn std::error::Error>> {
+    eprintln!("Source address only; this does not enforce an adapter, VPN path, or DNS policy.");
+    eprint!("Local source IP (blank for Automatic): ");
+    io::stderr().flush()?;
+    read_local_address(&mut io::stdin().lock())
+}
+
+fn read_local_address(
+    reader: &mut impl BufRead,
+) -> Result<Option<IpAddr>, Box<dyn std::error::Error>> {
+    let mut input = String::new();
+    let length = reader.take(128).read_line(&mut input)?;
+    if length == 0 {
+        return Err("local source selection cancelled: input closed".into());
+    }
+    if length >= 128 {
+        return Err("local source address input is too long".into());
+    }
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.parse()?))
+    }
 }
 
 fn format_pipeline_event(event: &PipelineEvent) -> Option<(OutputStream, String)> {
@@ -135,6 +226,71 @@ fn escape_terminal_controls(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn psrp_local_bind_cli_preserves_positionals_and_parses_explicit_choice() {
+        let invocation = Invocation::parse(
+            ["server.test", "user", "domain", "ca.pem"]
+                .map(str::to_owned)
+                .into_iter(),
+        )
+        .unwrap();
+        assert_eq!(invocation.host, "server.test");
+        assert_eq!(invocation.username, "user");
+        assert_eq!(invocation.domain.as_deref(), Some("domain"));
+        assert_eq!(invocation.ca_pem_file, Some(PathBuf::from("ca.pem")));
+        assert_eq!(invocation.local_address, None);
+        assert!(!invocation.ask_local_address);
+        for flag in ["--local-address=127.0.0.1", "--local-address=::1"] {
+            let invocation =
+                Invocation::parse([flag, "server.test", "user"].map(str::to_owned).into_iter())
+                    .unwrap();
+            assert!(invocation.local_address.unwrap().is_loopback());
+        }
+        let invocation = Invocation::parse(
+            ["--ask-local-address", "server.test", "user"]
+                .map(str::to_owned)
+                .into_iter(),
+        )
+        .unwrap();
+        assert!(invocation.ask_local_address);
+        assert_eq!(invocation.local_address, None);
+    }
+
+    #[test]
+    fn psrp_local_bind_cli_rejects_conflicting_or_malformed_options() {
+        for flags in [
+            vec!["--local-address"],
+            vec!["--local-address", "not-an-ip"],
+            vec!["--local-address=127.0.0.1", "--ask-local-address"],
+            vec!["--local-address=127.0.0.1", "--local-address", "::1"],
+            vec!["--ask-local-address", "--ask-local-address"],
+            vec!["--local-address=--local-address=127.0.0.1"],
+        ] {
+            assert!(Invocation::parse(
+                ["server.test", "user"]
+                    .into_iter()
+                    .chain(flags)
+                    .map(str::to_owned)
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn psrp_local_bind_prompt_requires_explicit_input_and_bounds_it() {
+        assert!(read_local_address(&mut io::Cursor::new(b"")).is_err());
+        assert_eq!(
+            read_local_address(&mut io::Cursor::new(b"\n")).unwrap(),
+            None
+        );
+        assert_eq!(
+            read_local_address(&mut io::Cursor::new(b"127.0.0.1\n")).unwrap(),
+            Some(IpAddr::from([127, 0, 0, 1]))
+        );
+        assert!(read_local_address(&mut io::Cursor::new(b"not-an-ip\n")).is_err());
+        assert!(read_local_address(&mut io::Cursor::new(vec![b' '; 256])).is_err());
+    }
 
     #[test]
     fn every_stream_variant_escapes_terminal_controls() {

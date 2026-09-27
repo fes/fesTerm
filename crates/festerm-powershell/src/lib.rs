@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -22,6 +23,7 @@ pub struct PowerShellEndpoint {
     host: String,
     port: u16,
     trusted_ca_pem: Option<String>,
+    local_bind_address: Option<IpAddr>,
 }
 
 impl PowerShellEndpoint {
@@ -31,6 +33,7 @@ impl PowerShellEndpoint {
             host,
             port: 5986,
             trusted_ca_pem: None,
+            local_bind_address: None,
         })
     }
 
@@ -50,6 +53,15 @@ impl PowerShellEndpoint {
         Ok(self)
     }
 
+    pub fn with_local_bind_address(
+        mut self,
+        address: Option<IpAddr>,
+    ) -> Result<Self, PowerShellSessionError> {
+        validate_local_bind_address(address)?;
+        self.local_bind_address = address;
+        Ok(self)
+    }
+
     #[must_use]
     pub fn host(&self) -> &str {
         &self.host
@@ -63,6 +75,11 @@ impl PowerShellEndpoint {
     #[must_use]
     pub fn trusted_ca_pem(&self) -> Option<&str> {
         self.trusted_ca_pem.as_deref()
+    }
+
+    #[must_use]
+    pub fn local_bind_address(&self) -> Option<IpAddr> {
+        self.local_bind_address
     }
 }
 
@@ -183,6 +200,10 @@ pub enum PowerShellSessionError {
     Closed,
     #[error("PowerShell transport failed")]
     TransportFailure,
+    #[error(
+        "PowerShell connection failed with the configured local source address; check address availability and routing (no unbound fallback was attempted)"
+    )]
+    LocalBindConnectionFailed,
     #[error("PowerShell protocol failed")]
     ProtocolFailure,
     #[error("PowerShell worker failed to start")]
@@ -279,6 +300,7 @@ impl PowerShellSession {
         if options.auth != PowerShellAuthMethod::Ntlm {
             return Err(PowerShellSessionError::UnsupportedAuth(options.auth));
         }
+        let explicitly_bound = endpoint.local_bind_address.is_some();
         let status = Arc::new(Mutex::new(PowerShellSessionStatus::Connecting));
         let (request_tx, request_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -306,7 +328,13 @@ impl PowerShellSession {
             }),
             Ok(Err(error)) => {
                 let _ = join.join();
-                Err(error)
+                Err(
+                    if explicitly_bound && error == PowerShellSessionError::TransportFailure {
+                        PowerShellSessionError::LocalBindConnectionFailed
+                    } else {
+                        error
+                    },
+                )
             }
             Err(_) => {
                 let _ = join.join();
@@ -523,6 +551,7 @@ fn build_client(
             use_tls: true,
             accept_invalid_certs: false,
             trusted_ca_pem: endpoint.trusted_ca_pem.clone(),
+            local_bind_address: endpoint.local_bind_address,
             connect_timeout_secs: options.connect_timeout.as_secs(),
             operation_timeout_secs: options.operation_timeout.as_secs(),
             auth_method: AuthMethod::Ntlm,
@@ -668,7 +697,7 @@ async fn drive_pipeline(
                     })
                 }
                 PipelineState::NotStarted | PipelineState::Running | PipelineState::Stopping => {
-                    continue
+                    continue;
                 }
             };
             let invalidated = matches!(
@@ -902,6 +931,35 @@ fn validate_host(host: String) -> Result<String, PowerShellSessionError> {
     Ok(host)
 }
 
+fn validate_local_bind_address(address: Option<IpAddr>) -> Result<(), PowerShellSessionError> {
+    let Some(address) = address else {
+        return Ok(());
+    };
+    if address.is_unspecified() {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "local bind address must not be unspecified",
+        ));
+    }
+    if address.is_multicast() {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "local bind address must not be multicast",
+        ));
+    }
+    if let IpAddr::V6(address) = address {
+        if address.to_ipv4_mapped().is_some() {
+            return Err(PowerShellSessionError::InvalidConfiguration(
+                "IPv4-mapped IPv6 local bind addresses are unsupported",
+            ));
+        }
+        if (address.segments()[0] & 0xffc0) == 0xfe80 {
+            return Err(PowerShellSessionError::InvalidConfiguration(
+                "IPv6 link-local local bind addresses require a scope ID, which is unsupported",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_options(options: &PowerShellOptions) -> Result<(), PowerShellSessionError> {
     if options.event_channel_capacity == 0
         || options.max_events_per_command == 0
@@ -919,7 +977,10 @@ fn map_failure_kind(error: &psrp_rs::PsrpError) -> PowerShellCommandFailureKind 
     match map_psrp_error(error) {
         PowerShellSessionError::TimedOut => PowerShellCommandFailureKind::TimedOut,
         PowerShellSessionError::Invalidated => PowerShellCommandFailureKind::Invalidated,
-        PowerShellSessionError::TransportFailure => PowerShellCommandFailureKind::TransportFailure,
+        PowerShellSessionError::TransportFailure
+        | PowerShellSessionError::LocalBindConnectionFailed => {
+            PowerShellCommandFailureKind::TransportFailure
+        }
         PowerShellSessionError::ProtocolFailure => PowerShellCommandFailureKind::ProtocolFailure,
         PowerShellSessionError::AuthenticationRejected
         | PowerShellSessionError::Closed
@@ -1076,6 +1137,69 @@ mod tests {
     fn endpoint_validation_rejects_url_shaped_hosts() {
         assert!(PowerShellEndpoint::https("https://win.local/wsman").is_err());
         assert!(PowerShellEndpoint::https("user@win.local").is_err());
+    }
+
+    #[test]
+    fn endpoint_local_bind_address_defaults_to_none_and_can_be_set() {
+        let endpoint = PowerShellEndpoint::https("win.local").unwrap();
+        assert_eq!(endpoint.local_bind_address(), None);
+
+        let endpoint = endpoint
+            .with_local_bind_address(Some(IpAddr::from([127, 0, 0, 2])))
+            .unwrap();
+        assert_eq!(
+            endpoint.local_bind_address(),
+            Some(IpAddr::from([127, 0, 0, 2]))
+        );
+
+        let endpoint = endpoint.with_local_bind_address(None).unwrap();
+        assert_eq!(endpoint.local_bind_address(), None);
+    }
+
+    #[test]
+    fn endpoint_local_bind_address_rejects_unsupported_sources() {
+        for address in [
+            IpAddr::from([0, 0, 0, 0]),
+            IpAddr::from([224, 0, 0, 1]),
+            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+            IpAddr::V6(std::net::Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1)),
+            IpAddr::V6(std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
+            IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0, 0)),
+            IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 1)),
+        ] {
+            assert!(
+                PowerShellEndpoint::https("win.local")
+                    .unwrap()
+                    .with_local_bind_address(Some(address))
+                    .is_err(),
+                "{address} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn endpoint_local_bind_failure_is_explicit_and_never_connects_unbound() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = PowerShellEndpoint::https("127.0.0.1")
+            .unwrap()
+            .with_port(listener.local_addr().unwrap().port())
+            .with_local_bind_address(Some(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)))
+            .unwrap();
+        let credentials =
+            PowerShellCredentials::new("fixture", SecretBytes::copy_from_slice(b"fixture"))
+                .unwrap();
+        let options = PowerShellOptions {
+            connect_timeout: Duration::from_secs(1),
+            operation_timeout: Duration::from_secs(1),
+            ..PowerShellOptions::default()
+        };
+        let error = PowerShellSession::connect(endpoint, options, credentials).unwrap_err();
+        assert_eq!(error, PowerShellSessionError::LocalBindConnectionFailed);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]

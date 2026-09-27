@@ -310,8 +310,9 @@ impl CredSspConnection {
         port: u16,
         path: &str,
         accept_invalid_certs: bool,
+        local_bind_address: Option<std::net::IpAddr>,
     ) -> Result<Self, WinrmError> {
-        use tokio::net::TcpStream;
+        use tokio::net::{TcpSocket, TcpStream};
         use tokio_rustls::TlsConnector;
 
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -356,9 +357,34 @@ impl CredSspConnection {
         let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
             .map_err(|_| WinrmError::AuthFailed(format!("CredSSP: invalid SNI: {host}")))?;
 
-        let tcp = TcpStream::connect((host, port))
-            .await
-            .map_err(|e| WinrmError::AuthFailed(format!("CredSSP TCP connect: {e}")))?;
+        let tcp = if let Some(local_address) = local_bind_address {
+            let mut resolved = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|e| WinrmError::AuthFailed(format!("CredSSP resolve: {e}")))?;
+            let remote = resolved
+                .find(|candidate| candidate.is_ipv4() == local_address.is_ipv4())
+                .ok_or_else(|| {
+                    WinrmError::AuthFailed(format!(
+                        "CredSSP local bind address family does not match any resolved address for {host}:{port}"
+                    ))
+                })?;
+            let socket = match local_address {
+                std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
+                std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
+            }
+            .map_err(|e| WinrmError::AuthFailed(format!("CredSSP socket: {e}")))?;
+            socket
+                .bind(std::net::SocketAddr::new(local_address, 0))
+                .map_err(|e| WinrmError::AuthFailed(format!("CredSSP local bind: {e}")))?;
+            socket
+                .connect(remote)
+                .await
+                .map_err(|e| WinrmError::AuthFailed(format!("CredSSP TCP connect: {e}")))?
+        } else {
+            TcpStream::connect((host, port))
+                .await
+                .map_err(|e| WinrmError::AuthFailed(format!("CredSSP TCP connect: {e}")))?
+        };
         tcp.set_nodelay(true).ok();
 
         let stream = connector
@@ -565,6 +591,10 @@ pub(crate) struct CredSspAuth {
     /// channel skips chain validation. Inner TLS authentication relies on
     /// pubKeyAuth regardless (MS-CSSP §3.1.5.1).
     pub(crate) accept_invalid_certs: bool,
+    /// Optional source IP used by the direct CredSSP TCP socket. This must
+    /// mirror `WinrmConfig.local_bind_address`; CredSSP bypasses reqwest to
+    /// preserve one HTTP auth context on one socket.
+    pub(crate) local_bind_address: Option<std::net::IpAddr>,
 }
 
 #[cfg(feature = "credssp")]
@@ -574,14 +604,21 @@ impl AuthTransport for CredSspAuth {
         _http: &reqwest::Client,
         url: &str,
         body: String,
+        _config: &crate::config::WinrmConfig,
     ) -> Result<String, WinrmError> {
         // CredSSP needs ONE TCP+TLS connection for the entire flow because
         // the server's inner-TLS state is bound to the socket. We bypass
         // reqwest entirely and drive raw HTTP/1.1 over a single tokio_rustls
         // TlsStream. See CredSspConnection above.
         let (host, port, path) = parse_url(url)?;
-        let mut conn =
-            CredSspConnection::connect(&host, port, &path, self.accept_invalid_certs).await?;
+        let mut conn = CredSspConnection::connect(
+            &host,
+            port,
+            &path,
+            self.accept_invalid_certs,
+            self.local_bind_address,
+        )
+        .await?;
 
         // Pywinrm sends the SOAP body in every CredSSP round (which is what
         // Microsoft HTTPAPI on the WSMAN listener expects). The same body is
