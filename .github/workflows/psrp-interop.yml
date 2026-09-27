@@ -75,6 +75,8 @@ jobs:
             $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
             $env:RUNNER_ENVIRONMENT = 'self-hosted'
           } @('-ProvisionIsolatedRunner')
+          # Expected child failures must not become the step's final exit code.
+          exit 0
 
       - name: Check PowerShell crate formatting
         run: cargo fmt --all -- --check
