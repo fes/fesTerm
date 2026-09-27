@@ -27,6 +27,12 @@ function Write-SanitizedDiagnostic([string]$Category, $ErrorRecord) {
     $line = if ($ErrorRecord -and $ErrorRecord.InvocationInfo) { $ErrorRecord.InvocationInfo.ScriptLineNumber } else { 0 }
     $hresult = if ($ErrorRecord -and $ErrorRecord.Exception) { $ErrorRecord.Exception.HResult } else { 0 }
     [Console]::Error.WriteLine("psrp-interop diagnostic category=$Category exception_type=$exceptionType line=$line hresult=$hresult")
+    if ($ErrorRecord -and $ErrorRecord.Exception) {
+        $message = $ErrorRecord.Exception.Message
+        if ($password) { $message = $message.Replace($password, '[redacted]') }
+        $message = [regex]::Replace($message, '[\x00-\x1f\x7f]', ' ')
+        [Console]::Error.WriteLine($message.Substring(0, [Math]::Min(1024, $message.Length)))
+    }
 }
 
 function Add-CleanupError([System.Collections.Generic.List[string]]$Errors, [string]$Step, [scriptblock]$Action) {
