@@ -101,6 +101,14 @@ The following surfaces should reuse the command model:
 
 A new invocation surface is not justification for a duplicate implementation of an existing action.
 
+Desktop document activation is another invocation surface: command-line paths,
+forwarded local-IPC requests and macOS open-document events enter one bounded
+application-owned queue. The application resolves an existing document's window
+or the last-active window, defers while dialogs block activation, and dispatches
+`OpenLocalMarkdownFile { replacing: None }`. Native adapters never write terminal
+input, upload files, or mutate document buffers. Opening an existing document
+focuses its view without replacing unsaved edits.
+
 ## UI Events vs. Application Commands
 
 Low-level terminal interaction remains separate from application commands.

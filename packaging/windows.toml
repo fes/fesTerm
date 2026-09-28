@@ -20,6 +20,7 @@ resources = [
 installMode = "currentUser"
 installer-icon = "../assets/app-icon/festerm.ico"
 appdata-paths = ["$APPDATA/fesTerm", "$LOCALAPPDATA/fesTerm"]
+template = "../packaging/windows-open-with.nsi"
 
 [windows]
 allow-downgrades = false

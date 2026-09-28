@@ -3,6 +3,29 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Opening Markdown from the desktop
+
+Markdown already had a local document and Preview path, but installing fesTerm
+did not make it an Open With target. The missing piece was application
+activation, not another renderer: desktop packages now advertise Markdown
+without claiming the user's default, and file requests enter the same document
+command from startup arguments, local process forwarding and macOS document
+events. Existing views retain their unsaved buffer, requests wait behind dialogs,
+and terminal drops keep their existing path-insertion/upload semantics.
+
+AppKit replaces its open-document handler during launch, so an early handler
+alone passed parsing tests but lost requests before UI attachment. A
+main-thread native harness now covers that interval; the bridge chains the
+original `finishLaunching` method and reinstalls only its document handler,
+without replacing eframe's delegate. An isolated macOS app bundle also received
+cold and warm LaunchServices opens and a real second-process CLI request in the
+same running frontend.
+
+The native package lifecycle and foreground behavior remain explicitly tracked
+in CP-19 rather than inferred from a metadata file or a unit test. AppImages
+require desktop integration; mobile and Store-specific document permissions
+remain outside this direct-distribution desktop slice.
+
 ## Locating the remaining WARP terminal gap
 
 After retained terminal images, single-pass output wakeups and textureless

@@ -2058,6 +2058,18 @@
         "ADR-0030"
       ],
       "automated_tests": [
+        "external_documents_open_in_last_active_window_and_reuse_dirty_views",
+        "external_document_missing_file_preserves_tabs_and_blocks_later_requests",
+        "external_document_activation_waits_for_modal_and_error_acknowledgement",
+        "document_activation_queue_waits_behind_errors_without_losing_later_files",
+        "document_activation_batch_opens_one_document_per_pass_in_order",
+        "parses_open_and_dash_prefixed_paths_without_utf8_loss",
+        "positional_paths_are_document_activation_but_flags_are_rejected",
+        "bounded_queue_reports_full_without_dropping",
+        "endpoint_forwarding_ack_full_stale_and_shutdown_are_bounded",
+        "connected_pipe_reports_the_actual_server_process",
+        "open_document_callbacks_receive_warm_events_without_buffering",
+        "open_document_callbacks_peek_and_retry_buffered_work_on_capacity",
         "command_palette_omits_open_markdown_file",
         "more_actions_open_markdown_file_opens_the_local_file_picker",
         "outline_and_preview_keep_separate_vertical_viewports",
@@ -2113,7 +2125,8 @@
         "opening_a_markdown_file_still_opens_it_when_the_replacement_target_is_gone"
       ],
       "manual_scenarios": [
-        "CP-06"
+        "CP-06",
+        "CP-19"
       ],
       "status": "partial",
       "prerequisites": [

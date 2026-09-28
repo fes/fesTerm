@@ -3740,14 +3740,21 @@ impl AppState {
     /// Opens a file in the editor. A second view of a file that is already
     /// open shares its document rather than reading the file again, and a tab
     /// already showing that document is raised instead of duplicated.
-    pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
-        let already_open = self.documents.borrow().find_local(path);
-        if let Some(existing) = already_open.and_then(|id| {
+    pub(crate) fn local_document_tab(&self, path: &Path) -> Option<TabId> {
+        self.documents.borrow().find_local(path).and_then(|id| {
             self.tabs.iter().find_map(|tab| match &tab.content {
                 TabContent::TextEditor(editor) if editor.document() == id => Some(tab.id),
                 _ => None,
             })
-        }) {
+        })
+    }
+
+    pub(crate) fn has_pending_open_refusal(&self) -> bool {
+        self.open_refusal.is_some() || self.pending_open_refusal_notice.is_some()
+    }
+
+    pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
+        if let Some(existing) = self.local_document_tab(path) {
             self.set_active(existing);
             self.workspace_dirty = true;
             return None;

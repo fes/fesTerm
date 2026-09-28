@@ -24,10 +24,11 @@ use windows_sys::Win32::{
         PIPE_ACCESS_DUPLEX,
     },
     System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
-        PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
-        PIPE_UNLIMITED_INSTANCES,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId,
+        SetNamedPipeHandleState, PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
     },
+    UI::WindowsAndMessaging::AllowSetForegroundWindow,
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -104,6 +105,30 @@ impl Pipe {
 
     pub fn set_write_timeout(&mut self, timeout: Duration) {
         self.write_timeout = timeout;
+    }
+
+    /// The server identity comes from the connected kernel pipe, not a PID
+    /// supplied by the peer's protocol payload.
+    pub fn server_process_id(&self) -> io::Result<u32> {
+        let mut process_id = 0;
+        // SAFETY: the owned pipe handle and output DWORD remain valid.
+        if unsafe { GetNamedPipeServerProcessId(self.handle.as_raw_handle(), &mut process_id) } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(process_id)
+    }
+
+    /// Passes the caller's foreground permission to this pipe's server.
+    /// Windows may deny the grant (for example for a background CLI launch);
+    /// callers should report that without discarding the document request.
+    pub fn allow_server_foreground(&self) -> io::Result<()> {
+        let process_id = self.server_process_id()?;
+        // SAFETY: grants foreground permission only to the connected server.
+        if unsafe { AllowSetForegroundWindow(process_id) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 }
 
@@ -301,6 +326,12 @@ mod tests {
             Pipe::connect(&name, Duration::from_millis(60), &AtomicBool::new(false)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn connected_pipe_reports_the_actual_server_process() {
+        let (_server, client) = connected_pair(&pipe_name());
+        assert_eq!(client.server_process_id().unwrap(), std::process::id());
     }
 
     #[test]

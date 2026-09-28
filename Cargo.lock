@@ -2062,6 +2062,7 @@ dependencies = [
  "festerm-ui-egui",
  "festerm-windows-direct2d",
  "festerm-windows-power",
+ "festerm-windows-security",
  "fs2",
  "image",
  "nix 0.31.3",

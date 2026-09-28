@@ -41,6 +41,32 @@ class PackagingMetadataTests(unittest.TestCase):
             {resource["target"] for resource in windows["resources"]},
         )
 
+    def test_markdown_open_with_packaging_is_alternative_only(self):
+        macos = packaging.load_toml(packaging.CONFIGS["macos"])
+        windows = packaging.load_toml(packaging.CONFIGS["windows"])
+        linux = packaging.load_toml(packaging.CONFIGS["linux"])
+
+        self.assertEqual(
+            macos["macos"]["info-plist-path"],
+            "../packaging/macos-info.plist",
+        )
+        self.assertNotIn("file-associations", macos)
+
+        self.assertEqual(
+            windows["nsis"]["template"],
+            "../packaging/windows-open-with.nsi",
+        )
+        self.assertNotIn("file-associations", windows)
+
+        self.assertEqual(
+            linux["file-associations"],
+            [packaging.EXPECTED_MARKDOWN_ASSOCIATION],
+        )
+        self.assertEqual(
+            linux["deb"]["desktop-template"],
+            "../packaging/linux-desktop-entry.desktop",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
