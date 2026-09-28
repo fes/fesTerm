@@ -2073,8 +2073,18 @@ mod tests {
         let (_request_tx, request_rx) = mpsc::sync_channel(WORKER_QUEUE);
         let (message_tx, message_rx) = mpsc::sync_channel(WORKER_QUEUE);
         let control = Arc::new(WorkerControl::new());
-        let handle = spawn_fake_worker(fake.clone(), request_rx, message_tx, control);
+        // Force Connected publication to observe the dropped consumer rather
+        // than race into an idle worker with a still-live request sender.
         drop(message_rx);
+        let handle = spawn_fake_worker(fake.clone(), request_rx, message_tx, control);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !handle.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "dropped consumer cleanup timed out"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
         handle.join().unwrap();
         assert_eq!(fake.state.closed.load(Ordering::Acquire), 1);
     }
