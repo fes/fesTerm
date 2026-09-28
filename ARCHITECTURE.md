@@ -73,13 +73,16 @@ never passwords, tokens, command history or live runspace identity.
 Both reuse the secret-byte boundary. Neither makes the terminal core depend on
 cloud identity, nor feeds PSRP/CLIXML through the VT parser.
 
-These backends are not yet application tabs, persisted accounts/profiles, or
+Enterprise accounts and remote-daemon selection are not yet GUI surfaces or
 automatic workspace connections. Future GUI integration must use typed
 application commands and keep network operations off the frame thread.
 Entra discovery does not authenticate a Windows shell. Sessiond's versioned
-JSON helper is a read-only prerequisite, not a network listener or implemented
-remote attachment bridge. Native interoperability and broker/compliance gates
-remain explicit in CP-19 through CP-21.
+JSON helper is read-only; its separate binary stdio bridge revalidates an
+exact owned daemon generation and requires explicit takeover authorization.
+`festerm-ssh` supplies bounded native binary exec without a PTY, while
+`festerm-sessiond` retains snapshot decoding/adoption and terminal ownership.
+There is no reverse SSH-to-sessiond dependency or new network listener.
+Native interoperability and broker/compliance gates remain CP-19 through CP-21.
 
 ## Current and Target Workspace Layout
 

@@ -35,6 +35,42 @@
   ],
   "coverage": [
     {
+      "id": "remote-sessiond-ssh-backend",
+      "edges": ["RSD-01", "RSD-02"],
+      "requirements": [
+        "docs/powershell-enterprise.md#remote-sessiond-over-ssh",
+        "docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": ["ADR-0038", "ADR-0041"],
+      "automated_tests": [
+        "remote_target_pins_generation_and_requires_explicit_takeover_command",
+        "remote_inventory_refuses_unavailable_incompatible_or_invalid_generations",
+        "remote_inventory_checks_schema_size_count_and_duplicate_identity",
+        "remote_helper_is_a_single_portable_executable_token",
+        "raw_exec_uses_no_pty_and_preserves_stdout_stderr_and_bytes",
+        "raw_exec_rejects_changed_pinned_host_key_without_unbound_fallback",
+        "raw_exec_requires_a_pinned_host_key_and_bounded_command",
+        "raw_exec_reports_rejection_and_nonzero_exit",
+        "raw_exec_pending_read_times_out_and_cancel_while_queue_full",
+        "native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_session",
+        "native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated",
+        "native_bridge_drains_exit_and_takeover_final_frames_before_success",
+        "invocation_rejects_attach_without_explicit_takeover",
+        "closed_session_input_is_an_error_not_successful_detach",
+        "bounded_line_reader_rejects_without_truncating_prefix",
+        "renderer_projects_text_without_remote_escape_sequences",
+        "native_ssh_remote_sessiond_adopts_snapshot_and_reattaches_same_live_generation",
+        "native_ssh_remote_sessiond_rejects_a_replaced_generation",
+        "native_ssh_remote_sessiond_rejects_an_untrusted_host_key"
+      ],
+      "manual_scenarios": ["CP-19"],
+      "status": "partial",
+      "prerequisites": [
+        "cross-host macOS/Linux and Windows OpenSSH/named-pipe native qualification",
+        "desktop remote picker and enterprise/PSRP bridge remain separate implementation slices"
+      ]
+    },
+    {
       "id": "native-powershell-desktop",
       "edges": [
         "PSRP-02",
@@ -395,7 +431,7 @@
         "login_shell_environment_loads_interactive_startup_files",
         "unavailable_binary_is_not_a_provider_error",
         "registry_absence_corruption_and_lock_contention_have_distinct_bounded_results",
-        "capabilities_are_explicit_and_do_not_advertise_remote_attachment",
+        "capabilities_are_explicit_and_advertise_remote_bridge_attachment",
         "discovery_of_a_missing_registry_is_empty_and_read_only",
         "discovery_classifies_live_stale_attached_and_incompatible_records",
         "discovery_surfaces_unreadable_and_invalid_identity_records_without_blobs",

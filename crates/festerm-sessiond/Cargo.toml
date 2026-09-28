@@ -31,5 +31,10 @@ festerm-windows-job = { path = "../festerm-windows-job" }
 festerm-windows-security = { path = "../festerm-windows-security" }
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
+[dev-dependencies]
+rpassword = "7"
+russh = { version = "0.62.5", default-features = false, features = ["ring"] }
+tokio = { version = "1.17.0", default-features = false, features = ["rt", "time", "net", "sync", "macros", "process", "io-util"] }
+
 [lints]
 workspace = true

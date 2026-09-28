@@ -1,5 +1,8 @@
 //! Client backend for fesTerm's native local session persistence daemon.
 
+mod remote;
+pub use remote::{RemoteSessionInventory, RemoteSessionTarget, RemoteSshEndpoint};
+
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt,
@@ -240,7 +243,7 @@ pub fn capabilities() -> SessiondCapabilities {
         recovery_snapshot_schema: SupportedVersions {
             supported_versions: vec![RECOVERY_SNAPSHOT_SCHEMA_VERSION],
         },
-        remote_attachment: false,
+        remote_attachment: true,
     }
 }
 
@@ -539,14 +542,14 @@ pub struct SessionDiscovery {
     pub sessions: Vec<DiscoveredSession>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveryInventory {
     pub record_count: usize,
     pub serialized_bytes: usize,
     pub status_counts: BTreeMap<String, usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredSession {
     pub name: String,
     pub validated_name: bool,
@@ -561,7 +564,7 @@ pub struct DiscoveredSession {
     pub recovery_snapshot_schema: DiscoveredVersion,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryStatus {
     Available,
@@ -587,7 +590,7 @@ impl DiscoveryStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredVersion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<u16>,
@@ -4392,7 +4395,7 @@ mod registry_filtering_tests {
     }
 
     #[test]
-    fn capabilities_are_explicit_and_do_not_advertise_remote_attachment() {
+    fn capabilities_are_explicit_and_advertise_remote_bridge_attachment() {
         let capabilities = capabilities();
         assert_eq!(capabilities.schema_version, MACHINE_READABLE_SCHEMA_VERSION);
         assert_eq!(capabilities.package_version, env!("CARGO_PKG_VERSION"));
@@ -4411,7 +4414,7 @@ mod registry_filtering_tests {
                 supported_versions: vec![RECOVERY_SNAPSHOT_SCHEMA_VERSION],
             }
         );
-        assert!(!capabilities.remote_attachment);
+        assert!(capabilities.remote_attachment);
     }
 
     #[test]

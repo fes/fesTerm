@@ -102,6 +102,8 @@ const CLIENT_FRAME_RECOVERY_ADOPTED: u8 = 4;
 const MAX_CLIENT_FRAME_BYTES: usize = 64 * 1024;
 const ATTACH_RECOVERY_DEADLINE: Duration = Duration::from_secs(15);
 const PTY_EVENT_CHANNEL_CAPACITY: usize = 64;
+const MAX_BRIDGE_SNAPSHOT_BYTES: u64 = 768 * 1024 * 1024;
+const BRIDGE_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionRecord {
@@ -217,6 +219,14 @@ enum CommandSpec {
     },
     Attach {
         name: String,
+    },
+    Bridge {
+        name: String,
+        pid: u32,
+        generation: u128,
+        protocol: u16,
+        snapshot_schema: u16,
+        allow_takeover: bool,
     },
 }
 
@@ -379,6 +389,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CommandSpec::DiscoverJson => run_discover_json(),
         CommandSpec::Kill { name } => run_kill(name),
         CommandSpec::Attach { name } => run_attach(name),
+        CommandSpec::Bridge {
+            name,
+            pid,
+            generation,
+            protocol,
+            snapshot_schema,
+            allow_takeover,
+        } => run_bridge(
+            name,
+            pid,
+            generation,
+            protocol,
+            snapshot_schema,
+            allow_takeover,
+        ),
     }
 }
 
@@ -411,8 +436,104 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
             let name = parse_name_only(&args[1..], "attach")?;
             Ok(CommandSpec::Attach { name })
         }
+        "bridge" => parse_bridge(&args[1..]),
         other => Err(format!("unknown command: {other}").into()),
     }
+}
+
+fn parse_bridge(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Error>> {
+    let usage = "usage: festerm-sessiond bridge --name NAME --pid PID --generation UNIX_MS --protocol 2 --snapshot-schema 2 --allow-takeover (takes over the session only after the remote client adopts the recovery snapshot)";
+    let mut name = None;
+    let mut pid = None;
+    let mut generation = None;
+    let mut protocol = None;
+    let mut snapshot_schema = None;
+    let mut allow_takeover = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--allow-takeover" => {
+                if allow_takeover {
+                    return Err("bridge received --allow-takeover more than once".into());
+                }
+                allow_takeover = true;
+                index += 1;
+            }
+            flag @ ("--name" | "--pid" | "--generation" | "--protocol" | "--snapshot-schema") => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(format!("bridge requires a value for {flag}; {usage}").into());
+                };
+                match flag {
+                    "--name" => set_once(&mut name, value.clone(), "bridge", flag)?,
+                    "--pid" => set_once(
+                        &mut pid,
+                        value
+                            .parse::<u32>()
+                            .map_err(|_| "bridge requires a valid u32 for --pid")?,
+                        "bridge",
+                        flag,
+                    )?,
+                    "--generation" => set_once(
+                        &mut generation,
+                        value
+                            .parse::<u128>()
+                            .map_err(|_| "bridge requires a valid u128 for --generation")?,
+                        "bridge",
+                        flag,
+                    )?,
+                    "--protocol" => set_once(
+                        &mut protocol,
+                        value
+                            .parse::<u16>()
+                            .map_err(|_| "bridge requires a valid u16 for --protocol")?,
+                        "bridge",
+                        flag,
+                    )?,
+                    "--snapshot-schema" => set_once(
+                        &mut snapshot_schema,
+                        value
+                            .parse::<u16>()
+                            .map_err(|_| "bridge requires a valid u16 for --snapshot-schema")?,
+                        "bridge",
+                        flag,
+                    )?,
+                    _ => unreachable!(),
+                }
+                index += 2;
+            }
+            other => return Err(format!("bridge does not recognize {other}; {usage}").into()),
+        }
+    }
+    let protocol = protocol.ok_or(usage)?;
+    let snapshot_schema = snapshot_schema.ok_or(usage)?;
+    if protocol != festerm_sessiond::PROTOCOL_VERSION {
+        return Err(format!(
+            "bridge requires --protocol {}; got {protocol}",
+            festerm_sessiond::PROTOCOL_VERSION
+        )
+        .into());
+    }
+    if snapshot_schema != festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION {
+        return Err(format!(
+            "bridge requires --snapshot-schema {}; got {snapshot_schema}",
+            festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        )
+        .into());
+    }
+    if !allow_takeover {
+        return Err(
+            "bridge requires explicit --allow-takeover; snapshot adoption takes over any existing attached client"
+                .into(),
+        );
+    }
+    Ok(CommandSpec::Bridge {
+        name: name.ok_or(usage)?,
+        pid: pid.ok_or(usage)?,
+        generation: generation.ok_or(usage)?,
+        protocol,
+        snapshot_schema,
+        allow_takeover,
+    })
 }
 
 fn parse_json_only(
@@ -2697,6 +2818,507 @@ fn write_client_frame<W: Write>(writer: &mut W, kind: u8, payload: &[u8]) -> io:
     writer.write_all(&payload_len.to_be_bytes())?;
     writer.write_all(payload)?;
     writer.flush()
+}
+
+fn run_bridge(
+    name: String,
+    pid: u32,
+    generation: u128,
+    protocol: u16,
+    snapshot_schema: u16,
+    allow_takeover: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if protocol != festerm_sessiond::PROTOCOL_VERSION
+        || snapshot_schema != festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        || !allow_takeover
+    {
+        return Err(
+            "bridge requires exact protocol 2, snapshot schema 2, and --allow-takeover".into(),
+        );
+    }
+    let name = validate_name(name)?;
+    let root = festerm_sessiond::runtime_root()?;
+
+    #[cfg(unix)]
+    let stream = with_registry_lock(|registry| {
+        let record = validate_bridge_record(registry, &root, &name, pid, generation)?;
+        let stream = UnixStream::connect(&record.socket)?;
+        stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
+        stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
+        Ok(stream)
+    })?;
+
+    #[cfg(windows)]
+    let stream = with_registry_lock(|registry| {
+        let record = validate_bridge_record(registry, &root, &name, pid, generation)?;
+        let mut stream =
+            Pipe::connect(&record.socket, WORKER_JOIN_TIMEOUT, &AtomicBool::new(false))?;
+        stream.set_read_timeout(CLIENT_POLL_INTERVAL);
+        stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+        Ok(stream)
+    })?;
+
+    run_stdio_bridge(stream).map_err(Into::into)
+}
+
+fn validate_bridge_record(
+    registry: &SessionRegistry,
+    root: &Path,
+    name: &str,
+    pid: u32,
+    generation: u128,
+) -> Result<SessionRecord, Box<dyn std::error::Error>> {
+    let Some(record) = registry.sessions.get(name) else {
+        if registry.foreign.contains_key(name) {
+            return Err(format!(
+                "session '{name}' was registered by a newer festerm-sessiond; bridge with that version"
+            )
+            .into());
+        }
+        return Err(format!("session '{name}' is not registered").into());
+    };
+    if record.pid != pid || record.created_at_unix_ms != generation {
+        return Err(format!(
+            "session '{name}' generation changed; expected pid={pid} generation={generation}, found pid={} generation={}",
+            record.pid, record.created_at_unix_ms
+        )
+        .into());
+    }
+    if record.protocol_version != festerm_sessiond::PROTOCOL_VERSION {
+        return Err(format!(
+            "session '{name}' uses persistent-session protocol {}; bridge requires {}",
+            record.protocol_version,
+            festerm_sessiond::PROTOCOL_VERSION
+        )
+        .into());
+    }
+    if record.snapshot_schema_version != festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION {
+        return Err(format!(
+            "session '{name}' uses recovery snapshot schema {}; bridge requires {}",
+            record.snapshot_schema_version,
+            festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+        )
+        .into());
+    }
+    if !validate_generation_endpoint(root, record)? {
+        return Err(
+            format!("session '{name}' does not use a canonical owned generation endpoint").into(),
+        );
+    }
+    if !festerm_sessiond::daemon_generation_is_live(
+        root,
+        record.pid,
+        record.created_at_unix_ms,
+        &record.socket,
+    )? {
+        return Err(format!("session '{name}' generation is not live").into());
+    }
+    Ok(record.clone())
+}
+
+trait BridgeStream: Read + Write + Send {}
+impl<T: Read + Write + Send> BridgeStream for T {}
+
+enum BridgeInputEvent {
+    Frame(Vec<u8>),
+    Done(io::Result<()>),
+}
+
+fn run_stdio_bridge<S: BridgeStream + 'static>(stream: S) -> io::Result<()> {
+    let stream = Arc::new(Mutex::new(stream));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (stdout_tx, stdout_rx) = mpsc::sync_channel::<Vec<u8>>(BRIDGE_QUEUE_CAPACITY);
+    let (stdout_done_tx, stdout_done_rx) = mpsc::sync_channel::<io::Result<()>>(1);
+    let (daemon_done_tx, daemon_done_rx) = mpsc::sync_channel::<io::Result<()>>(1);
+    let (stdin_tx, stdin_rx) = mpsc::sync_channel::<BridgeInputEvent>(BRIDGE_QUEUE_CAPACITY);
+
+    let stdout_cancelled = Arc::clone(&cancelled);
+    thread::Builder::new()
+        .name("festerm-sessiond-bridge-stdout".to_owned())
+        .spawn(move || {
+            let mut stdout = io::stdout();
+            let mut result = Ok(());
+            while let Ok(bytes) = stdout_rx.recv() {
+                if let Err(error) = stdout.write_all(&bytes).and_then(|()| stdout.flush()) {
+                    stdout_cancelled.store(true, Ordering::Release);
+                    result = Err(error);
+                    break;
+                }
+            }
+            let _ = stdout_done_tx.send(result);
+        })?;
+
+    let reader_stream = Arc::clone(&stream);
+    let reader_cancelled = Arc::clone(&cancelled);
+    thread::Builder::new()
+        .name("festerm-sessiond-bridge-daemon".to_owned())
+        .spawn(move || {
+            let result =
+                bridge_daemon_to_stdout(reader_stream, stdout_tx, Arc::clone(&reader_cancelled));
+            reader_cancelled.store(true, Ordering::Release);
+            let _ = daemon_done_tx.send(result);
+        })?;
+
+    let stdin_cancelled = Arc::clone(&cancelled);
+    thread::Builder::new()
+        .name("festerm-sessiond-bridge-stdin".to_owned())
+        .spawn(move || {
+            let result = bridge_read_stdin(stdin_tx.clone(), Arc::clone(&stdin_cancelled));
+            stdin_cancelled.store(true, Ordering::Release);
+            let _ = stdin_tx.send(BridgeInputEvent::Done(result));
+        })?;
+
+    loop {
+        if let Ok(result) = daemon_done_rx.try_recv() {
+            cancelled.store(true, Ordering::Release);
+            result?;
+            return match stdout_done_rx.recv_timeout(WORKER_JOIN_TIMEOUT) {
+                Ok(result) => result,
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "bridge stdout did not drain before the shutdown deadline",
+                )),
+                Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "bridge stdout worker exited without reporting status",
+                )),
+            };
+        }
+        match stdin_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
+            Ok(BridgeInputEvent::Frame(frame)) => {
+                let mut stream = stream
+                    .lock()
+                    .map_err(|_| io::Error::other("bridge IPC lock poisoned"))?;
+                stream.write_all(&frame)?;
+                stream.flush()?;
+            }
+            Ok(BridgeInputEvent::Done(result)) => {
+                cancelled.store(true, Ordering::Release);
+                return result;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                cancelled.store(true, Ordering::Release);
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn bridge_daemon_to_stdout<S: BridgeStream + 'static>(
+    stream: Arc<Mutex<S>>,
+    output: mpsc::SyncSender<Vec<u8>>,
+    cancelled: Arc<AtomicBool>,
+) -> io::Result<()> {
+    bridge_copy_exact(
+        &stream,
+        &output,
+        &cancelled,
+        12,
+        Some(|header: &[u8]| {
+            if &header[..4] != b"FSD2" {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bridge recovery snapshot has an invalid magic value",
+                ));
+            }
+            let length = u64::from_be_bytes(header[4..12].try_into().expect("snapshot header"));
+            if length > MAX_BRIDGE_SNAPSHOT_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bridge recovery snapshot exceeds the protocol limit",
+                ));
+            }
+            Ok(length)
+        }),
+    )?;
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let header = match bridge_read_exact(&stream, &cancelled, CLIENT_FRAME_HEADER_BYTES)? {
+            Some(header) => header,
+            None => return Ok(()),
+        };
+        if &header[..4] != b"FSO1" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bridge server frame has an invalid magic value",
+            ));
+        }
+        let payload_len =
+            u32::from_be_bytes(header[5..9].try_into().expect("server frame header")) as usize;
+        if payload_len > MAX_CLIENT_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bridge server frame payload exceeds the protocol limit",
+            ));
+        }
+        bridge_send_output(&output, &cancelled, header)?;
+        bridge_copy_payload(&stream, &output, &cancelled, payload_len as u64)?;
+    }
+}
+
+fn bridge_copy_exact<S: BridgeStream + 'static>(
+    stream: &Arc<Mutex<S>>,
+    output: &mpsc::SyncSender<Vec<u8>>,
+    cancelled: &AtomicBool,
+    header_len: usize,
+    validate: Option<impl FnOnce(&[u8]) -> io::Result<u64>>,
+) -> io::Result<()> {
+    let Some(header) = bridge_read_exact(stream, cancelled, header_len)? else {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "bridge stream closed before recovery snapshot",
+        ));
+    };
+    let payload_len = match validate {
+        Some(validate) => validate(&header)?,
+        None => 0,
+    };
+    bridge_send_output(output, cancelled, header)?;
+    bridge_copy_payload(stream, output, cancelled, payload_len)
+}
+
+fn bridge_copy_payload<S: BridgeStream + 'static>(
+    stream: &Arc<Mutex<S>>,
+    output: &mpsc::SyncSender<Vec<u8>>,
+    cancelled: &AtomicBool,
+    mut remaining: u64,
+) -> io::Result<()> {
+    while remaining > 0 {
+        let chunk = usize::try_from(remaining.min(4096)).expect("bounded bridge chunk");
+        let Some(bytes) = bridge_read_exact(stream, cancelled, chunk)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "bridge stream closed inside a frame payload",
+            ));
+        };
+        remaining -= bytes.len() as u64;
+        bridge_send_output(output, cancelled, bytes)?;
+    }
+    Ok(())
+}
+
+fn bridge_read_exact<S: BridgeStream + 'static>(
+    stream: &Arc<Mutex<S>>,
+    cancelled: &AtomicBool,
+    len: usize,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut bytes = vec![0; len];
+    let mut offset = 0;
+    while offset < len {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let read = {
+            let mut stream = stream
+                .lock()
+                .map_err(|_| io::Error::other("bridge IPC lock poisoned"))?;
+            match stream.read(&mut bytes[offset..]) {
+                Ok(0) if offset == 0 => return Ok(None),
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "bridge stream closed inside a frame",
+                    ))
+                }
+                Ok(count) => count,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    0
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => 0,
+                Err(error) => return Err(error),
+            }
+        };
+        if read == 0 {
+            thread::sleep(CLIENT_POLL_INTERVAL);
+        } else {
+            offset += read;
+        }
+    }
+    Ok(Some(bytes))
+}
+
+fn bridge_send_output(
+    output: &mpsc::SyncSender<Vec<u8>>,
+    cancelled: &AtomicBool,
+    bytes: Vec<u8>,
+) -> io::Result<()> {
+    let mut bytes = bytes;
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match output.try_send(bytes) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::TrySendError::Full(returned)) => {
+                bytes = returned;
+                thread::sleep(CLIENT_POLL_INTERVAL);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "bridge stdout closed",
+                ))
+            }
+        }
+    }
+}
+
+fn bridge_read_stdin(
+    frames: mpsc::SyncSender<BridgeInputEvent>,
+    cancelled: Arc<AtomicBool>,
+) -> io::Result<()> {
+    let mut stdin = io::stdin();
+    let mut parser = BridgeClientFrameParser::default();
+    let mut adopted = false;
+    let mut buffer = [0u8; 4096];
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let read_limit = buffer.len().min(parser.remaining_capacity());
+        match stdin.read(&mut buffer[..read_limit]) {
+            Ok(0) => return parser.close(),
+            Ok(count) => parser.push(&buffer[..count])?,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+        while let Some(frame) = parser.next_frame()? {
+            if !adopted {
+                if frame.kind != CLIENT_FRAME_RECOVERY_ADOPTED {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "bridge client sent a command before adopting recovery state",
+                    ));
+                }
+                adopted = true;
+            }
+            bridge_send_input(&frames, &cancelled, frame.raw)?;
+        }
+    }
+}
+
+fn bridge_send_input(
+    frames: &mpsc::SyncSender<BridgeInputEvent>,
+    cancelled: &AtomicBool,
+    frame: Vec<u8>,
+) -> io::Result<()> {
+    let mut event = BridgeInputEvent::Frame(frame);
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match frames.try_send(event) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::TrySendError::Full(returned)) => {
+                event = returned;
+                thread::sleep(CLIENT_POLL_INTERVAL);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "bridge input relay closed",
+                ))
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct BridgeClientFrameParser {
+    bytes: Vec<u8>,
+}
+
+struct BridgeClientFrame {
+    kind: u8,
+    raw: Vec<u8>,
+}
+
+impl BridgeClientFrameParser {
+    fn remaining_capacity(&self) -> usize {
+        MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES - self.bytes.len()
+    }
+
+    fn push(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if self.bytes.len().saturating_add(bytes.len())
+            > MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bridge client frame exceeds the protocol limit",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn next_frame(&mut self) -> io::Result<Option<BridgeClientFrame>> {
+        if self.bytes.len() < CLIENT_FRAME_HEADER_BYTES {
+            return Ok(None);
+        }
+        if &self.bytes[..CLIENT_FRAME_MAGIC.len()] != CLIENT_FRAME_MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bridge client frame has an invalid magic value",
+            ));
+        }
+        let kind = self.bytes[4];
+        let payload_len =
+            u32::from_be_bytes(self.bytes[5..9].try_into().expect("client frame header")) as usize;
+        if payload_len > MAX_CLIENT_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bridge client frame payload exceeds the protocol limit",
+            ));
+        }
+        let frame_len = CLIENT_FRAME_HEADER_BYTES + payload_len;
+        if self.bytes.len() < frame_len {
+            return Ok(None);
+        }
+        let payload = &self.bytes[CLIENT_FRAME_HEADER_BYTES..frame_len];
+        match kind {
+            CLIENT_FRAME_INPUT => {}
+            CLIENT_FRAME_RESIZE => {
+                parse_resize_frame(payload)?;
+            }
+            CLIENT_FRAME_RECOVERY_SYNC => {
+                let _: festerm_sessiond::RecoverySyncCommand = bincode::deserialize(payload)
+                    .map_err(|error| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("bridge recovery-sync payload is invalid: {error}"),
+                        )
+                    })?;
+            }
+            CLIENT_FRAME_RECOVERY_ADOPTED if payload.is_empty() => {}
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bridge client frame has an unknown command",
+                ))
+            }
+        }
+        let raw: Vec<_> = self.bytes.drain(..frame_len).collect();
+        Ok(Some(BridgeClientFrame { kind, raw }))
+    }
+
+    fn close(&self) -> io::Result<()> {
+        if self.bytes.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "bridge stdin closed inside a client frame",
+            ))
+        }
+    }
 }
 
 fn validate_name(name: String) -> Result<String, Box<dyn std::error::Error>> {

@@ -83,7 +83,7 @@ native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
 
 - [PowerShell and enterprise development](docs/powershell-enterprise.md) -
   experimental desktop PSRP profiles and structured sessions, Dev Box identity
-  and existing-session discovery boundaries; not yet a supported corporate
+  and generation-pinned remote sessiond attachment over SSH; not yet a supported corporate
   connection type.
 
 - [Keyboard bindings and routing](docs/keyboard-shortcuts.md) — persistent

@@ -1,6 +1,7 @@
 //! Native SSH transport policy and bounded `russh` session lifecycle.
 
 mod decision_gate;
+mod exec;
 mod openssh_config;
 mod port_forward;
 mod sftp;
@@ -32,6 +33,10 @@ use ssh_key::Certificate as OpenSshCertificate;
 use zeroize::Zeroize;
 
 use decision_gate::{DecisionGate, DecisionResolutionError, DecisionWaiter};
+pub use exec::{
+    SshExecStream, SshRawExecError, SshRawExecExit, SshRawExecOptions, SshRawExecOptionsError,
+    SshRawExecSession,
+};
 pub use openssh_config::{
     import_openssh_config, OpenSshConfigDiagnostic, OpenSshConfigDiagnosticKind,
     OpenSshConfigDiagnosticSeverity, OpenSshConfigImportReport,
@@ -3437,7 +3442,7 @@ async fn establish_gui_sftp_session(
     let handle = match establish_authenticated_handle(
         &profile,
         &authentication,
-        known_host_fingerprint.as_deref(),
+        HostKeyPolicy::Interactive(known_host_fingerprint.as_deref()),
         &shared,
         &command_receiver,
         &host_key_gate,
@@ -3738,7 +3743,7 @@ pub async fn probe_remote_persistence_provider(
     let handle = match establish_authenticated_handle(
         &profile,
         &authentication,
-        known_host_fingerprint.as_deref(),
+        HostKeyPolicy::Interactive(known_host_fingerprint.as_deref()),
         &shared,
         &command_receiver,
         &host_key_gate,
@@ -3982,6 +3987,7 @@ struct SshClientHandler {
     /// mirroring `ssh`'s own already-in-`known_hosts` behavior; any other
     /// presented key still prompts, flagged as a changed-key warning.
     expected_fingerprint: Option<String>,
+    prompt_for_untrusted_host_key: bool,
 }
 
 impl russh::client::Handler for SshClientHandler {
@@ -4000,6 +4006,11 @@ impl russh::client::Handler for SshClientHandler {
             self.shared
                 .set_verified_host_key_fingerprint(fingerprint.clone());
             return Ok(true);
+        }
+        if !self.prompt_for_untrusted_host_key {
+            self.shared.clear_verified_host_key_fingerprint();
+            self.host_key_rejected.store(true, Ordering::Release);
+            return Ok(false);
         }
         let previously_trusted = self.expected_fingerprint.as_deref();
         let waiter = match request_host_key_verification(
@@ -4591,6 +4602,7 @@ async fn establish_connection(
         host_key_rejected: Arc::clone(&host_key_rejected),
         forwarded_tcpip_sender,
         expected_fingerprint: known_host_fingerprint.map(str::to_owned),
+        prompt_for_untrusted_host_key: true,
     };
     let connection = connect_ssh_stream(config, profile, handler);
     tokio::pin!(connection);
@@ -5026,10 +5038,15 @@ enum AuthenticatedHandleAttempt {
     Shutdown,
 }
 
+enum HostKeyPolicy<'a> {
+    Interactive(Option<&'a str>),
+    Pinned(&'a str),
+}
+
 async fn establish_authenticated_handle(
     profile: &SshConnectionProfile,
     authentication: &WorkerAuthentication,
-    known_host_fingerprint: Option<&str>,
+    host_key_policy: HostKeyPolicy<'_>,
     shared: &Arc<WorkerShared>,
     command_receiver: &WorkerCommandReceiver,
     host_key_gate: &Arc<HostKeyDecisionGate>,
@@ -5045,13 +5062,18 @@ async fn establish_authenticated_handle(
     let host_key_rejected = Arc::new(AtomicBool::new(false));
     let (forwarded_tcpip_sender, _) =
         tokio::sync::mpsc::channel(PORT_FORWARD_PENDING_CONNECTION_CAPACITY);
+    let (expected_fingerprint, prompt_for_untrusted_host_key) = match host_key_policy {
+        HostKeyPolicy::Interactive(fingerprint) => (fingerprint.map(str::to_owned), true),
+        HostKeyPolicy::Pinned(fingerprint) => (Some(fingerprint.to_owned()), false),
+    };
     let handler = SshClientHandler {
         identity: profile.identity.clone(),
         shared: Arc::clone(shared),
         host_key_gate: Arc::clone(host_key_gate),
         host_key_rejected: Arc::clone(&host_key_rejected),
         forwarded_tcpip_sender,
-        expected_fingerprint: known_host_fingerprint.map(str::to_owned),
+        expected_fingerprint,
+        prompt_for_untrusted_host_key,
     };
     let connection = connect_ssh_stream(config, profile, handler);
     tokio::pin!(connection);
@@ -5394,7 +5416,7 @@ async fn sftp_worker(
     let handle = match establish_authenticated_handle(
         &profile,
         &authentication,
-        known_host_fingerprint.as_deref(),
+        HostKeyPolicy::Interactive(known_host_fingerprint.as_deref()),
         &shared,
         &command_receiver,
         &host_key_gate,
@@ -8608,6 +8630,7 @@ mod tests {
                 )
                 .0,
                 expected_fingerprint: None,
+                prompt_for_untrusted_host_key: true,
             };
             runtime
                 .block_on(handler.check_server_key(&public_key))
@@ -8656,6 +8679,7 @@ mod tests {
             expected_fingerprint: Some(
                 "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ".to_owned(),
             ),
+            prompt_for_untrusted_host_key: true,
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
@@ -8709,6 +8733,7 @@ mod tests {
                 )
                 .0,
                 expected_fingerprint: Some("SHA256:previouslyTrustedButDifferent".to_owned()),
+                prompt_for_untrusted_host_key: true,
             };
             runtime
                 .block_on(handler.check_server_key(&public_key))
@@ -8766,6 +8791,7 @@ mod tests {
                 )
                 .0,
                 expected_fingerprint: None,
+                prompt_for_untrusted_host_key: true,
             };
             runtime
                 .block_on(handler.check_server_key(&public_key))

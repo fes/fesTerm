@@ -127,7 +127,7 @@ fn native_capabilities_json_is_exact_and_read_only() {
             "recovery_snapshot_schema": {
                 "supported_versions": [festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
             },
-            "remote_attachment": false
+            "remote_attachment": true
         })
     );
     assert!(!runtime_registry_root(&runtime).exists());
@@ -482,6 +482,222 @@ fn native_discover_json_enforces_serialized_output_cap_without_partial_json() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("machine-readable response exceeds 524288 bytes"));
+}
+
+#[cfg(unix)]
+#[test]
+fn native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_session() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("bridge-validation");
+    let name = format!("bridge-validation-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let shell = pty_test_child(&executable);
+    launch_session_with(
+        &executable,
+        &runtime,
+        &name,
+        &shell,
+        &["emit:READY", "read-line", "echo:INPUT", "spin"],
+    );
+    let selection = bridge_selection(&runtime, &name);
+
+    let missing_takeover = bridge_command(&executable, &runtime, &selection, true)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!missing_takeover.status.success());
+    assert!(missing_takeover.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing_takeover.stderr).contains("--allow-takeover"));
+
+    let mut stale = selection.clone();
+    stale.generation += 1;
+    let stale_output = bridge_command(&executable, &runtime, &stale, false)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!stale_output.status.success());
+    assert!(stale_output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&stale_output.stderr).contains("generation changed"));
+
+    let mut client = connect(&selection.endpoint);
+    assert!(terminal_contains(&client.snapshot, b"READY"));
+    send_input(&mut client, &test_input("still-alive")).unwrap();
+    assert_contains(&mut client, b"INPUT:still-alive");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("bridge-protocol");
+    let name = format!("bridge-protocol-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let shell = pty_test_child(&executable);
+    launch_session_with(
+        &executable,
+        &runtime,
+        &name,
+        &shell,
+        &[
+            "emit:READY",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "spin",
+        ],
+    );
+    let selection = bridge_selection(&runtime, &name);
+
+    let mut old = connect(&selection.endpoint);
+    assert!(terminal_contains(&old.snapshot, b"READY"));
+
+    let mut premature = spawn_bridge(&executable, &runtime, &selection);
+    let premature_snapshot = read_bridge_snapshot(premature.stdout.as_mut().unwrap());
+    assert!(terminal_contains(&premature_snapshot, b"READY"));
+    write_bridge_client_frame(
+        premature.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("too-early"),
+    )
+    .unwrap();
+    let premature_output = premature.wait_with_output().unwrap();
+    assert!(!premature_output.status.success());
+    assert!(premature_output.stdout.is_empty());
+
+    send_input(&mut old, &test_input("old-still-attached")).unwrap();
+    assert_contains(&mut old, b"INPUT:old-still-attached");
+
+    let mut bridge = spawn_bridge(&executable, &runtime, &selection);
+    let snapshot = read_bridge_snapshot(bridge.stdout.as_mut().unwrap());
+    assert!(terminal_contains(&snapshot, b"INPUT:old-still-attached"));
+    acknowledge_bridge_recovery(bridge.stdin.as_mut().unwrap()).unwrap();
+    assert_contains(&mut old, STOLEN_NOTICE);
+
+    write_resize_frame(bridge.stdin.as_mut().unwrap(), 100, 30).unwrap();
+    read_bridge_frame_until(bridge.stdout.as_mut().unwrap(), |kind, _| kind == 5);
+
+    write_bridge_client_frame(
+        bridge.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("bridge-one"),
+    )
+    .unwrap();
+    let output = read_bridge_frame_until(bridge.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:bridge-one".len())
+                .any(|w| w == b"INPUT:bridge-one")
+    });
+    assert!(output
+        .windows(b"INPUT:bridge-one".len())
+        .any(|w| w == b"INPUT:bridge-one"));
+    drop(bridge.stdin.take());
+    assert!(bridge.wait().unwrap().success());
+
+    let mut reattached = spawn_bridge(&executable, &runtime, &selection);
+    let snapshot = read_bridge_snapshot(reattached.stdout.as_mut().unwrap());
+    assert!(terminal_contains(&snapshot, b"INPUT:bridge-one"));
+    acknowledge_bridge_recovery(reattached.stdin.as_mut().unwrap()).unwrap();
+    write_bridge_client_frame(
+        reattached.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("bridge-two"),
+    )
+    .unwrap();
+    let output = read_bridge_frame_until(reattached.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:bridge-two".len())
+                .any(|w| w == b"INPUT:bridge-two")
+    });
+    assert!(output
+        .windows(b"INPUT:bridge-two".len())
+        .any(|w| w == b"INPUT:bridge-two"));
+    drop(reattached.stdin.take());
+    assert!(reattached.wait().unwrap().success());
+}
+
+#[cfg(unix)]
+#[test]
+fn native_bridge_drains_exit_and_takeover_final_frames_before_success() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("bridge-final");
+    let exit_name = format!("bridge-exit-{}", std::process::id());
+    let takeover_name = format!("bridge-takeover-{}", std::process::id());
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: vec![exit_name.clone(), takeover_name.clone()],
+    };
+    let shell = pty_test_child(&executable);
+
+    launch_session_with(
+        &executable,
+        &runtime,
+        &exit_name,
+        &shell,
+        &["emit:READY", "read-line", "echo:INPUT", "exit:0"],
+    );
+    let exit_selection = bridge_selection(&runtime, &exit_name);
+    let mut exit_bridge = spawn_bridge(&executable, &runtime, &exit_selection);
+    assert!(terminal_contains(
+        &read_bridge_snapshot(exit_bridge.stdout.as_mut().unwrap()),
+        b"READY"
+    ));
+    acknowledge_bridge_recovery(exit_bridge.stdin.as_mut().unwrap()).unwrap();
+    write_bridge_client_frame(
+        exit_bridge.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("goodbye"),
+    )
+    .unwrap();
+    let output = read_bridge_frame_until(exit_bridge.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:goodbye".len())
+                .any(|w| w == b"INPUT:goodbye")
+    });
+    assert!(output
+        .windows(b"INPUT:goodbye".len())
+        .any(|w| w == b"INPUT:goodbye"));
+    read_bridge_frame_until(exit_bridge.stdout.as_mut().unwrap(), |kind, _| kind == 4);
+    assert!(exit_bridge.wait().unwrap().success());
+
+    launch_session_with(
+        &executable,
+        &runtime,
+        &takeover_name,
+        &shell,
+        &["emit:READY", "spin"],
+    );
+    let takeover_selection = bridge_selection(&runtime, &takeover_name);
+    let mut first = spawn_bridge(&executable, &runtime, &takeover_selection);
+    assert!(terminal_contains(
+        &read_bridge_snapshot(first.stdout.as_mut().unwrap()),
+        b"READY"
+    ));
+    acknowledge_bridge_recovery(first.stdin.as_mut().unwrap()).unwrap();
+    let mut second = spawn_bridge(&executable, &runtime, &takeover_selection);
+    assert!(terminal_contains(
+        &read_bridge_snapshot(second.stdout.as_mut().unwrap()),
+        b"READY"
+    ));
+    acknowledge_bridge_recovery(second.stdin.as_mut().unwrap()).unwrap();
+    read_bridge_frame_until(first.stdout.as_mut().unwrap(), |kind, _| kind == 3);
+    assert!(first.wait().unwrap().success());
+    drop(second.stdin.take());
+    assert!(second.wait().unwrap().success());
 }
 
 fn assert_generation_artifacts_removed(
@@ -1985,6 +2201,69 @@ fn registry_endpoint(path: &Path, name: &str) -> String {
         .to_owned()
 }
 
+#[cfg(unix)]
+#[derive(Clone)]
+struct BridgeSelection {
+    name: String,
+    pid: u32,
+    generation: u128,
+    endpoint: String,
+}
+
+#[cfg(unix)]
+fn bridge_selection(runtime_root: &Path, name: &str) -> BridgeSelection {
+    let registry = runtime_registry_root(runtime_root).join("registry.json");
+    let document: serde_json::Value = serde_json::from_slice(&fs::read(registry).unwrap()).unwrap();
+    let record = &document["sessions"][name];
+    BridgeSelection {
+        name: name.to_owned(),
+        pid: record["pid"].as_u64().unwrap().try_into().unwrap(),
+        generation: record["created_at_unix_ms"].as_u64().unwrap().into(),
+        endpoint: record["socket"].as_str().unwrap().to_owned(),
+    }
+}
+
+#[cfg(unix)]
+fn bridge_command(
+    executable: &Path,
+    runtime_root: &Path,
+    selection: &BridgeSelection,
+    omit_takeover: bool,
+) -> Command {
+    let mut command = daemon_command(executable, runtime_root);
+    command.args([
+        "bridge",
+        "--name",
+        &selection.name,
+        "--pid",
+        &selection.pid.to_string(),
+        "--generation",
+        &selection.generation.to_string(),
+        "--protocol",
+        "2",
+        "--snapshot-schema",
+        "2",
+    ]);
+    if !omit_takeover {
+        command.arg("--allow-takeover");
+    }
+    command
+}
+
+#[cfg(unix)]
+fn spawn_bridge(
+    executable: &Path,
+    runtime_root: &Path,
+    selection: &BridgeSelection,
+) -> std::process::Child {
+    bridge_command(executable, runtime_root, selection, false)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
 fn runtime_registry_root(runtime_root: &Path) -> PathBuf {
     runtime_root
         .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
@@ -2039,6 +2318,66 @@ fn read_recovery_terminal(stream: &mut dyn ClientStream) -> Terminal {
     let mut payload = vec![0; length];
     stream.read_exact(&mut payload).unwrap();
     bincode::deserialize(&payload).unwrap()
+}
+
+#[cfg(unix)]
+fn read_bridge_snapshot(stream: &mut impl Read) -> Terminal {
+    let mut header = [0u8; 12];
+    stream.read_exact(&mut header).unwrap();
+    assert_eq!(&header[..4], b"FSD2");
+    let length = usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
+    assert!(length <= 768 * 1024 * 1024);
+    let mut payload = vec![0; length];
+    stream.read_exact(&mut payload).unwrap();
+    bincode::deserialize(&payload).unwrap()
+}
+
+#[cfg(unix)]
+fn write_resize_frame(stream: &mut impl Write, cols: u16, rows: u16) -> io::Result<()> {
+    let payload: Vec<_> = [cols, rows, 0, 0]
+        .into_iter()
+        .flat_map(u16::to_be_bytes)
+        .collect();
+    write_bridge_client_frame(stream, 2, &payload)
+}
+
+#[cfg(unix)]
+fn acknowledge_bridge_recovery(stream: &mut impl Write) -> io::Result<()> {
+    write_bridge_client_frame(stream, 4, &[])
+}
+
+#[cfg(unix)]
+fn write_bridge_client_frame(stream: &mut impl Write, kind: u8, payload: &[u8]) -> io::Result<()> {
+    stream.write_all(FRAME_MAGIC)?;
+    stream.write_all(&[kind])?;
+    stream.write_all(&(payload.len() as u32).to_be_bytes())?;
+    stream.write_all(payload)?;
+    stream.flush()
+}
+
+#[cfg(unix)]
+fn read_bridge_frame_until(
+    stream: &mut impl Read,
+    mut accept: impl FnMut(u8, &[u8]) -> bool,
+) -> Vec<u8> {
+    let mut retained = Vec::new();
+    for _ in 0..128 {
+        let mut header = [0u8; 9];
+        stream.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..4], b"FSO1");
+        let kind = header[4];
+        let length = usize::try_from(u32::from_be_bytes(header[5..9].try_into().unwrap())).unwrap();
+        assert!(length <= 64 * 1024);
+        let mut payload = vec![0; length];
+        stream.read_exact(&mut payload).unwrap();
+        if kind == 1 {
+            retained.extend_from_slice(&payload);
+        }
+        if accept(kind, &payload) || (kind == 1 && accept(kind, &retained)) {
+            return if kind == 1 { retained } else { payload };
+        }
+    }
+    panic!("expected bridge frame did not arrive");
 }
 
 fn terminal_contains(terminal: &Terminal, expected: &[u8]) -> bool {

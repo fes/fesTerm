@@ -28,6 +28,12 @@ identity to make a denied path work.
 
 ## Native PowerShell transport gate
 
+Corporate prerequisites block corporate qualification, not development of the
+independent SSH/sessiond path, account UI, or protocol fixtures. A test tenant
+and an authorized remoting target would enable ordinary sign-in/discovery and
+endpoint trials; they would not by themselves implement broker/device claims,
+Kerberos, PSRP-over-SSH, or persistent-session attachment.
+
 The candidate Rust libraries are
 [`psrp-rs`](https://github.com/muchiny/psrp-rs) 2.0.2 and
 [`winrm-rs`](https://github.com/muchiny/winrm-rs) 1.2.2.
@@ -48,8 +54,9 @@ subsystem cancellation, Kerberos, CredSSP, reconnect and brokered enterprise
 authentication have separate qualification gates.
 
 The feature branch includes experimental native PowerShell profiles and a
-dedicated structured-session tab. Enterprise account UI and remote daemon
-attachment are not implemented.
+dedicated structured-session tab, plus a native SSH remote-daemon backend and
+CLI example. Enterprise account UI, a desktop remote-daemon picker and a
+PSRP daemon bridge remain separate implementation work, not credential blockers.
 
 ### Desktop workflow
 
@@ -308,7 +315,7 @@ festerm-sessiond discover --json
 
 Both require the explicit `--json` flag. Capabilities reports schema version
 `1`, helper package version, platform/architecture, daemon protocol range,
-supported recovery schemas and `remote_attachment: false`, without accessing
+supported recovery schemas and `remote_attachment: true`, without accessing
 the registry or cleaning up installed helpers.
 
 Discovery reports schema/package versions, inventory counts and per-session
@@ -324,7 +331,7 @@ success JSON.
 
 Discovery is an observation, not an attachment reservation. Between listing
 and selecting a session, its process, generation, endpoint, attachment state or
-helper can change. The eventual attachment operation must revalidate them and
+helper can change. The attachment operation must revalidate them and
 reject a changed generation; it must not silently start a replacement shell.
 
 Inventory does not contain command arguments, working directories, raw local
@@ -336,6 +343,59 @@ separate facts. A package version match is not a compatibility check.
 Existing local desktop discovery and attachment retain their existing policy.
 The machine-readable interface does not expose a network listener, grant
 cross-user access, implement a PSRP bridge or authorize remote takeover.
+
+## Remote sessiond over SSH
+
+List existing sessions on an authorized SSH host:
+
+```sh
+cargo +1.98.0 run -p festerm-sessiond --example remote-sessiond -- \
+  HOST 22 USER 'SHA256:INDEPENDENTLY_VERIFIED_FINGERPRINT' festerm-sessiond
+```
+
+Add `--attach SESSION_NAME --allow-takeover` before the positional arguments
+to select and attach a discovered generation. `--local-address IP` optionally
+binds the SSH source; failure does not retry unbound. After attachment,
+`/resize COLUMNS ROWS` requests an authoritative daemon resize.
+
+`RemoteSshEndpoint` performs read-only discovery through native SSH exec, and
+`RemoteSessionInventory::select` captures an exact discovered name, PID and
+creation generation. `RemoteSessionTarget::attach_with_takeover` attaches that
+generation using the installed helper's binary `bridge` command. The transport
+does not request a PTY, mix stderr into terminal bytes, add a network listener,
+start a daemon or fall back to a replacement shell.
+
+An independently verified SHA256 host-key fingerprint is required. The same
+host, account, key, helper and optional local source address are retained from
+discovery through attachment. The helper must be a simple executable name on
+the remote account's PATH, including an installed versioned helper name when
+necessary; shell expressions and executable paths are deliberately unsupported.
+Only the SSH execution account's owned live daemon can be attached. An
+administrator's SSH login does not stand in for a different desktop account.
+
+Takeover authorization is mandatory even when discovery says "unattached":
+the observation can race with another client. The existing protocol-v2 daemon
+only retires the previous frontend after the new frontend adopts its recovery
+snapshot. Before adoption, input and resize are refused. SSH loss or client
+drop detaches without terminating the daemon, and reconnect is never automatic.
+Reattaching a stale target fails instead of selecting a new generation by name.
+
+The development example is a line-oriented, text-only projection of the
+recovered terminal, not a full-screen renderer or desktop connection picker.
+It prompts for transient credentials separately for discovery and attachment;
+no password arguments or environment variables are accepted. `/detach` or EOF
+releases the attachment. Remote terminal controls are not emitted to the host
+terminal. Native transport/client APIs also support the existing in-memory
+key and certificate authentication variants.
+
+The snapshot decoder and adoption worker are the same ones used for local
+persistence, including the existing 768 MiB serialized snapshot ceiling.
+SSH queues and discovery are separately bounded; this is not a small-memory
+mobile snapshot protocol. The host/account pin extends the owner-scoped
+snapshot trust boundary; it does not make arbitrary snapshot files trusted.
+Cross-host and Windows OpenSSH/named-pipe interoperability remain CP-19.
+PSRP attachment, Entra sign-in and broker/device claims are not implemented by
+this SSH path.
 
 ## Remaining prerequisites
 

@@ -11,7 +11,8 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 The owner has separately authorized desktop native PowerShell and enterprise
 development on `feat/powershell` for #256/#255. The current work establishes
-experimental desktop profiles/structured sessions, public-client identity and current-user daemon-discovery
+experimental desktop profiles/structured sessions, public-client identity,
+current-user daemon discovery and generation-pinned remote SSH attachment
 boundaries under [ADR 0041](docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md).
 It does not mark any existing milestone complete or imply that PowerShell
 tabs, Dev Box Windows logon, embedded RDP or enrolled-phone access are accepted.

@@ -1,4 +1,4 @@
-# ADR 0041: Native PowerShell, Enterprise Identity, and Remote Session Discovery
+# ADR 0041: Native PowerShell, Enterprise Identity, and Remote Sessions
 
 - **Status:** Proposed - owner-authorized implementation; interoperability not accepted
 - **Date:** 2026-09-27
@@ -127,7 +127,7 @@ prune another version's registry records, or attach as a side effect. Report
 unavailable/incompatible records explicitly rather than silently downgrading.
 Do not advertise a remote attachment capability before its bridge exists.
 
-A later bounded bridge must preserve binary framing separately from PowerShell
+A bounded bridge must preserve binary framing separately from PowerShell
 formatting and result streams. It must revalidate the selected daemon generation
 and compatibility at attach time. An already-attached session requires explicit
 takeover policy, not a silent steal. Transport loss detaches the remote client;
@@ -138,6 +138,29 @@ The remote execution identity must own the daemon. A WinRM RunAs/JEA/virtual
 account is not automatically the interactive desktop user; do not relax named
 pipe ACLs, Unix socket permissions, or daemon identity checks to conceal that
 mismatch. This decision does not change existing local attachment behavior.
+
+The owner additionally authorized an SSH attachment path on 2026-09-27.
+Enterprise identity and PSRP qualification are not prerequisites for this path:
+an authenticated, host-key-verified SSH exec channel can carry the helper's
+binary stdio bridge without a PTY or new network listener. SSH stderr remains
+diagnostic data and must never enter snapshot or terminal framing.
+
+The first bridge targets an existing name, process ID and creation generation,
+with exact protocol 2 and recovery schema 2. It never starts or replaces a
+daemon. Because older daemons' attach handshake allows takeover, this initial
+bridge requires explicit takeover authorization even when discovery currently
+reports the target as unattached. An advisory registry flag cannot eliminate
+the race with another attaching client. A future non-takeover mode must enforce
+its policy atomically in the daemon, not merely check that flag.
+
+The remote client reuses snapshot decoding, structural validation and the
+adoption acknowledgement from the existing persistent-session backend.
+Transport buffers and diagnostics remain bounded; malformed/unsupported
+snapshots fail closed. Loss or cancellation drops only the bridge attachment.
+No automatic reconnect may silently reacquire a session from another client.
+This extends the owner-scoped snapshot trust boundary through an explicitly
+trusted SSH host and authenticated execution account; it is not permission
+to consume arbitrary snapshot files or downgrade incompatible generations.
 
 ## Alternatives considered
 
@@ -180,6 +203,8 @@ acceptance criteria pass.
   `PSRP-02` through `PSRP-04` cover desktop connection, pipeline/close and
   metadata-only restore. `PSRP-05` covers exact endpoint selection.
   `NET-01` through `NET-03` define source selection and retained binding.
+  `RSD-01` and `RSD-02` cover remote SSH discovery and generation-pinned
+  attachment at the backend/example layer, not a desktop picker.
   Enterprise GUI integration is not part of this slice.
 - **Automated tests required:** bounded capability/discovery serialization,
   protocol/schema mismatch, attached/stale/foreign registry records, metadata
@@ -190,6 +215,9 @@ acceptance criteria pass.
   Desktop coverage additionally requires injected workers, explicit source
   choice, profile/credential isolation, output and queue bounds, cancellation,
   stale completion, tab/window close, and metadata-only workspace restore.
+  Remote SSH coverage requires native SSH-to-helper-to-daemon composition,
+  no PTY, pinned host-key failure, pre-adoption input/resize rejection,
+  stale-generation refusal and detach/reattach of the same live shell.
 - **Native/manual evidence required:** CP-11 remains the local daemon gate.
   Controlled Windows PowerShell and PowerShell 7 endpoints, authorized Dev Box
   tenant access, and enrolled-device/broker evidence are additional prerequisites

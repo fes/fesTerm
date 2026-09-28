@@ -2328,9 +2328,12 @@ dependencies = [
  "fs2",
  "nix 0.31.3",
  "portable-pty",
+ "rpassword",
+ "russh",
  "serde",
  "serde_json",
  "socket2",
+ "tokio",
  "tracing",
  "windows-sys 0.61.2",
 ]
