@@ -7,6 +7,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 $interopEnvNames = @(
     'FESTERM_PSRP_INTEROP_HOST',
@@ -162,6 +163,7 @@ function Wait-EndpointReady([string]$ConfigurationName, [string]$WorkDir) {
             "$($env:COMPUTERNAME)\$($env:FESTERM_PSRP_INTEROP_USER)", $secure)
         $options = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 15000 -CancelTimeout 5000
         $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $reportedFailure = $false
         while ($clock.ElapsedMilliseconds -lt 110000) {
             $session = $null
             $ready = $false
@@ -172,7 +174,14 @@ function Wait-EndpointReady([string]$ConfigurationName, [string]$WorkDir) {
                 $edition = Invoke-Command -Session $session -ScriptBlock { $PSVersionTable.PSEdition }
                 $ready = -not [string]::IsNullOrWhiteSpace([string]$edition)
             } catch {
-                [Console]::Error.WriteLine("readiness attempt failed: $($_.Exception.GetType().Name)")
+                if (-not $reportedFailure) {
+                    $detail = [string]$_.Exception.Message
+                    $detail = $detail.Replace($env:FESTERM_PSRP_INTEROP_PASSWORD, '[redacted]')
+                    $detail = [regex]::Replace($detail, '[\x00-\x1f\x7f]', ' ')
+                    $detail = $detail.Substring(0, [Math]::Min(768, $detail.Length))
+                    [Console]::Error.WriteLine("readiness attempt failed: $($_.Exception.GetType().Name) $detail")
+                    $reportedFailure = $true
+                }
             } finally {
                 if ($session) { Remove-PSSession -Session $session -ErrorAction Stop }
             }
