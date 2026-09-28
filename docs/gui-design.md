@@ -550,7 +550,9 @@ and **Copy path** copies that resolved path (or the detected path when resolutio
 is unavailable). A disabled Open button explains when trustworthy cwd, host-key,
 or credential metadata is missing. A plain-text HTTP(S) address contributes
 **Go** and **Copy URL**; Go passes through the same validated external-link
-handler as an OSC 8 link. A non-empty
+handler as an OSC 8 link. Detection preserves bracketed IPv6 authorities,
+including ports and wrapped addresses, without copying surrounding markup.
+A non-empty
 terminal selection contributes **Copy**. A live session that currently accepts
 input contributes **Paste**. **Find in terminal** remains available in every
 retained terminal viewport, including an exited or disconnected read-only

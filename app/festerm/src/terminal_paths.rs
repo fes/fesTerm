@@ -280,15 +280,19 @@ fn web_url_candidate(capture: &CapturedLogicalLine) -> Option<(String, String)> 
     let line = &capture.text;
     for (start, _) in line.char_indices() {
         let tail = &line[start..];
-        if !(tail
+        let scheme_len = if tail
             .get(..7)
             .is_some_and(|scheme| scheme.eq_ignore_ascii_case("http://"))
-            || tail
-                .get(..8)
-                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://")))
         {
+            7
+        } else if tail
+            .get(..8)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+        {
+            8
+        } else {
             continue;
-        }
+        };
         if start > 0
             && line[..start]
                 .chars()
@@ -297,10 +301,21 @@ fn web_url_candidate(capture: &CapturedLogicalLine) -> Option<(String, String)> 
         {
             continue;
         }
+        // Brackets delimit surrounding markup, except for an IPv6 authority.
+        // The shared URL normalizer still validates the enclosed host.
+        let scan_start = if tail.as_bytes().get(scheme_len) == Some(&b'[') {
+            let Some(close) = tail[scheme_len..].find(']') else {
+                continue;
+            };
+            scheme_len + close + 1
+        } else {
+            scheme_len
+        };
         let end = start
-            + tail
+            + scan_start
+            + tail[scan_start..]
                 .find(|ch: char| ch.is_whitespace() || "<>\"'[]{}".contains(ch))
-                .unwrap_or(tail.len());
+                .unwrap_or(tail.len() - scan_start);
         if capture.clicked_range.start < start || capture.clicked_range.start >= end {
             continue;
         }
@@ -1243,11 +1258,83 @@ mod tests {
     }
 
     #[test]
+    fn ipv6_web_urls_preserve_authority_brackets_for_copy_and_launch() {
+        for (address, normalized) in [
+            ("http://[::1]", "http://[::1]/"),
+            ("https://[::1]:8443/docs", "https://[::1]:8443/docs"),
+            (
+                "HTTPS://[2001:DB8::1]/docs?a=1&b=2#part",
+                "https://[2001:db8::1]/docs?a=1&b=2#part",
+            ),
+        ] {
+            let terminal = terminal_with(&format!("{address}\n"), 80);
+            for column in 0..address.len() {
+                let action = resolve_context_menu_action(&terminal, target(column, 0), None)
+                    .expect("every URL cell, including authority brackets, is actionable");
+                assert_eq!(
+                    action.ui_action().copy,
+                    Some(("Copy URL".to_owned(), address.to_owned()))
+                );
+                assert!(
+                    matches!(action.open_request(), Some(TerminalPathOpenRequest::Web(url)) if url == normalized)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn web_url_authority_brackets_do_not_capture_surrounding_markup() {
+        for address in ["https://[::1]:8443/docs", "https://example.com/docs"] {
+            for (prefix, suffix) in [("[", "]"), ("[guide](", "),"), ("<", ">")] {
+                let terminal = terminal_with(&format!("{prefix}{address}{suffix}\n"), 80);
+                let action =
+                    resolve_context_menu_action(&terminal, target(prefix.len(), 0), None).unwrap();
+                assert_eq!(
+                    action.ui_action().copy,
+                    Some(("Copy URL".to_owned(), address.to_owned()))
+                );
+                assert!(
+                    resolve_context_menu_action(&terminal, target(prefix.len() - 1, 0), None,)
+                        .is_none()
+                );
+                for column in
+                    prefix.len() + address.len()..prefix.len() + address.len() + suffix.len()
+                {
+                    assert!(
+                        resolve_context_menu_action(&terminal, target(column, 0), None).is_none()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ipv6_web_url_detection_preserves_wrapped_logical_line() {
+        let address = "https://[2001:db8::1]:8443/docs";
+        let terminal = terminal_with(&format!("{address}\n"), 12);
+        let action = resolve_context_menu_action(&terminal, target(1, 2), None).unwrap();
+        assert_eq!(
+            action.ui_action().copy,
+            Some(("Copy URL".to_owned(), address.to_owned()))
+        );
+        assert!(
+            matches!(action.open_request(), Some(TerminalPathOpenRequest::Web(url)) if url == address)
+        );
+    }
+
+    #[test]
     fn malformed_or_unsupported_web_addresses_do_not_become_file_paths() {
         for address in [
             "https://",
             "https://example.com:bad/path",
             "ftp://example.com/file",
+            "https://[::1",
+            "https://[]/docs",
+            "https://[not-an-ip]/docs",
+            "https://[::1]:bad/docs",
+            "https://[::1]:65536/docs",
+            "https://[:: 1]/docs",
+            "https://user@[::1]/docs",
         ] {
             let terminal = terminal_with(&format!("see {address}\n"), 80);
             assert!(
