@@ -551,6 +551,12 @@ The current implementation/evidence boundary is maintained in
 [`powershell-enterprise.md`](powershell-enterprise.md). Do not record a native
 pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell.
 
+## Native PowerShell desktop qualification
+
+| ID | Scenario | Evidence class | Prerequisites and limits |
+| --- | --- | --- | --- |
+| CP-23 | Create/edit/duplicate a PowerShell profile, explicitly connect, run repeated stateful commands, inspect structured output and all streams, stop a long command, and close during connection/execution. Switch tabs/windows during pending work; reject bad credentials/trust and invalid source/configuration. Restart with a saved workspace and confirm disconnected setup with no restored secret, command, output or runtime source. Exercise narrow/high-DPI layouts and keyboard focus alongside existing terminals. | Injected lifecycle/configuration/UI regressions plus native GUI and endpoint evidence; partial | #256. Requires an authorized HTTPS/NTLM endpoint for each claimed client platform. PowerShell 7 and restricted/JEA configurations need distinct endpoint/permission evidence; broker/device-compliance and corporate Dev Box access remain CP-21. Unsupported host prompts/native-console applications and automatic reconnection are not advertised. |
+
 ## Local source address qualification
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |

@@ -65,6 +65,11 @@ Owner-authorized development under
 adds separate backend foundations rather than changing the terminal byte
 contract. `festerm-enterprise` owns transient public-client identity and bounded
 Dev Center queries; `festerm-powershell` owns native structured PSRP operations.
+The experimental desktop PowerShell tab is separate from terminal sessions:
+typed application actions control a background worker, structured output has
+bounded retention, and per-worker cleanup handles gate asynchronous teardown.
+Profiles/workspaces contain endpoint metadata and opaque credential references,
+never passwords, tokens, command history or live runspace identity.
 Both reuse the secret-byte boundary. Neither makes the terminal core depend on
 cloud identity, nor feeds PSRP/CLIXML through the VT parser.
 

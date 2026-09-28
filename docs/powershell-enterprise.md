@@ -47,8 +47,34 @@ host calls terminate correctly, and close releases the runspace. SSH
 subsystem cancellation, Kerberos, CredSSP, reconnect and brokered enterprise
 authentication have separate qualification gates.
 
-No native PowerShell profile, connected tab, enterprise account or remote
-attachment is advertised until its corresponding implementation exists.
+The feature branch includes experimental native PowerShell profiles and a
+dedicated structured-session tab. Enterprise account UI and remote daemon
+attachment are not implemented.
+
+### Desktop workflow
+
+Open **Profiles**, create a **PowerShell** profile, and select the host, HTTPS
+port, username/domain, exact endpoint configuration, optional trusted CA file,
+and local source-address policy. Windows PowerShell and PowerShell 7 presets
+are conveniences for configuration names, not endpoint installation or
+authentication negotiation. A custom name is never silently replaced.
+
+An optional password on profile Save is written through native secure storage;
+only its opaque reference enters configuration. Editing preserves that reference,
+while duplicating a profile requires a new credential. Without a saved reference,
+the session setup asks for a transient password. Opening or restoring a tab does
+not connect: **Connect** is explicit, and Ask requires a fresh source choice for
+each new runspace.
+
+The tab has a script editor, typed output/error/warning/information/progress
+streams, bounded structured property views, Stop, and Close. It is not a PTY:
+terminal keystrokes and full-screen console applications are not supported.
+Recoverable pipeline failures preserve the runspace; invalidation requires an
+explicit new connection. Output retention is bounded and omissions are visible.
+Networking, trust-file reads, credential access and remote cleanup run off the
+GUI thread. Tab close retains the cleanup worker, and window/application exit
+waits asynchronously up to 45 seconds before reporting unconfirmed cleanup.
+Native cross-platform usability/accessibility acceptance remains CP-23.
 
 ### Native backend example
 
@@ -83,9 +109,22 @@ CredSSP/delegation, PSRP-over-SSH, brokered logon, interactive credential prompt
 and reconnect/continuity are not supported connection modes here. Corporate
 qualification still requires CP-20; NTLM being implemented does not mean the
 organization permits it or that an Entra-only Dev Box accepts it.
-The resource URI currently selects the default `Microsoft.PowerShell`
-configuration. Alternate/JEA and PowerShell 7 configurations are not selectable
-through this API yet.
+The default resource URI selects `Microsoft.PowerShell`. An explicit endpoint
+configuration can instead be selected with
+`PowerShellEndpoint::with_configuration_name` or the CLI:
+
+```sh
+cargo +1.98.0 run -p festerm-powershell --example psrp-shell -- \
+  --configuration PowerShell.7 HOST USERNAME DOMAIN /path/to/trusted-ca.pem
+```
+
+The selected configuration is used throughout the runspace lifecycle,
+including cancellation and close. Names are bounded to 256 bytes and use ASCII
+letters, digits, dots, underscores and hyphens with an alphanumeric first
+character. A missing or unauthorized configuration fails; there is no fallback
+to `Microsoft.PowerShell`. The name does not install an endpoint, grant
+permissions or imply support for its interactive host calls. Restricted/JEA
+configuration authorization and behavior require separate qualification.
 
 ### Local source address
 

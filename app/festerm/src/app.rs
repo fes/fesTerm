@@ -469,6 +469,7 @@ pub struct FesTermApp {
     /// down the window is let through instead of being intercepted again
     /// (`docs/gui-action-graph.md` `QUIT-03`).
     quit_confirmed: bool,
+    powershell_shutdown_started: Option<Instant>,
     /// Which window this is (ADR 0032). The primary window owns the native
     /// menu bar, the wake monitor, native window chrome, workspace
     /// persistence, and the application quit path; a secondary window owns
@@ -893,6 +894,7 @@ impl FesTermApp {
             update_exit_requested: false,
             update_restart_authorized: false,
             quit_confirmed: false,
+            powershell_shutdown_started: None,
             role: WindowRole::Primary,
             pending_configuration_broadcast: None,
             window_close_accepted: false,
@@ -1076,6 +1078,7 @@ impl FesTermApp {
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::SftpFileManagerAuthenticationRequired(_)
             | TabContent::SftpFileManager(_)
+            | TabContent::PowerShell(_)
             | TabContent::Session(_) => "Close Session",
         };
         self.native_menu.update(
@@ -1425,8 +1428,33 @@ impl FesTermApp {
     /// True when this window's close request has been accepted and the
     /// composition root should drop it. Meaningful only for secondary
     /// windows; the primary window's close is the application quit path.
-    pub(crate) const fn window_close_accepted(&self) -> bool {
+    pub(crate) fn window_close_accepted(&self) -> bool {
+        (self.window_close_accepted || self.quit_confirmed)
+            && (self.state.powershell_worker_count() == 0
+                || self
+                    .powershell_shutdown_started
+                    .is_some_and(|started| started.elapsed() >= Duration::from_secs(45)))
+    }
+
+    pub(crate) fn window_close_requested(&self) -> bool {
         self.window_close_accepted || self.quit_confirmed
+    }
+
+    pub(crate) fn prepare_powershell_shutdown(&mut self, context: &egui::Context) -> bool {
+        let started = *self
+            .powershell_shutdown_started
+            .get_or_insert_with(Instant::now);
+        self.state.request_powershell_shutdown();
+        self.state.drain_powershell_tabs(context);
+        if self.state.powershell_worker_count() == 0 {
+            return true;
+        }
+        if started.elapsed() >= Duration::from_secs(45) {
+            tracing::error!("PowerShell cleanup deadline expired during application shutdown; remote state is unconfirmed");
+            return true;
+        }
+        context.request_repaint_after(Duration::from_millis(50));
+        false
     }
 
     /// One-shot consumption of this window's request for another window.
@@ -2008,6 +2036,81 @@ impl FesTermApp {
         }
     }
 
+    fn dispatch_powershell_action(
+        &mut self,
+        tab_id: TabId,
+        action: crate::powershell::PowerShellAction,
+        context: &egui::Context,
+    ) {
+        if self.powershell_shutdown_started.is_some() {
+            self.overlays.transient_notice = Some((
+                "PowerShell actions are disabled while the window is shutting down.".to_owned(),
+                Instant::now() + Duration::from_secs(3),
+            ));
+            return;
+        }
+        if matches!(action, crate::powershell::PowerShellAction::Connect)
+            && self.state.powershell_worker_count() >= 32
+        {
+            self.overlays.transient_notice = Some((
+                "PowerShell worker limit reached. Wait for closing sessions to finish.".to_owned(),
+                Instant::now() + Duration::from_secs(3),
+            ));
+            return;
+        }
+        if self.state.active() != tab_id {
+            self.overlays.transient_notice = Some((
+                "PowerShell action cancelled because its active tab changed.".to_owned(),
+                Instant::now() + Duration::from_secs(3),
+            ));
+            return;
+        }
+        let current_profile = if matches!(action, crate::powershell::PowerShellAction::Connect) {
+            let TabContent::PowerShell(tab) = &self.state.active_tab().content else {
+                self.overlays.transient_notice = Some((
+                    "PowerShell action cancelled because its session is no longer available."
+                        .to_owned(),
+                    Instant::now() + Duration::from_secs(3),
+                ));
+                return;
+            };
+            let profile = self
+                .state
+                .configuration()
+                .profiles()
+                .iter()
+                .find(|profile| profile.identifier() == tab.profile_identifier())
+                .and_then(festerm_config::Profile::as_powershell)
+                .cloned();
+            if profile.is_none() {
+                self.overlays.transient_notice = Some((
+                    "PowerShell profile was removed or changed type. Open an existing profile to connect.".to_owned(),
+                    Instant::now() + Duration::from_secs(3),
+                ));
+                return;
+            }
+            profile
+        } else {
+            None
+        };
+        if let TabContent::PowerShell(tab) = &mut self.state.active_tab_mut().content {
+            if let Some(profile) = current_profile {
+                tab.refresh_profile(&profile);
+            }
+            tab.dispatch(
+                action,
+                self.secret_store.as_ref().map_err(|error| *error),
+                context,
+            );
+        } else {
+            self.overlays.transient_notice = Some((
+                "PowerShell action cancelled because its session is no longer available."
+                    .to_owned(),
+                Instant::now() + Duration::from_secs(3),
+            ));
+        }
+    }
+
     fn start_stored_sftp_file_manager_target(
         &mut self,
         target: crate::sftp_file_manager::SftpFileManagerLaunchTarget,
@@ -2087,29 +2190,41 @@ impl FesTermApp {
                 .map(secret_store_message);
             return;
         };
-        if self.overlays.pending_password_store.is_some() {
+        if self.overlays.pending_password_store.is_some()
+            || self.overlays.pending_secret_cleanup.is_some()
+        {
             self.secure_storage_feedback =
-                Some("A saved SSH credential update is already in progress. Please wait.");
+                Some("A saved credential update is already in progress. Please wait.");
             return;
         }
-        let Some(profile_snapshot) = self
-            .state
-            .configuration()
-            .profile(&profile_id)
-            .and_then(Profile::as_ssh)
-            .cloned()
+        let Some(profile_snapshot) = self.state.configuration().profile(&profile_id).cloned()
         else {
-            self.secure_storage_feedback = Some("The SSH profile is no longer available.");
+            self.secure_storage_feedback = Some("The remote profile is no longer available.");
             return;
         };
+        if profile_snapshot.as_ssh().is_none()
+            && (profile_snapshot.as_powershell().is_none()
+                || credential_kind != festerm_config::CredentialKind::Password)
+        {
+            self.secure_storage_feedback =
+                Some("This profile does not support that stored credential type.");
+            return;
+        }
         let store = Arc::clone(store);
         let worker_store = Arc::clone(&store);
         let (sender, receiver) = mpsc::sync_channel(1);
         match thread::Builder::new()
-            .name("festerm-store-ssh-credential".to_owned())
+            .name("festerm-store-remote-credential".to_owned())
             .spawn(move || {
                 let secret = make_secret();
-                let _ = sender.send(worker_store.put(&secret));
+                if let Err(mpsc::SendError(Ok(reference))) = sender.send(worker_store.put(&secret))
+                {
+                    if worker_store.delete(&reference).is_err() {
+                        tracing::error!(
+                            "Unlinked native credential cleanup failed after owner closed"
+                        );
+                    }
+                }
             }) {
             Ok(_) => {
                 self.overlays.pending_password_store = Some(PendingPasswordStore {
@@ -2122,8 +2237,7 @@ impl FesTermApp {
                     launch_epoch: self.state.input_ownership_epoch(),
                     profile_snapshot,
                 });
-                self.secure_storage_feedback =
-                    Some("Saving SSH credential in native secure storage…");
+                self.secure_storage_feedback = Some("Saving credential in native secure storage…");
                 context.request_repaint();
             }
             Err(_) => {
@@ -2134,22 +2248,58 @@ impl FesTermApp {
         }
     }
 
+    fn cleanup_native_credential(
+        &mut self,
+        store: Arc<dyn SecretStore>,
+        reference: festerm_secret_store::SecretReference,
+        failure: &'static str,
+        context: &egui::Context,
+    ) {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let repaint = context.clone();
+        match thread::Builder::new()
+            .name("festerm-cleanup-native-credential".to_owned())
+            .spawn(move || {
+                let result = store.delete(&reference);
+                if result.is_err() {
+                    tracing::error!("Native credential cleanup failed");
+                }
+                let _ = sender.send(result);
+                repaint.request_repaint();
+            }) {
+            Ok(_) => self.overlays.pending_secret_cleanup = Some((receiver, failure)),
+            Err(_) => self.secure_storage_feedback = Some(failure),
+        }
+    }
+
     fn process_pending_password_store(&mut self, context: &egui::Context) {
+        if let Some((receiver, failure)) = self.overlays.pending_secret_cleanup.take() {
+            match receiver.try_recv() {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    self.secure_storage_feedback = Some(failure);
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    self.overlays.pending_secret_cleanup = Some((receiver, failure));
+                }
+            }
+        }
         let Some(pending) = self.overlays.pending_password_store.take() else {
             return;
         };
         match pending.receiver.try_recv() {
             Ok(Ok(reference)) => {
-                let current_profile = self
-                    .state
-                    .configuration()
-                    .profile(&pending.profile_id)
-                    .and_then(Profile::as_ssh);
+                let current_profile = self.state.configuration().profile(&pending.profile_id);
                 if current_profile != Some(&pending.profile_snapshot) {
-                    self.secure_storage_feedback = Some(match pending.store.delete(&reference) {
-                        Ok(_) => "The profile changed while saving. The credential was not linked and no connection was started.",
-                        Err(_) => "The profile changed while saving. No connection was started; removing the unlinked native credential also failed.",
-                    });
+                    self.secure_storage_feedback = Some(
+                        "The profile changed while saving. The credential was not linked and no connection was started.",
+                    );
+                    self.cleanup_native_credential(
+                        pending.store,
+                        reference,
+                        "The profile changed while saving. No connection was started; removing the unlinked native credential also failed.",
+                        context,
+                    );
                     return;
                 }
                 let launch_still_current = self.state.active() == pending.launch_tab
@@ -2170,11 +2320,18 @@ impl FesTermApp {
                     .profile(&pending.profile_id)
                     .and_then(festerm_config::Profile::credential_reference)
                     .map(festerm_secret_store::SecretReference::duplicate_for_transport);
-                let replacement = self.state.configuration().with_ssh_credential(
-                    &pending.profile_id,
-                    reference.duplicate_for_transport(),
-                    pending.credential_kind,
-                );
+                let replacement = if pending.profile_snapshot.as_powershell().is_some() {
+                    self.state.configuration().with_powershell_credential(
+                        &pending.profile_id,
+                        reference.duplicate_for_transport(),
+                    )
+                } else {
+                    self.state.configuration().with_ssh_credential(
+                        &pending.profile_id,
+                        reference.duplicate_for_transport(),
+                        pending.credential_kind,
+                    )
+                };
                 let saved = replacement.as_ref().ok().and_then(|configuration| {
                     self.configuration_reloader
                         .save_configuration(configuration)
@@ -2182,17 +2339,19 @@ impl FesTermApp {
                         .map(|_| configuration.clone())
                 });
                 if let Some(configuration) = saved {
+                    self.pending_configuration_broadcast = Some(configuration.clone());
                     self.state.replace_configuration(configuration);
                     self.configuration_status = ConfigurationStartupStatus::PasswordCredentialSaved;
-                    self.secure_storage_feedback = match previous_reference {
-                        Some(previous) => match pending.store.delete(&previous) {
-                            Ok(_) => Some("SSH credential saved in native secure storage."),
-                            Err(_) => Some(
-                                "SSH credential saved, but the previous native secret could not be removed.",
-                            ),
-                        },
-                        None => Some("SSH credential saved in native secure storage."),
-                    };
+                    self.secure_storage_feedback =
+                        Some("Credential saved in native secure storage.");
+                    if let Some(previous) = previous_reference {
+                        self.cleanup_native_credential(
+                            pending.store,
+                            previous,
+                            "Credential saved, but the previous native secret could not be removed.",
+                            context,
+                        );
+                    }
                     if let Some(launch) = pending.launch_after_store {
                         if !launch_still_current {
                             self.secure_storage_feedback = Some(
@@ -2222,19 +2381,19 @@ impl FesTermApp {
                         }
                     }
                 } else {
-                    let cleanup = pending.store.delete(&reference);
                     self.configuration_status =
                         ConfigurationStartupStatus::PasswordCredentialSaveFailure(
                             crate::configuration_startup::ConfigurationLoadFailure::Unreadable,
                         );
-                    self.secure_storage_feedback = match cleanup {
-                        Ok(_) => Some(
-                            "SSH credential was not linked because configuration could not be saved; the new native secret was removed.",
-                        ),
-                        Err(_) => Some(
-                            "SSH credential was not linked because configuration could not be saved; native-secret cleanup also failed.",
-                        ),
-                    };
+                    self.secure_storage_feedback = Some(
+                        "Credential was not linked because configuration could not be saved; removing the unlinked native secret.",
+                    );
+                    self.cleanup_native_credential(
+                        pending.store,
+                        reference,
+                        "Credential was not linked because configuration could not be saved; native-secret cleanup also failed.",
+                        context,
+                    );
                 }
             }
             Ok(Err(error)) => {
@@ -2297,6 +2456,7 @@ impl FesTermApp {
         let mut needs_repaint = false;
         let active = self.state.active();
         let scrollback_limit = self.state.scrollback_limit();
+        self.state.drain_powershell_tabs(context);
         for (id, session) in self.state.session_tabs_with_id_mut() {
             if session.adopt_recovered_terminal() {
                 session.apply_frontend_terminal_configuration(scrollback_limit);
@@ -2715,6 +2875,7 @@ impl FesTermApp {
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::SftpFileManager(_)
+                | TabContent::PowerShell(_)
                 | TabContent::Session(_) => "Close Session…".to_owned(),
             },
             hint: binding_label(A::CloseActiveSurface),
@@ -2759,6 +2920,10 @@ impl FesTermApp {
                 TabContent::SftpFileManager(tab) => {
                     (tab.label.clone(), Some("GUI SFTP file manager".to_owned()))
                 }
+                TabContent::PowerShell(tab) => (
+                    tab.title(),
+                    Some(format!("Structured PowerShell · {}", tab.state().label())),
+                ),
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
                     let hint = session
@@ -4651,6 +4816,22 @@ impl FesTermApp {
                         Some("GUI SFTP file manager".to_owned()),
                         ChipStatus::Neutral,
                     ),
+                    TabContent::PowerShell(tab) => (
+                        tab.title(),
+                        Some(format!("Structured PSRP · {}", tab.state().label())),
+                        match tab.state() {
+                            crate::powershell::PowerShellState::Connecting
+                            | crate::powershell::PowerShellState::Closing => ChipStatus::Starting,
+                            crate::powershell::PowerShellState::Ready => ChipStatus::Connected,
+                            crate::powershell::PowerShellState::Running
+                            | crate::powershell::PowerShellState::Cancelling => {
+                                ChipStatus::Connected
+                            }
+                            crate::powershell::PowerShellState::Failed => ChipStatus::Failed,
+                            crate::powershell::PowerShellState::Closed => ChipStatus::Exited,
+                            crate::powershell::PowerShellState::Setup => ChipStatus::Neutral,
+                        },
+                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = session
@@ -4889,6 +5070,27 @@ impl FesTermApp {
                 | TabContent::SftpFileManagerAuthenticationRequired(_) => {
                     (None, None, None, ChipStatus::Neutral, "", None, None)
                 }
+                TabContent::PowerShell(tab) => (
+                    Some("PowerShell"),
+                    None,
+                    Some(std::borrow::Cow::Owned(format!(
+                        "Structured PSRP · {}",
+                        tab.title()
+                    ))),
+                    match tab.state() {
+                        crate::powershell::PowerShellState::Connecting
+                        | crate::powershell::PowerShellState::Closing => ChipStatus::Starting,
+                        crate::powershell::PowerShellState::Ready
+                        | crate::powershell::PowerShellState::Running
+                        | crate::powershell::PowerShellState::Cancelling => ChipStatus::Connected,
+                        crate::powershell::PowerShellState::Failed => ChipStatus::Failed,
+                        crate::powershell::PowerShellState::Closed => ChipStatus::Exited,
+                        crate::powershell::PowerShellState::Setup => ChipStatus::Neutral,
+                    },
+                    tab.state().label(),
+                    None,
+                    None,
+                ),
                 // Same reasoning as the file manager below: the viewer has
                 // source locality, encoding, and a read-only/stale state to
                 // report, which is exactly what the mockup's `.fmd-status`
@@ -5245,7 +5447,10 @@ impl FesTermApp {
             // Nothing cancelled the close, so this window really is going
             // away. The primary window's teardown is eframe's; a secondary
             // window's is the composition root's.
-            if self.overlays.pending_quit.is_none() {
+            if self.overlays.pending_quit.is_none()
+                && self.overlays.pending_document_close.is_none()
+                && self.overlays.pending_document_close_after_save_as.is_none()
+            {
                 self.window_close_accepted = true;
                 if self.role == WindowRole::Primary && self.native_smoke.is_none() {
                     crate::diagnostics::record_exit_intent(
@@ -5644,6 +5849,12 @@ impl FesTermApp {
                     tab.set_status_bar_visible(status_bar_visible);
                     screen_command = tab.show(ui, active_tab_id);
                 }
+                TabContent::PowerShell(tab) => {
+                    screen_command = tab.show(ui).map(|action| AppCommand::PowerShell {
+                        tab_id: active_tab_id,
+                        action,
+                    });
+                }
                 TabContent::Session(session) => {
                     if session.adopt_recovered_terminal() {
                         session.apply_frontend_terminal_configuration(scrollback_limit);
@@ -5795,6 +6006,9 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                AppCommand::PowerShell { tab_id, action } => {
+                    self.dispatch_powershell_action(tab_id, action, ui.ctx());
+                }
                 AppCommand::OpenMarkdownWorkspace => {
                     self.open_markdown_file_picker(&ui.ctx().clone());
                 }
@@ -6232,6 +6446,18 @@ impl FesTermApp {
         self.window_close_accepted = true;
     }
 
+    pub(crate) fn retire_powershell_for_test(
+        &mut self,
+    ) -> crate::powershell::PowerShellShutdownHandle {
+        let handle = crate::powershell::PowerShellShutdownHandle::pending_for_test();
+        self.state.retire_powershell_for_test(handle.clone());
+        handle
+    }
+
+    pub(crate) fn expire_powershell_shutdown_for_test(&mut self) {
+        self.powershell_shutdown_started = Some(Instant::now() - Duration::from_secs(46));
+    }
+
     pub(crate) fn for_test_with_configuration(configuration: Configuration) -> Self {
         let state = AppState::for_test_with_configuration(configuration);
         Self {
@@ -6262,6 +6488,7 @@ impl FesTermApp {
             update_exit_requested: false,
             update_restart_authorized: false,
             quit_confirmed: false,
+            powershell_shutdown_started: None,
             role: WindowRole::Primary,
             pending_configuration_broadcast: None,
             window_close_accepted: false,
@@ -7789,6 +8016,9 @@ mod tests {
         assert!(CloseConsequence::DisconnectSsh
             .message()
             .contains("SSH connection"));
+        assert!(CloseConsequence::ClosePowerShell
+            .message()
+            .contains("PowerShell runspace"));
     }
 
     #[test]
@@ -7909,6 +8139,157 @@ mod tests {
             harness.state().state.active_tab().content,
             TabContent::Launcher
         ));
+    }
+
+    fn app_with_powershell_tab(context: &egui::Context) -> (FesTermApp, TabId) {
+        let configuration = Configuration::new(vec![festerm_config::Profile::powershell(
+            "ps",
+            "win.example.test",
+            5986,
+            "alice",
+        )
+        .expect("PowerShell profile is valid")])
+        .expect("configuration is valid");
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        app.state.dispatch(
+            AppCommand::OpenConfiguredPowerShellProfile {
+                profile_id: "ps".to_owned(),
+            },
+            context,
+        );
+        let tab = app.state.active();
+        (app, tab)
+    }
+
+    #[test]
+    fn powershell_password_save_links_only_unchanged_saved_profile() {
+        for scenario in 0..3 {
+            let profile =
+                Profile::powershell("ps-save", "win.example.test", 5986, "fixture").unwrap();
+            let mut harness =
+                harness_with_configuration(Configuration::new(vec![profile]).unwrap());
+            let directory = tempfile::tempdir().unwrap();
+            let path = if scenario == 2 {
+                // A directory cannot be atomically replaced by the configuration file.
+                directory.path().to_owned()
+            } else {
+                directory.path().join("config.toml")
+            };
+            harness.state_mut().configuration_reloader =
+                ConfigurationReloader::from_path_for_test(path);
+            let context = egui::Context::default();
+            harness.state_mut().store_password_for_profile(
+                "ps-save".to_owned(),
+                crate::tabs::PasswordToStore::new("fixture-password".to_owned()),
+                festerm_ssh::SshSessionOptions::new(),
+                None,
+                &context,
+            );
+            let mut pending = harness
+                .state_mut()
+                .overlays
+                .pending_password_store
+                .take()
+                .unwrap();
+            let outcome = pending
+                .receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            let reference = outcome.as_ref().unwrap().duplicate_for_transport();
+            let store = Arc::clone(&pending.store);
+            let (sender, receiver) = mpsc::sync_channel(1);
+            sender.send(outcome).unwrap();
+            pending.receiver = receiver;
+            harness.state_mut().overlays.pending_password_store = Some(pending);
+            if scenario == 1 {
+                harness.state_mut().state.replace_configuration(
+                    Configuration::new(vec![Profile::powershell(
+                        "ps-save",
+                        "different.example.test",
+                        5986,
+                        "fixture",
+                    )
+                    .unwrap()])
+                    .unwrap(),
+                );
+            }
+            harness.state_mut().process_pending_password_store(&context);
+            if let Some((receiver, _)) = harness.state_mut().overlays.pending_secret_cleanup.take()
+            {
+                receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap()
+                    .unwrap();
+            }
+            let saved = harness
+                .state()
+                .state
+                .configuration()
+                .profile("ps-save")
+                .unwrap();
+            if scenario == 0 {
+                assert!(saved.credential_reference().is_some());
+                assert!(store.get(&reference).is_ok());
+                assert!(!harness
+                    .state()
+                    .state
+                    .configuration()
+                    .to_toml()
+                    .unwrap()
+                    .contains("fixture-password"));
+                let broadcast = harness
+                    .state_mut()
+                    .take_configuration_broadcast()
+                    .expect("credential save must reach sibling windows");
+                assert!(broadcast
+                    .profile("ps-save")
+                    .unwrap()
+                    .credential_reference()
+                    .is_some_and(|saved| saved == &reference));
+            } else {
+                assert!(saved.credential_reference().is_none());
+                assert!(store.get(&reference).is_err());
+                assert!(harness.state_mut().take_configuration_broadcast().is_none());
+            }
+            assert!(matches!(
+                harness.state().state.active_tab().content,
+                TabContent::Launcher
+            ));
+        }
+    }
+
+    #[test]
+    fn powershell_command_editor_is_not_terminal_input_surface() {
+        let context = egui::Context::default();
+        let (app, _) = app_with_powershell_tab(&context);
+
+        assert!(!app.terminal_surface_owns_input());
+        assert!(!app.terminal_owns_input());
+        let shortcuts = app.shortcut_context(&context, false);
+        assert!(!shortcuts.terminal_input);
+        assert!(!shortcuts.allows(festerm_config::KeyboardAction::Copy));
+        assert!(!shortcuts.allows(festerm_config::KeyboardAction::Paste));
+    }
+
+    #[test]
+    fn powershell_close_confirmation_covers_active_work_without_terminal_shutdown() {
+        let context = egui::Context::default();
+        let (mut app, tab) = app_with_powershell_tab(&context);
+        set_confirm_session_close(&mut app, &context, true);
+        let TabContent::PowerShell(powershell) = &mut app.state.active_tab_mut().content else {
+            panic!("expected active PowerShell tab");
+        };
+        powershell.set_state_for_test(crate::powershell::PowerShellState::Running);
+
+        app.request_close_tab(tab, &context);
+
+        let pending = app
+            .overlays
+            .pending_close
+            .as_ref()
+            .expect("running PowerShell needs close confirmation");
+        assert_eq!(pending.consequence, CloseConsequence::ClosePowerShell);
+        assert_eq!(app.state.live_session_counts().powershell, 1);
     }
 
     #[test]
@@ -8756,6 +9137,38 @@ mod tests {
         );
         assert!(!harness.state().quit_confirmed);
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn powershell_cleanup_is_not_authorized_by_a_deferred_document_close() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        let handle = harness.state_mut().retire_powershell_for_test();
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+        let mut output = context.run_ui(input, |ui| harness.state_mut().frame_logic(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(!harness.state().window_close_requested());
+        assert!(harness.state().overlays.pending_document_close.is_some());
+        assert!(harness.state().powershell_shutdown_started.is_none());
+        assert!(!handle.close_requested_for_test());
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, egui::ViewportCommand::CancelClose)));
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(!harness.state().window_close_requested());
+        assert!(!handle.close_requested_for_test());
+        handle.finish_for_test();
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
@@ -11136,7 +11549,7 @@ mod tests {
                 credential_kind: festerm_config::CredentialKind::Password,
                 launch_tab: origin,
                 launch_epoch: harness.state().state.input_ownership_epoch(),
-                profile_snapshot: profile.as_ssh().unwrap().clone(),
+                profile_snapshot: profile.clone(),
             });
             let context = egui::Context::default();
             match scenario {
@@ -11168,6 +11581,13 @@ mod tests {
             }
             let active_after_change = harness.state().state.active();
             harness.state_mut().process_pending_password_store(&context);
+            if let Some((receiver, _)) = harness.state_mut().overlays.pending_secret_cleanup.take()
+            {
+                receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap()
+                    .unwrap();
+            }
             assert_eq!(harness.state().state.active(), active_after_change);
             assert!(!harness
                 .state()

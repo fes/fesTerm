@@ -58,12 +58,14 @@ enum LauncherItemKind<'a> {
     NewSsh,
     NewSftp,
     NewSerial,
+    NewPowerShell,
     /// Opens a Markdown workspace: the file picker, then a viewer tab.
     NewMarkdown,
     LocalProfile(&'a str),
     SshProfile(&'a str),
     SftpProfile(&'a str),
     SerialProfile(&'a str),
+    PowerShellProfile(&'a str),
     ResumeSession(&'a festerm_sessiond::UnattachedSession),
     /// A locally running tmux or GNU screen session offered from its own
     /// quick-connect widget (feature request: local tmux/screen quick
@@ -101,6 +103,7 @@ enum ProfileTableKind {
     Ssh,
     Sftp,
     Serial,
+    PowerShell,
 }
 
 impl ProfileTableKind {
@@ -110,6 +113,7 @@ impl ProfileTableKind {
             Self::Ssh => "SSH",
             Self::Sftp => "SFTP",
             Self::Serial => "Serial",
+            Self::PowerShell => "PowerShell",
         }
     }
 
@@ -119,6 +123,7 @@ impl ProfileTableKind {
             Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
             Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
             Self::Serial => (Icon::Serial, theme::ICON_SESSION_SERIAL),
+            Self::PowerShell => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
         }
     }
 }
@@ -145,6 +150,9 @@ impl ProfileTableItem {
                 profile_id: self.identifier.clone(),
             },
             ProfileTableKind::Serial => AppCommand::StartConfiguredSerialProfile {
+                profile_id: self.identifier.clone(),
+            },
+            ProfileTableKind::PowerShell => AppCommand::OpenConfiguredPowerShellProfile {
                 profile_id: self.identifier.clone(),
             },
         }
@@ -191,6 +199,7 @@ impl LauncherItem<'_> {
             LauncherItemKind::SshProfile(_) => ProfileTableKind::Ssh,
             LauncherItemKind::SftpProfile(_) => ProfileTableKind::Sftp,
             LauncherItemKind::SerialProfile(_) => ProfileTableKind::Serial,
+            LauncherItemKind::PowerShellProfile(_) => ProfileTableKind::PowerShell,
             _ => unreachable!("only saved profiles are rendered by the profile table"),
         };
         ProfileTableItem {
@@ -212,13 +221,15 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
+            | LauncherItemKind::NewPowerShell
             | LauncherItemKind::NewMarkdown
             | LauncherItemKind::ResumeSession(_)
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SftpProfile(id)
-            | LauncherItemKind::SerialProfile(id) => Some(id),
+            | LauncherItemKind::SerialProfile(id)
+            | LauncherItemKind::PowerShellProfile(id) => Some(id),
         }
     }
 
@@ -243,6 +254,9 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewSerial | LauncherItemKind::SerialProfile(_) => {
                 (Icon::Serial, theme::ICON_SESSION_SERIAL)
             }
+            LauncherItemKind::NewPowerShell | LauncherItemKind::PowerShellProfile(_) => {
+                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
+            }
             LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
         }
     }
@@ -263,6 +277,9 @@ impl LauncherItem<'_> {
                     "the New Serial Connection item opens the serial form, not an AppCommand"
                 )
             }
+            LauncherItemKind::NewPowerShell => AppCommand::CreateProfile {
+                kind: NewProfileKind::PowerShell,
+            },
             LauncherItemKind::NewMarkdown => AppCommand::OpenMarkdownWorkspace,
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
@@ -275,6 +292,11 @@ impl LauncherItem<'_> {
             },
             LauncherItemKind::SerialProfile(profile_id) => {
                 AppCommand::StartConfiguredSerialProfile {
+                    profile_id: profile_id.to_owned(),
+                }
+            }
+            LauncherItemKind::PowerShellProfile(profile_id) => {
+                AppCommand::OpenConfiguredPowerShellProfile {
                     profile_id: profile_id.to_owned(),
                 }
             }
@@ -3362,6 +3384,11 @@ pub fn show_launcher(
             "Open a Markdown workspace".to_owned(),
             LauncherItemKind::NewMarkdown,
         ),
+        LauncherItem::untabulated(
+            "PowerShell".to_owned(),
+            "Experimental structured HTTPS/NTLM PSRP".to_owned(),
+            LauncherItemKind::NewPowerShell,
+        ),
     ];
     let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
@@ -3448,6 +3475,11 @@ pub fn show_launcher(
                 LauncherItemKind::SerialProfile(profile.identifier()),
                 "Serial",
                 serial.device().to_owned(),
+            ),
+            Profile::PowerShell(powershell) => (
+                LauncherItemKind::PowerShellProfile(profile.identifier()),
+                "PowerShell",
+                powershell.host().to_owned(),
             ),
         };
         LauncherItem {
@@ -4006,6 +4038,7 @@ fn show_launch_card_row(
                         LauncherItemKind::NewSerial => {
                             state.pending_form = Some(LauncherForm::Serial);
                         }
+                        LauncherItemKind::NewPowerShell => *command = Some(item.command()),
                         _ => *command = Some(item.command()),
                     }
                 }
@@ -4670,30 +4703,35 @@ mod tests {
         configuration: Configuration,
         width: f32,
     ) -> Harness<'static, LauncherHarnessState> {
-        Harness::builder()
-            .with_size(egui::vec2(width, 880.0))
-            .build_ui_state(
-                move |ui, state: &mut LauncherHarnessState| {
-                    if let Some(command) = show_launcher(
-                        ui,
-                        state.tab_id,
-                        &state.configuration,
-                        true,
-                        None,
-                        false,
-                        &[],
-                        &[],
-                        &[],
-                    ) {
-                        state.command = Some(command);
-                    }
-                },
-                LauncherHarnessState {
-                    tab_id: AppState::for_test().active(),
-                    configuration,
-                    command: None,
-                },
-            )
+        harness_with_configuration_size(configuration, egui::vec2(width, 880.0))
+    }
+
+    fn harness_with_configuration_size(
+        configuration: Configuration,
+        size: egui::Vec2,
+    ) -> Harness<'static, LauncherHarnessState> {
+        Harness::builder().with_size(size).build_ui_state(
+            move |ui, state: &mut LauncherHarnessState| {
+                if let Some(command) = show_launcher(
+                    ui,
+                    state.tab_id,
+                    &state.configuration,
+                    true,
+                    None,
+                    false,
+                    &[],
+                    &[],
+                    &[],
+                ) {
+                    state.command = Some(command);
+                }
+            },
+            LauncherHarnessState {
+                tab_id: AppState::for_test().active(),
+                configuration,
+                command: None,
+            },
+        )
     }
 
     fn harness_with_profiles_and_grid(
@@ -4862,6 +4900,34 @@ mod tests {
         assert!(harness
             .query_by_label("Working directory (optional)")
             .is_none());
+    }
+
+    #[test]
+    fn powershell_new_profile_card_dispatches_at_narrow_and_wide_tab_sizes() {
+        for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
+            let mut harness = harness_with_configuration_size(Configuration::empty(), size);
+            harness.run_ok();
+
+            harness
+                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM PSRP")
+                .scroll_to_me();
+            harness.run_ok();
+            harness
+                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM PSRP")
+                .click();
+            harness.run_ok();
+
+            assert!(
+                matches!(
+                    harness.state().command,
+                    Some(AppCommand::CreateProfile {
+                        kind: NewProfileKind::PowerShell
+                    })
+                ),
+                "PowerShell card should dispatch CreateProfile at {size:?}, got {:?}",
+                harness.state().command
+            );
+        }
     }
 
     #[test]
@@ -6573,8 +6639,8 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        // Past the five launch cards to the first saved profile.
-        for _ in 0..5 {
+        // Past the six launch cards to the first saved profile.
+        for _ in 0..6 {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
         }

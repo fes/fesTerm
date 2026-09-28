@@ -35,6 +35,58 @@
   ],
   "coverage": [
     {
+      "id": "native-powershell-desktop",
+      "edges": [
+        "PSRP-02",
+        "PSRP-03",
+        "PSRP-04",
+        "PSRP-05"
+      ],
+      "requirements": [
+        "docs/gui-design.md#native-powershell-sessions",
+        "docs/powershell-enterprise.md#native-backend-example"
+      ],
+      "decisions": [
+        "ADR-0041"
+      ],
+      "automated_tests": [
+        "endpoint_configuration_defaults_to_windows_powershell_resource_uri",
+        "endpoint_selects_explicit_configurations_without_fallback",
+        "endpoint_configuration_name_trims_but_preserves_selection",
+        "endpoint_configuration_name_rejects_unsafe_or_bounded_input",
+        "psrp_configuration_cli_selects_endpoint_and_preserves_positionals",
+        "psrp_configuration_cli_rejects_malformed_values_at_parse_time",
+        "powershell_profile_toml_uses_secret_free_metadata_fields",
+        "powershell_new_profile_card_dispatches_at_narrow_and_wide_tab_sizes",
+        "powershell_profile_editor_click_flow_dispatches_secret_free_save",
+        "powershell_profile_edit_preserves_stored_reference_and_new_password_is_transient",
+        "powershell_password_save_links_only_unchanged_saved_profile",
+        "powershell_workspace_restores_disconnected_metadata_only",
+        "worker_keeps_session_ready_after_recoverable_pipeline_failure",
+        "worker_close_running_cancels_drains_and_closes",
+        "worker_nonblocking_mailbox_allows_close_when_gui_queue_full",
+        "close_failure_is_reported_not_shaped_as_success",
+        "presentation_queue_enforces_cumulative_byte_budget",
+        "bounded_value_renderer_truncates_deep_and_large_values",
+        "powershell_secondary_close_waits_only_for_its_own_retiring_workers",
+        "powershell_primary_quit_waits_for_all_window_workers_without_blocking",
+        "powershell_shutdown_deadline_allows_unconfirmed_cleanup_exit",
+        "powershell_cleanup_is_not_authorized_by_a_deferred_document_close",
+        "closing_powershell_tab_retains_cleanup_until_worker_exit"
+      ],
+      "manual_scenarios": [
+        "CP-20",
+        "CP-23"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "native GUI lifecycle, accessibility and keyboard usability with an authorized endpoint on each desktop platform",
+        "cross-host macOS and Linux HTTPS/NTLM interoperability and approved corporate endpoint authentication",
+        "restricted/JEA permissions and interactive-host behavior require separate qualification",
+        "remote sessiond attachment and enterprise broker/device-compliance integration are not implemented"
+      ]
+    },
+    {
       "id": "local-source-address-selection",
       "edges": [
         "NET-01",

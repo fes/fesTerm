@@ -99,6 +99,15 @@ activating an old tab or using the current tab. See
 
 ## Invocation Surfaces
 
+Native PowerShell uses this same command boundary without adopting the
+terminal byte-stream contract. Connect, Run, Stop and Close target the owning
+structured-session tab. Its worker owns blocking protocol and secret/trust
+loading, reports bounded state/results and wakes the application; GUI
+callbacks never wait for a network operation. Closing an owner prevents late
+results from being installed into another tab and initiates background cleanup.
+Workspace restore opens disconnected metadata only. See
+[native PowerShell sessions](gui-design.md#native-powershell-sessions).
+
 The following surfaces should reuse the command model:
 
 - session launcher;

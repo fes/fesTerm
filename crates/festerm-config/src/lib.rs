@@ -31,9 +31,10 @@ pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use profiles::{
     CredentialKind, KnownHostEntry, LocalBindPolicy, LocalProfileConfiguration,
-    PersistenceConfiguration, PersistenceProviderKind, Profile, ProfileUsageEntry,
-    RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity, SerialProfileConfiguration,
-    SerialStopBits, SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
+    PersistenceConfiguration, PersistenceProviderKind, PowerShellProfileConfiguration, Profile,
+    ProfileUsageEntry, RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity,
+    SerialProfileConfiguration, SerialStopBits, SshPortForwardConfiguration,
+    SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use settings::{
     ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
@@ -179,6 +180,27 @@ impl Configuration {
         };
         profile.credential_id = Some(CredentialReference::new(credential_reference));
         profile.credential_kind = kind;
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns a complete replacement with one native PowerShell profile's
+    /// opaque native-store password reference changed.
+    pub fn with_powershell_credential(
+        &self,
+        identifier: &str,
+        credential_reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        let profile = replacement
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.identifier() == identifier)
+            .ok_or_else(|| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))?;
+        let Profile::PowerShell(profile) = profile else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        };
+        profile.credential_id = Some(CredentialReference::new(credential_reference));
         replacement.validate()?;
         Ok(replacement)
     }
@@ -697,8 +719,11 @@ fn inspect_profile_for_secret_material(value: &toml::Value) -> Result<(), Config
     let toml::Value::Table(profile) = value else {
         return inspect_value_for_secret_material(value, false);
     };
-    let is_ssh = matches!(profile.get("kind"), Some(toml::Value::String(kind)) if kind == "ssh");
-    inspect_table_for_secret_material(profile, is_ssh)
+    let allows_credential = matches!(
+        profile.get("kind"),
+        Some(toml::Value::String(kind)) if kind == "ssh" || kind == "power_shell"
+    );
+    inspect_table_for_secret_material(profile, allows_credential)
 }
 
 fn inspect_value_for_secret_material(
@@ -1131,6 +1156,7 @@ id = "settings"
         assert_eq!(ssh.initial_size().rows(), 43);
 
         let serialized = configuration.to_toml().unwrap();
+
         assert!(serialized.starts_with("schema_version = 1\n"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
     }
@@ -1483,7 +1509,7 @@ credential_id = 42
     }
 
     #[test]
-    fn only_ssh_profile_credential_id_is_permitted_by_secret_field_scanning() {
+    fn only_transport_profile_credential_id_is_permitted_by_secret_field_scanning() {
         for document in [
             r#"
 schema_version = 1
@@ -1527,6 +1553,84 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
                 ConfigErrorKind::ForbiddenSecretField
             );
         }
+
+        let parsed = Configuration::parse(&format!(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "power_shell"
+id = "ps"
+host = "win.example.test"
+username = "alice"
+credential_id = "{CREDENTIAL_REFERENCE}"
+"#
+        ))
+        .unwrap();
+        assert!(parsed
+            .profile("ps")
+            .and_then(Profile::as_powershell)
+            .and_then(PowerShellProfileConfiguration::credential_reference)
+            .is_some());
+    }
+
+    #[test]
+    fn powershell_profile_toml_uses_secret_free_metadata_fields() {
+        let reference = SecretReference::parse("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let profile = Profile::powershell("ops-ps", "win.example.test", 5986, "alice")
+            .unwrap()
+            .as_powershell()
+            .unwrap()
+            .clone()
+            .with_domain(Some("CONTOSO".to_owned()))
+            .unwrap()
+            .with_configuration_name("PowerShell.7")
+            .unwrap()
+            .with_trusted_ca_file(Some("certs/lab-ca.pem".to_owned()))
+            .unwrap()
+            .with_local_bind_policy(LocalBindPolicy::Address("127.0.0.1".parse().unwrap()))
+            .unwrap();
+        let configuration = Configuration::new(vec![Profile::PowerShell(profile)])
+            .unwrap()
+            .with_powershell_credential("ops-ps", reference)
+            .unwrap();
+        let profile = configuration
+            .profile("ops-ps")
+            .and_then(Profile::as_powershell)
+            .expect("PowerShell profile parses");
+        assert_eq!(profile.host(), "win.example.test");
+        assert_eq!(profile.port(), 5986);
+        assert_eq!(profile.username(), "alice");
+        assert_eq!(profile.domain(), Some("CONTOSO"));
+        assert_eq!(profile.configuration_name(), "PowerShell.7");
+        assert_eq!(
+            profile.trusted_ca_file().map(|path| path.to_string_lossy()),
+            Some(std::borrow::Cow::Borrowed("certs/lab-ca.pem"))
+        );
+        assert_eq!(
+            profile
+                .credential_reference()
+                .map(|reference| reference.to_persisted_string()),
+            Some("550e8400-e29b-41d4-a716-446655440000".to_owned())
+        );
+        let serialized = configuration.to_toml().unwrap();
+        for expected in [
+            r#"kind = "power_shell""#,
+            r#"host = "win.example.test""#,
+            r#"domain = "CONTOSO""#,
+            r#"configuration_name = "PowerShell.7""#,
+            r#"trusted_ca_file = "certs/lab-ca.pem""#,
+            "[profiles.local_bind_policy]",
+            r#"address = "127.0.0.1""#,
+            r#"credential_id = "550e8400-e29b-41d4-a716-446655440000""#,
+        ] {
+            assert!(
+                serialized.contains(expected),
+                "missing {expected:?} in {serialized}"
+            );
+        }
+        assert!(!serialized.contains("password"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
     }
 
     #[test]
@@ -1537,6 +1641,7 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
                 WorkspaceTab::local_session("local-tab", "local").unwrap(),
                 WorkspaceTab::ssh_session("ssh-tab", "remote").unwrap(),
                 WorkspaceTab::sftp_session("sftp-tab", "remote").unwrap(),
+                WorkspaceTab::powershell_session("ps-tab", "ps").unwrap(),
                 WorkspaceTab::settings("settings").unwrap(),
                 WorkspaceTab::profiles("profiles").unwrap(),
             ],
@@ -1556,6 +1661,7 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
                     24,
                 )
                 .unwrap(),
+                Profile::powershell("ps", "win.example.test", 5986, "alice").unwrap(),
             ],
             workspace,
         )

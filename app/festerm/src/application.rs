@@ -165,9 +165,43 @@ impl FesTermApplication {
         self.broadcast_committed_configuration();
         self.move_requested_tabs(context);
         self.open_requested_windows(context);
+        self.settle_powershell_shutdown(context);
         self.close_finished_windows(context);
         self.save_workspace_if_requested();
         self.publish_window_footprints(context);
+    }
+
+    fn settle_powershell_shutdown(&mut self, context: &egui::Context) {
+        let quitting = self.windows[0].app.window_close_requested();
+        let mut ready = true;
+        for window in &mut self.windows {
+            if quitting || window.app.window_close_requested() {
+                let finished = window.app.prepare_powershell_shutdown(context);
+                if !quitting && !finished {
+                    context.send_viewport_cmd_to(
+                        window.id.viewport_id(),
+                        egui::ViewportCommand::CancelClose,
+                    );
+                }
+                if !quitting && finished {
+                    context.send_viewport_cmd_to(
+                        window.id.viewport_id(),
+                        egui::ViewportCommand::Close,
+                    );
+                }
+                ready &= finished;
+            }
+        }
+        if quitting {
+            context.send_viewport_cmd_to(
+                egui::ViewportId::ROOT,
+                if ready {
+                    egui::ViewportCommand::Close
+                } else {
+                    egui::ViewportCommand::CancelClose
+                },
+            );
+        }
     }
 
     /// Publishes every open window's screen footprint, so the *next* pass can
@@ -420,6 +454,7 @@ const DETACH_POINTER_INSET: f32 = 60.0;
 impl eframe::App for FesTermApplication {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
         eframe::App::logic(self.primary_mut(), context, frame);
+        self.settle_powershell_shutdown(context);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -634,6 +669,82 @@ mod tests {
         application.settle_windows(&context);
 
         assert_eq!(application.window_count(), 1);
+    }
+
+    #[test]
+    fn powershell_secondary_close_waits_only_for_its_own_retiring_workers() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        let primary = application.window_mut(0).retire_powershell_for_test();
+        let secondary = application.window_mut(1).retire_powershell_for_test();
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows(&context);
+        assert_eq!(application.window_count(), 2);
+        assert!(secondary.close_requested_for_test());
+        assert!(!primary.close_requested_for_test());
+        secondary.finish_for_test();
+        application.settle_windows(&context);
+        assert_eq!(application.window_count(), 1);
+        assert!(!primary.close_requested_for_test());
+        primary.finish_for_test();
+    }
+
+    #[test]
+    fn powershell_primary_quit_waits_for_all_window_workers_without_blocking() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        let primary = application.window_mut(0).retire_powershell_for_test();
+        let secondary = application.window_mut(1).retire_powershell_for_test();
+        application.window_mut(0).accept_window_close_for_test();
+        assert!(!powershell_close_pass(&mut application, &context));
+        assert!(primary.close_requested_for_test());
+        assert!(secondary.close_requested_for_test());
+        primary.finish_for_test();
+        assert!(!powershell_close_pass(&mut application, &context));
+        secondary.finish_for_test();
+        assert!(powershell_close_pass(&mut application, &context));
+    }
+
+    #[test]
+    fn powershell_shutdown_deadline_allows_unconfirmed_cleanup_exit() {
+        let (mut application, context) = application();
+        let handle = application.window_mut(0).retire_powershell_for_test();
+        application.window_mut(0).accept_window_close_for_test();
+        application
+            .window_mut(0)
+            .expire_powershell_shutdown_for_test();
+        assert!(powershell_close_pass(&mut application, &context));
+        assert!(!handle.is_finished());
+        assert!(handle.close_requested_for_test());
+        handle.finish_for_test();
+    }
+
+    fn powershell_close_pass(
+        application: &mut FesTermApplication,
+        context: &egui::Context,
+    ) -> bool {
+        let mut output = context.run_ui(Default::default(), |ui| {
+            application.settle_windows(ui.ctx())
+        });
+        output.textures_delta.clear();
+        let command = output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .rev()
+            .find(|command| {
+                matches!(
+                    command,
+                    egui::ViewportCommand::Close | egui::ViewportCommand::CancelClose
+                )
+            })
+            .expect("shutdown must explicitly close or cancel close");
+        matches!(command, egui::ViewportCommand::Close)
     }
 
     /// A window must not re-broadcast a document it merely adopted, or two

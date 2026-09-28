@@ -443,6 +443,53 @@ an adapter, repair routing, or bypass network policy. The UI must say so.
 Native PSRP exposes the same fixed-source/Automatic transport distinction
 through its pre-GUI endpoint API and CLI, not a new PowerShell profile type.
 
+### Native PowerShell sessions
+
+The experimental native PowerShell connection is a structured PSRP session,
+not an SSH shell or a VT terminal. Its chip uses the same independent-session
+chrome as other connections, but its content is a command editor and bounded
+result view. Local PowerShell launched through a PTY remains a separate
+existing capability.
+
+Saved profiles contain endpoint metadata, username/domain, the selected
+PowerShell configuration, optional trusted-CA file path, local source policy,
+and an opaque native-store credential reference. They never contain passwords,
+commands, output objects, or runspace contents. HTTPS/NTLM is explicitly
+labeled as the initial experimental mode, not Entra login. Configuration
+selection is exact: an unavailable or unauthorized PowerShell 7 or restricted
+configuration must not fall back to Windows PowerShell.
+
+Connecting, starting a pipeline, consuming protocol messages, loading trust
+files or native credentials, and closing the runspace are background work.
+One pipeline runs at a time. Run and Stop are application commands;
+cancellation remains pending until the backend acknowledges termination or
+reports uncertain/invalidated state. A command failure does not by itself
+authorize rebuilding the runspace. Network loss is explicit; reconnect,
+resumption and continuity must not be implied.
+
+Output, Error, Warning, Verbose, Debug, Information and Progress remain
+distinguishable. Structured values retain their types/properties through the
+backend-to-presentation boundary. Rendering must not evaluate remote content,
+interpret it as VT, or allocate an unbounded formatted representation.
+Command input, queues, retained output and per-frame work have finite limits.
+Reaching a limit is visible; it cannot silently discard a terminal lifecycle
+message or make a failed command look successful. Unsupported host prompts and
+native interactive console applications are rejected explicitly.
+
+Closing a tab cancels active work and requests bounded remote cleanup without
+blocking a GUI frame. An in-flight connection that finishes after its tab was
+closed is cleaned up rather than installed into a different tab. Restoring a
+workspace restores only its saved profile reference and a disconnected setup
+surface; no password is read and no network connection is made automatically.
+Ask source selection is resolved anew for each connection, never restored
+from a previous runtime choice.
+
+Application/window teardown waits asynchronously for owned PowerShell workers,
+including workers from recently closed tabs, within a finite cleanup deadline.
+Expiry reports unconfirmed remote state, not successful termination. Pending
+cleanup counts toward the connection-worker limit so repeatedly opening and
+closing tabs cannot accumulate unbounded background sessions.
+
 ### Launcher as a tab
 
 The launcher should use the same tab model as sessions.

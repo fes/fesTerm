@@ -65,13 +65,14 @@ impl<'de> Deserialize<'de> for CredentialReference {
     }
 }
 
-/// A reusable local-shell or SSH profile.
+/// A reusable local-shell, SSH/SFTP, serial, or native PowerShell profile.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Profile {
     Local(LocalProfileConfiguration),
     Ssh(SshProfileConfiguration),
     Serial(SerialProfileConfiguration),
+    PowerShell(PowerShellProfileConfiguration),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -204,6 +205,31 @@ impl Profile {
         profile.validate()?;
         Ok(profile)
     }
+
+    /// Creates a native PowerShell HTTPS/PSRP profile with secret-free
+    /// metadata. The password, when remembered, is represented only by an
+    /// opaque native-store reference added via
+    /// [`Self::with_powershell_credential_reference`].
+    pub fn powershell(
+        identifier: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        username: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::PowerShell(PowerShellProfileConfiguration {
+            id: identifier.into(),
+            host: host.into(),
+            port,
+            username: username.into(),
+            domain: None,
+            configuration_name: default_powershell_configuration_name(),
+            trusted_ca_file: None,
+            local_bind_policy: LocalBindPolicy::default(),
+            credential_id: None,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
     ///
     /// This accepts only the validated reference type, so callers cannot put a
     /// raw identifier or a secret value into profile metadata.
@@ -260,7 +286,28 @@ impl Profile {
                     ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
                 ))
             }
+            Self::PowerShell(_) => {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
+                ))
+            }
         }
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Associates a native PowerShell profile with an opaque native-store
+    /// password reference. No password material is stored in configuration.
+    pub fn with_powershell_credential_reference(
+        mut self,
+        credential_reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let Self::PowerShell(profile) = &mut self else {
+            return Err(ConfigError::new(
+                ConfigErrorKind::CredentialReferenceRequiresSshProfile,
+            ));
+        };
+        profile.credential_id = Some(CredentialReference::new(credential_reference));
         self.validate()?;
         Ok(self)
     }
@@ -271,6 +318,7 @@ impl Profile {
             Self::Local(profile) => profile.identifier(),
             Self::Ssh(profile) => profile.identifier(),
             Self::Serial(profile) => profile.identifier(),
+            Self::PowerShell(profile) => profile.identifier(),
         }
     }
 
@@ -278,7 +326,7 @@ impl Profile {
     pub fn as_local(&self) -> Option<&LocalProfileConfiguration> {
         match self {
             Self::Local(profile) => Some(profile),
-            Self::Ssh(_) | Self::Serial(_) => None,
+            Self::Ssh(_) | Self::Serial(_) | Self::PowerShell(_) => None,
         }
     }
 
@@ -286,7 +334,7 @@ impl Profile {
     pub fn as_ssh(&self) -> Option<&SshProfileConfiguration> {
         match self {
             Self::Ssh(profile) => Some(profile),
-            Self::Local(_) | Self::Serial(_) => None,
+            Self::Local(_) | Self::Serial(_) | Self::PowerShell(_) => None,
         }
     }
 
@@ -294,14 +342,25 @@ impl Profile {
     pub fn as_serial(&self) -> Option<&SerialProfileConfiguration> {
         match self {
             Self::Serial(profile) => Some(profile),
-            Self::Local(_) | Self::Ssh(_) => None,
+            Self::Local(_) | Self::Ssh(_) | Self::PowerShell(_) => None,
+        }
+    }
+
+    /// Returns native PowerShell metadata when this is a PowerShell profile.
+    pub fn as_powershell(&self) -> Option<&PowerShellProfileConfiguration> {
+        match self {
+            Self::PowerShell(profile) => Some(profile),
+            Self::Local(_) | Self::Ssh(_) | Self::Serial(_) => None,
         }
     }
 
     /// Returns this SSH profile's opaque native-store SSH-password reference, if set.
     pub fn credential_reference(&self) -> Option<&SecretReference> {
-        self.as_ssh()
-            .and_then(SshProfileConfiguration::credential_reference)
+        match self {
+            Self::Ssh(profile) => profile.credential_reference(),
+            Self::PowerShell(profile) => profile.credential_reference(),
+            Self::Local(_) | Self::Serial(_) => None,
+        }
     }
 
     /// Returns this profile's durable-session provider and name,
@@ -311,7 +370,7 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.persistence(),
             Self::Ssh(profile) => profile.persistence(),
-            Self::Serial(_) => None,
+            Self::Serial(_) | Self::PowerShell(_) => None,
         }
     }
 
@@ -320,6 +379,7 @@ impl Profile {
             Self::Local(profile) => profile.validate(),
             Self::Ssh(profile) => profile.validate(),
             Self::Serial(profile) => profile.validate(),
+            Self::PowerShell(profile) => profile.validate(),
         }
     }
 }
@@ -896,6 +956,157 @@ pub struct SerialProfileConfiguration {
     flow_control: SerialFlowControl,
 }
 
+const DEFAULT_POWERSHELL_PORT: u16 = 5986;
+
+fn default_powershell_port() -> u16 {
+    DEFAULT_POWERSHELL_PORT
+}
+
+fn default_powershell_configuration_name() -> String {
+    "Microsoft.PowerShell".to_owned()
+}
+
+fn valid_powershell_configuration_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// Secret-free metadata for an experimental native PowerShell HTTPS/PSRP
+/// connection. Authentication material is represented only by
+/// [`Self::credential_reference`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PowerShellProfileConfiguration {
+    id: String,
+    host: String,
+    #[serde(default = "default_powershell_port")]
+    port: u16,
+    username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    domain: Option<String>,
+    #[serde(default = "default_powershell_configuration_name")]
+    configuration_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trusted_ca_file: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_local_bind_policy")]
+    local_bind_policy: LocalBindPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) credential_id: Option<CredentialReference>,
+}
+
+impl PowerShellProfileConfiguration {
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn domain(&self) -> Option<&str> {
+        self.domain.as_deref()
+    }
+
+    pub fn configuration_name(&self) -> &str {
+        &self.configuration_name
+    }
+
+    pub fn trusted_ca_file(&self) -> Option<&Path> {
+        self.trusted_ca_file.as_deref().map(Path::new)
+    }
+
+    pub const fn local_bind_policy(&self) -> LocalBindPolicy {
+        self.local_bind_policy
+    }
+
+    pub fn credential_reference(&self) -> Option<&SecretReference> {
+        self.credential_id
+            .as_ref()
+            .map(CredentialReference::as_secret_reference)
+    }
+
+    pub fn with_domain(mut self, domain: Option<String>) -> Result<Self, ConfigError> {
+        self.domain = domain;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_configuration_name(mut self, name: impl Into<String>) -> Result<Self, ConfigError> {
+        self.configuration_name = name.into();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_trusted_ca_file(mut self, path: Option<String>) -> Result<Self, ConfigError> {
+        self.trusted_ca_file = path;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_local_bind_policy(
+        mut self,
+        local_bind_policy: LocalBindPolicy,
+    ) -> Result<Self, ConfigError> {
+        self.local_bind_policy = local_bind_policy;
+        self.validate()?;
+        Ok(self)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        if self.host.trim().is_empty()
+            || self.host.contains("://")
+            || self.host.contains('/')
+            || self.host.contains('@')
+            || self.username.trim().is_empty()
+            || self.configuration_name.trim().is_empty()
+            || self.configuration_name.trim() != self.configuration_name
+            || !valid_powershell_configuration_name(&self.configuration_name)
+            || contains_control_character(&self.host)
+            || contains_control_character(&self.username)
+            || contains_control_character(&self.configuration_name)
+            || contains_secret_bearing_value(&self.host)
+            || contains_secret_bearing_value(&self.username)
+            || contains_secret_bearing_value(&self.configuration_name)
+            || self.port == 0
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        if self.domain.as_ref().is_some_and(|domain| {
+            domain.trim().is_empty()
+                || contains_control_character(domain)
+                || contains_secret_bearing_value(domain)
+        }) {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        if self.trusted_ca_file.as_ref().is_some_and(|path| {
+            path.trim().is_empty()
+                || contains_control_character(path)
+                || contains_secret_bearing_value(path)
+        }) {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        self.local_bind_policy
+            .validate()
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))
+    }
+}
+
 impl SerialProfileConfiguration {
     /// Returns this profile's stable reusable identifier.
     pub fn identifier(&self) -> &str {
@@ -1343,6 +1554,58 @@ mod tests {
             .kind(),
             ConfigErrorKind::InvalidSshProfile
         );
+    }
+
+    #[test]
+    fn powershell_profiles_are_secret_free_and_validate_connection_metadata() {
+        let reference = SecretReference::parse(CREDENTIAL_REFERENCE).unwrap();
+        let profile = Profile::powershell("ops", "win.example.test", 5986, "alice")
+            .unwrap()
+            .with_powershell_credential_reference(reference)
+            .unwrap();
+        let powershell = profile.as_powershell().unwrap();
+        assert_eq!(powershell.configuration_name(), "Microsoft.PowerShell");
+        assert_eq!(
+            powershell
+                .credential_reference()
+                .unwrap()
+                .to_persisted_string(),
+            CREDENTIAL_REFERENCE
+        );
+        assert!(
+            Profile::powershell("bad", "https://win.example.test/wsman", 5986, "alice").is_err()
+        );
+        assert!(Profile::powershell("bad", "win.example.test", 0, "alice").is_err());
+        let powershell7 = powershell
+            .clone()
+            .with_configuration_name("PowerShell.7")
+            .unwrap();
+        assert_eq!(powershell7.configuration_name(), "PowerShell.7");
+        let custom_jea = powershell
+            .clone()
+            .with_configuration_name("JEA_Ops-1")
+            .unwrap();
+        assert_eq!(custom_jea.configuration_name(), "JEA_Ops-1");
+        for invalid in [
+            "",
+            " Microsoft.PowerShell",
+            "Microsoft PowerShell",
+            ".Microsoft.PowerShell",
+            "-Microsoft.PowerShell",
+            "http://schemas.microsoft.com/powershell/Microsoft.PowerShell",
+            "Microsoft/PowerShell",
+            "Microsoft\"PowerShell",
+            "Microsoft<PowerShell",
+        ] {
+            assert!(
+                powershell.clone().with_configuration_name(invalid).is_err(),
+                "{invalid:?} should be rejected"
+            );
+        }
+        assert!(powershell
+            .clone()
+            .with_configuration_name("A".repeat(257))
+            .is_err());
     }
 
     #[test]

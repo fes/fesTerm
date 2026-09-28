@@ -24,6 +24,7 @@ use crate::{
 pub(crate) enum CloseConsequence {
     TerminateLocalProcess,
     DisconnectSsh,
+    ClosePowerShell,
 }
 
 impl CloseConsequence {
@@ -34,6 +35,9 @@ impl CloseConsequence {
             }
             Self::DisconnectSsh => {
                 "The SSH connection will be disconnected and its terminal history discarded."
+            }
+            Self::ClosePowerShell => {
+                "The PowerShell runspace will be closed. A running command is cancelled first; no terminal history is involved."
             }
         }
     }
@@ -181,6 +185,11 @@ impl PendingQuitConfirmation {
             phrase(self.counts.local, "local process", "local processes"),
             phrase(self.counts.ssh, "SSH connection", "SSH connections"),
             phrase(self.counts.serial, "serial device", "serial devices"),
+            phrase(
+                self.counts.powershell,
+                "PowerShell session",
+                "PowerShell sessions",
+            ),
         ]
         .into_iter()
         .flatten()
@@ -213,7 +222,7 @@ pub(crate) struct PendingPasswordStore {
     /// A changed tab, input owner, or profile cancels the deferred connection.
     pub(crate) launch_tab: TabId,
     pub(crate) launch_epoch: u64,
-    pub(crate) profile_snapshot: festerm_config::SshProfileConfiguration,
+    pub(crate) profile_snapshot: festerm_config::Profile,
 }
 
 pub(crate) enum StoredCredentialLaunch {
@@ -261,6 +270,8 @@ pub(crate) struct OverlayState {
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
+    pub(crate) pending_secret_cleanup:
+        Option<(mpsc::Receiver<Result<bool, SecretStoreError>>, &'static str)>,
     /// The "Open Markdown File…" picker (#132), reusing the SFTP file
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
@@ -359,6 +370,7 @@ mod tests {
                     local: 1,
                     ssh: 0,
                     serial: 0,
+                    powershell: 0,
                 },
                 cancel_focus_requested: false,
                 purpose: QuitConfirmationPurpose::Quit,
@@ -386,6 +398,7 @@ mod tests {
                 local: 1,
                 ssh: 0,
                 serial: 0,
+                powershell: 0,
             },
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::Quit,
@@ -400,6 +413,7 @@ mod tests {
                 local: 1,
                 ssh: 2,
                 serial: 1,
+                powershell: 0,
             },
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::Quit,
@@ -417,6 +431,7 @@ mod tests {
                 local: 0,
                 ssh: 3,
                 serial: 1,
+                powershell: 0,
             },
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::Quit,
@@ -424,6 +439,24 @@ mod tests {
         assert_eq!(
             pending.summary_message(),
             "3 SSH connections and 1 serial device are still open."
+        );
+    }
+
+    #[test]
+    fn quit_summary_includes_active_powershell_sessions() {
+        let pending = PendingQuitConfirmation {
+            counts: crate::tabs::LiveSessionCounts {
+                local: 0,
+                ssh: 0,
+                serial: 0,
+                powershell: 2,
+            },
+            cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::Quit,
+        };
+        assert_eq!(
+            pending.summary_message(),
+            "2 PowerShell sessions are still open."
         );
     }
 

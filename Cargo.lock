@@ -2147,6 +2147,7 @@ dependencies = [
  "festerm-linux-power",
  "festerm-macos-window",
  "festerm-markdown",
+ "festerm-powershell",
  "festerm-pty",
  "festerm-secret-store",
  "festerm-serial",

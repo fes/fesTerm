@@ -40,6 +40,33 @@ Profile and workspace tab identifiers are unique within their respective
 collections and use one to 64 lowercase ASCII letters, digits, and internal
 hyphens.
 
+On `feat/powershell`, experimental native PSRP profiles use `kind =
+"power_shell"` (distinct from a local `pwsh` process). They store metadata
+only; the optional credential reference names a password in native secure
+storage:
+
+```toml
+[[profiles]]
+kind = "power_shell"
+id = "remote-ps"
+host = "win.example.test"
+port = 5986
+username = "alice"
+domain = "CONTOSO"
+configuration_name = "Microsoft.PowerShell"
+trusted_ca_file = "/path/to/lab-ca.pem"
+local_bind_policy = "ask"
+```
+
+`domain` and `trusted_ca_file` are optional. Omitting `local_bind_policy`
+selects Automatic; a fixed source uses `[profiles.local_bind_policy]` with
+`address = "127.0.0.1"`. `credential_id` is an optional opaque UUID, never a
+password. An optional workspace tab uses `kind = "power_shell_session"` and
+`profile_id = "remote-ps"`; it restores disconnected setup only. Neither
+commands, results, runspace state nor a previously prompted source address
+are persisted. Configuration names select registered endpoints exactly;
+choosing `PowerShell.7` does not install or authorize that endpoint.
+
 ```toml
 schema_version = 1
 workspace_enabled = true

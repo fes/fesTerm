@@ -57,8 +57,24 @@ must bind every underlying HTTP connection and fail rather than retry unbound.
 It does not select the Entra browser's interface, route DNS requests, or imply
 VPN/device-compliance guarantees. The shared SSH/SFTP profile and session
 selection contract is in
-[GUI design](../gui-design.md#local-source-address-selection); PSRP exposes
-the transport option without advertising a PowerShell GUI profile.
+[GUI design](../gui-design.md#local-source-address-selection).
+
+The next owner-authorized slice promotes the backend into an explicitly
+experimental desktop profile and structured result tab. The application owns
+typed connect/run/cancel/close commands, bounded presentation, and a worker
+adapter around the backend's blocking APIs. It does not implement PSRP inside
+the terminal SessionController. Neither tab drop nor a repaint may wait for
+network cleanup. Pending completion retains its original owner; closing a tab
+cancels/drains its command and closes any connection that arrives too late.
+Workspace persistence retains only the profile reference and restores an
+unconnected setup surface. There is no persisted command/output history.
+
+An explicit configuration name selects the endpoint's PowerShell resource
+URI for the complete shell lifecycle. The default remains
+`Microsoft.PowerShell`; PowerShell 7 and restricted/JEA names are explicit
+alternatives, not fallback candidates. Name validation and SOAP escaping
+remain transport responsibilities. Selecting a configuration does not grant
+its endpoint permissions or implement unsupported host calls.
 
 ### Enterprise identity and Dev Box
 
@@ -160,16 +176,20 @@ acceptance criteria pass.
 - **Invariants introduced or changed:** structured PSRP is separate from VT
   bytes; enterprise identity is separate from endpoint authorization; remote
   daemon access preserves current-user isolation and generation identity.
-- **GUI/action edges affected:** `PSRP-01` covers the native backend; `NET-01`
-  covers its optional source binding alongside SSH/SFTP. `NET-02` and `NET-03`
-  cover SSH/SFTP first-connect selection and retained session binding, not
-  a new PowerShell or enterprise UI.
+- **GUI/action edges affected:** `PSRP-01` covers the native backend;
+  `PSRP-02` through `PSRP-04` cover desktop connection, pipeline/close and
+  metadata-only restore. `PSRP-05` covers exact endpoint selection.
+  `NET-01` through `NET-03` define source selection and retained binding.
+  Enterprise GUI integration is not part of this slice.
 - **Automated tests required:** bounded capability/discovery serialization,
   protocol/schema mismatch, attached/stale/foreign registry records, metadata
   minimization, read-only behavior and unchanged legacy CLI parsing. Later
   slices require real protocol fixtures and cancellation/identity isolation.
   Source binding requires observed loopback peer addresses and fail-closed
   mismatched/unavailable-source regressions across HTTP connections.
+  Desktop coverage additionally requires injected workers, explicit source
+  choice, profile/credential isolation, output and queue bounds, cancellation,
+  stale completion, tab/window close, and metadata-only workspace restore.
 - **Native/manual evidence required:** CP-11 remains the local daemon gate.
   Controlled Windows PowerShell and PowerShell 7 endpoints, authorized Dev Box
   tenant access, and enrolled-device/broker evidence are additional prerequisites

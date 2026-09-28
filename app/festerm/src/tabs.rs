@@ -63,6 +63,7 @@ use std::rc::Rc;
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::local_bind::ResolvedLocalBind;
 use crate::markdown_viewer::MarkdownViewerTab;
+use crate::powershell::PowerShellTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 use crate::sftp_file_manager::{
     local_home_directory, SftpFileManagerAuthentication, SftpFileManagerLaunchTarget,
@@ -575,11 +576,12 @@ pub struct LiveSessionCounts {
     pub local: usize,
     pub ssh: usize,
     pub serial: usize,
+    pub powershell: usize,
 }
 
 impl LiveSessionCounts {
     pub const fn total(&self) -> usize {
-        self.local + self.ssh + self.serial
+        self.local + self.ssh + self.serial + self.powershell
     }
 }
 
@@ -1680,6 +1682,7 @@ pub enum TabContent {
     TextEditor(Box<TextEditorTab>),
     SftpFileManagerAuthenticationRequired(SftpFileManagerAuthenticationRequiredTab),
     SftpFileManager(Box<SftpFileManagerTab>),
+    PowerShell(Box<PowerShellTab>),
     Session(Box<SessionTab>),
 }
 
@@ -1762,6 +1765,7 @@ pub enum NewProfileKind {
     Ssh,
     Sftp,
     Serial,
+    PowerShell,
     SshFromDraft(SshProfileDraftSeed),
 }
 
@@ -1793,6 +1797,10 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    PowerShell {
+        tab_id: TabId,
+        action: crate::powershell::PowerShellAction,
+    },
     /// Cancels a preconnection form without retargeting a deferred credential completion.
     CancelConnectionSetup {
         tab_id: TabId,
@@ -1979,6 +1987,11 @@ pub enum AppCommand {
     /// Starts a serial session from a saved serial profile. Mirrors
     /// `StartConfiguredLocalProfile`.
     StartConfiguredSerialProfile {
+        profile_id: String,
+    },
+    /// Opens a native PowerShell profile as a disconnected structured setup
+    /// tab. Connecting is an explicit tab action, never workspace restore.
+    OpenConfiguredPowerShellProfile {
         profile_id: String,
     },
     /// Opens a local file in the native editor, binding to the document if it
@@ -2389,6 +2402,7 @@ pub struct AppState {
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
     tabs: Vec<Tab>,
+    retiring_powershell_workers: Vec<crate::powershell::PowerShellShutdownHandle>,
     active: TabId,
     /// Which tabs were looked at, oldest first, so that closing the active tab
     /// can return to the one it was opened from rather than to whichever tab
@@ -2501,6 +2515,7 @@ impl AppState {
             resume_error: None,
             pending_resume: None,
             tabs,
+            retiring_powershell_workers: Vec::new(),
             active,
             activation_history: Vec::new(),
             documents: DocumentRegistry::shared(),
@@ -2696,6 +2711,13 @@ impl AppState {
                         None,
                     )))
                 }
+                WorkspaceTab::PowerShellSession(tab) => {
+                    let profile = configuration
+                        .profile(tab.profile_id())
+                        .and_then(festerm_config::Profile::as_powershell)
+                        .expect("validated workspace PowerShell profile reference");
+                    TabContent::PowerShell(Box::new(PowerShellTab::new(profile.clone())))
+                }
             };
             restored.push(Tab { id, content });
         }
@@ -2719,16 +2741,20 @@ impl AppState {
     pub fn live_session_counts(&self) -> LiveSessionCounts {
         let mut counts = LiveSessionCounts::default();
         for tab in &self.tabs {
-            let TabContent::Session(session) = &tab.content else {
-                continue;
-            };
-            if !session.close_requires_confirmation() {
-                continue;
-            }
-            match session.inspector_transport {
-                InspectorTransport::Local { .. } => counts.local += 1,
-                InspectorTransport::Ssh { .. } | InspectorTransport::Sftp { .. } => counts.ssh += 1,
-                InspectorTransport::Serial { .. } => counts.serial += 1,
+            match &tab.content {
+                TabContent::Session(session) if session.close_requires_confirmation() => {
+                    match session.inspector_transport {
+                        InspectorTransport::Local { .. } => counts.local += 1,
+                        InspectorTransport::Ssh { .. } | InspectorTransport::Sftp { .. } => {
+                            counts.ssh += 1
+                        }
+                        InspectorTransport::Serial { .. } => counts.serial += 1,
+                    }
+                }
+                TabContent::PowerShell(powershell) if powershell.close_requires_confirmation() => {
+                    counts.powershell += 1;
+                }
+                _ => {}
             }
         }
         counts
@@ -2749,6 +2775,16 @@ impl AppState {
     /// Launcher choices. Existing session tabs retain their live transports
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
+        for tab in &mut self.tabs {
+            if let TabContent::PowerShell(powershell) = &mut tab.content {
+                if let Some(profile) = configuration
+                    .profile(powershell.profile_identifier())
+                    .and_then(festerm_config::Profile::as_powershell)
+                {
+                    powershell.refresh_profile(profile);
+                }
+            }
+        }
         self.configuration = configuration;
     }
 
@@ -2787,7 +2823,7 @@ impl AppState {
         self.default_sftp_local_directory = settings
             .default_sftp_local_directory()
             .map(Path::to_path_buf);
-        self.configuration = configuration;
+        self.replace_configuration(configuration);
     }
 
     /// Captures only restorable workspace metadata in current display order.
@@ -2840,6 +2876,10 @@ impl AppState {
                         WorkspaceTab::sftp_file_manager(identifier.clone(), profile_id)
                     })
                     .transpose()?,
+                TabContent::PowerShell(tab) => Some(WorkspaceTab::powershell_session(
+                    identifier.clone(),
+                    tab.profile_identifier(),
+                )?),
                 TabContent::Session(session) => session
                     .profile_identifier
                     .as_deref()
@@ -3058,7 +3098,8 @@ impl AppState {
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::SftpFileManager(_)
                 | TabContent::MarkdownViewer(_)
-                | TabContent::TextEditor(_) => None,
+                | TabContent::TextEditor(_)
+                | TabContent::PowerShell(_) => None,
             })
     }
 
@@ -3076,7 +3117,8 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::SftpFileManager(_) => None,
+                | TabContent::SftpFileManager(_)
+                | TabContent::PowerShell(_) => None,
             })
     }
 
@@ -3094,7 +3136,8 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::Session(_) => None,
+                | TabContent::Session(_)
+                | TabContent::PowerShell(_) => None,
             })
     }
 
@@ -3127,7 +3170,8 @@ impl AppState {
             | TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::SftpFileManagerAuthenticationRequired(_)
-            | TabContent::SftpFileManager(_) => None,
+            | TabContent::SftpFileManager(_)
+            | TabContent::PowerShell(_) => None,
         })
     }
 
@@ -3148,10 +3192,56 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::SftpFileManager(_) => None,
+                | TabContent::SftpFileManager(_)
+                | TabContent::PowerShell(_) => None,
             })
     }
 
+    pub fn drain_powershell_tabs(&mut self, context: &egui::Context) {
+        self.retiring_powershell_workers
+            .retain(|handle| !handle.is_finished());
+        for tab in &mut self.tabs {
+            if let TabContent::PowerShell(powershell) = &mut tab.content {
+                powershell.drain_messages(context);
+            }
+        }
+    }
+
+    pub(crate) fn powershell_worker_count(&self) -> usize {
+        self.retiring_powershell_workers
+            .iter()
+            .filter(|handle| !handle.is_finished())
+            .count()
+            + self
+                .tabs
+                .iter()
+                .filter(|tab| match &tab.content {
+                    TabContent::PowerShell(tab) => tab
+                        .shutdown_handle()
+                        .is_some_and(|handle| !handle.is_finished()),
+                    _ => false,
+                })
+                .count()
+    }
+
+    pub(crate) fn request_powershell_shutdown(&mut self) {
+        for handle in &self.retiring_powershell_workers {
+            handle.request_close();
+        }
+        for tab in &mut self.tabs {
+            if let TabContent::PowerShell(tab) = &mut tab.content {
+                tab.request_close();
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retire_powershell_for_test(
+        &mut self,
+        handle: crate::powershell::PowerShellShutdownHandle,
+    ) {
+        self.retiring_powershell_workers.push(handle);
+    }
     /// Requests an on-demand SSH-level liveness probe (ADR 0018) on every
     /// open SSH session tab. Intended for a wake/network-change signal:
     /// each request is coalescing and nonblocking, so calling this
@@ -3178,6 +3268,7 @@ impl AppState {
             self.pending_profile_usage = Some(profile_id.to_owned());
         }
         match command {
+            AppCommand::PowerShell { .. } => {}
             AppCommand::CancelConnectionSetup { tab_id } => {
                 if self.active == tab_id {
                     self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
@@ -3354,6 +3445,9 @@ impl AppState {
             }
             AppCommand::StartConfiguredSerialProfile { profile_id } => {
                 self.start_configured_serial_profile(&profile_id, context)
+            }
+            AppCommand::OpenConfiguredPowerShellProfile { profile_id } => {
+                self.open_configured_powershell_profile(&profile_id)
             }
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
@@ -4417,6 +4511,18 @@ impl AppState {
         ));
     }
 
+    fn open_configured_powershell_profile(&mut self, profile_id: &str) {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_powershell)
+            .cloned()
+        else {
+            return;
+        };
+        self.place_powershell(PowerShellTab::new(profile));
+    }
+
     /// Starts a saved SSH profile that has no stored native-secret
     /// credential, using the same openssh-style in-terminal interactive
     /// prompt flow as Quick Connect. Unlike a stored-password profile (which
@@ -5031,6 +5137,22 @@ impl AppState {
         self.set_active(id);
     }
 
+    fn place_powershell(&mut self, powershell: PowerShellTab) {
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = TabContent::PowerShell(Box::new(powershell));
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::PowerShell(Box::new(powershell)),
+        });
+        self.set_active(id);
+    }
+
     fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
@@ -5263,8 +5385,15 @@ impl AppState {
         if let Some(document) = view_document(&removed.content) {
             self.documents.borrow_mut().release(document);
         }
-        if let TabContent::Session(session) = removed.content {
-            session.controller.shutdown();
+        match removed.content {
+            TabContent::Session(session) => session.controller.shutdown(),
+            TabContent::PowerShell(mut tab) => {
+                tab.request_close();
+                if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
+                    self.retiring_powershell_workers.push(handle);
+                }
+            }
+            _ => {}
         }
         if self.tabs.is_empty() {
             // Root state must never go empty (`docs/gui-design.md` "Root
@@ -6141,6 +6270,66 @@ mod tests {
 
         assert_eq!(state.active(), state.tabs()[0].id);
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn powershell_workspace_restores_disconnected_metadata_only() {
+        let reference = festerm_secret_store::SecretReference::generate();
+        let profile =
+            festerm_config::Profile::powershell("ps", "win.example.test", 5986, "fixture")
+                .unwrap()
+                .with_powershell_credential_reference(reference)
+                .unwrap();
+        let workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::powershell_session("ps-tab", "ps").unwrap()],
+            Some("ps-tab".to_owned()),
+        )
+        .unwrap();
+        let configuration = Configuration::new(vec![profile]).unwrap();
+        let context = egui::Context::default();
+        let mut state = AppState::with_restored_workspace(&context, configuration, &workspace);
+        let TabContent::PowerShell(tab) = &state.active_tab().content else {
+            panic!("saved PowerShell metadata must restore disconnected setup");
+        };
+        assert_eq!(tab.state(), crate::powershell::PowerShellState::Setup);
+        assert_eq!(tab.profile_identifier(), "ps");
+        assert_eq!(state.session_tabs_with_id_mut().count(), 0);
+        let (captured, _) = state.capture_window_workspace_tabs(&mut 0).unwrap();
+        assert_eq!(
+            captured,
+            vec![WorkspaceTab::powershell_session("tab-0", "ps").unwrap()]
+        );
+    }
+
+    #[test]
+    fn closing_powershell_tab_retains_cleanup_until_worker_exit() {
+        let context = egui::Context::default();
+        let profile =
+            festerm_config::Profile::powershell("ps", "win.example.test", 5986, "fixture").unwrap();
+        let mut state =
+            AppState::for_test_with_configuration(Configuration::new(vec![profile]).unwrap());
+        state.dispatch(
+            AppCommand::OpenConfiguredPowerShellProfile {
+                profile_id: "ps".to_owned(),
+            },
+            &context,
+        );
+        let id = state.active();
+        let handle = crate::powershell::PowerShellShutdownHandle::pending_for_test();
+        let TabContent::PowerShell(tab) = &mut state.active_tab_mut().content else {
+            panic!("PowerShell tab expected");
+        };
+        tab.attach_shutdown_handle_for_test(handle.clone());
+        state.dispatch(AppCommand::CloseTab(id), &context);
+        assert!(!state.tabs().iter().any(|tab| tab.id == id));
+        assert!(handle.close_requested_for_test());
+        assert_eq!(state.powershell_worker_count(), 1);
+        state.drain_powershell_tabs(&context);
+        assert_eq!(state.powershell_worker_count(), 1);
+        handle.finish_for_test();
+        state.drain_powershell_tabs(&context);
+        assert_eq!(state.powershell_worker_count(), 0);
+        assert!(state.retiring_powershell_workers.is_empty());
     }
 
     #[test]
