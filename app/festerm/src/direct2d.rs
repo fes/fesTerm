@@ -32,10 +32,24 @@ pub(crate) fn install_from_environment(
     context: &egui::Context,
     state: Option<&egui_wgpu::RenderState>,
 ) {
+    let host_copy =
+        match host_copy_requested(std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY").as_deref()) {
+            Ok(requested) => requested,
+            Err(message) => {
+                tracing::warn!(target: "festerm::rendering", "{message}");
+                false
+            }
+        };
     let preference = match Preference::from_environment(
         std::env::var_os("FESTERM_EXPERIMENTAL_DIRECT2D").as_deref(),
     ) {
-        Ok(Preference::Disabled) => return,
+        Ok(Preference::Disabled) => {
+            if host_copy {
+                tracing::info!(target: "festerm::rendering",
+                    "host copy requires Direct2D; retaining ordinary rendering");
+            }
+            return;
+        }
         Ok(preference) => preference,
         Err(message) => {
             tracing::warn!(target: "festerm::rendering", "{message}");
@@ -43,7 +57,7 @@ pub(crate) fn install_from_environment(
         }
     };
     let Some(state) = state else {
-        if preference == Preference::Enabled {
+        if preference == Preference::Enabled || host_copy {
             tracing::warn!(target: "festerm::rendering", "Direct2D requires wgpu; retaining the current renderer");
         }
         return;
@@ -55,14 +69,22 @@ pub(crate) fn install_from_environment(
         info.backend,
         state.target_format,
     ) {
-        if preference == Preference::Enabled {
+        if preference == Preference::Enabled || host_copy {
             tracing::info!(target: "festerm::rendering",
                 "Direct2D requires Windows x64, a DX12 CPU adapter and 8-bit gamma target; retaining egui-wgpu");
         }
         return;
     }
+    if host_copy && state.target_format != wgpu::TextureFormat::Bgra8Unorm {
+        tracing::info!(target: "festerm::rendering",
+            "host copy requires a BGRA target; retaining shader composition");
+    }
     #[cfg(all(windows, target_arch = "x86_64"))]
-    match native::install(context, state) {
+    match native::install_with_host_copy(
+        context,
+        state,
+        host_copy && state.target_format == wgpu::TextureFormat::Bgra8Unorm,
+    ) {
         Ok(_) => {
             tracing::info!(target: "festerm::rendering", ?preference, "Direct2D terminal painter enabled")
         }
@@ -71,6 +93,15 @@ pub(crate) fn install_from_environment(
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     let _ = context;
+}
+
+fn host_copy_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static str> {
+    match value {
+        None => Ok(false),
+        Some(value) if value == "0" => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        _ => Err("FESTERM_EXPERIMENTAL_HOST_COPY expects 0 or 1; retaining shader composition"),
+    }
 }
 
 fn eligible(device: wgpu::DeviceType, backend: wgpu::Backend, format: wgpu::TextureFormat) -> bool {
@@ -121,6 +152,9 @@ impl TimingConfig {
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 mod profile;
 
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+mod host_copy;
+
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod native {
     use super::*;
@@ -147,10 +181,14 @@ mod native {
     struct Paint {
         pipeline: Arc<wgpu::RenderPipeline>,
         bindings: wgpu::BindGroup,
-        _texture: wgpu::Texture,
+        copy: egui_wgpu::CallbackTextureCopy,
     }
 
     impl egui_wgpu::CallbackTrait for Paint {
+        fn texture_copy(&self) -> Option<&egui_wgpu::CallbackTextureCopy> {
+            Some(&self.copy)
+        }
+
         fn paint(
             &self,
             _: egui::PaintCallbackInfo,
@@ -179,9 +217,18 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 ";
 
+    #[cfg(test)]
     pub(super) fn install(
         context: &egui::Context,
         state: &egui_wgpu::RenderState,
+    ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
+        install_with_host_copy(context, state, false)
+    }
+
+    pub(super) fn install_with_host_copy(
+        context: &egui::Context,
+        state: &egui_wgpu::RenderState,
+        host_copy: bool,
     ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
         let timings = match TimingConfig::from_environment(
             std::env::var("FESTERM_DIRECT2D_TIMINGS").ok().as_deref(),
@@ -387,10 +434,18 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 Paint {
                     pipeline: pipeline.clone(),
                     bindings,
-                    _texture: surface.texture,
+                    copy: egui_wgpu::CallbackTextureCopy {
+                        texture: surface.texture,
+                        origin: surface.origin,
+                    },
                 },
             ))
         });
+        state.renderer.write().final_callback_copy_enabled = host_copy;
+        if host_copy {
+            tracing::info!(target: "festerm::rendering",
+                "experimental final-target host copy enabled; ineligible frames retain shader composition");
+        }
         Ok(status)
     }
 }
@@ -398,6 +453,19 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_copy_is_explicitly_opt_in_and_rejects_invalid_values() {
+        for (value, expected) in [(None, false), (Some("0"), false), (Some("1"), true)] {
+            assert_eq!(
+                host_copy_requested(value.map(std::ffi::OsStr::new)).unwrap(),
+                expected
+            );
+        }
+        for value in ["", "true", "2", " 1"] {
+            assert!(host_copy_requested(Some(std::ffi::OsStr::new(value))).is_err());
+        }
+    }
 
     #[test]
     fn direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy() {
