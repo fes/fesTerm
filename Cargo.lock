@@ -2058,6 +2058,7 @@ dependencies = [
  "festerm-sessiond",
  "festerm-ssh",
  "festerm-syntax",
+ "festerm-test-support",
  "festerm-ui-egui",
  "festerm-windows-direct2d",
  "festerm-windows-power",
@@ -2154,6 +2155,9 @@ dependencies = [
 name = "festerm-pty-test-child"
 version = "0.6.0"
 dependencies = [
+ "festerm-test-support",
+ "serde_json",
+ "tempfile",
  "terminal_size",
 ]
 

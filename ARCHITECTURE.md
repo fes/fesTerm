@@ -57,6 +57,16 @@ hardware adapters, unsupported formats, and other platforms retain ordinary
 egui-wgpu. The UI retains layout, input, fonts and paint order; the native
 crate owns SDK interop and immutable shared surfaces. See proposed
 [ADR 0039](docs/adr/0039-opt-in-direct2d-terminal-composition.md).
+The native renderer retains one frame's pixels and bounded presentation-region
+snapshots. Small changes redraw damaged regions and copy them into a new
+immutable frame; unchanged frames share their existing texture. This does not
+move terminal ownership or introduce a partial-present/window backend.
+
+The app-owned textureless panel pipeline also handles the full-width chrome
+band and status-bar frame on eligible Windows DX12 CPU adapters. The UI exposes
+a graphics-only optional fill callback; the app retains device/format,
+opacity and transform policy, shader resources, and egui's exact feathered
+geometry. There is no new terminal state or presentation backend in this hook.
 
 ## Current and Target Workspace Layout
 

@@ -272,6 +272,14 @@ impl egui_wgpu::CallbackTrait for PanelPaint {
     }
 }
 
+fn supports_panel_painter(ui: &egui::Ui) -> bool {
+    ui.painter().opacity() == 1.0
+        && ui.painter().is_visible()
+        && ui.ctx().viewport_id() == egui::ViewportId::ROOT
+        && ui.ctx().viewport_rect().min == egui::Pos2::ZERO
+        && ui.ctx().layer_transform_to_global(ui.layer_id()).is_none()
+}
+
 pub(crate) fn show_frame<R>(
     ui: &mut egui::Ui,
     frame: egui::Frame,
@@ -281,13 +289,7 @@ pub(crate) fn show_frame<R>(
         .ctx()
         .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()));
     let Some(renderer) = renderer.filter(|_| {
-        frame.fill.is_opaque()
-            && frame.shadow == egui::Shadow::NONE
-            && ui.painter().opacity() == 1.0
-            && ui.painter().is_visible()
-            && ui.ctx().viewport_id() == egui::ViewportId::ROOT
-            && ui.ctx().viewport_rect().min == egui::Pos2::ZERO
-            && ui.ctx().layer_transform_to_global(ui.layer_id()).is_none()
+        frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
     }) else {
         return frame.show(ui, contents);
     };
@@ -422,6 +424,11 @@ pub(crate) fn install(context: &egui::Context, render_state: &egui_wgpu::RenderS
                 render_state,
                 egui_wgpu::RendererOptions::default().dithering,
             ) {
+                let fills = Arc::clone(&renderer);
+                festerm_ui_egui::install_panel_fill_callback(context, move |ui, rect, fill| {
+                    (fill.is_opaque() && supports_panel_painter(ui))
+                        .then(|| fills.shape(ui, egui::Shape::rect_filled(rect, 0.0, fill)))
+                });
                 context.data_mut(|data| data.insert_temp(panel_renderer_id(), renderer));
                 tracing::info!(target: "festerm::app", "using textureless application panel backgrounds on Windows WARP");
             }
@@ -447,6 +454,88 @@ mod tests {
 
     impl EncodedInputSink for Sink {
         fn record_encoded_input(&mut self, _bytes: &[u8]) {}
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn textureless_application_chrome_preserves_pixels_across_dpi_and_clipping() {
+        use egui_kittest::TestRenderer;
+        let render = |native: bool, scale: f32, opacity: f32, clipped: bool| {
+            let mut setup = default_wgpu_setup();
+            let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                unreachable!()
+            };
+            options.instance_descriptor.backends = wgpu::Backends::DX12;
+            let state = create_render_state(setup, Default::default());
+            assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let context = egui::Context::default();
+            context.set_visuals(festerm_ui_egui::theme::default_visuals());
+            if native {
+                install(&context, &state);
+            }
+            let (mut app, _, _) = crate::app::FesTermApp::for_test_with_fake_ssh_session([]);
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(513.0, 401.0),
+                )),
+                time: Some(0.0),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let mut output = None;
+            for _ in 0..5 {
+                let mut frame = context.run_ui(input.clone(), |ui| {
+                    ui.set_opacity(opacity);
+                    if clipped {
+                        ui.set_clip_rect(egui::Rect::from_min_max(
+                            egui::pos2(11.25, 13.5),
+                            egui::pos2(501.5, 389.75),
+                        ));
+                    }
+                    app.frame_logic(ui.ctx());
+                    app.ui_content(ui);
+                });
+                renderer.handle_delta(&mut frame.textures_delta);
+                output = Some(frame);
+            }
+            let image = renderer.render(&context, &output.unwrap()).unwrap();
+            if native {
+                let panel = context
+                    .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+                    .unwrap();
+                let paints = panel.paints.load(std::sync::atomic::Ordering::Relaxed);
+                if opacity == 1.0 {
+                    assert!(paints >= 2);
+                } else {
+                    assert_eq!(paints, 0);
+                }
+            }
+            image
+        };
+        for scale in [1.0, 1.25, 2.0] {
+            for opacity in [1.0, 0.5] {
+                for clipped in [false, true] {
+                    let reference = render(false, scale, opacity, clipped);
+                    let actual = render(true, scale, opacity, clipped);
+                    assert_eq!(reference.dimensions(), actual.dimensions());
+                    assert_eq!(
+                        reference
+                            .pixels()
+                            .zip(actual.pixels())
+                            .filter(|(a, b)| a != b)
+                            .count(),
+                        0,
+                        "scale={scale}, opacity={opacity}, clipped={clipped}",
+                    );
+                }
+            }
+        }
     }
 
     #[test]

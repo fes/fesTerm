@@ -5,6 +5,9 @@ This directory contains the isolated Windows render-stage experiment and
 controlled-output qualification fixtures for the bounded supported-path
 application prototype. It is not a complete egui backend.
 
+The broader active-TUI corpus and isolated Windows Terminal comparison are
+documented in [`../terminal-performance/README.md`](../terminal-performance/README.md).
+
 ## Recommendation
 
 **Go for a bounded Windows terminal-only implementation that defaults on only
@@ -35,6 +38,13 @@ a fresh native committed resource, releases it to shader-resource state, and
 imports it into wgpu as already initialized. The surface covers only visible
 primitive bounds, so a short line does not require a full-window bitmap
 composition. There is no framebuffer readback/upload in this path.
+
+The renderer now retains one immutable frame with bounded horizontal-region
+snapshots. Unchanged frames reuse that image; localized changes redraw damaged
+regions and copy them into a fresh frame. Full/large changes keep full native
+drawing. Old callbacks' textures are never overwritten. egui-wgpu still owns
+window composition, so this is not a partial-present backend. Native frame
+counters count updated images; unchanged-image reuse is logged separately.
 
 The SDK implementation in `crates/festerm-windows-direct2d/native/renderer.cpp`
 is shared with the replay probe. Rust owns resource publication, budgets, and
