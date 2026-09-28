@@ -123,9 +123,10 @@ jobs:
           mkdir -p private_keys
           printf '%s' "$APPLE_API_KEY_P8" > "private_keys/AuthKey_${APPLE_API_KEY}.p8"
           chmod 600 "private_keys/AuthKey_${APPLE_API_KEY}.p8"
-          cp packaging/macos.toml packaging/macos-release.toml
-          printf '\n[macos]\nsigning-identity = "%s"\n' "$APPLE_SIGNING_IDENTITY" \
-            >> packaging/macos-release.toml
+          python3 scripts/prepare_macos_release_config.py \
+            --input packaging/macos.toml \
+            --output packaging/macos-release.toml \
+            --signing-identity "$APPLE_SIGNING_IDENTITY"
           echo "APPLE_API_KEY_PATH=$GITHUB_WORKSPACE/private_keys/AuthKey_${APPLE_API_KEY}.p8" \
             >> "$GITHUB_ENV"
       - name: Build, sign, and notarize
