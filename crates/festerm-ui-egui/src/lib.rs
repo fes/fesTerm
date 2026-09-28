@@ -31,7 +31,7 @@ pub(crate) const SELECTION_BACKGROUND: Color32 = theme::SURFACE_SELECTION;
 pub(crate) const GLYPH_CACHE_CAPACITY: usize = 4_096;
 
 // --- Public re-exports ---
-pub use background::install_terminal_background_callback;
+pub use background::{install_panel_fill_callback, install_terminal_background_callback};
 pub use cache::{
     RenderCacheUpdate, RenderedCell, ResizeOutcome, ResizeTracker, TerminalRenderCache,
 };

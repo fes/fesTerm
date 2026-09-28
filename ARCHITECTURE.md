@@ -62,6 +62,12 @@ snapshots. Small changes redraw damaged regions and copy them into a new
 immutable frame; unchanged frames share their existing texture. This does not
 move terminal ownership or introduce a partial-present/window backend.
 
+The app-owned textureless panel pipeline also handles the full-width chrome
+band and status-bar frame on eligible Windows DX12 CPU adapters. The UI exposes
+a graphics-only optional fill callback; the app retains device/format,
+opacity and transform policy, shader resources, and egui's exact feathered
+geometry. There is no new terminal state or presentation backend in this hook.
+
 ## Current and Target Workspace Layout
 
 The repository is a Cargo workspace. The initial core, test-support, and

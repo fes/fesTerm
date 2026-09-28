@@ -4879,20 +4879,28 @@ impl FesTermApp {
         egui::Panel::bottom("status_bar")
             .resizable(false)
             .show_separator_line(false)
-            .frame(egui::Frame::new().fill(theme::SURFACE_WINDOW))
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                festerm_ui_egui::statusbar::show(
+                crate::software_background::show_frame(
                     ui,
-                    festerm_ui_egui::statusbar::StatusBarContent {
-                        mode,
-                        context,
-                        dimensions: dimensions.as_deref(),
-                        system: system.as_deref(),
-                        status,
-                        status_label,
-                        detail: detail.as_deref(),
-                        durable_session: durable_session.as_deref(),
-                        port_forwards: port_forwards.as_deref(),
+                    egui::Frame::new().fill(theme::SURFACE_WINDOW),
+                    |ui| {
+                        // Preserve the full-width stretch previously supplied by Panel's frame.
+                        ui.set_min_width(ui.available_width());
+                        festerm_ui_egui::statusbar::show(
+                            ui,
+                            festerm_ui_egui::statusbar::StatusBarContent {
+                                mode,
+                                context,
+                                dimensions: dimensions.as_deref(),
+                                system: system.as_deref(),
+                                status,
+                                status_label,
+                                detail: detail.as_deref(),
+                                durable_session: durable_session.as_deref(),
+                                port_forwards: port_forwards.as_deref(),
+                            },
+                        )
                     },
                 );
             });
@@ -6183,7 +6191,7 @@ impl FesTermApp {
         (app, tab)
     }
 
-    fn for_test_with_fake_ssh_session(
+    pub(crate) fn for_test_with_fake_ssh_session(
         events: impl IntoIterator<Item = festerm_session::SessionEvent>,
     ) -> (Self, TabId, crate::session_controller::fake::FakeSshSession) {
         let mut app = Self::for_test_with_configuration(Configuration::empty());
@@ -6195,6 +6203,15 @@ impl FesTermApp {
             22,
         );
         (app, tab, session)
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub(crate) fn active_terminal_dimensions_for_test(&self) -> festerm_core::Dimensions {
+        self.state
+            .session_tab(self.state.active())
+            .expect("active test terminal")
+            .terminal
+            .dimensions()
     }
 }
 

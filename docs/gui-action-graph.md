@@ -25,7 +25,8 @@ reduced motion automatically without changing the persisted setting.
 Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
-For Launcher, connection forms, Settings cards and Profiles panels, Windows
+For Launcher, connection forms, Settings cards, Profiles panels, the chrome
+band and the status-bar frame, Windows
 DX12 CPU adapters may use the textureless fill pipeline while retaining egui's
 layout, rounded geometry, borders and clipping. Hardware and unsupported
 surfaces retain standard painting.
@@ -67,6 +68,12 @@ replay checks pixels; the separately opt-in Windows Terminal comparison checks
 matched workload delivery, font, grid, native-window identity and CPU. Neither
 GUI frame counts nor offscreen timings establish physical presentation latency.
 See `validation/terminal-performance/README.md` and CP-18.
+
+The optional residual-CPU probe separates frozen full-application composition
+from terminal preparation/drawing using completed GPU work and process-wide CPU
+time. Its diagnostic mesh omissions are not valid production optimizations.
+The chrome fill optimization must preserve every pixel, including fractional
+DPI, clipping and translucent fallback, without changing update cadence.
 
 The supported native path now retains immutable pixels for unchanged
 presentation regions. Small updates redraw only changed regions before normal

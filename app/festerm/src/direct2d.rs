@@ -118,6 +118,9 @@ impl TimingConfig {
     }
 }
 
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+mod profile;
+
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod native {
     use super::*;
@@ -137,6 +140,8 @@ mod native {
         pub(super) last_updated_pixels: AtomicU64,
         #[cfg(test)]
         pub(super) last_surface_pixels: AtomicU64,
+        #[cfg(test)]
+        pub(super) last_surface: Mutex<Option<festerm_windows_direct2d::Surface>>,
     }
 
     struct Paint {
@@ -262,6 +267,8 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             last_updated_pixels: AtomicU64::new(0),
             #[cfg(test)]
             last_surface_pixels: AtomicU64::new(0),
+            #[cfg(test)]
+            last_surface: Mutex::new(None),
         });
         let observed = status.clone();
         festerm_ui_egui::install_root_terminal_painter(context, move |context, frame| {
@@ -303,6 +310,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let surface = rendered.surface;
             #[cfg(test)]
             {
+                *observed.last_surface.lock().unwrap() = Some(surface.clone());
                 observed
                     .last_updated_pixels
                     .store(updated_pixels, Ordering::Relaxed);
@@ -311,6 +319,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     Ordering::Relaxed,
                 );
             }
+
             let mut offset = [0u8; 16];
             offset[0..4].copy_from_slice(&surface.origin[0].to_le_bytes());
             offset[4..8].copy_from_slice(&surface.origin[1].to_le_bytes());

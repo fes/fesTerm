@@ -421,7 +421,7 @@ pub fn show(
         ui.cursor().min,
         vec2(ui.available_width(), CHROME_TOP_INSET + chip_row_height),
     );
-    ui.painter().rect_filled(band_rect, 0.0, CHROME_BACKGROUND);
+    crate::background::paint_panel_fill(ui, band_rect, CHROME_BACKGROUND);
     ui.add_space(CHROME_TOP_INSET);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;

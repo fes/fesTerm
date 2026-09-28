@@ -30,6 +30,110 @@ not application idle CPU. Readback is not physical presentation latency.
 Set `FESTERM_RUN_TUI_RENDER_PROBE=1` and the output variable above to include
 this test in `scripts\run-optional-validation.ps1`.
 
+## Residual process-CPU decomposition
+
+Use a fresh directory and an otherwise unloaded build machine:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_TUI_PROFILE_SCENE = 'application'
+$env:FESTERM_TUI_PROFILE_OUT = 'target\terminal-cpu-profile'
+cargo test --release -p festerm profile_terminal_residual_cpu -- --ignored --nocapture --test-threads=1
+```
+
+The scene is `terminal` by default; `application` adds the actual app chrome and
+session controller around a deterministic fake transport. Both use 120x40,
+2058x1658 physical pixels and 200% scaling. Every case gets five warmup draws,
+then 100 draws requested at 10 Hz without dropping frames. `GetProcessTimes`
+counts kernel/user CPU across all process threads, including WARP workers.
+Submissions complete before each sleep and measurement boundary. The offscreen
+target is retained: there is no per-frame image allocation or screenshot
+readback in the measured final-composition pass. CPU-counter granularity is
+visible in very small results; a reported zero is not proof of zero work.
+
+`profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
+completed-draw wall time and primitive identities. Individual cases include
+clear/sleep controls, frozen whole-frame and single-primitive composition,
+ordinary egui meshes, localized updates, and updates without final composition.
+Costs need not add exactly: batching, scheduling and worker behavior change
+between isolated and combined draws. Frozen-frame repeats bracket variability.
+These are not native presentation or input-latency measurements.
+
+`without-solid-mesh-fills` deliberately removes pixels to locate expensive work;
+it is **not a valid rendering optimization**. `FESTERM_TUI_PROFILE_SAMPLER=1`
+also measures a test-only nearest-sampling alternative. That alternative matched
+every pixel but regressed severely on this WARP driver (about 3,928 CPU-ms/frame
+and only 2.64 frames/s versus about 47 CPU-ms/frame for frozen terminal-only
+integer-load composition); production retains `textureLoad`.
+
+Set `FESTERM_TUI_PROFILE_REFERENCE` to a previous `original.png` to require
+exact full-frame equality. Set `FESTERM_RUN_TUI_CPU_PROFILE=1` to include this
+probe in the optional Windows runner.
+
+### Residual-cost finding and chrome fix
+
+Using the retained-renderer/single-wake fix as the baseline, the full-app replay
+reproduced the native localized workload's remaining CPU load. Two ordinary
+egui meshes contained the chrome band and status-bar background. Even their
+flat colors went through egui's textured shader on WARP.
+
+| Completed offscreen case, 10 Hz | Baseline CPU | Textureless chrome CPU |
+| --- | ---: | ---: |
+| Localized updates, complete app | 17.43% | 6.32% |
+| Frozen complete app | 14.36% | 5.62% |
+| Frozen complete app, ending repeat | 14.78% | 4.56% |
+| App chrome meshes alone | 10.39% | 2.34% |
+| Localized preparation/native drawing, no final composition | 2.61% | 2.49% |
+
+The production change routes only those fills through the existing textureless
+panel renderer, retaining egui's exact geometry, feathering, colors, clipping,
+opacity fallback and full-width status-bar layout. The complete 2058x1658
+candidate frame matched **every baseline pixel**. A separate automated regression
+covers 100%, 125% and 200% scaling, fractional clipping and translucent painters.
+Hardware adapters and unsupported formats retain ordinary painting; no output
+or frame-rate throttling was added. These figures are offscreen process CPU;
+the separately qualified native result follows.
+
+### Native chrome-fix qualification
+
+A fresh quiet-desktop interval compared the retained-renderer/single-wake
+baseline from PR #265 with the chrome-fill candidate, using `-FesTermOnly`.
+Both clients were 2058x1658 at 192 DPI, fully within the 2880x1704 work area,
+with a 120x40 grid and bundled JetBrains Mono NL. All four runs passed
+foreground, geometry, responsiveness and input guards, and needed zero forced
+setup redraws. CPU percentages use all 16 logical processors.
+
+| Native workload | Baseline CPU | Candidate CPU | Baseline GUI frames/s | Candidate GUI frames/s |
+| --- | ---: | ---: | ---: | ---: |
+| Quiet populated terminal | 0.01935% | 0.00966% | 0 | 0 |
+| Localized TUI updates | 17.52952% | 8.51299% | 10.02196 | 9.93991 |
+
+That is a **51.4% localized-update CPU reduction** on top of PR #265. Both
+localized producers wrote 200 updates and exactly 23,790 bytes at the same
+requested 100ms interval; their final writes were at 20,000.686ms and
+20,000.760ms. Changed native-frame rates matched the GUI rates. Sample-window
+boundary differences are not evidence of an output/frame-rate cap.
+
+The localized working-set/private-byte snapshots were 230.32/501.61 MiB before
+and 247.28/505.73 MiB after. These are snapshots, not peak or long-run memory
+qualification; this change does not claim a memory reduction. Native streaming,
+full-redraw, dragging, presentation latency, device loss and hardware
+qualification are not established by this pair. The remaining 8.5% is still
+above Windows Terminal; offscreen native preparation and whole-frame composition
+both remain measurable. Do not assign the difference between offscreen and
+native results to a particular subsystem without another controlled measurement.
+
+Measured executable SHA256:
+
+- Baseline: `F0107FFD538EF330A5A695D0A33F2E655DEC7BB4D9AEE907A15095F6A66F6E34`
+- Candidate: `DDAE5EF048D83D2E7003BD61C9F30E480C8EF96029F54195BD4BFDF2C27E9E6E`
+- Shared producer: `C0FE2C1D796FE3919966CB8F33DC4AC70351A9FFB51470558F4831F5FE2A6A41`
+
+The first implementation omitted the status-bar frame's full-width stretch.
+Pixel comparison and the required native-paint count rejected it; restoring the
+width passed both gates before the qualified native run. The installed app and
+existing user sessions were not replaced or driven.
+
 ## Native Windows Terminal comparison
 
 Prepare a separate, verified unpackaged Windows Terminal ZIP and create its

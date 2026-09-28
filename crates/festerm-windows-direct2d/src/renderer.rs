@@ -35,6 +35,7 @@ struct MeshInput {
 }
 
 unsafe extern "C" {
+    fn festerm_d2d_process_cpu_ticks(output: *mut u64) -> i32;
     fn festerm_d2d_create(device: *mut c_void, queue: *mut c_void, output: *mut *mut c_void)
         -> i32;
     fn festerm_d2d_destroy(bridge: *mut c_void);
@@ -89,6 +90,22 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// Cumulative kernel and user CPU time across all threads of this process.
+/// Optional rendering probes must complete queued work before sampling a boundary.
+pub fn process_cpu_time() -> Result<Duration, Error> {
+    let mut ticks = 0;
+    // The SDK writes a single initialized u64; no handles cross this boundary.
+    let code = unsafe { festerm_d2d_process_cpu_ticks(&mut ticks) };
+    if code < 0 {
+        return Err(Error {
+            operation: "process CPU timing",
+            code,
+            message: "GetProcessTimes failed".into(),
+        });
+    }
+    Ok(Duration::from_secs(ticks / 10_000_000) + Duration::from_nanos((ticks % 10_000_000) * 100))
+}
 
 /// Native drawing is queued before subsequent wgpu use. Published pixels are
 /// never overwritten; unchanged frames may share the same texture.
