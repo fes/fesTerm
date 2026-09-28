@@ -12,6 +12,10 @@
 //! routes session output through the single-writer `Terminal` +
 //! `SessionController` pair defined in `session_controller.rs`.
 
+#[cfg(test)]
+#[path = "tabs_remote_tests.rs"]
+mod remote_tests;
+
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -965,6 +969,50 @@ impl SessionTab {
         Self::from_local_session_result(result, dimensions, name, None, None, inspector_persistence)
     }
 
+    fn start_remote_persistent(
+        target: festerm_sessiond::RemoteSessionTarget,
+        authentication: SshAuthentication,
+        context: &egui::Context,
+    ) -> Self {
+        let endpoint = target.endpoint();
+        let profile = endpoint.profile();
+        let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
+        let label = format!(
+            "{} · {}@{}",
+            target.name(),
+            profile.username(),
+            profile.identity().host()
+        );
+        let transport = InspectorTransport::Ssh {
+            username: profile.username().to_owned(),
+            host: profile.identity().host().to_owned(),
+            port: profile.identity().port(),
+            local_bind: ResolvedLocalBind::from_address(profile.local_bind_address()),
+            persistence: Some(InspectorPersistence {
+                provider_label: "Remote sessiond",
+                session_name: target.name().to_owned(),
+            }),
+        };
+        let result = target
+            .attach_with_takeover(authentication, make_notifier(context))
+            .map(ApplicationSession::Persistent)
+            .map_err(|error| error.to_string());
+        let mut session = Self::from_local_session_result(
+            result,
+            dimensions,
+            &label,
+            Some(format!(
+                "SSH sessiond · pid {} · generation {}",
+                target.pid(),
+                target.generation()
+            )),
+            None,
+            None,
+        );
+        session.inspector_transport = transport;
+        session
+    }
+
     /// Starts the prevalidated attach-only provider client. No saved profile
     /// backs this launch, so workspace/Inspector metadata cannot claim one.
     fn start_multiplexer_session(
@@ -1602,6 +1650,13 @@ impl SessionTab {
         }
     }
 
+    pub(crate) fn is_remote_persistent(&self) -> bool {
+        matches!(
+            self.controller.session(),
+            Some(ApplicationSession::Persistent(_))
+        ) && matches!(self.inspector_transport, InspectorTransport::Ssh { .. })
+    }
+
     /// The most recent live SSH port-forward snapshot for this tab.
     pub fn port_forwards(&self) -> &[SshPortForwardRuntime] {
         self.controller.port_forwards()
@@ -1683,6 +1738,8 @@ pub enum TabContent {
     SftpFileManagerAuthenticationRequired(SftpFileManagerAuthenticationRequiredTab),
     SftpFileManager(Box<SftpFileManagerTab>),
     PowerShell(Box<PowerShellTab>),
+    Enterprise(Box<crate::enterprise::EnterpriseTab>),
+    RemoteSessions(Box<crate::remote_sessions::RemoteSessionsTab>),
     Session(Box<SessionTab>),
 }
 
@@ -1797,6 +1854,16 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    OpenEnterprise,
+    OpenRemoteSessions,
+    Enterprise {
+        tab_id: TabId,
+        action: crate::enterprise::EnterpriseAction,
+    },
+    RemoteSessions {
+        tab_id: TabId,
+        action: crate::remote_sessions::RemoteSessionsAction,
+    },
     PowerShell {
         tab_id: TabId,
         action: crate::powershell::PowerShellAction,
@@ -2403,6 +2470,8 @@ pub struct AppState {
     pending_resume: Option<PendingResume>,
     tabs: Vec<Tab>,
     retiring_powershell_workers: Vec<crate::powershell::PowerShellShutdownHandle>,
+    retiring_enterprise_workers: Vec<crate::enterprise::EnterpriseShutdownHandle>,
+    retiring_remote_workers: Vec<crate::remote_sessions::RemoteSessionsShutdownHandle>,
     active: TabId,
     /// Which tabs were looked at, oldest first, so that closing the active tab
     /// can return to the one it was opened from rather than to whichever tab
@@ -2516,6 +2585,8 @@ impl AppState {
             pending_resume: None,
             tabs,
             retiring_powershell_workers: Vec::new(),
+            retiring_enterprise_workers: Vec::new(),
+            retiring_remote_workers: Vec::new(),
             active,
             activation_history: Vec::new(),
             documents: DocumentRegistry::shared(),
@@ -2852,7 +2923,10 @@ impl AppState {
                 TabContent::Profiles => Some(WorkspaceTab::profiles(identifier.clone())?),
                 // ADR 0034 §12: an editor tab is not restored, because the
                 // buffer it was showing is not persisted anywhere.
-                TabContent::MarkdownViewer(_) | TabContent::TextEditor(_) => None,
+                TabContent::MarkdownViewer(_)
+                | TabContent::TextEditor(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
                 TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
                     identifier.clone(),
                     ssh.profile.identifier(),
@@ -3099,7 +3173,9 @@ impl AppState {
                 | TabContent::SftpFileManager(_)
                 | TabContent::MarkdownViewer(_)
                 | TabContent::TextEditor(_)
-                | TabContent::PowerShell(_) => None,
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -3118,7 +3194,9 @@ impl AppState {
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::SftpFileManager(_)
-                | TabContent::PowerShell(_) => None,
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -3137,7 +3215,9 @@ impl AppState {
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::Session(_)
-                | TabContent::PowerShell(_) => None,
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -3171,7 +3251,9 @@ impl AppState {
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::SftpFileManagerAuthenticationRequired(_)
             | TabContent::SftpFileManager(_)
-            | TabContent::PowerShell(_) => None,
+            | TabContent::PowerShell(_)
+            | TabContent::Enterprise(_)
+            | TabContent::RemoteSessions(_) => None,
         })
     }
 
@@ -3193,25 +3275,44 @@ impl AppState {
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::SftpFileManager(_)
-                | TabContent::PowerShell(_) => None,
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
-    pub fn drain_powershell_tabs(&mut self, context: &egui::Context) {
+    pub fn drain_background_tabs(&mut self, context: &egui::Context) {
         self.retiring_powershell_workers
             .retain(|handle| !handle.is_finished());
+        self.retiring_enterprise_workers
+            .retain(|handle| !handle.is_finished());
+        self.retiring_remote_workers
+            .retain(|handle| !handle.is_finished());
         for tab in &mut self.tabs {
-            if let TabContent::PowerShell(powershell) = &mut tab.content {
-                powershell.drain_messages(context);
+            match &mut tab.content {
+                TabContent::PowerShell(tab) => tab.drain_messages(context),
+                TabContent::Enterprise(tab) => tab.drain_messages(context),
+                TabContent::RemoteSessions(tab) => tab.drain_messages(context),
+                _ => {}
             }
         }
     }
 
-    pub(crate) fn powershell_worker_count(&self) -> usize {
+    pub(crate) fn background_worker_count(&self) -> usize {
         self.retiring_powershell_workers
             .iter()
             .filter(|handle| !handle.is_finished())
             .count()
+            + self
+                .retiring_enterprise_workers
+                .iter()
+                .filter(|handle| !handle.is_finished())
+                .count()
+            + self
+                .retiring_remote_workers
+                .iter()
+                .filter(|handle| !handle.is_finished())
+                .count()
             + self
                 .tabs
                 .iter()
@@ -3219,18 +3320,33 @@ impl AppState {
                     TabContent::PowerShell(tab) => tab
                         .shutdown_handle()
                         .is_some_and(|handle| !handle.is_finished()),
+                    TabContent::Enterprise(tab) => tab
+                        .shutdown_handle()
+                        .is_some_and(|handle| !handle.is_finished()),
+                    TabContent::RemoteSessions(tab) => tab
+                        .shutdown_handle()
+                        .is_some_and(|handle| !handle.is_finished()),
                     _ => false,
                 })
                 .count()
     }
 
-    pub(crate) fn request_powershell_shutdown(&mut self) {
+    pub(crate) fn request_background_shutdown(&mut self) {
         for handle in &self.retiring_powershell_workers {
             handle.request_close();
         }
+        for handle in &self.retiring_enterprise_workers {
+            handle.request_shutdown();
+        }
+        for handle in &self.retiring_remote_workers {
+            handle.request_shutdown();
+        }
         for tab in &mut self.tabs {
-            if let TabContent::PowerShell(tab) = &mut tab.content {
-                tab.request_close();
+            match &mut tab.content {
+                TabContent::PowerShell(tab) => tab.request_close(),
+                TabContent::Enterprise(tab) => tab.request_close(),
+                TabContent::RemoteSessions(tab) => tab.request_close(),
+                _ => {}
             }
         }
     }
@@ -3269,6 +3385,17 @@ impl AppState {
         }
         match command {
             AppCommand::PowerShell { .. } => {}
+            AppCommand::Enterprise { .. } | AppCommand::RemoteSessions { .. } => {}
+            AppCommand::OpenEnterprise => {
+                self.open_auxiliary_tab(TabContent::Enterprise(Box::new(
+                    crate::enterprise::EnterpriseTab::new(),
+                )));
+            }
+            AppCommand::OpenRemoteSessions => {
+                self.open_auxiliary_tab(TabContent::RemoteSessions(Box::new(
+                    crate::remote_sessions::RemoteSessionsTab::new(),
+                )));
+            }
             AppCommand::CancelConnectionSetup { tab_id } => {
                 if self.active == tab_id {
                     self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
@@ -5153,6 +5280,29 @@ impl AppState {
         self.set_active(id);
     }
 
+    fn open_auxiliary_tab(&mut self, content: TabContent) {
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = content;
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab { id, content });
+        self.set_active(id);
+    }
+
+    pub(crate) fn attach_remote_session(
+        &mut self,
+        request: crate::remote_sessions::RemoteAttachRequest,
+        context: &egui::Context,
+    ) {
+        let session =
+            SessionTab::start_remote_persistent(request.target, request.authentication, context);
+        self.place_session(session);
+    }
+
     fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
@@ -5391,6 +5541,18 @@ impl AppState {
                 tab.request_close();
                 if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
                     self.retiring_powershell_workers.push(handle);
+                }
+            }
+            TabContent::Enterprise(mut tab) => {
+                tab.request_close();
+                if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
+                    self.retiring_enterprise_workers.push(handle);
+                }
+            }
+            TabContent::RemoteSessions(mut tab) => {
+                tab.request_close();
+                if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
+                    self.retiring_remote_workers.push(handle);
                 }
             }
             _ => {}
@@ -6302,6 +6464,29 @@ mod tests {
     }
 
     #[test]
+    fn discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata() {
+        for command in [AppCommand::OpenEnterprise, AppCommand::OpenRemoteSessions] {
+            let context = egui::Context::default();
+            let mut state = AppState::for_test_with_configuration(Configuration::empty());
+            let original = state.active();
+            state.dispatch(command, &context);
+            assert_eq!(state.active(), original);
+            assert!(matches!(
+                state.active_tab().content,
+                TabContent::Enterprise(_) | TabContent::RemoteSessions(_)
+            ));
+            assert_eq!(state.background_worker_count(), 0);
+            assert_eq!(state.session_tabs_with_id_mut().count(), 0);
+            let (captured, focused) = state.capture_window_workspace_tabs(&mut 0).unwrap();
+            assert!(captured.is_empty());
+            assert!(focused.is_none());
+            state.dispatch(AppCommand::CloseTab(original), &context);
+            assert!(matches!(state.active_tab().content, TabContent::Launcher));
+            assert_eq!(state.background_worker_count(), 0);
+        }
+    }
+
+    #[test]
     fn closing_powershell_tab_retains_cleanup_until_worker_exit() {
         let context = egui::Context::default();
         let profile =
@@ -6323,13 +6508,49 @@ mod tests {
         state.dispatch(AppCommand::CloseTab(id), &context);
         assert!(!state.tabs().iter().any(|tab| tab.id == id));
         assert!(handle.close_requested_for_test());
-        assert_eq!(state.powershell_worker_count(), 1);
-        state.drain_powershell_tabs(&context);
-        assert_eq!(state.powershell_worker_count(), 1);
+        assert_eq!(state.background_worker_count(), 1);
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 1);
         handle.finish_for_test();
-        state.drain_powershell_tabs(&context);
-        assert_eq!(state.powershell_worker_count(), 0);
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 0);
         assert!(state.retiring_powershell_workers.is_empty());
+    }
+
+    #[test]
+    fn closing_discovery_tabs_retains_cleanup_until_worker_exit() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test_with_configuration(Configuration::empty());
+        state.dispatch(AppCommand::OpenEnterprise, &context);
+        let enterprise = crate::enterprise::EnterpriseShutdownHandle::pending_for_test();
+        let TabContent::Enterprise(tab) = &mut state.active_tab_mut().content else {
+            panic!("enterprise tab");
+        };
+        tab.attach_shutdown_handle_for_test(enterprise.clone());
+        state.close(state.active());
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 1);
+        assert_eq!(state.retiring_enterprise_workers.len(), 1);
+        enterprise.finish_for_test();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 0);
+        assert!(state.retiring_enterprise_workers.is_empty());
+
+        state.dispatch(AppCommand::OpenRemoteSessions, &context);
+        let remote = crate::remote_sessions::RemoteSessionsShutdownHandle::pending_for_test();
+        let TabContent::RemoteSessions(tab) = &mut state.active_tab_mut().content else {
+            panic!("remote sessions tab");
+        };
+        tab.attach_shutdown_handle_for_test(remote.clone());
+        state.close(state.active());
+        state.request_background_shutdown();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 1);
+        assert_eq!(state.retiring_remote_workers.len(), 1);
+        remote.finish_for_test();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 0);
+        assert!(state.retiring_remote_workers.is_empty());
     }
 
     #[test]

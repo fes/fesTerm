@@ -1072,6 +1072,8 @@ impl FesTermApp {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
             TabContent::Profiles => "Close Profiles",
+            TabContent::Enterprise(_) => "Close Enterprise",
+            TabContent::RemoteSessions(_) => "Close Remote Sessions",
             TabContent::MarkdownViewer(_) => "Close Markdown Viewer",
             TabContent::TextEditor(_) => "Close Editor",
             TabContent::SshAuthenticationRequired(_)
@@ -1430,7 +1432,7 @@ impl FesTermApp {
     /// windows; the primary window's close is the application quit path.
     pub(crate) fn window_close_accepted(&self) -> bool {
         (self.window_close_accepted || self.quit_confirmed)
-            && (self.state.powershell_worker_count() == 0
+            && (self.state.background_worker_count() == 0
                 || self
                     .powershell_shutdown_started
                     .is_some_and(|started| started.elapsed() >= Duration::from_secs(45)))
@@ -1440,17 +1442,18 @@ impl FesTermApp {
         self.window_close_accepted || self.quit_confirmed
     }
 
+    /// The existing window-exit gate also owns enterprise and remote discovery cleanup.
     pub(crate) fn prepare_powershell_shutdown(&mut self, context: &egui::Context) -> bool {
         let started = *self
             .powershell_shutdown_started
             .get_or_insert_with(Instant::now);
-        self.state.request_powershell_shutdown();
-        self.state.drain_powershell_tabs(context);
-        if self.state.powershell_worker_count() == 0 {
+        self.state.request_background_shutdown();
+        self.state.drain_background_tabs(context);
+        if self.state.background_worker_count() == 0 {
             return true;
         }
         if started.elapsed() >= Duration::from_secs(45) {
-            tracing::error!("PowerShell cleanup deadline expired during application shutdown; remote state is unconfirmed");
+            tracing::error!("Background session cleanup deadline expired during application shutdown; remote state is unconfirmed");
             return true;
         }
         context.request_repaint_after(Duration::from_millis(50));
@@ -2050,7 +2053,7 @@ impl FesTermApp {
             return;
         }
         if matches!(action, crate::powershell::PowerShellAction::Connect)
-            && self.state.powershell_worker_count() >= 32
+            && self.state.background_worker_count() >= 32
         {
             self.overlays.transient_notice = Some((
                 "PowerShell worker limit reached. Wait for closing sessions to finish.".to_owned(),
@@ -2108,6 +2111,25 @@ impl FesTermApp {
                     .to_owned(),
                 Instant::now() + Duration::from_secs(3),
             ));
+        }
+    }
+
+    fn auxiliary_action_allowed(&mut self, tab_id: TabId, starts_worker: bool) -> bool {
+        let rejection = if self.powershell_shutdown_started.is_some() {
+            Some("Connection actions are disabled while this window is shutting down.")
+        } else if self.state.active() != tab_id {
+            Some("Connection action cancelled because its active tab changed.")
+        } else if starts_worker && self.state.background_worker_count() >= 32 {
+            Some("Background worker limit reached. Wait for closing operations to finish.")
+        } else {
+            None
+        };
+        if let Some(message) = rejection {
+            self.overlays.transient_notice =
+                Some((message.to_owned(), Instant::now() + Duration::from_secs(3)));
+            false
+        } else {
+            true
         }
     }
 
@@ -2456,7 +2478,7 @@ impl FesTermApp {
         let mut needs_repaint = false;
         let active = self.state.active();
         let scrollback_limit = self.state.scrollback_limit();
-        self.state.drain_powershell_tabs(context);
+        self.state.drain_background_tabs(context);
         for (id, session) in self.state.session_tabs_with_id_mut() {
             if session.adopt_recovered_terminal() {
                 session.apply_frontend_terminal_configuration(scrollback_limit);
@@ -2869,6 +2891,8 @@ impl FesTermApp {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
                 TabContent::Profiles => "Close Profiles".to_owned(),
+                TabContent::Enterprise(_) => "Close Enterprise".to_owned(),
+                TabContent::RemoteSessions(_) => "Close Remote Sessions".to_owned(),
                 TabContent::MarkdownViewer(_) => "Close Markdown Viewer".to_owned(),
                 TabContent::TextEditor(_) => "Close Editor".to_owned(),
                 TabContent::SshAuthenticationRequired(_)
@@ -2887,6 +2911,13 @@ impl FesTermApp {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
                 TabContent::Profiles => ("Profiles".to_owned(), None),
+                TabContent::Enterprise(tab) => {
+                    ("Enterprise".to_owned(), Some(tab.status_label().to_owned()))
+                }
+                TabContent::RemoteSessions(tab) => (
+                    "Remote Sessions".to_owned(),
+                    Some(tab.status_label().to_owned()),
+                ),
                 TabContent::MarkdownViewer(tab) => (
                     tab.title().to_owned(),
                     Some(tab.chip_secondary().to_owned()),
@@ -4832,6 +4863,24 @@ impl FesTermApp {
                             crate::powershell::PowerShellState::Setup => ChipStatus::Neutral,
                         },
                     ),
+                    TabContent::Enterprise(tab) => (
+                        "Enterprise".to_owned(),
+                        Some(tab.status_label().to_owned()),
+                        if tab.is_busy() {
+                            ChipStatus::Starting
+                        } else {
+                            ChipStatus::Neutral
+                        },
+                    ),
+                    TabContent::RemoteSessions(tab) => (
+                        "Remote Sessions".to_owned(),
+                        Some(tab.status_label().to_owned()),
+                        if tab.is_busy() {
+                            ChipStatus::Starting
+                        } else {
+                            ChipStatus::Neutral
+                        },
+                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = session
@@ -5088,6 +5137,32 @@ impl FesTermApp {
                         crate::powershell::PowerShellState::Setup => ChipStatus::Neutral,
                     },
                     tab.state().label(),
+                    None,
+                    None,
+                ),
+                TabContent::Enterprise(tab) => (
+                    Some("Enterprise"),
+                    None,
+                    None,
+                    if tab.is_busy() {
+                        ChipStatus::Starting
+                    } else {
+                        ChipStatus::Neutral
+                    },
+                    tab.status_label(),
+                    None,
+                    None,
+                ),
+                TabContent::RemoteSessions(tab) => (
+                    Some("Remote Sessions"),
+                    None,
+                    None,
+                    if tab.is_busy() {
+                        ChipStatus::Starting
+                    } else {
+                        ChipStatus::Neutral
+                    },
+                    tab.status_label(),
                     None,
                     None,
                 ),
@@ -5855,6 +5930,18 @@ impl FesTermApp {
                         action,
                     });
                 }
+                TabContent::Enterprise(tab) => {
+                    screen_command = tab.show(ui).map(|action| AppCommand::Enterprise {
+                        tab_id: active_tab_id,
+                        action,
+                    });
+                }
+                TabContent::RemoteSessions(tab) => {
+                    screen_command = tab.show(ui).map(|action| AppCommand::RemoteSessions {
+                        tab_id: active_tab_id,
+                        action,
+                    });
+                }
                 TabContent::Session(session) => {
                     if session.adopt_recovered_terminal() {
                         session.apply_frontend_terminal_configuration(scrollback_limit);
@@ -6008,6 +6095,36 @@ impl FesTermApp {
             match command {
                 AppCommand::PowerShell { tab_id, action } => {
                     self.dispatch_powershell_action(tab_id, action, ui.ctx());
+                }
+                AppCommand::Enterprise { tab_id, action } => {
+                    if self.auxiliary_action_allowed(tab_id, action.starts_worker()) {
+                        if let TabContent::Enterprise(tab) =
+                            &mut self.state.active_tab_mut().content
+                        {
+                            tab.dispatch(action, ui.ctx());
+                        } else {
+                            self.overlays.transient_notice = Some((
+                                "Enterprise action cancelled because its tab changed.".into(),
+                                Instant::now() + Duration::from_secs(3),
+                            ));
+                        }
+                    }
+                }
+                AppCommand::RemoteSessions { tab_id, action } => {
+                    if self.auxiliary_action_allowed(tab_id, action.starts_worker()) {
+                        if let TabContent::RemoteSessions(tab) =
+                            &mut self.state.active_tab_mut().content
+                        {
+                            if let Some(request) = tab.dispatch(action, ui.ctx()) {
+                                self.state.attach_remote_session(request, ui.ctx());
+                            }
+                        } else {
+                            self.overlays.transient_notice = Some((
+                                "Remote-session action cancelled because its tab changed.".into(),
+                                Instant::now() + Duration::from_secs(3),
+                            ));
+                        }
+                    }
                 }
                 AppCommand::OpenMarkdownWorkspace => {
                     self.open_markdown_file_picker(&ui.ctx().clone());
@@ -8159,6 +8276,29 @@ mod tests {
         );
         let tab = app.state.active();
         (app, tab)
+    }
+
+    #[test]
+    fn discovery_action_guard_rejects_stale_owners_and_caps_only_new_workers() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.dispatch(AppCommand::OpenEnterprise, &context);
+        let old_owner = app.state.active();
+        app.state.dispatch(AppCommand::OpenRemoteSessions, &context);
+        let current_owner = app.state.active();
+        assert_ne!(old_owner, current_owner);
+        assert!(!app.auxiliary_action_allowed(old_owner, true));
+        assert!(app.overlays.transient_notice.is_some());
+        let handles: Vec<_> = (0..32).map(|_| app.retire_powershell_for_test()).collect();
+        assert!(!app.auxiliary_action_allowed(current_owner, true));
+        assert!(app.auxiliary_action_allowed(current_owner, false));
+        for handle in handles {
+            handle.finish_for_test();
+        }
+        app.state.drain_background_tabs(&context);
+        assert!(app.auxiliary_action_allowed(current_owner, true));
+        app.powershell_shutdown_started = Some(Instant::now());
+        assert!(!app.auxiliary_action_allowed(current_owner, true));
     }
 
     #[test]

@@ -125,7 +125,7 @@ impl fmt::Display for ConfigError {
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
             ),
             ConfigErrorKind::InvalidPowerShellProfile => formatter.write_str(
-                "PowerShell profile metadata must contain a safe HTTPS host, nonzero port, username, configuration name, optional domain/trusted CA path, source-address policy, and opaque credential reference only",
+                "PowerShell profile metadata must contain transport-specific safe HTTPS or SSH endpoint metadata, source-address policy, and opaque credential reference only",
             ),
             ConfigErrorKind::InvalidSshPortForwardConfiguration => formatter.write_str(
                 "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports",

@@ -37,7 +37,18 @@ narrow patches needed before adoption:
    restricted/JEA configuration) for the whole shell lifecycle; `open` keeps
    its previous behavior by delegating with the default `RESOURCE_URI_PSRP`,
    and the vendored `winrm-rs` `RESOURCE_URI_PSRP_BASE` is re-exported for URI
-   construction.
+   construction;
+8. `BlockingIoPsrpTransport`, a bounded caller-owned stdio transport for the
+   PowerShell SSH subsystem's out-of-process XML envelope (`Data`, `Command`,
+   `Signal`, `Close` and acknowledgements) around base64 PSRP fragments. It
+   accepts the existing native SSH crate's authenticated, pinned subsystem
+   stream instead of enabling this vendor's separate SSH client. Framing
+   fixtures are supplemented by the `festerm-powershell` real `pwsh -sshs`
+   composition harness;
+9. explicit `send_pipeline_fragment` destination routing for pipeline host
+   responses, input/end-input and multi-fragment creation. Runspace messages
+   retain nil routing rather than inheriting the last pipeline identity; the
+   transport default preserves existing non-SSH behavior.
 
 For WSMan, a successful PowerShell Signal response acknowledges the stop.
 This follows Microsoft's `ClientPowerShellDataStructureHandler.OnSignalCompleted`

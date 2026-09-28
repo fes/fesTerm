@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::io::{self, Read};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -89,8 +90,37 @@ impl RemoteSshEndpoint {
         &self,
         authentication: SshAuthentication,
     ) -> Result<RemoteSessionInventory, PersistentSessionError> {
+        self.discover_with_cancellation(authentication, Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Performs bounded, read-only discovery until completion, deadline, size
+    /// limit, transport failure, or caller cancellation.
+    ///
+    /// Cancellation is cooperative with the raw-exec stream timeout: once the
+    /// flag is observed, the exec stream is dropped and no further bytes are
+    /// read from the helper.
+    pub fn discover_with_cancellation(
+        &self,
+        authentication: SshAuthentication,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<RemoteSessionInventory, PersistentSessionError> {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(PersistentSessionError::new(
+                "remote discovery was cancelled",
+            ));
+        }
         let mut stream = self.open(authentication, format!("{} discover --json", self.helper))?;
-        let bytes = read_discovery(&mut stream, Instant::now() + DISCOVERY_DEADLINE)?;
+        if cancelled.load(Ordering::Acquire) {
+            drop(stream);
+            return Err(PersistentSessionError::new(
+                "remote discovery was cancelled",
+            ));
+        }
+        let bytes = read_discovery_with_cancellation(
+            &mut stream,
+            Instant::now() + DISCOVERY_DEADLINE,
+            || cancelled.load(Ordering::Acquire),
+        )?;
         RemoteSessionInventory::decode(self.clone(), &bytes)
     }
 }
@@ -103,7 +133,10 @@ pub struct RemoteSessionInventory {
 }
 
 impl RemoteSessionInventory {
-    fn decode(endpoint: RemoteSshEndpoint, bytes: &[u8]) -> Result<Self, PersistentSessionError> {
+    pub fn decode(
+        endpoint: RemoteSshEndpoint,
+        bytes: &[u8],
+    ) -> Result<Self, PersistentSessionError> {
         #[derive(Deserialize)]
         struct WireInventory {
             schema_version: u32,
@@ -142,6 +175,10 @@ impl RemoteSessionInventory {
 
     pub fn sessions(&self) -> &[DiscoveredSession] {
         &self.sessions
+    }
+
+    pub fn endpoint(&self) -> &RemoteSshEndpoint {
+        &self.endpoint
     }
 
     pub fn select(&self, name: &str) -> Result<RemoteSessionTarget, PersistentSessionError> {
@@ -238,13 +275,27 @@ impl RemoteSessionTarget {
     }
 }
 
+#[cfg(test)]
 fn read_discovery(
     stream: &mut impl Read,
     deadline: Instant,
 ) -> Result<Vec<u8>, PersistentSessionError> {
+    read_discovery_with_cancellation(stream, deadline, || false)
+}
+
+fn read_discovery_with_cancellation(
+    stream: &mut impl Read,
+    deadline: Instant,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Vec<u8>, PersistentSessionError> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
     loop {
+        if cancelled() {
+            return Err(PersistentSessionError::new(
+                "remote discovery was cancelled",
+            ));
+        }
         if Instant::now() >= deadline {
             return Err(PersistentSessionError::new(
                 "remote discovery deadline exceeded",
@@ -253,6 +304,11 @@ fn read_discovery(
         match stream.read(&mut buffer) {
             Ok(0) => return Ok(bytes),
             Ok(count) => {
+                if cancelled() {
+                    return Err(PersistentSessionError::new(
+                        "remote discovery was cancelled",
+                    ));
+                }
                 if bytes.len().saturating_add(count) > MAX_DISCOVERY_BYTES {
                     return Err(PersistentSessionError::new(
                         "remote discovery exceeds the byte limit",
@@ -380,6 +436,28 @@ mod tests {
         )
         .is_err());
         assert!(read_discovery(&mut io::empty(), Instant::now()).is_err());
+    }
+
+    #[test]
+    fn remote_discovery_read_loop_observes_caller_cancellation() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut bytes = io::Cursor::new(br#"{"unterminated":"#);
+        let first = Arc::clone(&cancelled);
+        assert!(read_discovery_with_cancellation(
+            &mut bytes,
+            Instant::now() + Duration::from_secs(5),
+            move || first.swap(true, Ordering::AcqRel),
+        )
+        .is_err());
+
+        let mut bytes = io::Cursor::new(br#"{}"#);
+        let already = Arc::new(AtomicBool::new(true));
+        assert!(read_discovery_with_cancellation(
+            &mut bytes,
+            Instant::now() + Duration::from_secs(5),
+            move || already.load(Ordering::Acquire),
+        )
+        .is_err());
     }
 
     #[test]

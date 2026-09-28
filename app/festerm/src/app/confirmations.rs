@@ -46,16 +46,20 @@ impl FesTermApp {
                             .then(|| PendingCloseConfirmation {
                                 tab: id,
                                 identity: session.label.clone(),
-                                consequence: match session.inspector_transport {
-                                    InspectorTransport::Local { .. } => {
-                                        CloseConsequence::TerminateLocalProcess
-                                    }
-                                    InspectorTransport::Ssh { .. }
-                                    | InspectorTransport::Sftp { .. } => {
-                                        CloseConsequence::DisconnectSsh
-                                    }
-                                    InspectorTransport::Serial { .. } => {
-                                        CloseConsequence::TerminateLocalProcess
+                                consequence: if session.is_remote_persistent() {
+                                    CloseConsequence::DetachRemoteSession
+                                } else {
+                                    match session.inspector_transport {
+                                        InspectorTransport::Local { .. } => {
+                                            CloseConsequence::TerminateLocalProcess
+                                        }
+                                        InspectorTransport::Ssh { .. }
+                                        | InspectorTransport::Sftp { .. } => {
+                                            CloseConsequence::DisconnectSsh
+                                        }
+                                        InspectorTransport::Serial { .. } => {
+                                            CloseConsequence::TerminateLocalProcess
+                                        }
                                     }
                                 },
                                 lifecycle_generation: session.controller.lifecycle_generation(),
@@ -187,22 +191,25 @@ impl FesTermApp {
                 TabContent::Session(session) => {
                     session.close_requires_confirmation()
                         && session.controller.lifecycle_generation() == pending.lifecycle_generation
-                        && matches!(
-                            (&session.inspector_transport, pending.consequence),
-                            (
-                                InspectorTransport::Local { persistence: None },
-                                CloseConsequence::TerminateLocalProcess
-                            ) | (
-                                InspectorTransport::Ssh { .. },
-                                CloseConsequence::DisconnectSsh
-                            ) | (
-                                InspectorTransport::Sftp { .. },
-                                CloseConsequence::DisconnectSsh
-                            ) | (
-                                InspectorTransport::Serial { .. },
-                                CloseConsequence::TerminateLocalProcess
-                            )
-                        )
+                        && ((session.is_remote_persistent()
+                            && pending.consequence == CloseConsequence::DetachRemoteSession)
+                            || (!session.is_remote_persistent()
+                                && matches!(
+                                    (&session.inspector_transport, pending.consequence),
+                                    (
+                                        InspectorTransport::Local { persistence: None },
+                                        CloseConsequence::TerminateLocalProcess
+                                    ) | (
+                                        InspectorTransport::Ssh { .. },
+                                        CloseConsequence::DisconnectSsh
+                                    ) | (
+                                        InspectorTransport::Sftp { .. },
+                                        CloseConsequence::DisconnectSsh
+                                    ) | (
+                                        InspectorTransport::Serial { .. },
+                                        CloseConsequence::TerminateLocalProcess
+                                    )
+                                )))
                 }
                 TabContent::PowerShell(powershell) => {
                     powershell.close_requires_confirmation()

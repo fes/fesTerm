@@ -9,13 +9,15 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::egui;
-use festerm_config::{LocalBindPolicy, PowerShellProfileConfiguration};
+use festerm_config::{LocalBindPolicy, PowerShellProfileConfiguration, PowerShellTransport};
 use festerm_powershell::{
     PipelineEvent, PipelineState, PowerShellAuthMethod, PowerShellCommand,
     PowerShellCommandFailureKind, PowerShellCommandMessage, PowerShellCredentials,
-    PowerShellEndpoint, PowerShellOptions, PowerShellSession, PowerShellSessionError, PsValue,
+    PowerShellEndpoint, PowerShellOptions, PowerShellSession, PowerShellSessionError,
+    PowerShellSessionStatus, PowerShellSshSession, PsValue,
 };
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore};
+use festerm_ssh::{SshAuthentication, SshRawExecOptions};
 use festerm_ui_egui::theme;
 
 use crate::local_bind::{LocalBindDraft, ResolvedLocalBind};
@@ -33,7 +35,7 @@ const MAX_TRUSTED_CA_PEM_BYTES: usize = 1024 * 1024;
 #[allow(dead_code)]
 const WORKER_QUEUE: usize = 128;
 const CONNECTED_STATUS: &str =
-    "Experimental HTTPS/NTLM PSRP. TLS verification stays enabled; NTLM is not Entra-compatible.";
+    "Experimental structured native PSRP. HTTPS uses TLS/NTLM; SSH uses an explicit pinned subsystem.";
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -301,15 +303,29 @@ impl PowerShellTab {
                     ui.add_space(12.0);
                     ui.heading(self.title());
                     ui.label(egui::RichText::new(CONNECTED_STATUS).color(theme::TEXT_SECONDARY));
-                    ui.label(format!(
-                        "{}:{} · {} · configuration {}",
-                        self.profile.host(),
-                        self.profile.port(),
-                        self.profile.username(),
-                        self.profile.configuration_name()
-                    ));
-                    if let Some(domain) = self.profile.domain() {
-                        ui.label(format!("Domain: {domain}"));
+                    match self.profile.transport() {
+                        PowerShellTransport::Https => {
+                            ui.label(format!(
+                                "HTTPS {}:{} · {} · configuration {}",
+                                self.profile.host(),
+                                self.profile.port(),
+                                self.profile.username(),
+                                self.profile.configuration_name()
+                            ));
+                            if let Some(domain) = self.profile.domain() {
+                                ui.label(format!("Domain: {domain}"));
+                            }
+                        }
+                        PowerShellTransport::Ssh => {
+                            ui.label(format!(
+                                "SSH {}:{} · {} · subsystem {}",
+                                self.profile.host(),
+                                self.profile.port(),
+                                self.profile.username(),
+                                self.profile.ssh_subsystem()
+                            ));
+                            ui.label("Host key: pinned SHA256 fingerprint; no SSH host prompt is available for this tab.");
+                        }
                     }
                     ui.separator();
                     match self.state {
@@ -996,8 +1012,36 @@ trait WorkerBackend {
 
 struct RealBackend;
 
+enum NativePowerShellSession {
+    Https(PowerShellSession),
+    Ssh(PowerShellSshSession),
+}
+
+impl NativePowerShellSession {
+    fn start_script(&self, script: String) -> Result<PowerShellCommand, PowerShellSessionError> {
+        match self {
+            Self::Https(session) => session.start_script(script),
+            Self::Ssh(session) => session.start_script(script),
+        }
+    }
+
+    fn close(&self) -> Result<(), PowerShellSessionError> {
+        match self {
+            Self::Https(session) => session.close(),
+            Self::Ssh(session) => session.close(),
+        }
+    }
+
+    fn status(&self) -> PowerShellSessionStatus {
+        match self {
+            Self::Https(session) => session.status(),
+            Self::Ssh(session) => session.status(),
+        }
+    }
+}
+
 impl WorkerBackend for RealBackend {
-    type Session = PowerShellSession;
+    type Session = NativePowerShellSession;
     type Command = PowerShellCommand;
 
     fn connect(
@@ -1036,7 +1080,7 @@ impl WorkerBackend for RealBackend {
     }
 
     fn ready(&self, session: &Self::Session) -> bool {
-        session.status() == festerm_powershell::PowerShellSessionStatus::Ready
+        session.status() == PowerShellSessionStatus::Ready
     }
 }
 
@@ -1325,28 +1369,67 @@ fn connect_session(
     profile: &PowerShellProfileConfiguration,
     local_bind_address: Option<IpAddr>,
     password: SecretBytes,
-) -> Result<PowerShellSession, PowerShellSessionError> {
-    let mut endpoint = PowerShellEndpoint::https(profile.host())?
-        .with_port(profile.port())
-        .with_configuration_name(profile.configuration_name())?
-        .with_local_bind_address(local_bind_address)?;
-    if let Some(path) = profile.trusted_ca_file() {
-        let pem = read_trusted_ca_pem_bounded(path)?;
-        endpoint = endpoint.with_trusted_ca_pem(pem)?;
+) -> Result<NativePowerShellSession, PowerShellSessionError> {
+    match profile.transport() {
+        PowerShellTransport::Https => {
+            let mut endpoint = PowerShellEndpoint::https(profile.host())?
+                .with_port(profile.port())
+                .with_configuration_name(profile.configuration_name())?
+                .with_local_bind_address(local_bind_address)?;
+            if let Some(path) = profile.trusted_ca_file() {
+                let pem = read_trusted_ca_pem_bounded(path)?;
+                endpoint = endpoint.with_trusted_ca_pem(pem)?;
+            }
+            let credentials = PowerShellCredentials::with_domain(
+                profile.username(),
+                profile.domain().map(str::to_owned),
+                password,
+            )?;
+            PowerShellSession::connect(
+                endpoint,
+                PowerShellOptions {
+                    auth: PowerShellAuthMethod::Ntlm,
+                    ..PowerShellOptions::default()
+                },
+                credentials,
+            )
+            .map(NativePowerShellSession::Https)
+        }
+        PowerShellTransport::Ssh => {
+            let ssh_profile = profile
+                .to_ssh_connection_profile_with_resolved_local_bind(local_bind_address)
+                .map_err(|_| {
+                    PowerShellSessionError::InvalidConfiguration(
+                        "invalid PowerShell SSH profile metadata",
+                    )
+                })?;
+            let fingerprint = profile.ssh_host_key_fingerprint().ok_or(
+                PowerShellSessionError::InvalidConfiguration(
+                    "PowerShell SSH requires a pinned SHA256 host-key fingerprint",
+                ),
+            )?;
+            let ssh_options = SshRawExecOptions::new()
+                .with_known_host_fingerprint(fingerprint)
+                .map_err(|_| {
+                    PowerShellSessionError::InvalidConfiguration(
+                        "PowerShell SSH host-key fingerprint must be SHA256",
+                    )
+                })?;
+            let password = password
+                .with_bytes(|bytes| String::from_utf8(bytes.to_vec()))
+                .map_err(|_| {
+                    PowerShellSessionError::InvalidConfiguration("password must be valid UTF-8")
+                })?;
+            PowerShellSshSession::connect_ssh_subsystem_named(
+                ssh_profile,
+                SshAuthentication::password(password),
+                profile.ssh_subsystem(),
+                ssh_options,
+                PowerShellOptions::default(),
+            )
+            .map(NativePowerShellSession::Ssh)
+        }
     }
-    let credentials = PowerShellCredentials::with_domain(
-        profile.username(),
-        profile.domain().map(str::to_owned),
-        password,
-    )?;
-    PowerShellSession::connect(
-        endpoint,
-        PowerShellOptions {
-            auth: PowerShellAuthMethod::Ntlm,
-            ..PowerShellOptions::default()
-        },
-        credentials,
-    )
 }
 
 #[allow(dead_code)]
@@ -1697,6 +1780,7 @@ mod tests {
         connect_entered: AtomicBool,
         connect_blocked: AtomicBool,
         close_error: Mutex<Option<String>>,
+        connect_transport: Mutex<Option<PowerShellTransport>>,
     }
 
     impl FakeBackend {
@@ -1715,6 +1799,7 @@ mod tests {
                     connect_entered: AtomicBool::new(false),
                     connect_blocked: AtomicBool::new(false),
                     close_error: Mutex::new(None),
+                    connect_transport: Mutex::new(None),
                 }),
             }
         }
@@ -1749,10 +1834,11 @@ mod tests {
 
         fn connect(
             &self,
-            _profile: &PowerShellProfileConfiguration,
+            profile: &PowerShellProfileConfiguration,
             _local_bind_address: Option<IpAddr>,
             _password: SecretBytes,
         ) -> Result<Self::Session, String> {
+            *self.state.connect_transport.lock().unwrap() = Some(profile.transport());
             self.state.connect_entered.store(true, Ordering::Release);
             while self.state.connect_blocked.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(5));
@@ -1816,8 +1902,31 @@ mod tests {
             .clone()
     }
 
+    fn test_ssh_profile() -> PowerShellProfileConfiguration {
+        festerm_config::Profile::powershell("ps-ssh", "host.test", 22, "alice")
+            .unwrap()
+            .as_powershell()
+            .unwrap()
+            .clone()
+            .with_ssh_transport(
+                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "powershell",
+            )
+            .unwrap()
+    }
+
     fn spawn_fake_worker(
         fake: FakeBackend,
+        request_rx: Receiver<WorkerRequest>,
+        message_tx: SyncSender<WorkerMessage>,
+        control: Arc<WorkerControl>,
+    ) -> thread::JoinHandle<()> {
+        spawn_fake_worker_with_profile(fake, test_profile(), request_rx, message_tx, control)
+    }
+
+    fn spawn_fake_worker_with_profile(
+        fake: FakeBackend,
+        profile: PowerShellProfileConfiguration,
         request_rx: Receiver<WorkerRequest>,
         message_tx: SyncSender<WorkerMessage>,
         control: Arc<WorkerControl>,
@@ -1825,7 +1934,7 @@ mod tests {
         thread::spawn(move || {
             run_worker_with_backend(
                 fake,
-                test_profile(),
+                profile,
                 None,
                 CredentialSource::Transient(SecretBytes::from_secret_string("pw".into())),
                 request_rx,
@@ -1926,6 +2035,45 @@ mod tests {
         assert!(matches!(
             recv_kind(&message_rx),
             WorkerMessageKind::RecoverableFailure(_)
+        ));
+        request_tx.send(WorkerRequest::Close).unwrap();
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::Closed(Ok(()))
+        ));
+        handle.join().unwrap();
+        assert_eq!(fake.state.closed.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn worker_dispatches_explicit_ssh_profile_through_same_lifecycle() {
+        let fake = FakeBackend::new(vec![PowerShellCommandMessage::Completed {
+            state: PipelineState::Completed,
+        }]);
+        let (request_tx, request_rx) = mpsc::sync_channel(WORKER_QUEUE);
+        let (message_tx, message_rx) = mpsc::sync_channel(WORKER_QUEUE);
+        let control = Arc::new(WorkerControl::new());
+        let handle = spawn_fake_worker_with_profile(
+            fake.clone(),
+            test_ssh_profile(),
+            request_rx,
+            message_tx,
+            control,
+        );
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::Connected
+        ));
+        assert_eq!(
+            *fake.state.connect_transport.lock().unwrap(),
+            Some(PowerShellTransport::Ssh)
+        );
+        request_tx
+            .send(WorkerRequest::Run("Get-Date".into()))
+            .unwrap();
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::CommandFinished(_)
         ));
         request_tx.send(WorkerRequest::Close).unwrap();
         assert!(matches!(

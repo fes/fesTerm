@@ -24,6 +24,7 @@ use crate::{
 pub(crate) enum CloseConsequence {
     TerminateLocalProcess,
     DisconnectSsh,
+    DetachRemoteSession,
     ClosePowerShell,
 }
 
@@ -35,6 +36,9 @@ impl CloseConsequence {
             }
             Self::DisconnectSsh => {
                 "The SSH connection will be disconnected and its terminal history discarded."
+            }
+            Self::DetachRemoteSession => {
+                "This frontend will detach. The remote daemon, shell and retained recovery history will keep running; reconnect requires a new explicit attachment."
             }
             Self::ClosePowerShell => {
                 "The PowerShell runspace will be closed. A running command is cancelled first; no terminal history is involved."

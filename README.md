@@ -82,7 +82,7 @@ native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
 ## Documentation
 
 - [PowerShell and enterprise development](docs/powershell-enterprise.md) -
-  experimental desktop PSRP profiles and structured sessions, Dev Box identity
+  experimental desktop PSRP profiles, structured sessions, enterprise discovery
   and generation-pinned remote sessiond attachment over SSH; not yet a supported corporate
   connection type.
 

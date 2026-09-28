@@ -110,6 +110,11 @@ jobs:
       - run: cargo test --workspace
       - name: Test native PowerShell and enterprise CLI boundaries
         run: cargo test -p festerm-powershell -p festerm-enterprise --examples --locked
+      - name: Qualify native SSH PSRP against the installed PowerShell runtime
+        timeout-minutes: 5
+        env:
+          FESTERM_PSRP_SSH_PWSH_INTEROP: "1"
+        run: cargo test -p festerm-powershell --test psrp_ssh_pwsh --locked -- --nocapture
       - name: Test the pinned PSRP dependency patches
         timeout-minutes: 15
         run: cargo test --manifest-path vendor/psrp-rs/Cargo.toml --tests --locked

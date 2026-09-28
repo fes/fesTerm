@@ -32,7 +32,7 @@ Corporate prerequisites block corporate qualification, not development of the
 independent SSH/sessiond path, account UI, or protocol fixtures. A test tenant
 and an authorized remoting target would enable ordinary sign-in/discovery and
 endpoint trials; they would not by themselves implement broker/device claims,
-Kerberos, PSRP-over-SSH, or persistent-session attachment.
+Kerberos, or PSRP runspace continuity.
 
 The candidate Rust libraries are
 [`psrp-rs`](https://github.com/muchiny/psrp-rs) 2.0.2 and
@@ -54,15 +54,17 @@ subsystem cancellation, Kerberos, CredSSP, reconnect and brokered enterprise
 authentication have separate qualification gates.
 
 The feature branch includes experimental native PowerShell profiles and a
-dedicated structured-session tab, plus a native SSH remote-daemon backend and
-CLI example. Enterprise account UI, a desktop remote-daemon picker and a
-PSRP daemon bridge remain separate implementation work, not credential blockers.
+dedicated structured-session tab, a remote-session desktop picker backed by
+native SSH, and an enterprise sign-in/discovery tab. A PSRP daemon bridge and
+broker/device-claim integration remain separate implementation work, not
+features enabled merely by supplying credentials.
 
 ### Desktop workflow
 
-Open **Profiles**, create a **PowerShell** profile, and select the host, HTTPS
-port, username/domain, exact endpoint configuration, optional trusted CA file,
-and local source-address policy. Windows PowerShell and PowerShell 7 presets
+Open **Profiles** and create a **PowerShell** profile. For the default HTTPS/NTLM
+mode, select the host, port, username/domain, exact endpoint configuration,
+optional trusted CA file, and local source-address policy. The explicit SSH
+mode uses the separate settings described below. Windows PowerShell and PowerShell 7 presets
 are conveniences for configuration names, not endpoint installation or
 authentication negotiation. A custom name is never silently replaced.
 
@@ -82,6 +84,37 @@ Networking, trust-file reads, credential access and remote cleanup run off the
 GUI thread. Tab close retains the cleanup worker, and window/application exit
 waits asynchronously up to 45 seconds before reporting unconfirmed cleanup.
 Native cross-platform usability/accessibility acceptance remains CP-23.
+
+### Remote-session desktop discovery
+
+Open **Remote Sessions** on the Launcher. Supply the authorized SSH host,
+account, port, helper executable name, independently verified SHA256 host-key
+fingerprint and optional local source address. Discovery is bounded and
+read-only. Endpoint edits invalidate the displayed inventory. Credentials are
+transient; this surface does not save a connection profile.
+
+Select an existing generation and explicitly consent to takeover before
+attaching. Even an apparently unattached session needs consent: discovery
+cannot reserve its attachment state. The selected name, PID and creation
+generation are pinned; stale selection fails instead of finding a replacement.
+Attachment opens a normal terminal tab, installs the daemon snapshot before
+input, and retains the existing daemon when the frontend detaches. Remote
+inventories, selected generations and ad-hoc attached tabs are excluded from
+workspace restoration. This is sessiond-over-SSH, not PSRP runspace attachment.
+
+### Enterprise desktop discovery
+
+Open **Enterprise** on the Launcher and supply the approved tenant and public
+client application identifiers plus the Dev Center endpoint and optional
+project. Sign-in uses the existing browser/loopback PKCE flow. Projects and
+owned Dev Boxes are read-only metadata, not connection authority; discovered
+connection URLs are never executed implicitly.
+
+Sign-in/discovery work runs off the UI thread. Cancel, configuration/account
+changes, sign-out and tab/window closure invalidate pending results and retain
+cleanup ownership. Tokens are transient and never enter configuration or
+workspace data. This surface is deliberately not a corporate Windows logon,
+embedded RDP client, or device-compliance broker.
 
 ### Native backend example
 
@@ -111,11 +144,46 @@ upstream attribution and describe the bounded decode/transport deviations.
 Their regression suites run separately in CI because these vendored libraries
 are not workspace members; their test dependencies have separate lockfiles.
 
-Only HTTPS plus explicit NTLM credentials is in this prototype. Kerberos,
-CredSSP/delegation, PSRP-over-SSH, brokered logon, interactive credential prompts,
-and reconnect/continuity are not supported connection modes here. Corporate
+The HTTPS mode uses explicit NTLM credentials. Kerberos, CredSSP/delegation,
+brokered logon, interactive credential prompts and reconnect/continuity are not
+supported connection modes here. The separate SSH mode is described below. Corporate
 qualification still requires CP-20; NTLM being implemented does not mean the
 organization permits it or that an Entra-only Dev Box accepts it.
+
+### Native PSRP over SSH
+
+PowerShell profiles can explicitly select **SSH** instead of the
+backward-compatible HTTPS/NTLM default. Configure the SSH account and port,
+an independently verified SHA256 host-key fingerprint, and the exact PowerShell
+subsystem name (normally `powershell`). The target administrator must already
+have enabled that subsystem. The desktop mode uses the existing transient or
+native-stored password flow and fresh local source-address policy; it does not
+infer an SSH endpoint from a Dev Box URL or an HTTPS configuration name.
+
+SSH authentication and binary channel ownership remain in `festerm-ssh`.
+`PowerShellSshSession` layers structured PSRP over its native, no-PTY subsystem
+stream. It does not request a shell, substitute an exec command, spawn a local
+remoting client, or fall back to WSMan. The structured desktop result view and
+explicit stop/close lifecycle remain the same; no SSH terminal VT parser is
+used for PowerShell objects.
+
+The opt-in interoperability fixture starts an in-process SSH server backed by
+an actual local `pwsh -sshs` process. This executable is the **test server**,
+not a production client dependency. No operating-system listener, test account
+or corporate policy is configured by this fixture:
+
+```sh
+FESTERM_PSRP_SSH_PWSH_INTEROP=1 \
+  cargo +1.98.0 test -p festerm-powershell --test psrp_ssh_pwsh -- --nocapture
+```
+
+Set `FESTERM_PSRP_SSH_PWSH_PATH` when `pwsh` is not on PATH. Opting in without
+an executable fails instead of silently skipping. Controlled local composition
+does not establish cross-host OpenSSH configuration, corporate authorization,
+phone device claims or native GUI accessibility acceptance.
+
+### HTTPS endpoint configuration
+
 The default resource URI selects `Microsoft.PowerShell`. An explicit endpoint
 configuration can instead be selected with
 `PowerShellEndpoint::with_configuration_name` or the CLI:

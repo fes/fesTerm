@@ -76,6 +76,15 @@ alternatives, not fallback candidates. Name validation and SOAP escaping
 remain transport responsibilities. Selecting a configuration does not grant
 its endpoint permissions or implement unsupported host calls.
 
+The independently authorized SSH mode uses a caller-supplied bounded binary
+stream from the existing native SSH crate. A subsystem request is not an exec
+request or a PTY shell. `festerm-powershell` owns structured PSRP over that
+stream; it must not activate the vendor's duplicate SSH authentication client.
+Profiles explicitly select the transport, with HTTPS retained for old metadata.
+SSH requires a pinned host key and exact subsystem; HTTP CA/domain/resource
+configuration is not reinterpreted as SSH policy. Both transports use the same
+structured desktop command surface and retained asynchronous cleanup.
+
 ### Enterprise identity and Dev Box
 
 Use an explicitly configured, authorized public-client application identity.
@@ -162,6 +171,24 @@ This extends the owner-scoped snapshot trust boundary through an explicitly
 trusted SSH host and authenticated execution account; it is not permission
 to consume arbitrary snapshot files or downgrade incompatible generations.
 
+### Desktop discovery surfaces
+
+The next owner-authorized slice exposes remote sessiond and enterprise discovery
+as independent desktop tabs reached from the Launcher. Presentation returns
+typed application actions; network work, transient credentials/tokens and
+callback-listener cleanup remain in bounded workers. Tab/window closure cancels
+these workers and retains shutdown ownership until completion. Account or
+endpoint edits invalidate prior inventories and pending outcomes.
+
+Remote attachment opens the existing `PersistentSession` in an ordinary
+application-owned terminal tab, preserving authoritative recovery adoption.
+The picker requires an independently verified host key and explicit takeover
+of a selected generation; no provider start-or-create path is substituted.
+Enterprise discovery remains read-only and does not launch opaque connection
+URLs, authenticate a shell, or claim broker/device compliance. These discovery
+surfaces and ad-hoc remote attachments are not workspace-restored: credentials,
+tokens, inventories and selected daemon generations are ephemeral.
+
 ## Alternatives considered
 
 - Ordinary SSH or an external PowerShell client: useful existing workflows,
@@ -188,6 +215,12 @@ GitHub-hosted Windows runner. It must reject developer machines and
 self-hosted runners, preserve TLS verification, and restore its endpoint,
 account, certificate and service changes. This is test infrastructure, not
 application-driven endpoint enablement or corporate access.
+
+SSH interoperability may also use a loopback in-process SSH server bridged to
+an actual local `pwsh -sshs` test-server process. This requires no OS listener,
+account or trust-policy modification and exercises the native product client.
+Explicit opt-in must fail if the server runtime is unavailable; fixture-only
+framing tests cannot substitute for native interoperability.
 
 Library versions, supported transport/authentication combinations and remaining
 native prerequisites must be recorded as implementation evidence, not inferred

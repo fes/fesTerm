@@ -97,7 +97,7 @@ pub use runspace::{
     DisconnectedPool, PROTOCOL_VERSION, RunspacePool, RunspacePoolState, RunspacePoolStateMachine,
 };
 pub use shared::SharedRunspacePool;
-pub use transport::{PsrpTransport, WinrmPsrpTransport};
+pub use transport::{BlockingIoPsrpTransport, PsrpTransport, WinrmPsrpTransport};
 
 // Re-export the `winrm-rs` types commonly needed by callers so they
 // don't have to depend on `winrm-rs` directly.

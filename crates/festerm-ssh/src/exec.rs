@@ -1,7 +1,7 @@
-//! Bounded raw SSH exec stream for remote `sessiond` bridge transports.
+//! Bounded raw SSH exec and subsystem streams.
 //!
-//! This module deliberately opens an SSH session channel with an `exec` request
-//! and no PTY.  It exposes stdout as `Read`, stdin as `Write`, and keeps stderr
+//! This module opens an SSH session channel with an exec or subsystem request
+//! and no PTY. It exposes stdout as `Read`, stdin as `Write`, and keeps stderr
 //! as a bounded diagnostic side channel.
 
 use std::{
@@ -33,6 +33,20 @@ const DEFAULT_STDERR_CAPACITY: usize = 16 * 1024;
 const DEFAULT_STREAM_TIMEOUT: Duration = Duration::from_millis(20);
 const DEFAULT_EXEC_QUEUE_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_RAW_EXEC_COMMAND_BYTES: usize = 4096;
+const MAX_SUBSYSTEM_NAME_BYTES: usize = 128;
+
+enum RawRequest {
+    Exec(String),
+    Subsystem(String),
+}
+
+impl RawRequest {
+    fn name(&self) -> &str {
+        match self {
+            Self::Exec(name) | Self::Subsystem(name) => name,
+        }
+    }
+}
 
 /// Bounded options for one raw SSH exec stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,7 +302,7 @@ impl SshRawExecError {
     }
 }
 
-/// A bounded, blocking `Read + Write + Send` SSH exec channel.
+/// A bounded, blocking `Read + Write + Send` SSH exec or subsystem channel.
 pub struct SshRawExecSession {
     command: String,
     stdout_receiver: Receiver<Vec<u8>>,
@@ -338,6 +352,44 @@ impl SshRawExecSession {
                 ),
             ));
         }
+        Self::start(profile, authentication, RawRequest::Exec(command), options)
+    }
+
+    /// Opens a named SSH subsystem without a shell, exec request or PTY.
+    /// Authentication, host-key pinning, local binding and cancellation have
+    /// the same semantics as [`Self::connect`].
+    pub fn connect_subsystem(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        subsystem: impl Into<String>,
+        options: SshRawExecOptions,
+    ) -> io::Result<Self> {
+        let subsystem = subsystem.into();
+        if subsystem.is_empty()
+            || subsystem.len() > MAX_SUBSYSTEM_NAME_BYTES
+            || !subsystem
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SSH subsystem must be a 1-128 byte ASCII name using letters, digits, dot, dash or underscore",
+            ));
+        }
+        Self::start(
+            profile,
+            authentication,
+            RawRequest::Subsystem(subsystem),
+            options,
+        )
+    }
+
+    fn start(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        request: RawRequest,
+        options: SshRawExecOptions,
+    ) -> io::Result<Self> {
         let known_host_fingerprint = options.known_host_fingerprint.clone().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -373,7 +425,7 @@ impl SshRawExecSession {
         let worker_cancelled = Arc::clone(&cancelled);
         let worker_shared = Arc::clone(&shared);
         let worker_host_key_gate = Arc::clone(&host_key_gate);
-        let session_command = command.clone();
+        let session_command = request.name().to_owned();
         let join = thread::Builder::new()
             .name("festerm-ssh-raw-exec".to_owned())
             .spawn(move || {
@@ -383,7 +435,7 @@ impl SshRawExecSession {
                 let worker_outcome = run_exec_thread(
                     profile,
                     authentication,
-                    command,
+                    request,
                     known_host_fingerprint,
                     stdout_sender,
                     stdin_receiver,
@@ -624,7 +676,7 @@ impl BoundedDiagnostic {
 fn run_exec_thread(
     profile: SshConnectionProfile,
     authentication: SshAuthentication,
-    command: String,
+    request: RawRequest,
     known_host_fingerprint: String,
     stdout_sender: SyncSender<Vec<u8>>,
     stdin_receiver: Receiver<Vec<u8>>,
@@ -646,7 +698,7 @@ fn run_exec_thread(
         run_exec_worker(
             profile,
             authentication,
-            command,
+            request,
             known_host_fingerprint,
             stdout_sender,
             stdin_receiver,
@@ -665,7 +717,7 @@ fn run_exec_thread(
 async fn run_exec_worker(
     profile: SshConnectionProfile,
     authentication: SshAuthentication,
-    command: String,
+    request: RawRequest,
     known_host_fingerprint: String,
     stdout_sender: SyncSender<Vec<u8>>,
     stdin_receiver: Receiver<Vec<u8>>,
@@ -723,7 +775,12 @@ async fn run_exec_worker(
     };
 
     match wait_for_ssh_operation(
-        channel.exec(true, command),
+        async {
+            match request {
+                RawRequest::Exec(command) => channel.exec(true, command).await,
+                RawRequest::Subsystem(name) => channel.request_subsystem(true, name).await,
+            }
+        },
         &command_receiver,
         &shared,
         &host_key_gate,
@@ -895,6 +952,7 @@ mod tests {
     struct ExecFixtureState {
         pty_count: Arc<Mutex<usize>>,
         commands: Arc<Mutex<Vec<String>>>,
+        subsystems: Arc<Mutex<Vec<String>>>,
     }
 
     struct ExecHandler {
@@ -942,6 +1000,45 @@ mod tests {
             _session: &mut russh::server::Session,
         ) -> Result<(), Self::Error> {
             *self.state.pty_count.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        async fn subsystem_request(
+            &mut self,
+            id: russh::ChannelId,
+            name: &str,
+            session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            self.state.subsystems.lock().unwrap().push(name.to_owned());
+            if self.reject_exec {
+                session.channel_failure(id)?;
+                return Ok(());
+            }
+            session.channel_success(id)?;
+            let mut channel = self.channel.take().unwrap();
+            let exit_status = self.exit_status;
+            tokio::spawn(async move {
+                channel
+                    .extended_data(1, &b"subsystem diagnostic"[..])
+                    .await
+                    .unwrap();
+                channel.data(&b"ready:"[..]).await.unwrap();
+                while let Some(message) = channel.wait().await {
+                    match message {
+                        russh::ChannelMsg::Data { data } => {
+                            channel.data(&data[..]).await.unwrap();
+                            if data.last() == Some(&b'\n') {
+                                break;
+                            }
+                        }
+                        russh::ChannelMsg::Eof | russh::ChannelMsg::Close => return,
+                        _ => {}
+                    }
+                }
+                channel.exit_status(exit_status).await.unwrap();
+                channel.eof().await.unwrap();
+                channel.close().await.unwrap();
+            });
             Ok(())
         }
 
@@ -1025,6 +1122,7 @@ mod tests {
         let state = ExecFixtureState {
             pty_count: Arc::new(Mutex::new(0)),
             commands: Arc::new(Mutex::new(Vec::new())),
+            subsystems: Arc::new(Mutex::new(Vec::new())),
         };
         let server_state = state.clone();
         let join = thread::spawn(move || {
@@ -1132,6 +1230,66 @@ mod tests {
             server.state.commands.lock().unwrap()[0],
             "festerm-sessiond bridge"
         );
+    }
+
+    #[test]
+    fn raw_subsystem_uses_native_request_without_exec_or_pty() {
+        let (server, port) = start_server(false, 0);
+        let mut stream = SshRawExecSession::connect_subsystem(
+            profile(port),
+            SshAuthentication::password("test-password"),
+            "powershell",
+            pinned_options(&server),
+        )
+        .unwrap();
+        let mut ready = [0; 6];
+        stream.read_exact(&mut ready).unwrap();
+        assert_eq!(&ready, b"ready:");
+        stream.write_all(b"abc\0def\n").unwrap();
+        let mut echoed = [0; 8];
+        stream.read_exact(&mut echoed).unwrap();
+        assert_eq!(&echoed, b"abc\0def\n");
+        assert_eq!(
+            stream.wait_finish(Duration::from_secs(5)).unwrap().status(),
+            0
+        );
+        assert_eq!(stream.stderr_diagnostic(), b"subsystem diagnostic");
+        assert_eq!(*server.state.pty_count.lock().unwrap(), 0);
+        assert!(server.state.commands.lock().unwrap().is_empty());
+        assert_eq!(*server.state.subsystems.lock().unwrap(), ["powershell"]);
+    }
+
+    #[test]
+    fn raw_subsystem_rejects_invalid_names_and_server_refusal() {
+        for name in ["", "powershell;sh", "pwsh\n", "pwsh\0", "pwsh target"] {
+            assert!(SshRawExecSession::connect_subsystem(
+                profile(22),
+                SshAuthentication::password("test-password"),
+                name,
+                SshRawExecOptions::new(),
+            )
+            .is_err());
+        }
+        assert!(SshRawExecSession::connect_subsystem(
+            profile(22),
+            SshAuthentication::password("test-password"),
+            "x".repeat(MAX_SUBSYSTEM_NAME_BYTES + 1),
+            SshRawExecOptions::new(),
+        )
+        .is_err());
+        let (server, port) = start_server(true, 0);
+        let mut stream = SshRawExecSession::connect_subsystem(
+            profile(port),
+            SshAuthentication::password("test-password"),
+            "powershell",
+            pinned_options(&server),
+        )
+        .unwrap();
+        assert_eq!(
+            stream.wait_finish(Duration::from_secs(5)),
+            Err(SshRawExecError::ExecRejected)
+        );
+        assert!(server.state.commands.lock().unwrap().is_empty());
     }
 
     #[test]

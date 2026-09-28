@@ -35,6 +35,53 @@
   ],
   "coverage": [
     {
+      "id": "native-powershell-ssh-subsystem",
+      "edges": ["PSRP-06"],
+      "requirements": ["docs/powershell-enterprise.md"],
+      "decisions": ["ADR-0041"],
+      "automated_tests": [
+        "raw_subsystem_uses_native_request_without_exec_or_pty",
+        "raw_subsystem_rejects_invalid_names_and_server_refusal",
+        "opt_in_real_pwsh_ssh_subsystem_runs_structured_psrp",
+        "powershell_https_is_backwards_compatible_default_transport",
+        "powershell_ssh_requires_explicit_pin_and_uses_ssh_defaults",
+        "powershell_profile_editor_routes_explicit_ssh_metadata",
+        "worker_dispatches_explicit_ssh_profile_through_same_lifecycle"
+      ],
+      "manual_scenarios": ["CP-20", "CP-23"],
+      "status": "partial",
+      "prerequisites": [
+        "authorized deployed OpenSSH PowerShell subsystem and approved authentication for each claimed remote platform",
+        "native GUI usability/accessibility qualification and corporate network/device-policy acceptance",
+        "controlled local real-pwsh subsystem composition is not corporate Dev Box or cross-host acceptance"
+      ]
+    },
+    {
+      "id": "desktop-remote-and-enterprise-discovery",
+      "edges": ["RSD-03", "ENTRA-03"],
+      "requirements": [
+        "docs/powershell-enterprise.md",
+        "docs/adr/0041-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": ["ADR-0014", "ADR-0038", "ADR-0041"],
+      "automated_tests": [
+        "discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata",
+        "remote_and_enterprise_cards_route_to_typed_discovery_actions",
+        "remote_picker_target_opens_normal_terminal_adopts_snapshot_and_stays_ephemeral",
+        "closing_discovery_tabs_retains_cleanup_until_worker_exit",
+        "discovery_action_guard_rejects_stale_owners_and_caps_only_new_workers",
+        "remote_picker_click_flow_requires_review_before_emitting_exact_target",
+        "finished_worker_without_terminal_message_reports_failure"
+      ],
+      "manual_scenarios": ["CP-19", "CP-21"],
+      "status": "partial",
+      "prerequisites": [
+        "native desktop focus/accessibility and real remote Windows OpenSSH/named-pipe qualification",
+        "approved enterprise tenant/application registration and policy-authorized Dev Center access",
+        "broker/device claims and enrolled-phone workflow remain separate implementation and qualification"
+      ]
+    },
+    {
       "id": "remote-sessiond-ssh-backend",
       "edges": ["RSD-01", "RSD-02"],
       "requirements": [
@@ -67,7 +114,7 @@
       "status": "partial",
       "prerequisites": [
         "cross-host macOS/Linux and Windows OpenSSH/named-pipe native qualification",
-        "desktop remote picker and enterprise/PSRP bridge remain separate implementation slices"
+        "enterprise/PSRP daemon bridge remains a separate implementation slice"
       ]
     },
     {

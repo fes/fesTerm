@@ -59,6 +59,8 @@ enum LauncherItemKind<'a> {
     NewSftp,
     NewSerial,
     NewPowerShell,
+    NewRemoteSessions,
+    NewEnterprise,
     /// Opens a Markdown workspace: the file picker, then a viewer tab.
     NewMarkdown,
     LocalProfile(&'a str),
@@ -222,6 +224,8 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
             | LauncherItemKind::NewPowerShell
+            | LauncherItemKind::NewRemoteSessions
+            | LauncherItemKind::NewEnterprise
             | LauncherItemKind::NewMarkdown
             | LauncherItemKind::ResumeSession(_)
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
@@ -257,6 +261,9 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewPowerShell | LauncherItemKind::PowerShellProfile(_) => {
                 (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
             }
+            LauncherItemKind::NewRemoteSessions | LauncherItemKind::NewEnterprise => {
+                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
+            }
             LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
         }
     }
@@ -281,6 +288,8 @@ impl LauncherItem<'_> {
                 kind: NewProfileKind::PowerShell,
             },
             LauncherItemKind::NewMarkdown => AppCommand::OpenMarkdownWorkspace,
+            LauncherItemKind::NewRemoteSessions => AppCommand::OpenRemoteSessions,
+            LauncherItemKind::NewEnterprise => AppCommand::OpenEnterprise,
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
@@ -3356,8 +3365,7 @@ pub fn show_launcher(
     let profiles = configuration.profiles();
     let customize_local_shell = configuration.interface_settings().customize_local_shell();
     let now_unix_seconds = unix_now_seconds();
-    // The five launch cards: one per session type fesTerm can start from
-    // nothing, in the order a new user meets them.
+    // Connection and discovery entry points, followed by saved profiles.
     let mut items = vec![
         LauncherItem::untabulated(
             "Local Shell".to_owned(),
@@ -3386,8 +3394,18 @@ pub fn show_launcher(
         ),
         LauncherItem::untabulated(
             "PowerShell".to_owned(),
-            "Experimental structured HTTPS/NTLM PSRP".to_owned(),
+            "Experimental structured HTTPS/NTLM or SSH PSRP".to_owned(),
             LauncherItemKind::NewPowerShell,
+        ),
+        LauncherItem::untabulated(
+            "Remote Sessions".to_owned(),
+            "Discover and resume an existing sessiond shell over SSH".to_owned(),
+            LauncherItemKind::NewRemoteSessions,
+        ),
+        LauncherItem::untabulated(
+            "Enterprise".to_owned(),
+            "Experimental Entra sign-in and Dev Box discovery".to_owned(),
+            LauncherItemKind::NewEnterprise,
         ),
     ];
     let fixed_end = items.len();
@@ -3478,7 +3496,10 @@ pub fn show_launcher(
             ),
             Profile::PowerShell(powershell) => (
                 LauncherItemKind::PowerShellProfile(profile.identifier()),
-                "PowerShell",
+                match powershell.transport() {
+                    festerm_config::PowerShellTransport::Https => "PowerShell HTTPS",
+                    festerm_config::PowerShellTransport::Ssh => "PowerShell SSH",
+                },
                 powershell.host().to_owned(),
             ),
         };
@@ -4909,11 +4930,11 @@ mod tests {
             harness.run_ok();
 
             harness
-                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM PSRP")
+                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
                 .scroll_to_me();
             harness.run_ok();
             harness
-                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM PSRP")
+                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
                 .click();
             harness.run_ok();
 
@@ -4927,6 +4948,37 @@ mod tests {
                 "PowerShell card should dispatch CreateProfile at {size:?}, got {:?}",
                 harness.state().command
             );
+        }
+    }
+
+    #[test]
+    fn remote_and_enterprise_cards_route_to_typed_discovery_actions() {
+        for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
+            for (label, remote) in [
+                (
+                    "Remote Sessions — Discover and resume an existing sessiond shell over SSH",
+                    true,
+                ),
+                (
+                    "Enterprise — Experimental Entra sign-in and Dev Box discovery",
+                    false,
+                ),
+            ] {
+                let mut harness = harness_with_configuration_size(Configuration::empty(), size);
+                harness.run_ok();
+                harness.get_by_label(label).scroll_to_me();
+                harness.run_ok();
+                harness.get_by_label(label).click();
+                harness.run_ok();
+                assert!(if remote {
+                    matches!(
+                        harness.state().command,
+                        Some(AppCommand::OpenRemoteSessions)
+                    )
+                } else {
+                    matches!(harness.state().command, Some(AppCommand::OpenEnterprise))
+                });
+            }
         }
     }
 
@@ -6639,8 +6691,8 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        // Past the six launch cards to the first saved profile.
-        for _ in 0..6 {
+        // Past the eight launch cards to the first saved profile.
+        for _ in 0..8 {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
         }

@@ -10,6 +10,7 @@ description = "Bounded native PowerShell/PSRP backend for fesTerm."
 
 [dependencies]
 festerm-secret-store = { path = "../festerm-secret-store" }
+festerm-ssh = { path = "../festerm-ssh" }
 psrp-rs = { path = "../../vendor/psrp-rs" }
 rpassword = "7"
 thiserror = "2"
@@ -18,7 +19,10 @@ tokio-util = { version = "0.7", features = ["rt"] }
 zeroize = "1"
 
 [dev-dependencies]
+festerm-session = { path = "../festerm-session" }
+russh = { version = "0.62.5", default-features = false, features = ["ring"] }
 static_assertions = "1"
+tokio = { version = "1", features = ["io-util", "net", "process", "rt", "sync", "time"] }
 
 [lints]
 workspace = true

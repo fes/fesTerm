@@ -2144,6 +2144,7 @@ dependencies = [
  "festerm-config",
  "festerm-core",
  "festerm-document",
+ "festerm-enterprise",
  "festerm-linux-power",
  "festerm-macos-window",
  "festerm-markdown",
@@ -2259,8 +2260,11 @@ name = "festerm-powershell"
 version = "0.6.0"
 dependencies = [
  "festerm-secret-store",
+ "festerm-session",
+ "festerm-ssh",
  "psrp-rs",
  "rpassword",
+ "russh",
  "static_assertions",
  "thiserror 2.0.19",
  "tokio",

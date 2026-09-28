@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::clixml::{PsObject, PsValue, parse_clixml, to_clixml};
 use crate::error::{PsrpError, Result};
-use crate::fragment::{Reassembler, encode_message};
+use crate::fragment::{Reassembler, encode_message, split_message};
 use crate::host::{HostMethodId, NoInteractionHost, PsHost, dispatch_host_call};
 use crate::message::{Destination, MessageType, PsrpMessage};
 use crate::transport::{PsrpTransport, StopAcknowledgement};
@@ -511,14 +511,32 @@ impl<T: PsrpTransport> RunspacePool<T> {
         };
         let encoded = msg.encode();
         let oid = self.allocate_object_id();
-        let frag_bytes = encode_message(oid, &encoded);
+        let fragments = split_message(oid, &encoded);
 
         // For CreatePipeline: the first fragment must go via Execute
         // (Command) with the PID as CommandId, not via Send.
         if mt == MessageType::CreatePipeline {
-            self.transport.execute_pipeline(&frag_bytes, pid).await
+            let mut fragments = fragments.into_iter().map(|fragment| fragment.encode());
+            let first_fragment = fragments
+                .next()
+                .ok_or_else(|| PsrpError::protocol("CreatePipeline encoded no fragments"))?;
+            self.transport
+                .execute_pipeline(&first_fragment, pid)
+                .await?;
+            for fragment in fragments {
+                self.transport
+                    .send_pipeline_fragment(pid, &fragment)
+                    .await?;
+            }
+            Ok(())
         } else {
-            self.transport.send_fragment(&frag_bytes).await
+            let frag_bytes = fragments
+                .into_iter()
+                .flat_map(|fragment| fragment.encode())
+                .collect::<Vec<_>>();
+            self.transport
+                .send_pipeline_fragment(pid, &frag_bytes)
+                .await
         }
     }
 

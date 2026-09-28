@@ -441,7 +441,7 @@ an actionable error; the client never silently falls back to Automatic.
 Source binding does not guarantee a VPN-only path, bind DNS requests, enforce
 an adapter, repair routing, or bypass network policy. The UI must say so.
 Native PSRP exposes the same fixed-source/Automatic transport distinction
-through its pre-GUI endpoint API and CLI, not a new PowerShell profile type.
+through its endpoint API, CLI and explicit PowerShell profile source policy.
 
 ### Native PowerShell sessions
 
@@ -454,8 +454,9 @@ existing capability.
 Saved profiles contain endpoint metadata, username/domain, the selected
 PowerShell configuration, optional trusted-CA file path, local source policy,
 and an opaque native-store credential reference. They never contain passwords,
-commands, output objects, or runspace contents. HTTPS/NTLM is explicitly
-labeled as the initial experimental mode, not Entra login. Configuration
+commands, output objects, or runspace contents. Explicit SSH profiles instead
+carry a pinned host key and exact subsystem name. HTTPS/NTLM remains the
+backward-compatible default; neither transport is presented as Entra login. Configuration
 selection is exact: an unavailable or unauthorized PowerShell 7 or restricted
 configuration must not fall back to Windows PowerShell.
 
@@ -489,6 +490,28 @@ including workers from recently closed tabs, within a finite cleanup deadline.
 Expiry reports unconfirmed remote state, not successful termination. Pending
 cleanup counts toward the connection-worker limit so repeatedly opening and
 closing tabs cannot accumulate unbounded background sessions.
+
+### Remote and enterprise discovery
+
+Launcher cards open ephemeral **Remote Sessions** and **Enterprise** tabs.
+Merely opening either surface performs no network or credential operation.
+Typed actions route through the active tab identity; cancellation remains
+available when the shared background-worker limit is reached. Closed tabs
+retain worker cleanup ownership until completion, including at window exit.
+Neither surface restores secrets, account sessions, inventories or pending
+network actions from workspace metadata.
+
+Remote discovery requires a pinned SSH host key and exact endpoint/source
+selection. Selecting a live daemon generation still requires explicit takeover
+consent and fresh authentication. Attachment opens an ordinary terminal backed
+by the remote PersistentSession, not a second terminal model. Snapshot adoption
+precedes input, and closing detaches rather than terminating the daemon.
+
+Enterprise discovery uses configured public-client PKCE sign-in and read-only
+Dev Center APIs. Changing configuration or account invalidates old results.
+Account tokens stay transient, discovered connection URLs are not executable
+actions, and the UI never equates discovery with corporate shell authority or
+broker/device compliance.
 
 ### Launcher as a tab
 

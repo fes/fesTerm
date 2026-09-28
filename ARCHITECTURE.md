@@ -70,6 +70,11 @@ typed application actions control a background worker, structured output has
 bounded retention, and per-worker cleanup handles gate asynchronous teardown.
 Profiles/workspaces contain endpoint metadata and opaque credential references,
 never passwords, tokens, command history or live runspace identity.
+Ephemeral enterprise and remote-session discovery tabs share the typed action,
+bounded background-worker and retained cleanup model. The remote picker opens
+the existing PersistentSession terminal path for an exact SSH-pinned daemon
+generation, while enterprise discovery remains read-only account metadata.
+Neither surface enters workspace restoration or implicitly authorizes a shell.
 Both reuse the secret-byte boundary. Neither makes the terminal core depend on
 cloud identity, nor feeds PSRP/CLIXML through the VT parser.
 

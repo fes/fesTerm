@@ -656,7 +656,7 @@ pub(crate) fn describe_errors(errors: &[PsValue]) -> String {
 mod tests {
     use super::*;
     use crate::clixml::to_clixml;
-    use crate::fragment::encode_message;
+    use crate::fragment::{MAX_FRAGMENT_PAYLOAD, encode_message};
     use crate::message::{Destination, PsrpMessage};
     use crate::runspace::RunspacePoolState;
     use crate::transport::mock::MockTransport;
@@ -991,6 +991,51 @@ mod tests {
         // Two outgoing frames for open + 1 CreatePipeline + 3 PipelineInput
         // + 1 EndOfPipelineInput = 7.
         assert_eq!(t.sent().len(), 7);
+        assert_eq!(t.sent_pipeline_fragment_ids(), vec![pid, pid, pid, pid]);
+        let _ = pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn multi_fragment_create_pipeline_routes_continuations_to_pipeline() {
+        let t = MockTransport::new();
+        let mut pool = opened_pool_with(&t).await;
+        let rpid = pool.id();
+        let pid = Uuid::new_v4();
+        let long_script = format!("'{}'", "x".repeat(MAX_FRAGMENT_PAYLOAD * 2));
+        t.push_incoming(encode_message(
+            10,
+            &make_state_message(
+                MessageType::PipelineState,
+                "PipelineState",
+                PipelineState::Completed as i32,
+                rpid,
+                pid,
+            ),
+        ));
+
+        let result = Pipeline::new(long_script)
+            .__with_forced_pid_for_test(pid)
+            .run_all_streams(&mut pool)
+            .await
+            .unwrap();
+        assert_eq!(result.state, PipelineState::Completed);
+
+        assert_eq!(t.executed_pipeline_ids(), vec![pid]);
+        let continuation_ids = t.sent_pipeline_fragment_ids();
+        assert!(
+            !continuation_ids.is_empty(),
+            "long CreatePipeline should require continuation fragments"
+        );
+        assert!(continuation_ids.iter().all(|id| *id == pid));
+
+        pool.send_psrp_message(MessageType::PublicKey, "<S>after</S>".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            t.sent_pipeline_fragment_ids(),
+            continuation_ids,
+            "runspace-scoped messages after pipeline completion must not reuse the pipeline destination"
+        );
         let _ = pool.close().await;
     }
 

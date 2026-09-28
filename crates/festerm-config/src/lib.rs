@@ -31,10 +31,10 @@ pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use profiles::{
     CredentialKind, KnownHostEntry, LocalBindPolicy, LocalProfileConfiguration,
-    PersistenceConfiguration, PersistenceProviderKind, PowerShellProfileConfiguration, Profile,
-    ProfileUsageEntry, RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity,
-    SerialProfileConfiguration, SerialStopBits, SshPortForwardConfiguration,
-    SshPortForwardDirection, SshProfileConfiguration,
+    PersistenceConfiguration, PersistenceProviderKind, PowerShellProfileConfiguration,
+    PowerShellTransport, Profile, ProfileUsageEntry, RemoteProfileKind, SerialDataBits,
+    SerialFlowControl, SerialParity, SerialProfileConfiguration, SerialStopBits,
+    SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use settings::{
     ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
@@ -1630,6 +1630,38 @@ credential_id = "{CREDENTIAL_REFERENCE}"
             );
         }
         assert!(!serialized.contains("password"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn powershell_ssh_profile_toml_round_trips_transport_specific_metadata() {
+        let profile = Profile::powershell("ops-ssh", "linux.example.test", 22, "alice")
+            .unwrap()
+            .as_powershell()
+            .unwrap()
+            .clone()
+            .with_ssh_transport(
+                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "powershell",
+            )
+            .unwrap()
+            .with_local_bind_policy(LocalBindPolicy::Ask)
+            .unwrap();
+        let configuration = Configuration::new(vec![Profile::PowerShell(profile)]).unwrap();
+        let serialized = configuration.to_toml().unwrap();
+        for expected in [
+            r#"transport = "ssh""#,
+            r#"port = 22"#,
+            r#"ssh_host_key_fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA""#,
+            r#"local_bind_policy = "ask""#,
+        ] {
+            assert!(
+                serialized.contains(expected),
+                "missing {expected:?} in {serialized}"
+            );
+        }
+        assert!(!serialized.contains("trusted_ca_file"));
+        assert!(!serialized.contains("domain"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
     }
 

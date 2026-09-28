@@ -5,6 +5,11 @@
 //! pipeline) talks to the transport through the [`PsrpTransport`] trait so
 //! it can be mocked in tests without standing up a fake SOAP server.
 
+use std::{
+    io::{Read, Write},
+    sync::{Arc, Mutex},
+};
+
 use async_trait::async_trait;
 use tracing::{debug, warn};
 use winrm_rs::{RESOURCE_URI_PSRP, Shell, SoapError, WinrmClient, WinrmError};
@@ -29,11 +34,21 @@ pub enum StopAcknowledgement {
 /// other error — in particular SOAP faults, which usually mean the
 /// server-side shell has died and the pool must be recreated.
 #[async_trait]
-pub trait PsrpTransport: Send {
+pub trait PsrpTransport: Send + Sync {
     async fn send_fragment(&self, bytes: &[u8]) -> Result<()>;
     async fn recv_chunk(&mut self) -> Result<Vec<u8>>;
     async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<StopAcknowledgement>;
     async fn close_shell(&mut self) -> Result<()>;
+
+    /// Send a PSRP fragment that is addressed to a specific pipeline.
+    ///
+    /// Most transports carry the pipeline id inside the PSRP message itself,
+    /// so the default preserves the historical behaviour. Out-of-process
+    /// PowerShell SSH remoting also wraps the fragment in an outer XML
+    /// envelope whose `PSGuid` must match the target pipeline.
+    async fn send_pipeline_fragment(&self, _pipeline_id: uuid::Uuid, bytes: &[u8]) -> Result<()> {
+        self.send_fragment(bytes).await
+    }
 
     /// Start a pipeline by executing a WS-Man Command with the first
     /// PSRP fragment as an argument and the pipeline's UUID as the
@@ -59,6 +74,287 @@ pub trait PsrpTransport: Send {
             "this transport does not implement disconnect_shell",
         ))
     }
+}
+
+/// PSRP transport over an already-authenticated, already-opened byte stream.
+///
+/// This is the narrow transport seam needed for PowerShell remoting over an
+/// SSH subsystem without making `psrp-rs` own SSH authentication or host-key
+/// policy. Callers must open the real `"powershell"` SSH subsystem elsewhere
+/// (for fesTerm, through `festerm-ssh`) and pass its bounded stdio stream here.
+/// Bytes are written and read exactly as PSRP fragments; there is no PTY,
+/// shell text protocol, CLIXML-in-terminal parsing, or WinRM/SOAP wrapping.
+#[derive(Debug)]
+pub struct BlockingIoPsrpTransport<S> {
+    stream: Arc<Mutex<Option<S>>>,
+    read_chunk_bytes: usize,
+    framing: BlockingIoFraming,
+    inbound_buffer: Vec<u8>,
+}
+
+impl<S> BlockingIoPsrpTransport<S>
+where
+    S: Read + Write + Send + 'static,
+{
+    /// Default upper bound for one blocking read operation. Fragment
+    /// reassembly above this transport handles arbitrary frame boundaries.
+    pub const DEFAULT_READ_CHUNK_BYTES: usize = 16 * 1024;
+
+    /// Wrap an opened PSRP byte stream using the default read chunk bound.
+    pub fn new(stream: S) -> Self {
+        Self::with_read_chunk_bytes(stream, Self::DEFAULT_READ_CHUNK_BYTES)
+    }
+
+    /// Wrap an opened PSRP byte stream with an explicit per-read bound.
+    ///
+    /// The bound is transport-local. Higher-level command/object budgets still
+    /// apply while decoding PSRP/CLIXML payloads.
+    pub fn with_read_chunk_bytes(stream: S, read_chunk_bytes: usize) -> Self {
+        Self {
+            stream: Arc::new(Mutex::new(Some(stream))),
+            read_chunk_bytes: read_chunk_bytes.max(1),
+            framing: BlockingIoFraming::Raw,
+            inbound_buffer: Vec::new(),
+        }
+    }
+
+    /// Wrap an opened PowerShell SSH subsystem stream.
+    ///
+    /// PowerShell's `pwsh -sshs` subsystem uses the out-of-process remoting
+    /// XML envelope (`<Data>`, `<Command>`, `<Close>`, `<Signal>`) around
+    /// base64-encoded PSRP fragments. This constructor enables that envelope
+    /// while preserving the same byte-stream transport bounds.
+    pub fn powershell_ssh(stream: S) -> Self {
+        Self::with_powershell_ssh_read_chunk_bytes(stream, Self::DEFAULT_READ_CHUNK_BYTES)
+    }
+
+    /// Like [`powershell_ssh`](Self::powershell_ssh), with an explicit
+    /// transport-local read chunk bound.
+    pub fn with_powershell_ssh_read_chunk_bytes(stream: S, read_chunk_bytes: usize) -> Self {
+        Self {
+            stream: Arc::new(Mutex::new(Some(stream))),
+            read_chunk_bytes: read_chunk_bytes.max(1),
+            framing: BlockingIoFraming::PowerShellOutOfProc,
+            inbound_buffer: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockingIoFraming {
+    Raw,
+    PowerShellOutOfProc,
+}
+
+#[async_trait]
+impl<S> PsrpTransport for BlockingIoPsrpTransport<S>
+where
+    S: Read + Write + Send + 'static,
+{
+    async fn send_fragment(&self, bytes: &[u8]) -> Result<()> {
+        let bytes = match self.framing {
+            BlockingIoFraming::Raw => bytes.to_vec(),
+            BlockingIoFraming::PowerShellOutOfProc => out_of_proc_data(uuid::Uuid::nil(), bytes),
+        };
+        write_out_of_proc_control(&self.stream, bytes).await
+    }
+
+    async fn send_pipeline_fragment(&self, pipeline_id: uuid::Uuid, bytes: &[u8]) -> Result<()> {
+        let bytes = match self.framing {
+            BlockingIoFraming::Raw => bytes.to_vec(),
+            BlockingIoFraming::PowerShellOutOfProc => out_of_proc_data(pipeline_id, bytes),
+        };
+        write_out_of_proc_control(&self.stream, bytes).await
+    }
+
+    async fn recv_chunk(&mut self) -> Result<Vec<u8>> {
+        loop {
+            if self.framing == BlockingIoFraming::PowerShellOutOfProc {
+                if let Some(bytes) = take_next_out_of_proc_data(&mut self.inbound_buffer)? {
+                    return Ok(bytes);
+                }
+            }
+            let stream = Arc::clone(&self.stream);
+            let limit = self.read_chunk_bytes;
+            let bytes = match tokio::task::spawn_blocking(move || {
+                let mut buffer = vec![0; limit];
+                let mut guard = stream
+                    .lock()
+                    .map_err(|_| PsrpError::protocol("PSRP SSH stream lock poisoned"))?;
+                let stream = guard
+                    .as_mut()
+                    .ok_or_else(|| PsrpError::protocol("PSRP SSH stream closed"))?;
+                match stream.read(&mut buffer) {
+                    Ok(0) => Err(PsrpError::protocol("PSRP SSH stream closed by peer")),
+                    Ok(read) => {
+                        buffer.truncate(read);
+                        Ok(buffer)
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::TimedOut
+                                | std::io::ErrorKind::WouldBlock
+                                | std::io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        Ok(Vec::new())
+                    }
+                    Err(error) => Err(PsrpError::protocol(format!(
+                        "PSRP SSH stream read: {error}"
+                    ))),
+                }
+            })
+            .await
+            .map_err(|error| PsrpError::protocol(format!("PSRP SSH read worker failed: {error}")))?
+            {
+                Ok(bytes) if bytes.is_empty() => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    continue;
+                }
+                result => result?,
+            };
+            if self.framing == BlockingIoFraming::Raw {
+                return Ok(bytes);
+            }
+            self.inbound_buffer.extend_from_slice(&bytes);
+        }
+    }
+
+    async fn signal_stop(&self, pipeline_id: uuid::Uuid) -> Result<StopAcknowledgement> {
+        if self.framing == BlockingIoFraming::PowerShellOutOfProc {
+            write_out_of_proc_control(&self.stream, out_of_proc_empty("Signal", pipeline_id))
+                .await?;
+        }
+        Ok(StopAcknowledgement::AwaitPipelineState)
+    }
+
+    async fn close_shell(&mut self) -> Result<()> {
+        if self.framing == BlockingIoFraming::PowerShellOutOfProc {
+            let _ = write_out_of_proc_control(
+                &self.stream,
+                out_of_proc_empty("Close", uuid::Uuid::nil()),
+            )
+            .await;
+        }
+        let stream = Arc::clone(&self.stream);
+        tokio::task::spawn_blocking(move || {
+            let mut guard = stream
+                .lock()
+                .map_err(|_| PsrpError::protocol("PSRP SSH stream lock poisoned"))?;
+            if let Some(mut stream) = guard.take() {
+                stream.flush().map_err(|error| {
+                    PsrpError::protocol(format!("PSRP SSH stream close flush: {error}"))
+                })?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| PsrpError::protocol(format!("PSRP SSH close worker failed: {error}")))?
+    }
+
+    async fn execute_pipeline(
+        &mut self,
+        fragment_bytes: &[u8],
+        pipeline_id: uuid::Uuid,
+    ) -> Result<()> {
+        if self.framing == BlockingIoFraming::PowerShellOutOfProc {
+            write_out_of_proc_control(&self.stream, out_of_proc_empty("Command", pipeline_id))
+                .await?;
+            self.send_pipeline_fragment(pipeline_id, fragment_bytes)
+                .await
+        } else {
+            self.send_fragment(fragment_bytes).await
+        }
+    }
+}
+
+fn out_of_proc_data(ps_guid: uuid::Uuid, bytes: &[u8]) -> Vec<u8> {
+    format!(
+        "<Data Stream='Default' PSGuid='{ps_guid}'>{}</Data>\n",
+        crate::clixml::encode::base64_encode(bytes)
+    )
+    .into_bytes()
+}
+
+fn out_of_proc_empty(element: &str, ps_guid: uuid::Uuid) -> Vec<u8> {
+    format!("<{element} PSGuid='{ps_guid}' />\n").into_bytes()
+}
+
+async fn write_out_of_proc_control<S>(stream: &Arc<Mutex<Option<S>>>, bytes: Vec<u8>) -> Result<()>
+where
+    S: Write + Send + 'static,
+{
+    let stream = Arc::clone(stream);
+    tokio::task::spawn_blocking(move || {
+        let mut guard = stream
+            .lock()
+            .map_err(|_| PsrpError::protocol("PSRP SSH stream lock poisoned"))?;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| PsrpError::protocol("PSRP SSH stream closed"))?;
+        stream
+            .write_all(&bytes)
+            .map_err(|error| PsrpError::protocol(format!("PSRP SSH stream write: {error}")))?;
+        stream
+            .flush()
+            .map_err(|error| PsrpError::protocol(format!("PSRP SSH stream flush: {error}")))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| PsrpError::protocol(format!("PSRP SSH write worker failed: {error}")))?
+}
+
+fn take_next_out_of_proc_data(buffer: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
+    loop {
+        let Some(start) = buffer.iter().position(|byte| *byte == b'<') else {
+            buffer.clear();
+            return Ok(None);
+        };
+        if start > 0 {
+            buffer.drain(..start);
+        }
+        let Some(tag_end) = buffer.iter().position(|byte| *byte == b'>') else {
+            return Ok(None);
+        };
+        let start_tag = std::str::from_utf8(&buffer[..=tag_end])
+            .map_err(|error| PsrpError::protocol(format!("PSRP SSH XML tag utf8: {error}")))?;
+        if start_tag.starts_with("<Data ") || start_tag.starts_with("<Data>") {
+            let closing = b"</Data>";
+            let Some(close_start) = find_bytes(buffer, closing) else {
+                return Ok(None);
+            };
+            let content =
+                std::str::from_utf8(&buffer[tag_end + 1..close_start]).map_err(|error| {
+                    PsrpError::protocol(format!("PSRP SSH Data payload utf8: {error}"))
+                })?;
+            let end = close_start + closing.len();
+            let decoded = crate::clixml::encode::base64_decode(content.trim())
+                .ok_or_else(|| PsrpError::protocol("PSRP SSH Data payload is not base64"))?;
+            buffer.drain(..end);
+            return Ok(Some(decoded));
+        }
+        if start_tag.ends_with("/>") {
+            buffer.drain(..=tag_end);
+            continue;
+        }
+        let name_end = start_tag[1..]
+            .find(|ch: char| ch.is_ascii_whitespace() || ch == '>')
+            .map(|idx| idx + 1)
+            .unwrap_or(start_tag.len() - 1);
+        let name = &start_tag[1..name_end];
+        let closing = format!("</{name}>");
+        let Some(close_start) = find_bytes(buffer, closing.as_bytes()) else {
+            return Ok(None);
+        };
+        buffer.drain(..close_start + closing.len());
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Transport backed by a live `winrm_rs::Shell`.
@@ -283,6 +579,8 @@ pub mod mock {
     pub struct MockTransport {
         pub inbox: Arc<Mutex<VecDeque<Vec<u8>>>>, // bytes to hand out of recv_chunk
         pub outbox: Arc<Mutex<Vec<Vec<u8>>>>,     // bytes captured from send_fragment
+        pub pipeline_fragment_ids: Arc<Mutex<Vec<uuid::Uuid>>>,
+        pub executed_pipeline_ids: Arc<Mutex<Vec<uuid::Uuid>>>,
         pub stopped: Arc<Mutex<bool>>,
         pub stopped_pipeline_ids: Arc<Mutex<Vec<uuid::Uuid>>>,
         pub stop_acknowledgement: Arc<Mutex<StopAcknowledgement>>,
@@ -306,6 +604,14 @@ pub mod mock {
         pub fn sent(&self) -> Vec<Vec<u8>> {
             self.outbox.lock().unwrap().clone()
         }
+
+        pub fn sent_pipeline_fragment_ids(&self) -> Vec<uuid::Uuid> {
+            self.pipeline_fragment_ids.lock().unwrap().clone()
+        }
+
+        pub fn executed_pipeline_ids(&self) -> Vec<uuid::Uuid> {
+            self.executed_pipeline_ids.lock().unwrap().clone()
+        }
     }
 
     #[async_trait]
@@ -316,6 +622,24 @@ pub mod mock {
             }
             self.outbox.lock().unwrap().push(bytes.to_vec());
             Ok(())
+        }
+
+        async fn send_pipeline_fragment(
+            &self,
+            pipeline_id: uuid::Uuid,
+            bytes: &[u8],
+        ) -> Result<()> {
+            self.pipeline_fragment_ids.lock().unwrap().push(pipeline_id);
+            self.send_fragment(bytes).await
+        }
+
+        async fn execute_pipeline(
+            &mut self,
+            fragment_bytes: &[u8],
+            pipeline_id: uuid::Uuid,
+        ) -> Result<()> {
+            self.executed_pipeline_ids.lock().unwrap().push(pipeline_id);
+            self.send_fragment(fragment_bytes).await
         }
 
         async fn recv_chunk(&mut self) -> Result<Vec<u8>> {
@@ -409,5 +733,131 @@ pub mod mock {
             super::pipeline_command_id(id),
             "2BFDF32C-97F5-4A3A-AA8C-B0D968B8EE4A"
         );
+    }
+}
+
+#[cfg(test)]
+mod blocking_io_tests {
+    use super::{BlockingIoPsrpTransport, PsrpTransport};
+    use std::{
+        collections::VecDeque,
+        io::{self, Read, Write},
+        sync::{Arc, Condvar, Mutex},
+        time::Duration,
+    };
+
+    #[derive(Clone, Debug, Default)]
+    struct MemoryStream {
+        inbound: Arc<(Mutex<VecDeque<Vec<u8>>>, Condvar)>,
+        outbound: Arc<Mutex<Vec<Vec<u8>>>>,
+        closed: Arc<Mutex<bool>>,
+    }
+
+    impl MemoryStream {
+        fn push_inbound(&self, bytes: Vec<u8>) {
+            let (lock, ready) = &*self.inbound;
+            lock.lock().unwrap().push_back(bytes);
+            ready.notify_all();
+        }
+
+        fn outbound(&self) -> Vec<Vec<u8>> {
+            self.outbound.lock().unwrap().clone()
+        }
+    }
+
+    impl Read for MemoryStream {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let (lock, ready) = &*self.inbound;
+            let mut inbound = lock.lock().unwrap();
+            loop {
+                if let Some(mut bytes) = inbound.pop_front() {
+                    let count = buffer.len().min(bytes.len());
+                    buffer[..count].copy_from_slice(&bytes[..count]);
+                    if count < bytes.len() {
+                        bytes.drain(..count);
+                        inbound.push_front(bytes);
+                    }
+                    return Ok(count);
+                }
+                if *self.closed.lock().unwrap() {
+                    return Ok(0);
+                }
+                inbound = ready
+                    .wait_timeout(inbound, Duration::from_secs(1))
+                    .unwrap()
+                    .0;
+            }
+        }
+    }
+
+    impl Write for MemoryStream {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.outbound.lock().unwrap().push(buffer.to_vec());
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn blocking_io_transport_writes_raw_fragments_and_reassembles_bounded_reads() {
+        let stream = MemoryStream::default();
+        let peer = stream.clone();
+        let mut transport = BlockingIoPsrpTransport::with_read_chunk_bytes(stream, 4);
+
+        transport.send_fragment(b"fragment").await.unwrap();
+        assert_eq!(peer.outbound(), vec![b"fragment".to_vec()]);
+
+        peer.push_inbound(b"abcdef".to_vec());
+        assert_eq!(transport.recv_chunk().await.unwrap(), b"abcd".to_vec());
+        assert_eq!(transport.recv_chunk().await.unwrap(), b"ef".to_vec());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn blocking_io_transport_closes_without_leaving_a_readable_stream() {
+        let stream = MemoryStream::default();
+        let mut transport = BlockingIoPsrpTransport::new(stream);
+        transport.close_shell().await.unwrap();
+
+        let error = transport.recv_chunk().await.unwrap_err().to_string();
+        assert!(error.contains("closed"), "{error}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn powershell_ssh_framing_routes_pipeline_fragments_to_the_pipeline_guid() {
+        let stream = MemoryStream::default();
+        let peer = stream.clone();
+        let transport = BlockingIoPsrpTransport::powershell_ssh(stream);
+        let pipeline_id = uuid::Uuid::parse_str("11111111-2222-4333-8444-555555555555").unwrap();
+
+        transport.send_fragment(b"runspace").await.unwrap();
+        transport
+            .send_pipeline_fragment(pipeline_id, b"pipeline-input")
+            .await
+            .unwrap();
+        transport.send_fragment(b"runspace-after").await.unwrap();
+
+        let outbound = peer
+            .outbound()
+            .into_iter()
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            outbound[0].contains("PSGuid='00000000-0000-0000-0000-000000000000'"),
+            "{outbound:?}"
+        );
+        assert!(outbound[0].contains("cnVuc3BhY2U="), "{outbound:?}");
+        assert!(
+            outbound[1].contains("PSGuid='11111111-2222-4333-8444-555555555555'"),
+            "{outbound:?}"
+        );
+        assert!(outbound[1].contains("cGlwZWxpbmUtaW5wdXQ="), "{outbound:?}");
+        assert!(
+            outbound[2].contains("PSGuid='00000000-0000-0000-0000-000000000000'"),
+            "{outbound:?}"
+        );
+        assert!(outbound[2].contains("cnVuc3BhY2UtYWZ0ZXI="), "{outbound:?}");
     }
 }

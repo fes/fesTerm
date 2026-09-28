@@ -18,6 +18,7 @@ mod discovery;
 mod document_store;
 #[allow(dead_code)]
 mod documents;
+mod enterprise;
 mod environment;
 mod inspector;
 mod keyboard;
@@ -29,6 +30,7 @@ mod native_smoke;
 mod overlay_state;
 mod port_forward_draft;
 mod powershell;
+mod remote_sessions;
 mod save_as;
 mod screens;
 mod search;

@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -10,9 +11,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use festerm_secret_store::SecretBytes;
+use festerm_ssh::{SshAuthentication, SshConnectionProfile, SshRawExecOptions, SshRawExecSession};
 use psrp_rs::{
-    AuthMethod, Pipeline, RunspacePool, WinrmClient, WinrmConfig, WinrmCredentials, WinrmError,
-    WinrmPsrpTransport, RESOURCE_URI_PSRP_BASE,
+    AuthMethod, BlockingIoPsrpTransport, Pipeline, PsrpTransport, RunspacePool, WinrmClient,
+    WinrmConfig, WinrmCredentials, WinrmError, WinrmPsrpTransport, RESOURCE_URI_PSRP_BASE,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -414,6 +416,15 @@ impl PowerShellSession {
                 }
             });
         }
+        let Some(sender) = self
+            .sender
+            .lock()
+            .expect("sender mutex poisoned")
+            .as_ref()
+            .cloned()
+        else {
+            return Err(PowerShellSessionError::Closed);
+        };
         let (message_tx, message_rx) = mpsc::sync_channel(self.options.event_channel_capacity + 1);
         let (ack_tx, ack_rx) = mpsc::sync_channel(1);
         let cancel = CancellationToken::new();
@@ -423,7 +434,7 @@ impl PowerShellSession {
             cancel: cancel.clone(),
             ack_tx,
         };
-        self.sender()
+        sender
             .send(request)
             .map_err(|_| PowerShellSessionError::Invalidated)?;
         ack_rx
@@ -456,15 +467,195 @@ impl PowerShellSession {
         }
         result
     }
+}
 
-    fn sender(&self) -> mpsc::Sender<SessionRequest> {
-        self.sender
+/// Native PSRP session over an already-opened PowerShell SSH subsystem stream.
+///
+/// This type deliberately does not open SSH connections itself. fesTerm's SSH
+/// crate owns authentication, host-key trust, source binding, queue bounds and
+/// cleanup; once it exposes a no-PTY `"powershell"` subsystem stream, callers
+/// pass that stream here to run structured PSRP without duplicating SSH policy.
+#[derive(Debug)]
+pub struct PowerShellSshSession {
+    sender: Mutex<Option<mpsc::Sender<SessionRequest>>>,
+    status: Arc<Mutex<PowerShellSessionStatus>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+    options: PowerShellOptions,
+}
+
+impl PowerShellSshSession {
+    /// Default SSH subsystem name used by Windows PowerShell remoting over SSH.
+    pub const DEFAULT_SUBSYSTEM_NAME: &'static str = "powershell";
+
+    /// Open a native PowerShell SSH subsystem through `festerm-ssh`, then run
+    /// structured PSRP over that subsystem's bounded stdio stream.
+    ///
+    /// SSH authentication, host-key pinning/trust, local source binding,
+    /// channel queue bounds, cancellation and worker cleanup are owned by
+    /// `festerm-ssh`. This method requests a subsystem channel, never a shell,
+    /// exec command or PTY.
+    pub fn connect_ssh_subsystem(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        ssh_options: SshRawExecOptions,
+        options: PowerShellOptions,
+    ) -> Result<Self, PowerShellSessionError> {
+        Self::connect_ssh_subsystem_named(
+            profile,
+            authentication,
+            Self::DEFAULT_SUBSYSTEM_NAME,
+            ssh_options,
+            options,
+        )
+    }
+
+    /// Like [`connect_ssh_subsystem`](Self::connect_ssh_subsystem), but with
+    /// an explicit PowerShell SSH subsystem name. Use this for hosts that
+    /// deliberately register a non-default endpoint; there is no fallback.
+    pub fn connect_ssh_subsystem_named(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        subsystem: impl Into<String>,
+        ssh_options: SshRawExecOptions,
+        options: PowerShellOptions,
+    ) -> Result<Self, PowerShellSessionError> {
+        let stream =
+            SshRawExecSession::connect_subsystem(profile, authentication, subsystem, ssh_options)
+                .map_err(map_ssh_stream_open_error)?;
+        Self::connect_stream(stream, options)
+    }
+
+    pub fn connect_stream<S>(
+        stream: S,
+        options: PowerShellOptions,
+    ) -> Result<Self, PowerShellSessionError>
+    where
+        S: Read + Write + Send + 'static,
+    {
+        validate_options(&options)?;
+        let status = Arc::new(Mutex::new(PowerShellSessionStatus::Connecting));
+        let (request_tx, request_rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let worker_status = Arc::clone(&status);
+        let worker_options = options.clone();
+        let join = thread::Builder::new()
+            .name("festerm-powershell-ssh".into())
+            .spawn(move || {
+                run_ssh_stream_worker(stream, worker_options, request_rx, ready_tx, worker_status);
+            })
+            .map_err(|_| PowerShellSessionError::WorkerStartFailed)?;
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                sender: Mutex::new(Some(request_tx)),
+                status,
+                worker: Mutex::new(Some(join)),
+                options,
+            }),
+            Ok(Err(error)) => {
+                let _ = join.join();
+                Err(error)
+            }
+            Err(_) => {
+                let _ = join.join();
+                Err(PowerShellSessionError::WorkerStartFailed)
+            }
+        }
+    }
+
+    pub fn status(&self) -> PowerShellSessionStatus {
+        *self.status.lock().expect("status mutex poisoned")
+    }
+
+    pub fn start_script(
+        &self,
+        script: impl Into<String>,
+    ) -> Result<PowerShellCommand, PowerShellSessionError> {
+        let Some(sender) = self
+            .sender
             .lock()
             .expect("sender mutex poisoned")
             .as_ref()
-            .expect("sender available")
-            .clone()
+            .cloned()
+        else {
+            return Err(PowerShellSessionError::Closed);
+        };
+        start_script_request(
+            self.status(),
+            self.options.event_channel_capacity,
+            sender,
+            script.into(),
+        )
     }
+
+    pub fn close(&self) -> Result<(), PowerShellSessionError> {
+        close_session_request(&self.sender, &self.status, &self.worker)
+    }
+}
+
+fn start_script_request(
+    status: PowerShellSessionStatus,
+    event_channel_capacity: usize,
+    sender: mpsc::Sender<SessionRequest>,
+    script: String,
+) -> Result<PowerShellCommand, PowerShellSessionError> {
+    if script.trim().is_empty() {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "script must not be empty",
+        ));
+    }
+    if status != PowerShellSessionStatus::Ready {
+        return Err(match status {
+            PowerShellSessionStatus::Invalidated => PowerShellSessionError::Invalidated,
+            PowerShellSessionStatus::Closed => PowerShellSessionError::Closed,
+            PowerShellSessionStatus::Connecting | PowerShellSessionStatus::Ready => {
+                PowerShellSessionError::TransportFailure
+            }
+        });
+    }
+    let (message_tx, message_rx) = mpsc::sync_channel(event_channel_capacity + 1);
+    let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+    let cancel = CancellationToken::new();
+    sender
+        .send(SessionRequest::RunScript {
+            script,
+            message_tx,
+            cancel: cancel.clone(),
+            ack_tx,
+        })
+        .map_err(|_| PowerShellSessionError::Invalidated)?;
+    ack_rx
+        .recv()
+        .map_err(|_| PowerShellSessionError::Invalidated)??;
+    Ok(PowerShellCommand {
+        receiver: message_rx,
+        cancel,
+        finished: false,
+    })
+}
+
+fn close_session_request(
+    sender: &Mutex<Option<mpsc::Sender<SessionRequest>>>,
+    status: &Arc<Mutex<PowerShellSessionStatus>>,
+    worker: &Mutex<Option<JoinHandle<()>>>,
+) -> Result<(), PowerShellSessionError> {
+    let mut guard = sender.lock().expect("sender mutex poisoned");
+    let Some(sender) = guard.take() else {
+        if *status.lock().expect("status mutex poisoned") == PowerShellSessionStatus::Closed {
+            return Ok(());
+        }
+        return Err(PowerShellSessionError::Closed);
+    };
+    let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+    sender
+        .send(SessionRequest::Close { ack_tx })
+        .map_err(|_| PowerShellSessionError::Invalidated)?;
+    let result = ack_rx
+        .recv()
+        .map_err(|_| PowerShellSessionError::Invalidated)?;
+    if let Some(join) = worker.lock().expect("worker mutex poisoned").take() {
+        let _ = join.join();
+    }
+    result
 }
 
 enum SessionRequest {
@@ -588,6 +779,106 @@ fn run_worker(
     *status.lock().expect("status mutex poisoned") = PowerShellSessionStatus::Invalidated;
 }
 
+fn run_ssh_stream_worker<S>(
+    stream: S,
+    options: PowerShellOptions,
+    request_rx: Receiver<SessionRequest>,
+    ready_tx: SyncSender<Result<(), PowerShellSessionError>>,
+    status: Arc<Mutex<PowerShellSessionStatus>>,
+) where
+    S: Read + Write + Send + 'static,
+{
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            let _ = ready_tx.send(Err(PowerShellSessionError::WorkerStartFailed));
+            *status.lock().expect("status mutex poisoned") = PowerShellSessionStatus::Invalidated;
+            return;
+        }
+    };
+
+    let transport = BlockingIoPsrpTransport::powershell_ssh(stream);
+    let open_result = runtime.block_on(async {
+        match tokio::time::timeout(options.connect_timeout, async move {
+            let (rpid, creation) =
+                RunspacePool::<BlockingIoPsrpTransport<S>>::build_creation_fragments(1, 1)?;
+            transport.send_fragment(&creation).await?;
+            RunspacePool::open_from_transport(transport, rpid, 1, 1).await
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(psrp_rs::PsrpError::Cancelled),
+        }
+    });
+    let mut pool = match open_result {
+        Ok(pool) => pool,
+        Err(error) => {
+            let mapped = map_psrp_error(&error);
+            let _ = ready_tx.send(Err(mapped));
+            *status.lock().expect("status mutex poisoned") = PowerShellSessionStatus::Invalidated;
+            return;
+        }
+    };
+    *status.lock().expect("status mutex poisoned") = PowerShellSessionStatus::Ready;
+    let _ = ready_tx.send(Ok(()));
+
+    while let Ok(request) = request_rx.recv() {
+        match request {
+            SessionRequest::RunScript {
+                script,
+                message_tx,
+                cancel,
+                ack_tx,
+            } => {
+                let started =
+                    runtime.block_on(async { Pipeline::new(script).start(&mut pool).await });
+                match started {
+                    Ok(handle) => {
+                        let _ = ack_tx.send(Ok(()));
+                        let health = runtime.block_on(drive_pipeline(
+                            handle, message_tx, cancel, &options, &status,
+                        ));
+                        if matches!(health, WorkerHealth::Invalidated) {
+                            *status.lock().expect("status mutex poisoned") =
+                                PowerShellSessionStatus::Invalidated;
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let mapped = map_psrp_error(&error);
+                        let _ = ack_tx.send(Err(mapped.clone()));
+                        if invalidates_psrp(&error) {
+                            *status.lock().expect("status mutex poisoned") =
+                                PowerShellSessionStatus::Invalidated;
+                            break;
+                        }
+                    }
+                }
+            }
+            SessionRequest::Close { ack_tx } => {
+                let result = runtime.block_on(async {
+                    match tokio::time::timeout(options.shutdown_timeout, pool.close()).await {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(error)) => Err(map_psrp_error(&error)),
+                        Err(_) => Err(PowerShellSessionError::TimedOut),
+                    }
+                });
+                *status.lock().expect("status mutex poisoned") = PowerShellSessionStatus::Closed;
+                let _ = ack_tx.send(result);
+                return;
+            }
+        }
+    }
+
+    let _ = runtime
+        .block_on(async { tokio::time::timeout(options.shutdown_timeout, pool.close()).await });
+    *status.lock().expect("status mutex poisoned") = PowerShellSessionStatus::Invalidated;
+}
+
 fn build_client(
     endpoint: &PowerShellEndpoint,
     options: &PowerShellOptions,
@@ -631,8 +922,8 @@ enum WorkerHealth {
     Invalidated,
 }
 
-async fn drive_pipeline(
-    mut handle: psrp_rs::PipelineHandle<'_, WinrmPsrpTransport<'_>>,
+async fn drive_pipeline<T: PsrpTransport>(
+    mut handle: psrp_rs::PipelineHandle<'_, T>,
     message_tx: SyncSender<PowerShellCommandMessage>,
     cancel: CancellationToken,
     options: &PowerShellOptions,
@@ -1112,7 +1403,11 @@ fn pipeline_error_invalidates_worker(error: &psrp_rs::PsrpError, cancel_requeste
 fn invalidates_psrp(error: &psrp_rs::PsrpError) -> bool {
     matches!(
         error,
-        psrp_rs::PsrpError::Winrm(WinrmError::Timeout(_)) | psrp_rs::PsrpError::Cancelled
+        psrp_rs::PsrpError::Winrm(WinrmError::Timeout(_))
+            | psrp_rs::PsrpError::Cancelled
+            | psrp_rs::PsrpError::Protocol(_)
+            | psrp_rs::PsrpError::Fragment(_)
+            | psrp_rs::PsrpError::Clixml(_)
     )
 }
 
@@ -1126,6 +1421,18 @@ fn map_psrp_error(error: &psrp_rs::PsrpError) -> PowerShellSessionError {
         | psrp_rs::PsrpError::Clixml(_)
         | psrp_rs::PsrpError::Fragment(_)
         | psrp_rs::PsrpError::PipelineFailed(_) => PowerShellSessionError::ProtocolFailure,
+    }
+}
+
+fn map_ssh_stream_open_error(error: std::io::Error) -> PowerShellSessionError {
+    match error.kind() {
+        std::io::ErrorKind::InvalidInput => PowerShellSessionError::InvalidConfiguration(
+            "SSH subsystem options must be valid and include an explicit pinned host key",
+        ),
+        std::io::ErrorKind::TimedOut => PowerShellSessionError::TimedOut,
+        std::io::ErrorKind::Interrupted => PowerShellSessionError::Invalidated,
+        std::io::ErrorKind::PermissionDenied => PowerShellSessionError::AuthenticationRejected,
+        _ => PowerShellSessionError::TransportFailure,
     }
 }
 
