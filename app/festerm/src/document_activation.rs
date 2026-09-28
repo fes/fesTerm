@@ -919,6 +919,11 @@ fn forward_to_endpoint(
         let cancelled = AtomicBool::new(false);
         match Pipe::connect(&endpoint.pipe_name, CONNECT_TIMEOUT, &cancelled) {
             Ok(mut pipe) => {
+                pipe.verify_server_user().map_err(|error| {
+                    ForwardError::ConnectionFailed(format!(
+                        "could not verify activation receiver identity: {error}"
+                    ))
+                })?;
                 if let Err(error) = pipe.allow_server_foreground() {
                     tracing::warn!(
                         target: "festerm::app",

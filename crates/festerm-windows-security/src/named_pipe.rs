@@ -119,6 +119,19 @@ impl Pipe {
         Ok(process_id)
     }
 
+    /// A private server DACL controls incoming clients, but does not prove to a
+    /// connecting client that nobody else pre-created the global pipe name.
+    pub fn verify_server_user(&self) -> io::Result<()> {
+        if super::imp::process_belongs_to_current_user(self.server_process_id()?)? {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the pipe server belongs to a different user",
+            ))
+        }
+    }
+
     /// Passes the caller's foreground permission to this pipe's server.
     /// Windows may deny the grant (for example for a background CLI launch);
     /// callers should report that without discarding the document request.
@@ -332,6 +345,8 @@ mod tests {
     fn connected_pipe_reports_the_actual_server_process() {
         let (_server, client) = connected_pair(&pipe_name());
         assert_eq!(client.server_process_id().unwrap(), std::process::id());
+        client.verify_server_user().unwrap();
+        assert!(super::super::imp::process_belongs_to_current_user(0).is_err());
     }
 
     #[test]
