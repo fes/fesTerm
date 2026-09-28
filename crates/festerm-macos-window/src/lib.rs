@@ -1743,12 +1743,13 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    #[cfg(target_os = "macos")]
+    use super::OPEN_DOCUMENT_PATH_BYTE_CAPACITY;
     use super::{
         native_menu_state, traffic_light_origin_y, wake_after_enqueue, NativeMenuAction,
         NativeMenuCommand, NativeMenuState, NativeMenuSync, OpenDocumentBridge,
         OpenDocumentCallbacks, OpenDocumentEnqueueResult, OpenDocumentError, OpenDocumentPending,
-        OwnedNativeMenuState, OPEN_DOCUMENT_ERROR_CAPACITY, OPEN_DOCUMENT_PATH_BYTE_CAPACITY,
-        OPEN_DOCUMENT_REQUEST_CAPACITY,
+        OwnedNativeMenuState, OPEN_DOCUMENT_ERROR_CAPACITY, OPEN_DOCUMENT_REQUEST_CAPACITY,
     };
 
     #[test]
