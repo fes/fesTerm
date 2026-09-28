@@ -5,6 +5,9 @@ This directory contains the isolated Windows render-stage experiment and
 controlled-output qualification fixtures for the bounded supported-path
 application prototype. It is not a complete egui backend.
 
+The broader active-TUI corpus and isolated Windows Terminal comparison are
+documented in [`../terminal-performance/README.md`](../terminal-performance/README.md).
+
 ## Recommendation
 
 **Go for a bounded Windows terminal-only implementation that defaults on only

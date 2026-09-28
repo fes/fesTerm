@@ -670,4 +670,201 @@ mod tests {
             fixture(true, 1.0, false, false, true)
         );
     }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    #[ignore = "optional completed-render TUI profiling; not native presentation latency"]
+    fn replay_terminal_tui_workloads() {
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+        use festerm_core::{Dimensions, Terminal};
+        use festerm_test_support::{captures, tui_workload::Workload};
+        use festerm_ui_egui::{EncodedInputSink, TerminalView};
+        use std::{path::PathBuf, sync::atomic::Ordering, time::Instant};
+
+        struct Sink;
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, _: &[u8]) {}
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+        }
+
+        assert_eq!(
+            std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
+            Ok("1")
+        );
+        let directory = PathBuf::from(
+            std::env::var_os("FESTERM_TUI_RENDER_OUT").expect("set FESTERM_TUI_RENDER_OUT"),
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_test_writer()
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let cases = [
+            (
+                "copilot",
+                captures::frame_worth_rendering(captures::COPILOT).to_vec(),
+                None,
+            ),
+            (
+                "vim",
+                captures::frame_worth_rendering(captures::VIM).to_vec(),
+                None,
+            ),
+            (
+                "htop",
+                captures::frame_worth_rendering(captures::HTOP).to_vec(),
+                None,
+            ),
+            (
+                "tmux",
+                captures::frame_worth_rendering(captures::TMUX).to_vec(),
+                None,
+            ),
+            ("quiet", Workload::Quiet.setup(), Some(Workload::Quiet)),
+            (
+                "localized",
+                Workload::Localized.setup(),
+                Some(Workload::Localized),
+            ),
+            (
+                "streaming",
+                Workload::Streaming.setup(),
+                Some(Workload::Streaming),
+            ),
+            (
+                "full-redraw",
+                Workload::FullRedraw.setup(),
+                Some(Workload::FullRedraw),
+            ),
+        ];
+        let dimensions = Dimensions::new(captures::COLUMNS, captures::ROWS).unwrap();
+        let mut results = Vec::new();
+        for (name, setup_bytes, workload) in cases {
+            let mut reference: Option<image::RgbaImage> = None;
+            for native in [false, true] {
+                let mut setup = default_wgpu_setup();
+                let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                    unreachable!()
+                };
+                options.instance_descriptor.backends = wgpu::Backends::DX12;
+                let state = create_render_state(setup, Default::default());
+                assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
+                let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+                let context = egui::Context::default();
+                context.set_theme(egui::ThemePreference::Dark);
+                context.set_visuals(festerm_ui_egui::theme::default_visuals());
+                crate::software_background::install(&context, &state);
+                let status = native.then(|| super::native::install(&context, &state).unwrap());
+                let mut terminal = Terminal::new(dimensions).unwrap();
+                terminal.ingest(&setup_bytes);
+                let mut view = TerminalView::default();
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1440.0, 852.0),
+                    )),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(2.0);
+                let step = |terminal: &mut Terminal, view: &mut TerminalView| {
+                    context.run_ui(input.clone(), |ui| {
+                        view.show(ui, terminal, &mut Sink);
+                    })
+                };
+                for frame in 0..5 {
+                    if let Some(workload) = workload {
+                        terminal.ingest(&workload.update(frame));
+                    }
+                    let mut output = step(&mut terminal, &mut view);
+                    renderer.handle_delta(&mut output.textures_delta);
+                    renderer
+                        .render(&context, &output)
+                        .expect("TUI warmup render");
+                }
+                assert_eq!(terminal.dimensions(), dimensions);
+                assert!(context
+                    .viewport_rect()
+                    .contains_rect(view.diagnostics().grid_rect.unwrap()));
+                let mut timings = Vec::new();
+                let mut image = None;
+                for frame in 5..15 {
+                    let bytes = workload
+                        .map(|workload| workload.update(frame))
+                        .unwrap_or_default();
+                    let started = Instant::now();
+                    terminal.ingest(&bytes);
+                    let parse_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let started = Instant::now();
+                    let mut output = step(&mut terminal, &mut view);
+                    renderer.handle_delta(&mut output.textures_delta);
+                    let ui_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let started = Instant::now();
+                    image = Some(
+                        renderer
+                            .render(&context, &output)
+                            .expect("completed TUI render"),
+                    );
+                    let draw_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    timings.push(serde_json::json!({
+                        "frame": frame, "input_bytes": bytes.len(), "parse_ms": parse_ms,
+                        "ui_ms": ui_ms, "draw_readback_ms": draw_ms,
+                    }));
+                }
+                let image = image.unwrap();
+                image
+                    .save(directory.join(format!(
+                        "{name}-{}.png",
+                        if native { "direct2d" } else { "wgpu" }
+                    )))
+                    .unwrap();
+                if let Some(status) = status {
+                    assert!(
+                        status.active.load(Ordering::Relaxed),
+                        "{name}: native fallback: {:?}",
+                        status.first_failure.get()
+                    );
+                    assert!(
+                        status.frames.load(Ordering::Relaxed) > 0,
+                        "{name}: no native frames"
+                    );
+                }
+                if let Some(reference) = &reference {
+                    assert_eq!(reference.dimensions(), image.dimensions());
+                    let changed = reference
+                        .pixels()
+                        .zip(image.pixels())
+                        .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 2))
+                        .count();
+                    assert_eq!(changed, 0, "{name}: native rendering changed TUI pixels");
+                } else {
+                    reference = Some(image);
+                }
+                let average = |key: &str| {
+                    timings
+                        .iter()
+                        .map(|value| value[key].as_f64().unwrap())
+                        .sum::<f64>()
+                        / timings.len() as f64
+                };
+                eprintln!("tui-replay case={name} native={native} parse_ms={:.3} ui_ms={:.3} draw_readback_ms={:.3}",
+                    average("parse_ms"), average("ui_ms"), average("draw_readback_ms"));
+                results.push(serde_json::json!({"case":name,"native":native,"frames":timings}));
+                std::fs::write(
+                    directory.join("timings.json"),
+                    serde_json::to_vec_pretty(&results).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+    }
 }

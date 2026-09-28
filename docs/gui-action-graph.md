@@ -60,6 +60,14 @@ output consumption remain unchanged. A rejected native frame keeps ordinary
 painting in the same frame. CP-18 tracks the remaining
 native qualification; ADR-0039 remains Proposed and issue #244 remains open.
 
+`TERM-01` also has a controlled TUI performance corpus: quiet populated content,
+localized status updates, streaming primary-screen output, full alternate-screen
+redraws, and recorded Copilot/Vim/htop/tmux screens. The optional completed-render
+replay checks pixels; the separately opt-in Windows Terminal comparison checks
+matched workload delivery, font, grid, native-window identity and CPU. Neither
+GUI frame counts nor offscreen timings establish physical presentation latency.
+See `validation/terminal-performance/README.md` and CP-18.
+
 ## How to use the graph
 
 Each test run starts at a named checkpoint, follows one or more edges, asserts

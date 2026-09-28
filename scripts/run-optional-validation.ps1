@@ -304,6 +304,42 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=skipped reason=explicit-opt-in"
     }
+    if ($env:FESTERM_RUN_TUI_RENDER_PROBE -eq '1') {
+        try {
+            if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'The Direct2D TUI replay requires Windows x64.' }
+            Invoke-NativeCommand {
+                cargo test --release -p festerm replay_terminal_tui_workloads -- --ignored --nocapture --test-threads=1
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Terminal TUI rendering replay failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-replay status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-replay status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-replay status=skipped reason=explicit-opt-in"
+    }
+    if ($env:FESTERM_RUN_TUI_NATIVE_COMPARISON -eq '1') {
+        try {
+            if (-not $env:FESTERM_WINDOWS_TERMINAL_PORTABLE -or -not $env:FESTERM_TUI_NATIVE_OUT) {
+                throw 'Set FESTERM_WINDOWS_TERMINAL_PORTABLE and FESTERM_TUI_NATIVE_OUT.'
+            }
+            & "$PSScriptRoot\stage-conpty.ps1" -Configuration Release
+            if ($LASTEXITCODE -ne 0) { throw 'Release ConPTY staging failed.' }
+            & "$PSScriptRoot\..\validation\terminal-performance\compare-windows.ps1" `
+                -WindowsTerminal $env:FESTERM_WINDOWS_TERMINAL_PORTABLE `
+                -ResultDirectory $env:FESTERM_TUI_NATIVE_OUT `
+                -RegisterBundledFont:($env:FESTERM_REGISTER_TUI_FONT -eq '1')
+            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=skipped reason=explicit-opt-in"
+    }
 }
 
 Add-Content -Path $ResultPath -Value "`nstatus=$status"
