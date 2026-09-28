@@ -70,6 +70,146 @@ Set `FESTERM_TUI_PROFILE_REFERENCE` to a previous `original.png` to require
 exact full-frame equality. Set `FESTERM_RUN_TUI_CPU_PROFILE=1` to include this
 probe in the optional Windows runner.
 
+For a shorter, bounded question, set `FESTERM_TUI_PROFILE_CASES` to comma-separated
+exact case names. Unknown/empty names fail, and selection preserves the probe's
+defined order, not the order in the variable. `retained-validation-only` requires
+`localized-ui-only` so it can consume that case's captured frame. Additional
+diagnostic cases distinguish:
+
+- `native-copy-only` and `native-allocate-copy`: full immutable image copying,
+  with and without allocating the destination each frame.
+- `native-solid-patch`: fresh native surfaces with a full-width, 128-pixel-high
+  solid rectangle, without glyphs, UI construction or final composition.
+- `localized-ui-only`: ordinary UI construction/capture with intentionally frozen
+  native pixels; **not a valid production optimization**.
+- `retained-validation-only`: repeated validation/reuse of that unchanged frame.
+- `interpolated-load-frozen`, `interpolated-load-native`, and
+  `interpolated-load-frozen-repeat`: test-only interpolated texel coordinates
+  instead of the production position-minus-origin integer load.
+
+Set `FESTERM_TUI_PROFILE_COPY=1` to use a **test-only BGRA target** and add
+`copy-frozen-all` / `localized-copy-all`. These replace the last native-image
+shader draw with a texture copy after rendering the preceding UI. The probe
+rejects a clipped/non-final native callback, mismatched formats or out-of-bounds
+copies. Initial and final localized images must match ordinary composition
+exactly; BGRA readbacks are explicitly converted to RGBA outside timing.
+The earlier RGBA mode remains the default. Compare copying against the shader
+**in the same BGRA run**, not against unrelated RGBA measurements. This probe
+owns its final target, unlike an ordinary app callback, and uses an additional
+submission/completion boundary; it is not a production compositor or a native
+presentation measurement.
+
+```powershell
+$env:FESTERM_TUI_PROFILE_COPY = '1'
+$env:FESTERM_TUI_PROFILE_CASES = 'frozen-all,copy-frozen-all,localized-all,localized-copy-all,frozen-all-repeat'
+```
+
+Both new controls flow through the existing optional CPU-profile runner.
+`terminal_damage` records the last changed/total native pixel counts only for
+live localized-native cases; unrelated diagnostic cases report null.
+
+### Remaining gap and renderer-host boundary
+
+**Applicability: Windows x64 DX12 WARP / DevBox, not hardware-GPU or
+cross-platform performance evidence.** This follow-up uses the PR #266 runtime
+at `110f485ff2665f0abcc4123a5204e840329df823`; no further runtime optimization
+was accepted. Its executable and producer hashes are listed below in the
+chrome-fix qualification.
+
+A fresh native campaign obtained the following guarded results. All successful
+cases had no input/foreground/geometry contamination, responsive isolated
+windows, 120x40 PTYs and 200 producer ticks at 100ms intervals.
+
+| Native workload | fesTerm CPU | Windows Terminal CPU | fesTerm GUI frames/s |
+| --- | ---: | ---: | ---: |
+| Quiet populated terminal | 0.000% | 0.000% | 0 |
+| Localized TUI | 8.60218% | 0.44561% | 10.08396 |
+| Streaming | 5.96094% | Not qualified | 12.40651 |
+| Full redraw | Not qualified | Not qualified | Not qualified |
+
+The localized pair wrote 23,790 bytes and 200 updates each; last writes completed
+at 20,000.725ms and 20,003.024ms respectively. The whole clients still differ
+because of chrome (fesTerm 2058x1658; WT 2106x1593), at 192 DPI. Zero CPU is a
+counter-granularity result, not proof of zero work.
+
+The campaign then aborted at Windows Terminal streaming startup with
+`Foreground activation unavailable`. Its isolated process closed cleanly.
+The three fesTerm samples passed their measurement guards but needed the
+driver's PID-scoped forced cleanup after the four-second close timeout; these
+samples do not qualify graceful shutdown.
+Earlier attempts also failed input/foreground or startup guards; these failures
+were retained, not retried automatically or converted to passing samples.
+The full-redraw pair and WT force-full-repaint control were not reached.
+The localized pair is about **19.3x**, not parity. The agreed target is within
+`max(10% of WT CPU, 0.2 system CPU percentage points)` for each workload, with
+repeated qualified pairs; that target is not met.
+
+Completed offscreen work further narrowed the cost. A 10Hz RGBA run measured
+133.281 CPU-ms/frame for complete localized updates, 46.563 without final
+composition, 2.969 for image copy alone, 3.125 for allocate-and-copy, 2.500 for
+UI/capture only and 0.469 for unchanged native validation. A separate run
+measured a glyph-free solid native patch at 0.156 CPU-ms/frame versus 49.375
+for localized native work without composition. These are separate diagnostic
+paths, not additive subsystem accounting. A late localized frame changed
+258,432 of 2,982,063 native pixels (8.7%), confirming partial retention was
+active rather than silently redrawing the whole terminal.
+
+| BGRA direct-copy experiment, second run | CPU-ms/frame | Actual frames/s |
+| --- | ---: | ---: |
+| Frozen full app, shader | 89.375 | 10.000 |
+| Frozen full app, direct copy | 32.031 | 10.000 |
+| Localized full app, shader | 138.281 | 10.000 |
+| Localized full app, direct copy | 102.656 | 10.000 |
+| Frozen full app, shader ending repeat | 77.344 | 10.000 |
+
+Copying preserved every initial and final comparison pixel and reduced
+localized CPU by 25.8% in this run, but even the offscreen copy path used
+6.416% system CPU. The first run had severe wall-time variability: the shader
+localized case fell to 5.03fps while copying sustained 9.72fps. Its lower
+shader CPU percentage was therefore **not an improvement**. That run's
+frozen shader/copy costs were 86.094/28.906 CPU-ms/frame; localized costs were
+107.344/85.313. Keep both runs rather than selecting a favorable percentage.
+A final selected-case run exercised the final diagnostic code and damage schema:
+localized shader/copy costs were 134.219/91.719 CPU-ms/frame at 10Hz, with exact
+reference and final-copy pixels. Frozen shader and native-copy-only costs were
+66.406 and 0.156 respectively, further illustrating isolated-case variability.
+This shorter run does not replace the full controls or native qualification.
+
+Rejected experiments: interpolated shader coordinates preserved pixels but did
+not show a consistent CPU win. Batching contiguous A8 masks into bounded
+256-sprite Direct2D batches changed 13,113 full-app pixels by one channel level
+and showed no useful native-work reduction (49.219 CPU-ms/frame versus the
+46.563 baseline). It was reverted, with no context-version requirement left
+behind. Instrumentation found all 11,420 captured textured vertices had integer
+source coordinates, so widespread fractional-source ineligibility did not
+explain that result.
+
+**Stopping boundary:** the current app callback cannot perform the measured
+direct-to-target copy or control partial presentation. In pinned
+[egui-wgpu 0.36.1 `Painter`](https://github.com/emilk/egui/blob/0.36.1/crates/egui-wgpu/src/winit.rs),
+callback preparation runs before acquiring the surface; the host then opens a
+full-clear render pass and presents it. The
+[`CallbackTrait`](https://github.com/emilk/egui/blob/0.36.1/crates/egui-wgpu/src/renderer.rs)
+paint phase receives a render pass, not the final texture/encoder; surface
+configuration requests `RENDER_ATTACHMENT`, not `COPY_DST`.
+This is a concrete host/API constraint, **not an inherent Rust limitation**.
+
+[Windows Terminal v1.23.20211.0](https://github.com/microsoft/terminal/tree/d14747ff2db6935e04828bff19160daead11f486/src/renderer/atlas)
+owns its native backend/swap chain, selects Direct2D for WARP and can submit
+`Present1` dirty/scroll rectangles. Its Direct2D text backend still traverses
+rows; dirty presentation does not prove that it avoids all native rasterization.
+Without the missing full-repaint control, do not assign the entire gap to
+`Present1`.
+
+Further work needs a reviewed surface-aware/retained compositor integration
+and continued investigation of native glyph drawing, with immutable published
+textures, paint ordering, overlays, clipping, resize/DPI, device loss and
+ordinary-renderer fallback preserved. That is a renderer-host design/ADR
+decision, not another safe shader substitution inside the present callback.
+It was not implemented implicitly by this profiling PR. Neither diminishing
+returns nor near parity is claimed; native dragging remains separate in #263.
+The focused renderer-host review and qualification follow-up is #267.
+
 ### Residual-cost finding and chrome fix
 
 Using the retained-renderer/single-wake fix as the baseline, the full-app replay

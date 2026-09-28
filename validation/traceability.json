@@ -854,6 +854,7 @@
         "panel_fill_callback_preserves_declined_geometry_and_color",
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",
         "profile_terminal_residual_cpu",
+        "profile_case_filter_preserves_order_and_rejects_incomplete_inputs",
         "native_solid_background_matches_terminal_pixels_across_dpi",
         "srgb_framebuffers_keep_standard_background_pixels",
         "only_eight_bit_gamma_framebuffers_use_the_solid_background_pipeline",

@@ -72,13 +72,13 @@ fn draw(
     complete(state);
 }
 
-struct SampledPaint {
+struct CompositePaint {
     pipeline: wgpu::RenderPipeline,
     bindings: wgpu::BindGroup,
     _texture: wgpu::Texture,
 }
 
-impl egui_wgpu::CallbackTrait for SampledPaint {
+impl egui_wgpu::CallbackTrait for CompositePaint {
     fn paint(
         &self,
         _: egui::PaintCallbackInfo,
@@ -91,44 +91,56 @@ impl egui_wgpu::CallbackTrait for SampledPaint {
     }
 }
 
-// Diagnostic alternative only: compare integer loads with nearest sampling.
-fn sampled_callback(state: &egui_wgpu::RenderState, surface: &Surface) -> egui::PaintCallback {
+#[derive(Clone, Copy)]
+enum CompositeProbe {
+    Sampled,
+    InterpolatedLoad,
+}
+
+fn composite_probe(
+    state: &egui_wgpu::RenderState,
+    surface: &Surface,
+    probe: CompositeProbe,
+) -> egui::PaintCallback {
+    let mut entries = vec![wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }];
+    if matches!(probe, CompositeProbe::Sampled) {
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+            count: None,
+        });
+    }
     let layout = state
         .device
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sampled composite probe"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                    count: None,
-                },
-            ],
+            label: Some("composite probe"),
+            entries: &entries,
         });
     let pipeline_layout = state
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sampled composite probe"),
+            label: Some("composite probe"),
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
     let module = state
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("sampled composite probe"),
+            label: Some("composite probe"),
             source: wgpu::ShaderSource::Wgsl(
-                r"
+                match probe {
+                    CompositeProbe::Sampled => {
+                        r"
 @group(0) @binding(0) var image: texture_2d<f32>;
 @group(0) @binding(1) var nearest: sampler;
 struct VertexOutput {
@@ -148,13 +160,37 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     return textureSampleLevel(image, nearest, input.uv, 0.0);
 }
 "
+                    }
+                    CompositeProbe::InterpolatedLoad => {
+                        r"
+@group(0) @binding(0) var image: texture_2d<f32>;
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texel: vec2<f32>,
+}
+@vertex
+fn vertex(@builtin(vertex_index) index: u32) -> VertexOutput {
+    let points = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var output: VertexOutput;
+    output.position = vec4(points[index], 0.0, 1.0);
+    output.texel = (points[index] * vec2(0.5, -0.5) + vec2(0.5))
+        * vec2<f32>(textureDimensions(image));
+    return output;
+}
+@fragment
+fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    return textureLoad(image, vec2<i32>(input.texel), 0);
+}
+"
+                    }
+                }
                 .into(),
             ),
         });
     let pipeline = state
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sampled composite probe"),
+            label: Some("composite probe"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &module,
@@ -186,23 +222,24 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
         mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
+    let mut entries = vec![wgpu::BindGroupEntry {
+        binding: 0,
+        resource: wgpu::BindingResource::TextureView(&view),
+    }];
+    if matches!(probe, CompositeProbe::Sampled) {
+        entries.push(wgpu::BindGroupEntry {
+            binding: 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let bindings = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("sampled composite probe"),
+        label: Some("composite probe"),
         layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &entries,
     });
     egui_wgpu::Callback::new_paint_callback(
         surface.rect,
-        SampledPaint {
+        CompositePaint {
             pipeline,
             bindings,
             _texture: surface.texture.clone(),
@@ -210,26 +247,158 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     )
 }
 
-fn screenshot(
-    renderer: &mut WgpuTestRenderer,
-    context: &egui::Context,
+fn read_image(state: &egui_wgpu::RenderState, texture: &wgpu::Texture) -> image::RgbaImage {
+    let stride = (texture.width() * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = state.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("untimed profile screenshot"),
+        size: u64::from(stride) * u64::from(texture.height()),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = state.device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(stride),
+                rows_per_image: None,
+            },
+        },
+        texture.size(),
+    );
+    state.queue.submit([encoder.finish()]);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+    complete(state);
+    receiver
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap()
+        .unwrap();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
+    let mut bytes: Vec<_> = mapped
+        .chunks_exact(stride as usize)
+        .flat_map(|row| row[..texture.width() as usize * 4].iter().copied())
+        .collect();
+    match texture.format() {
+        wgpu::TextureFormat::Bgra8Unorm => {
+            for pixel in bytes.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+        }
+        wgpu::TextureFormat::Rgba8Unorm => {}
+        format => panic!("unsupported screenshot format: {format:?}"),
+    }
+    drop(mapped);
+    buffer.unmap();
+    image::RgbaImage::from_raw(texture.width(), texture.height(), bytes).unwrap()
+}
+
+fn assert_same_pixels(reference: &image::RgbaImage, actual: &image::RgbaImage, label: &str) {
+    assert_eq!(reference.dimensions(), actual.dimensions(), "{label}");
+    assert_eq!(
+        reference
+            .pixels()
+            .zip(actual.pixels())
+            .filter(|(a, b)| a != b)
+            .count(),
+        0,
+        "{label}"
+    );
+}
+
+fn draw_with_copy(
+    state: &egui_wgpu::RenderState,
+    texture: &wgpu::Texture,
+    screen: &egui_wgpu::ScreenDescriptor,
     primitives: &[ClippedPrimitive],
-) -> image::RgbaImage {
-    let output = egui::FullOutput {
-        shapes: primitives
-            .iter()
-            .map(|primitive| egui::epaint::ClippedShape {
-                clip_rect: primitive.clip_rect,
-                shape: match &primitive.primitive {
-                    Primitive::Mesh(mesh) => egui::Shape::Mesh(mesh.clone().into()),
-                    Primitive::Callback(callback) => egui::Shape::Callback(callback.clone()),
-                },
-            })
-            .collect(),
-        pixels_per_point: context.pixels_per_point(),
-        ..Default::default()
+    surface: &Surface,
+) {
+    let (native, preceding) = primitives.split_last().expect("native image callback");
+    assert!(
+        matches!(&native.primitive, Primitive::Callback(callback) if callback.rect == surface.rect),
+        "copy probe supports only a final native callback"
+    );
+    assert!(native.clip_rect.contains_rect(surface.rect));
+    assert_eq!(surface.texture.format(), texture.format());
+    assert!(surface.origin[0] + surface.texture.width() <= texture.width());
+    assert!(surface.origin[1] + surface.texture.height() <= texture.height());
+    // This test owns the target. An ordinary egui callback cannot do this copy.
+    draw(
+        state,
+        &texture.create_view(&Default::default()),
+        screen,
+        preceding,
+    );
+    let mut encoder = state.device.create_command_encoder(&Default::default());
+    let mut destination = texture.as_image_copy();
+    destination.origin = wgpu::Origin3d {
+        x: surface.origin[0],
+        y: surface.origin[1],
+        z: 0,
     };
-    renderer.render(context, &output).expect("probe screenshot")
+    encoder.copy_texture_to_texture(
+        surface.texture.as_image_copy(),
+        destination,
+        surface.texture.size(),
+    );
+    state.queue.submit([encoder.finish()]);
+    complete(state);
+}
+
+fn select_cases(
+    cases: &mut Vec<(String, Vec<ClippedPrimitive>)>,
+    requested: &str,
+) -> Result<(), &'static str> {
+    let requested: Vec<_> = requested.split(',').map(str::trim).collect();
+    if !requested
+        .iter()
+        .all(|name| cases.iter().any(|case| case.0 == *name))
+    {
+        return Err("unknown or empty profile case");
+    }
+    if requested.contains(&"retained-validation-only") && !requested.contains(&"localized-ui-only")
+    {
+        return Err("retained validation requires the UI-only snapshot case");
+    }
+    cases.retain(|case| requested.contains(&case.0.as_str()));
+    Ok(())
+}
+
+#[test]
+fn profile_case_filter_preserves_order_and_rejects_incomplete_inputs() {
+    let all = vec![
+        ("localized-all".to_owned(), Vec::new()),
+        ("localized-ui-only".to_owned(), Vec::new()),
+        ("retained-validation-only".to_owned(), Vec::new()),
+    ];
+    for requested in [
+        "",
+        " ",
+        "unknown",
+        "localized-all,",
+        "retained-validation-only",
+    ] {
+        let mut cases = all.clone();
+        assert!(select_cases(&mut cases, requested).is_err(), "{requested}");
+        assert_eq!(
+            cases.len(),
+            all.len(),
+            "invalid selection must not mutate cases"
+        );
+    }
+    let mut cases = all;
+    select_cases(&mut cases, "retained-validation-only, localized-ui-only").unwrap();
+    assert_eq!(
+        cases.iter().map(|case| case.0.as_str()).collect::<Vec<_>>(),
+        ["localized-ui-only", "retained-validation-only"]
+    );
 }
 
 #[test]
@@ -249,7 +418,17 @@ fn profile_terminal_residual_cpu() {
         unreachable!()
     };
     options.instance_descriptor.backends = wgpu::Backends::DX12;
-    let state = create_render_state(setup, Default::default());
+    let mut state = create_render_state(setup, Default::default());
+    let direct_copy = match std::env::var_os("FESTERM_TUI_PROFILE_COPY") {
+        None => false,
+        Some(value) if value == "1" => true,
+        _ => panic!("FESTERM_TUI_PROFILE_COPY expects 1 or unset"),
+    };
+    if direct_copy {
+        state.target_format = wgpu::TextureFormat::Bgra8Unorm;
+        *state.renderer.write() =
+            egui_wgpu::Renderer::new(&state.device, state.target_format, Default::default());
+    }
     let info = state.adapter.get_info();
     assert_eq!(info.device_type, wgpu::DeviceType::Cpu);
     let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
@@ -314,7 +493,9 @@ fn profile_terminal_residual_cpu() {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: state.target_format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let target = texture.create_view(&Default::default());
@@ -346,32 +527,48 @@ fn profile_terminal_residual_cpu() {
         .position(|primitive| matches!(&primitive.primitive, Primitive::Callback(callback) if callback.rect == surface.rect))
         .expect("locate native image callback");
     let mut sampled = primitives.clone();
-    sampled[native_index].primitive = Primitive::Callback(sampled_callback(&state, &surface));
-    let original_image = screenshot(&mut renderer, &context, &primitives);
-    let sampled_image = screenshot(&mut renderer, &context, &sampled);
+    sampled[native_index].primitive =
+        Primitive::Callback(composite_probe(&state, &surface, CompositeProbe::Sampled));
+    let mut interpolated = primitives.clone();
+    interpolated[native_index].primitive = Primitive::Callback(composite_probe(
+        &state,
+        &surface,
+        CompositeProbe::InterpolatedLoad,
+    ));
+    draw(&state, &target, &screen, &primitives);
+    let original_image = read_image(&state, &texture);
+    draw(&state, &target, &screen, &sampled);
+    let sampled_image = read_image(&state, &texture);
+    draw(&state, &target, &screen, &interpolated);
+    let interpolated_image = read_image(&state, &texture);
     original_image.save(directory.join("original.png")).unwrap();
     sampled_image.save(directory.join("sampled.png")).unwrap();
-    assert_eq!(original_image.dimensions(), sampled_image.dimensions());
-    assert_eq!(
-        original_image
-            .pixels()
-            .zip(sampled_image.pixels())
-            .filter(|(a, b)| a != b)
-            .count(),
-        0,
-        "sampled compositor changed pixels"
+    assert_same_pixels(
+        &original_image,
+        &sampled_image,
+        "sampled compositor changed pixels",
     );
+    assert_same_pixels(
+        &original_image,
+        &interpolated_image,
+        "compositor coordinates changed pixels",
+    );
+    if direct_copy {
+        draw_with_copy(&state, &texture, &screen, &primitives, &surface);
+        let copied_image = read_image(&state, &texture);
+        copied_image.save(directory.join("copied.png")).unwrap();
+        assert_same_pixels(
+            &original_image,
+            &copied_image,
+            "direct copying changed pixels",
+        );
+    }
     if let Some(reference) = std::env::var_os("FESTERM_TUI_PROFILE_REFERENCE") {
         let reference = image::open(reference).unwrap().into_rgba8();
-        assert_eq!(original_image.dimensions(), reference.dimensions());
-        assert_eq!(
-            original_image
-                .pixels()
-                .zip(reference.pixels())
-                .filter(|(a, b)| a != b)
-                .count(),
-            0,
-            "full application pixels changed"
+        assert_same_pixels(
+            &reference,
+            &original_image,
+            "full application pixels changed",
         );
     }
     let metadata = primitives
@@ -394,6 +591,11 @@ fn profile_terminal_residual_cpu() {
         ("sleep-only".to_owned(), Vec::new()),
         ("clear-only".to_owned(), Vec::new()),
         ("frozen-all".to_owned(), primitives.clone()),
+        ("interpolated-load-frozen".to_owned(), interpolated.clone()),
+        (
+            "interpolated-load-native".to_owned(),
+            vec![interpolated[native_index].clone()],
+        ),
     ];
     for (index, primitive) in primitives.iter().enumerate() {
         cases.push((format!("primitive-{index}"), vec![primitive.clone()]));
@@ -427,35 +629,150 @@ fn profile_terminal_residual_cpu() {
     if std::env::var("FESTERM_TUI_PROFILE_SAMPLER").as_deref() == Ok("1") {
         cases.push(("sampled-frozen-all".to_owned(), sampled));
     }
+    if direct_copy {
+        cases.extend([
+            ("copy-frozen-all".to_owned(), primitives.clone()),
+            ("localized-copy-all".to_owned(), Vec::new()),
+        ]);
+    }
     cases.extend([
         ("meshes-only".to_owned(), meshes),
         ("without-solid-mesh-fills".to_owned(), without_fills),
         ("localized-all".to_owned(), Vec::new()),
         ("localized-without-composition".to_owned(), Vec::new()),
-        ("frozen-all-repeat".to_owned(), primitives),
+        ("native-copy-only".to_owned(), Vec::new()),
+        ("native-allocate-copy".to_owned(), Vec::new()),
+        ("native-solid-patch".to_owned(), Vec::new()),
+        ("interpolated-load-frozen-repeat".to_owned(), interpolated),
+        ("frozen-all-repeat".to_owned(), primitives.clone()),
+        ("localized-ui-only".to_owned(), Vec::new()),
+        ("retained-validation-only".to_owned(), Vec::new()),
     ]);
+    if let Some(requested) = std::env::var_os("FESTERM_TUI_PROFILE_CASES") {
+        let requested = requested.into_string().expect("case names must be UTF-8");
+        select_cases(&mut cases, &requested).expect("valid profile selection");
+    }
+    let copy_descriptor = wgpu::TextureDescriptor {
+        label: Some("native image copy probe"),
+        size: surface.texture.size(),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: surface.texture.format(),
+        usage: wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    };
+    let copy_target = state.device.create_texture(&copy_descriptor);
+    let captured =
+        std::sync::Arc::new(std::sync::OnceLock::<festerm_ui_egui::TerminalPaintFrame>::new());
+    let mut validation_renderer =
+        festerm_windows_direct2d::CachedRenderer::new(state.device.clone(), state.queue.clone())
+            .unwrap();
+    let mut solid_renderer =
+        festerm_windows_direct2d::Renderer::new(state.device.clone(), state.queue.clone()).unwrap();
+    let patch_rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(surface.texture.width() as f32, 128.0),
+    );
+    let mut patch = egui::Mesh::default();
+    patch.add_colored_rect(patch_rect, festerm_ui_egui::theme::SURFACE_TERMINAL);
+    let patch = [ClippedPrimitive {
+        clip_rect: patch_rect,
+        primitive: Primitive::Mesh(patch),
+    }];
+    let patch_textures = [(
+        egui::TextureId::Managed(0),
+        std::sync::Arc::new(egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE])),
+    )];
     let logical_processors = std::thread::available_parallelism().unwrap().get();
     let mut measurements = Vec::new();
     const FRAMES: u32 = 100;
     const INTERVAL: Duration = Duration::from_millis(100);
     let mut update_index = 8;
     for (name, frozen) in cases {
+        if name == "localized-ui-only" {
+            let Primitive::Callback(callback) = &primitives[native_index].primitive else {
+                unreachable!()
+            };
+            let callback = callback.clone();
+            let captured = captured.clone();
+            // Diagnostic only: capture the normal UI snapshot but freeze native pixels.
+            festerm_ui_egui::install_root_terminal_painter(&context, move |_, frame| {
+                let _ = captured.set(frame);
+                Some(callback.clone())
+            });
+        }
+        let mut last_copied_frame = None;
         let mut frame = || {
             if name == "sleep-only" {
                 return;
             }
-            if name.starts_with("localized-") {
+            if name == "copy-frozen-all" {
+                draw_with_copy(&state, &texture, &screen, &frozen, &surface);
+            } else if name == "retained-validation-only" {
+                let frame = captured
+                    .get()
+                    .expect("UI-only case must capture a frame first");
+                validation_renderer
+                    .render(
+                        frame.rect,
+                        frame.pixels_per_point,
+                        festerm_ui_egui::theme::SURFACE_TERMINAL,
+                        &frame.primitives,
+                        &frame.textures,
+                        None,
+                    )
+                    .unwrap()
+                    .expect("retained native frame");
+                complete(&state);
+            } else if name == "native-solid-patch" {
+                solid_renderer
+                    .render(
+                        patch_rect,
+                        1.0,
+                        festerm_ui_egui::theme::SURFACE_TERMINAL,
+                        &patch,
+                        &patch_textures,
+                        None,
+                    )
+                    .unwrap()
+                    .expect("solid native patch");
+                state.queue.submit([]);
+                complete(&state);
+            } else if name.starts_with("native-") {
+                let target = if name == "native-allocate-copy" {
+                    state.device.create_texture(&copy_descriptor)
+                } else {
+                    copy_target.clone()
+                };
+                let mut encoder = state.device.create_command_encoder(&Default::default());
+                encoder.copy_texture_to_texture(
+                    surface.texture.as_image_copy(),
+                    target.as_image_copy(),
+                    target.size(),
+                );
+                state.queue.submit([encoder.finish()]);
+                complete(&state);
+            } else if name.starts_with("localized-") {
                 let (mut output, actual_dimensions) =
                     step(&Workload::Localized.update(update_index));
                 assert_eq!(actual_dimensions, dimensions);
                 update_index += 1;
                 renderer.handle_delta(&mut output.textures_delta);
-                if name == "localized-without-composition" {
+                if name == "localized-without-composition" || name == "localized-ui-only" {
                     state.queue.submit([]);
                     complete(&state);
                 } else {
                     let paint = context.tessellate(output.shapes, context.pixels_per_point());
-                    draw(&state, &target, &screen, &paint);
+                    if name == "localized-copy-all" {
+                        let current = status.last_surface.lock().unwrap().clone().unwrap();
+                        draw_with_copy(&state, &texture, &screen, &paint, &current);
+                        last_copied_frame = Some(paint);
+                    } else {
+                        draw(&state, &target, &screen, &paint);
+                    }
                 }
             } else {
                 draw(&state, &target, &screen, &frozen);
@@ -477,11 +794,31 @@ fn profile_terminal_residual_cpu() {
         }
         let elapsed = started.elapsed();
         let cpu = process_cpu_time().unwrap() - cpu_start;
+        if let Some(paint) = last_copied_frame {
+            let copied = read_image(&state, &texture);
+            draw(&state, &target, &screen, &paint);
+            let reference = read_image(&state, &texture);
+            assert_same_pixels(
+                &reference,
+                &copied,
+                "localized copying changed final pixels",
+            );
+        }
         assert!(
             status.active.load(Ordering::Relaxed),
             "{:?}",
             status.first_failure.get()
         );
+        let terminal_damage = matches!(
+            name.as_str(),
+            "localized-all" | "localized-copy-all" | "localized-without-composition"
+        )
+        .then(|| {
+            serde_json::json!({
+                "last_updated_pixels":status.last_updated_pixels.load(Ordering::Relaxed),
+                "last_surface_pixels":status.last_surface_pixels.load(Ordering::Relaxed),
+            })
+        });
         let measurement = serde_json::json!({
             "case":name, "frames":FRAMES, "wall_ms":elapsed.as_secs_f64() * 1000.0,
             "cpu_ms":cpu.as_secs_f64() * 1000.0,
@@ -489,6 +826,7 @@ fn profile_terminal_residual_cpu() {
             "completed_draw_ms_per_frame":completed_draw.as_secs_f64() * 1000.0 / f64::from(FRAMES),
             "cpu_percent":100.0 * cpu.as_secs_f64() / elapsed.as_secs_f64() / logical_processors as f64,
             "frames_per_second":f64::from(FRAMES) / elapsed.as_secs_f64(),
+            "terminal_damage":terminal_damage,
         });
         eprintln!("residual-profile {measurement}");
         measurements.push(measurement);
@@ -499,6 +837,8 @@ fn profile_terminal_residual_cpu() {
                 "target_format":format!("{:?}", state.target_format),
                 "physical_size":screen.size_in_pixels, "pixels_per_point":screen.pixels_per_point,
                 "grid":[120,40], "interval_ms":100, "exact_sampled_pixels":true,
+                "exact_interpolated_pixels":true,
+                "direct_copy_probe":direct_copy,
                 "scene":scene, "removed_fill_triangles":removed_fill_triangles,
                 "primitives":metadata, "measurements":measurements,
             }))

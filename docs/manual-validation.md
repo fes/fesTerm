@@ -569,9 +569,23 @@ The optional `profile_terminal_residual_cpu` measures process-wide CPU with a
 persistent offscreen target and completed submissions, excluding screenshot
 readback from timing. It can include the real app chrome around a deterministic
 fake session, but does not measure ConPTY or native presentation. Its solid-fill
-omission and nearest-sampler cases are explicitly diagnostic. The production
-chrome/status-bar fill optimization has exact framebuffer comparisons at 100%,
-125% and 200%, including fractional clipping and translucent fallback. Native
+omission and nearest-sampler cases are explicitly diagnostic. The probe also
+isolates image copying, native solid patches, UI capture and unchanged
+retained validation. `FESTERM_TUI_PROFILE_CASES` selects named cases with strict
+validation. `FESTERM_TUI_PROFILE_COPY=1` adds a BGRA direct-copy compositor
+experiment that requires exact initial/final pixels and owns the target outside
+the production callback. The same-format shader is its control; cadence and
+CPU-ms/frame must be reviewed, not CPU percentage alone. These additions do not
+qualify native presentation or change the production renderer.
+The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
+CPU; its campaign stopped at a later foreground-activation failure. Streaming,
+full-redraw, force-full-repaint control and repeated parity evidence remain
+incomplete. The measured renderer-host boundary and rejected experiments are
+recorded in the terminal-performance README and #267; CP-18 remains open.
+The fesTerm samples required forced cleanup after the graceful-close timeout,
+so sample validity does not qualify shutdown behavior.
+The production chrome/status-bar fill optimization has exact framebuffer
+comparisons at 100%, 125% and 200%, including fractional clipping and translucent fallback. Native
 before/after qualification still uses the isolated `-FesTermOnly` driver and a
 fresh quiet-desktop interval; no installed application is changed by these tests.
 

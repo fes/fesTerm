@@ -3,6 +3,31 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Locating the remaining WARP terminal gap
+
+After retained terminal images, single-pass output wakeups and textureless
+chrome, a fresh guarded localized-TUI pair still measured 8.60% system CPU for
+fesTerm versus 0.45% for Windows Terminal. Quiet terminals rounded to zero;
+the later comparison campaign stopped on foreground activation rather than
+weakening its desktop guards. Streaming/full-redraw and repeated parity
+qualification remain incomplete.
+
+Completed-work probes separated cheap UI capture, unchanged validation and
+image copying from the remaining native drawing and final composition.
+Interpolated shader coordinates did not produce a consistent improvement;
+bounded Direct2D sprite batches changed low-order pixels without a useful
+native-work reduction, so both production experiments were reverted.
+
+A test-only direct-copy compositor preserved exact pixels and reduced
+localized CPU by 25.8% in a matched 10Hz run, but still did not reach parity.
+It exposed the next architectural boundary: the app callback does not own
+egui-wgpu's final surface, clear pass or presentation. Avoiding the shader
+copy in production needs a reviewed renderer-host integration, not an unsafe
+callback workaround or an assumption that Rust is inherently slow. The
+reproduction, variability and explicit stopping point are recorded in
+`validation/terminal-performance/README.md`; this follow-up adds diagnostic
+coverage, not a new runtime renderer or completed CP-18 acceptance.
+
 ## Default-selecting Direct2D on the supported WARP path
 
 The Direct2D terminal painter is no longer only an explicit opt-in. With the
