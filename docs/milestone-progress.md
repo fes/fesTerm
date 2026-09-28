@@ -3,6 +3,38 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Crossing the final-target boundary without replacing egui
+
+The owner authorized a real-app, default-off prototype after the residual-cost
+investigation identified expensive shader composition on WARP. A narrow patch
+to pinned egui-wgpu now lets the host replace an eligible final terminal
+callback with an exact image copy, after the surrounding UI pass and before
+the existing submission/presentation. Egui still owns the complete UI, layout
+and input; native images remain immutable, and overlays or incompatible targets
+retain shader painting. Proposed ADR-0040 records the new host seam and its
+maintenance cost rather than treating prototype permission as merge approval.
+
+Guarded native off/on comparisons and a reversed-order localized repeat
+measured localized CPU at 8.45% versus 5.16% on average, a 38.9% reduction
+at approximately 10 updates per second. Streaming fell from 5.25% to 3.52%;
+full redraw from 11.81% to 9.15%; quiet cases counter-rounded to zero.
+Copy counters prove the real host path executed. Exact-pixel regressions cover
+DPI, resize, clipping, overlays, capture targets and older callbacks retained
+across subsequent updates. These are Windows x64 DevBox/WARP results, not
+hardware-GPU savings or Windows Terminal parity.
+
+The offscreen ABBA control also reduced localized CPU work by 25.5%, but
+completed-draw wall times did not improve, so there is no latency claim.
+One earlier native run was rejected for desktop input; all accepted CPU
+samples still needed PID-scoped forced cleanup. Full CP-18 qualification,
+mixed-monitor/recovery evidence, and architectural review remain open.
+The final native-window self-smoke passed focus, four resize generations and
+PTY continuity in both modes and exited normally; it does not erase the
+separate workload-cleanup limitation.
+The reproduction and complete result ranges are in
+`validation/terminal-performance/README.md`. The prototype is enabled only
+by `FESTERM_EXPERIMENTAL_HOST_COPY=1`; nothing is installed or default-enabled.
+
 ## Locating the remaining WARP terminal gap
 
 After retained terminal images, single-pass output wakeups and textureless

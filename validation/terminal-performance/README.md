@@ -108,7 +108,157 @@ Both new controls flow through the existing optional CPU-profile runner.
 `terminal_damage` records the last changed/total native pixel counts only for
 live localized-native cases; unrelated diagnostic cases report null.
 
-### Remaining gap and renderer-host boundary
+### Default-off final-target host-copy prototype
+
+**Applicability: Windows x64 DX12 WARP / DevBox only.** The owner authorized
+vendoring pinned egui-wgpu 0.36.1 to test the real application. Proposed
+[ADR-0040](../../docs/adr/0040-opt-in-final-target-terminal-copy.md) describes
+the narrow final-target seam; [the vendor note](../../vendor/egui-wgpu/FESTERM-PATCH.md)
+records provenance and the local patch. The shared dependency compiles on all
+platforms, but the app requests copies only for the existing eligible native
+Direct2D path and a BGRA gamma target. Hardware GPUs retain their existing path.
+
+Unset or `FESTERM_EXPERIMENTAL_HOST_COPY=0` uses existing shader composition.
+`1` requests host copying; invalid values warn and remain disabled.
+`FESTERM_EXPERIMENTAL_DIRECT2D=0` also prevents host copying. There is no
+settings migration or changed default.
+
+Unlike the earlier test-owned direct-copy diagnostic, this path executes in
+the actual eframe host: prepare callbacks normally, draw the preceding UI,
+end the pass, copy the final terminal image, and use the existing submission
+and presentation. There is no additional submit/completion wait. It requires
+a compatible opaque root surface with COPY_DST support and no MSAA/depth.
+Any overlay after the terminal, incompatible format, usage, clip or geometry
+keeps the original callback paint in the same frame. It still clears/draws the
+surrounding UI, copies the whole immutable terminal image, and presents
+normally; it is not partial presentation.
+
+#### Guarded real-application results
+
+Same release executable, Windows x64, 16 logical processors, DX12 Microsoft
+Basic Render Driver/WARP `10.0.26100.9278`. Every case used 120x40 cells,
+2058x1658 physical client pixels, 192 DPI, and a 10-second sample after warmup.
+The monitor work area was 4480x2424. The order was off/all four, on/all four,
+on/localized, off/localized. No build ran during measurement.
+
+| Workload | Host copy off CPU | Host copy on CPU | Relative reduction | GUI frames/s off / on |
+| --- | ---: | ---: | ---: | --- |
+| Quiet | 0.000% | 0.000% | Counter-rounded | 0 / 0 |
+| Localized, first pair | 8.25341% | 4.93487% | 40.2% | 10.042 / 10.047 |
+| Localized, reverse-order pair | 8.64188% | 5.38178% | 37.7% | 10.065 / 10.065 |
+| Streaming | 5.24597% | 3.51977% | 32.9% | 10.664 / 10.554 |
+| Full redraw | 11.80544% | 9.15175% | 22.5% | 10.049 / 10.037 |
+
+Localized averages are **8.44765% versus 5.15833%, 38.9% lower CPU**.
+Both localized orders improved; streaming/full-redraw have only one pair,
+not repeated qualification. In enabled active samples, actual host-copy
+counts matched GUI cadence. Native changed-frame cadence matched localized
+and full-redraw GUI cadence; streaming was 10.166/s off and 10.255/s on.
+Quiet native/copy counters remained zero.
+
+All ten samples passed input, foreground, geometry and responsiveness guards.
+Each producer completed 200 scheduled ticks at 100ms; emitted bytes matched
+between modes: quiet 3,990, localized 23,790, streaming 28,182, full redraw
+796,990. Producer CPU counter-rounded to zero. GUI/copy counts and completed
+writes do not prove individual displayed updates or presentation latency.
+Private-byte snapshots ranged from 418,226,176 to 522,792,960 off and
+414,486,528 to 552,013,824 on; these are snapshots, not a leak or memory-budget
+qualification. All ten test-owned processes required forced PID-scoped cleanup
+after the existing four-second close timeout. Graceful shutdown is unqualified.
+
+An earlier off/quiet attempt was rejected because `InputChanged=true`
+(`ForegroundChanged=false`, `GeometryChanged=false`). It stopped the campaign;
+the successful run above followed a separately approved quiet-desktop interval.
+The invalid measurement remains preserved, not included in the table.
+
+Native performance executable SHA256:
+`B26A37A08D392116B14BCF21AB805E25BCD25EA7CF701BD508622DDD1F046D0D`.
+Producer SHA256:
+`C0FE2C1D796FE3919966CB8F33DC4AC70351A9FFB51470558F4831F5FE2A6A41`.
+The source base is merged #268 (`a994b96d6a40cafc69211e777757003ee8e5fa83`)
+plus this prototype. A subsequent capture-format correction rebuilds the
+screenshot pipeline when formats change; CPU sampling does not request captures.
+Evidence directories are `terminal-host-native-qualified-1-0` through
+`terminal-host-native-qualified-4-0`; the rejected attempt is
+`terminal-host-native-initial-0`.
+
+The final candidate also passed the existing isolated
+`FESTERM_NATIVE_WINDOW_SMOKE=1` with host copying off and on: native focus,
+four resize generations, PTY output continuity (75 to 118 bytes), and a
+recognized CSI 6n reply. Both self-smoke processes exited normally without
+forced cleanup. Enabled logs show actual copies across changed target sizes;
+disabled logs show none. This is distinct from the forced cleanup of the CPU
+workload windows above, not a general shutdown qualification. Final native
+smoke executable SHA256:
+`1D005051276039A49930562BE322F47081BD69F239FED42EC683BDFD6601FB22`.
+Artifacts: `terminal-host-native-resize-0` and `terminal-host-native-resize-1`.
+These self-driven checks do not replace OS-keyboard or screenshot review.
+
+#### Completed-work and visual controls
+
+The application-scene BGRA ABBA profile used 100 completed localized frames
+per run at requested 10Hz, after five warmups, with readback outside timing.
+Every run matched the original full-application reference exactly; enabled
+localized cases require actual host-copy selection rather than silent fallback.
+
+| Sequence | Mode | CPU-ms/frame | System CPU | Frames/s | Completed draw ms/frame |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | Off | 131.40625 | 8.21255% | 9.99958 | 56.04414 |
+| 2 | On | 97.34375 | 6.08377% | 9.99965 | 58.56631 |
+| 3 | On | 93.43750 | 5.83981% | 9.99994 | 59.42096 |
+| 4 | Off | 124.84375 | 7.80086% | 9.99760 | 56.03078 |
+
+Average CPU work fell from 128.125 to 95.390625 CPU-ms/frame (25.5%).
+Completed-draw wall time was slightly higher with copying: **no latency
+improvement is claimed**. Last localized native damage remained
+258,432 / 2,982,063 pixels. Frozen initial/ending controls varied too:
+91.094/84.688, 56.406/49.531, 41.094/57.188, 70.156/75.781 CPU-ms/frame
+in the same sequence; retain the range rather than selecting the best run.
+
+Deterministic tests require identical shader/copy pixels across 100%, 125%,
+200%, then 100% DPI, resize, live Unicode/emoji updates, fractional clipping,
+translucent overlays and disabled opacity. They also verify older callbacks
+after later frames, capture COPY_DST transitions and fallback pixels,
+capture size/format recreation, MSAA/depth rejection and wrong clip/format/
+usage/target-size rejection. These are framebuffer and policy evidence, not
+native monitor-transition, device-loss or presentation evidence.
+
+#### Reproduction and remaining boundary
+
+Build the release application and producer, and stage ConPTY using the
+existing staging script if needed. Reserve a quiet desktop; each invocation
+creates only its isolated test-owned instances:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+$env:FESTERM_EXPERIMENTAL_HOST_COPY='0'
+.\validation\terminal-performance\compare-windows.ps1 -FesTermOnly `
+  -ResultDirectory '<fresh-off-directory>'
+$env:FESTERM_EXPERIMENTAL_HOST_COPY='1'
+.\validation\terminal-performance\compare-windows.ps1 -FesTermOnly `
+  -ResultDirectory '<fresh-on-directory>'
+```
+
+Repeat localized in reverse order using `-Workloads localized`. JSON includes
+`HostCopyRequested` and `HostCopyFramesPerSecond`; enabled active workloads
+must execute copies. Do not retry invalid guarded samples automatically.
+For the optional completed-work profile, use
+`FESTERM_EXPERIMENTAL_HOST_COPY=1` instead of `FESTERM_TUI_PROFILE_COPY=1`;
+the two modes cannot be combined. Use the earlier BGRA shader cases with
+host copying off as the same-format control.
+
+**Stopping point for this prototype:** it demonstrates a real native CPU
+improvement with preserved deterministic pixels, not near parity or exhausted
+egui headroom. The earlier Windows Terminal localized reference was 0.446%;
+it is not a fresh matched pair against this candidate. Native glyph work,
+whole-image composition and presentation remain meaningful costs. Further
+partial/retained presentation is a separate design, not added implicitly here.
+ADR-0040 remains Proposed and the feature remains off pending review. Mixed
+monitor DPI, multiwindow/transparent surfaces, graphics recovery, hardware
+negative-routing, native screenshot/overlay review, latency and full CP-18
+qualification remain open in #267/#244; dragging remains separate in #263.
+
+### Prior remaining-gap investigation and renderer-host boundary
 
 **Applicability: Windows x64 DX12 WARP / DevBox, not hardware-GPU or
 cross-platform performance evidence.** This follow-up uses the PR #266 runtime
