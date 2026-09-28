@@ -24,6 +24,11 @@ if ($FesTermOnly -and $IncludeFullRepaintControl) {
 if ($null -ne $env:FESTERM_EXPERIMENTAL_DIRECT2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
     throw 'The fesTerm comparison requires automatic Direct2D selection (unset or 1).'
 }
+$hostCopy = $env:FESTERM_EXPERIMENTAL_HOST_COPY -eq '1'
+if ($null -ne $env:FESTERM_EXPERIMENTAL_HOST_COPY -and
+    $env:FESTERM_EXPERIMENTAL_HOST_COPY -notin @('0','1')) {
+    throw 'FESTERM_EXPERIMENTAL_HOST_COPY must be unset, 0, or 1.'
+}
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 . "$root\scripts\windows-application-window.ps1"
 if (-not [IO.Path]::IsPathRooted($FesTerm)) { $FesTerm = Join-Path $root $FesTerm }
@@ -204,7 +209,7 @@ confirm_session_close = false
 terminal_font = "jet-brains-mono"
 terminal_ligatures = false
 "@ | Set-Content -LiteralPath $env:FESTERM_CONFIG_PATH -Encoding utf8
-            $env:RUST_LOG = 'festerm=info,festerm::rendering=debug,warn'
+            $env:RUST_LOG = 'festerm=info,festerm::rendering=debug,egui_wgpu::callback_copy=debug,warn'
         } else {
             $commandline = (@($child) + $arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
             $settings = @{
@@ -275,6 +280,7 @@ terminal_ligatures = false
             Start-Sleep -Seconds 5
             $beforeFrames = if ($isFesTerm) { Frame-Count $directory } else { $null }
             $nativeBefore = if ($isFesTerm) { Frame-Count $directory 'direct2d_frame_number' } else { $null }
+            $copyBefore = if ($isFesTerm -and $hostCopy) { Frame-Count $directory 'final_callback_copy_frame' } else { $null }
             $process.Refresh()
             $producerProcess.Refresh()
             $before = $process.TotalProcessorTime.TotalSeconds
@@ -308,6 +314,7 @@ terminal_ligatures = false
             } while ($elapsed -lt 10)
             $afterFrames = if ($isFesTerm) { Frame-Count $directory } else { $null }
             $nativeAfter = if ($isFesTerm) { Frame-Count $directory 'direct2d_frame_number' } else { $null }
+            $copyAfter = if ($isFesTerm -and $hostCopy) { Frame-Count $directory 'final_callback_copy_frame' } else { $null }
             $producerProcess.Refresh()
             $producerCpu = $producerProcess.TotalProcessorTime.TotalSeconds-$producerBefore
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
@@ -342,6 +349,9 @@ terminal_ligatures = false
                     throw "$name fell back from Direct2D."
                 }
                 if ($run.Workload -ne 'quiet' -and $nativeAfter -le $nativeBefore) { throw "$name built no native terminal frames." }
+                if ($hostCopy -and $run.Workload -ne 'quiet' -and $copyAfter -le $copyBefore) {
+                    throw "$name did not exercise final-target host copies."
+                }
             }
             $result = [pscustomobject]@{
                 Host=$run.Host;Workload=$run.Workload;Status=$(if($valid){'valid'}else{'invalid-input-or-window'})
@@ -359,6 +369,8 @@ terminal_ligatures = false
                 ForcedResizeRepaints=$forcedResizeRepaints
                 GuiFramesPerSecond=$(if($isFesTerm){($afterFrames-$beforeFrames)/$elapsed}else{$null})
                 Direct2DFramesPerSecond=$(if($isFesTerm){($nativeAfter-$nativeBefore)/$elapsed}else{$null})
+                HostCopyRequested=($isFesTerm -and $hostCopy)
+                HostCopyFramesPerSecond=$(if($isFesTerm -and $hostCopy){($copyAfter-$copyBefore)/$elapsed}else{$null})
                 Producer=$producer;Intervals=$intervals
                 InputChanged=$inputChanged;ForegroundChanged=$foregroundChanged;GeometryChanged=$geometryChanged
             }
