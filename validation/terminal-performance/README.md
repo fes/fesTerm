@@ -231,3 +231,14 @@ readback, but host load changed between replay runs; the guarded native
 before/after CPU pair above is the performance claim. Normal full-window
 composition remains a cost, and these changes do **not** establish parity with
 Windows Terminal's 1.547% localized sample or resolve issue #263 dragging.
+
+### Visual regression evidence
+
+These are losslessly encoded **offscreen replay images**, not native-window
+screenshots or latency evidence. They show the same synthetic state after
+14 localized updates. The complete image pair passed the existing maximum
+two-level per-channel native/reference tolerance.
+
+| Ordinary egui reference | Retained Direct2D candidate |
+| --- | --- |
+| ![Ordinary egui localized-update reference](localized-wgpu.webp) | ![Retained Direct2D localized-update candidate](localized-direct2d.webp) |
