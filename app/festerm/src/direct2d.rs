@@ -131,7 +131,12 @@ mod native {
     pub(super) struct Status {
         pub(super) active: AtomicBool,
         pub(super) frames: AtomicU64,
+        pub(super) reused_frames: AtomicU64,
         pub(super) first_failure: OnceLock<String>,
+        #[cfg(test)]
+        pub(super) last_updated_pixels: AtomicU64,
+        #[cfg(test)]
+        pub(super) last_surface_pixels: AtomicU64,
     }
 
     struct Paint {
@@ -182,7 +187,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 TimingConfig::Disabled
             }
         };
-        let renderer = Mutex::new(festerm_windows_direct2d::Renderer::new(
+        let renderer = Mutex::new(festerm_windows_direct2d::CachedRenderer::new(
             state.device.clone(),
             state.queue.clone(),
         )?);
@@ -251,7 +256,12 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let status = Arc::new(Status {
             active: AtomicBool::new(true),
             frames: AtomicU64::new(0),
+            reused_frames: AtomicU64::new(0),
             first_failure: OnceLock::new(),
+            #[cfg(test)]
+            last_updated_pixels: AtomicU64::new(0),
+            #[cfg(test)]
+            last_surface_pixels: AtomicU64::new(0),
         });
         let observed = status.clone();
         festerm_ui_egui::install_root_terminal_painter(context, move |context, frame| {
@@ -276,7 +286,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
-            let surface = match result {
+            let rendered = match result {
                 Ok(Some(surface)) => surface,
                 Ok(None) => return None,
                 Err(error) => {
@@ -288,6 +298,19 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
+            let updated_regions = rendered.updated_regions;
+            let updated_pixels = rendered.updated_pixels;
+            let surface = rendered.surface;
+            #[cfg(test)]
+            {
+                observed
+                    .last_updated_pixels
+                    .store(updated_pixels, Ordering::Relaxed);
+                observed.last_surface_pixels.store(
+                    u64::from(surface.texture.width()) * u64::from(surface.texture.height()),
+                    Ordering::Relaxed,
+                );
+            }
             let mut offset = [0u8; 16];
             offset[0..4].copy_from_slice(&surface.origin[0].to_le_bytes());
             offset[4..8].copy_from_slice(&surface.origin[1].to_le_bytes());
@@ -312,12 +335,21 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     },
                 ],
             });
-            let number = observed.frames.fetch_add(1, Ordering::Relaxed) + 1;
-            if timings.should_log(number) {
+            let number = if updated_regions == 0 {
+                let reused = observed.reused_frames.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::debug!(target: "festerm::rendering", direct2d_reused_frames = reused,
+                    "reused unchanged Direct2D terminal frame");
+                observed.frames.load(Ordering::Relaxed)
+            } else {
+                observed.frames.fetch_add(1, Ordering::Relaxed) + 1
+            };
+            if updated_regions > 0 && timings.should_log(number) {
                 let render_timings = render_timings.as_ref().expect("timing capture enabled");
                 tracing::info!(
                     target: "festerm::rendering",
                     direct2d_frame_number = number,
+                    updated_regions,
+                    updated_pixels,
                     surface_width = render_timings.surface_width,
                     surface_height = render_timings.surface_height,
                     mesh_count = render_timings.mesh_count,
@@ -337,7 +369,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                         .unwrap_or_default(),
                     "Direct2D production frame timings"
                 );
-            } else {
+            } else if updated_regions > 0 {
                 tracing::debug!(target: "festerm::rendering", direct2d_frame_number = number,
                     "built Direct2D terminal surface");
             }
@@ -673,6 +705,133 @@ mod tests {
 
     #[cfg(all(windows, target_arch = "x86_64"))]
     #[test]
+    fn retained_terminal_updates_preserve_pixels_across_dpi_and_clipping() {
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+        use festerm_core::{Dimensions, Terminal};
+        use festerm_ui_egui::{EncodedInputSink, TerminalView};
+        use std::sync::atomic::Ordering;
+
+        struct Sink;
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, _: &[u8]) {}
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+        }
+        let sequence = |native: bool, scale: f32, clipped: bool| {
+            let mut setup = default_wgpu_setup();
+            let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                unreachable!()
+            };
+            options.instance_descriptor.backends = wgpu::Backends::DX12;
+            let state = create_render_state(setup, Default::default());
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let context = egui::Context::default();
+            crate::software_background::install(&context, &state);
+            let status = native.then(|| super::native::install(&context, &state).unwrap());
+            let mut terminal = Terminal::new(Dimensions::new(48, 24).unwrap()).unwrap();
+            terminal.ingest(b"\x1b[?25l");
+            for row in 1..=24 {
+                terminal.ingest(
+                    format!("\x1b[{row};1HRow {row:02} 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+                        .as_bytes(),
+                );
+            }
+            terminal.ingest(
+                "\x1b[3;1H\u{754c} e\u{301} \u{1f916} \u{1f469}\u{200d}\u{1f52c}".as_bytes(),
+            );
+            let mut view = TerminalView::default();
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(480.0, 480.0),
+                )),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let updates = [
+                "",
+                "",
+                "",
+                "\x1b[9;3H\x1b[31mPATCH\x1b[0m",
+                "\x1b[9;1H\x1b[2K",
+                "\x1b[9;3H\x1b[4mABCD\x1b[0m",
+                "\x1b[10;5H\x1b[?25h",
+                "\x1b[?25l\x1b[3;1H\u{1f916}\x1b[K",
+                "",
+            ];
+            let mut images = Vec::new();
+            let mut saw_partial = false;
+            for (index, bytes) in updates.iter().enumerate() {
+                terminal.ingest(bytes.as_bytes());
+                let mut output = context.run_ui(input.clone(), |ui| {
+                    ui.painter().rect_filled(
+                        ui.max_rect(),
+                        0.0,
+                        egui::Color32::from_rgb(70, 25, 80),
+                    );
+                    ui.add_enabled_ui(index != 5, |ui| {
+                        if clipped {
+                            ui.set_clip_rect(egui::Rect::from_min_max(
+                                egui::pos2(11.25, 13.5),
+                                egui::pos2(460.5, 469.75),
+                            ));
+                        }
+                        view.show(ui, &mut terminal, &mut Sink);
+                    });
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(15.0, 100.0), egui::vec2(180.0, 25.0)),
+                        6.0,
+                        egui::Color32::from_rgba_unmultiplied(200, 100, 50, 96),
+                    );
+                });
+                renderer.handle_delta(&mut output.textures_delta);
+                images.push(renderer.render(&context, &output).unwrap());
+                if let Some(status) = &status {
+                    assert!(
+                        status.active.load(Ordering::Relaxed),
+                        "{:?}",
+                        status.first_failure.get()
+                    );
+                    let changed = status.last_updated_pixels.load(Ordering::Relaxed);
+                    let full = status.last_surface_pixels.load(Ordering::Relaxed);
+                    saw_partial |= index >= 3 && index != 5 && changed > 0 && changed < full;
+                }
+            }
+            if native {
+                assert!(saw_partial, "fixture must exercise retained updates");
+            }
+            images
+        };
+        for scale in [1.0, 1.25, 2.0] {
+            for clipped in [false, true] {
+                let reference = sequence(false, scale, clipped);
+                let actual = sequence(true, scale, clipped);
+                for (index, (reference, actual)) in reference.iter().zip(&actual).enumerate() {
+                    assert_eq!(reference.dimensions(), actual.dimensions());
+                    let mismatches = reference
+                        .pixels()
+                        .zip(actual.pixels())
+                        .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 2))
+                        .count();
+                    assert_eq!(
+                        mismatches, 0,
+                        "frame={index}, scale={scale}, clipped={clipped}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
     #[ignore = "optional completed-render TUI profiling; not native presentation latency"]
     fn replay_terminal_tui_workloads() {
         use egui_kittest::{
@@ -815,9 +974,21 @@ mod tests {
                             .expect("completed TUI render"),
                     );
                     let draw_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let updated_pixels = status.as_ref().map(|status| {
+                        let updated = status.last_updated_pixels.load(Ordering::Relaxed);
+                        let full = status.last_surface_pixels.load(Ordering::Relaxed);
+                        if name == "localized" && frame >= 10 {
+                            assert!(
+                                updated * 4 < full,
+                                "localized update redrew most of the terminal"
+                            );
+                        }
+                        updated
+                    });
                     timings.push(serde_json::json!({
                         "frame": frame, "input_bytes": bytes.len(), "parse_ms": parse_ms,
                         "ui_ms": ui_ms, "draw_readback_ms": draw_ms,
+                        "updated_pixels": updated_pixels,
                     }));
                 }
                 let image = image.unwrap();

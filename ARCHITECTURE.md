@@ -57,6 +57,10 @@ hardware adapters, unsupported formats, and other platforms retain ordinary
 egui-wgpu. The UI retains layout, input, fonts and paint order; the native
 crate owns SDK interop and immutable shared surfaces. See proposed
 [ADR 0039](docs/adr/0039-opt-in-direct2d-terminal-composition.md).
+The native renderer retains one frame's pixels and bounded presentation-region
+snapshots. Small changes redraw damaged regions and copy them into a new
+immutable frame; unchanged frames share their existing texture. This does not
+move terminal ownership or introduce a partial-present/window backend.
 
 ## Current and Target Workspace Layout
 

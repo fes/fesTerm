@@ -71,11 +71,34 @@ it can record the external work's submission. Native work is queued before
 publication; later wgpu reads follow it on the shared graphics queue.
 
 Published surfaces are immutable from the native renderer's perspective:
-allocate a fresh surface for a changed paint submission, never overwrite a
-texture that an older callback or command buffer could still reference.
-Crop the surface to visible primitive bounds; the ordinary full terminal
-background still clears previous content. This avoids a full-window composite
-for a short line without introducing retained-pixel/damage semantics.
+never overwrite a texture that an older callback or command buffer could still
+reference. Crop the surface to visible primitive bounds; the ordinary full
+terminal background still clears previous content.
+
+Retain one completed frame plus bounded, exact presentation snapshots for
+64-physical-pixel horizontal regions. Validate the complete original frame
+before reuse, preserving aggregate geometry, palette and texture limits. Compare
+texture identities/pixels, clipping, geometry and colors; do not accept a
+hash-only match. Rect, scale, background, visible bounds or texture changes
+invalidate reuse. Region snapshots share the original frame's texture pixels
+and cap expanded geometry/primitive counts at the existing frame limits.
+Ineligible partitions and changes covering at least half the regions use
+ordinary full native drawing.
+
+For smaller changes, copy the preceding image into a fresh wgpu-owned texture,
+draw adjacent damaged regions together into fresh native surfaces, and copy
+those patches into the new image on the shared queue. Clear each complete
+damaged region so removed glyphs cannot survive. Quantize raster coordinates
+before subtracting the region origin, preserving half-subpixel rounding at
+region boundaries. Region draws retain the validated full frame's texture set
+instead of repeatedly retiring/reuploading unchanged emoji textures. Unchanged
+frames reuse the same immutable image. Only the latest frame is retained by
+this cache; published callbacks retain their independent normal GPU lifetimes.
+
+This optimization preserves the existing native/UI ownership boundary and
+does not change egui-wgpu composition or DXGI presentation. Full-window
+composition still happens for a GUI repaint. It is not a frame-rate cap,
+output coalescing policy, or native presentation-latency guarantee.
 
 Native errors are explicit HRESULT-bearing errors. The app logs the failure,
 removes the optional hook for the remainder of the process, and retains the
@@ -94,7 +117,7 @@ device-loss handling; native-window recovery remains qualification work.
 - **Per-frame framebuffer readback/upload:** unnecessary synchronization and
   transfer cost; use shared GPU resources instead.
 - **Mutable surface reuse:** requires proving ownership of all outstanding
-  callbacks and submissions; immutable frames are the initial safety policy.
+  callbacks and submissions; use immutable image reuse/copying instead.
 - **Independent Rust and C++ renderers:** duplicates the most sensitive
   alpha/raster-grid logic. Keep the native implementation shared; Rust still
   owns the safe interface and application integration.
@@ -121,7 +144,9 @@ and unknown texture sources fall back rather than approximate.
 The C++ boundary and native wgpu access increase maintenance/review cost.
 wgpu upgrades must revalidate resource states, initialization, queue selection,
 and lifetime guarantees. Fresh surfaces and CPU font snapshots have costs
-that must be measured in the actual application. Native window/device-loss,
+that must be measured in the actual application. The retained-image cache adds
+one bounded frame and presentation snapshots, with CPU/memory results measured
+separately from pixel correctness. Native window/device-loss,
 mixed-DPI, multi-window, memory/latency characterization, and representative
 hardware qualification remain open in issue #244. This ADR is not an
 acceptance declaration or a claim that native qualification is complete merely
@@ -136,6 +161,12 @@ because the supported WARP path now defaults on.
   selection semantics retained.
 - **Automated tests required:** `native_bounds_crop_sparse_paints_and_validate_indices`,
   `shared_surfaces_preserve_pixels_and_previous_frame_ownership`,
+  `retained_frames_update_only_changed_regions_and_preserve_older_pixels`,
+  `raster_grid_normalization_is_independent_of_damage_origin`,
+  `retained_terminal_updates_preserve_pixels_across_dpi_and_clipping`,
+  `session_notifier_wakes_one_frame_without_a_settling_repaint`,
+  `drained_terminal_output_does_not_request_a_redundant_frame`,
+  `pending_terminal_resize_rearms_an_early_frame`,
   `direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy`,
   `direct2d_invalid_overrides_do_not_enable_the_default`,
   `integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`,

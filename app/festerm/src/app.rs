@@ -2221,30 +2221,22 @@ impl FesTermApp {
                 needs_repaint = true;
             }
             let hit_limit = session.pump_session_events();
-            // `hit_limit` alone only reports whether the bounded per-frame
-            // drain was exhausted (backpressure) - a normal, modest burst of
-            // output drains well under the per-frame cap and reports
-            // `false` there even though real output was ingested. Use
-            // `last_pump_output_received()` for "did output actually
-            // arrive", both for scheduling a repaint and for the
-            // background-tab "new output" chip pulse (feature request #68);
-            // relying on `hit_limit` for the latter meant it almost never
-            // fired for ordinary output.
+            // Backend availability already woke this frame, and pumping runs
+            // before painting. Request another frame only for an incomplete
+            // drain, not for output this frame will already display.
+            needs_repaint |= hit_limit;
             let output_received = session.controller.last_pump_output_received();
-            if hit_limit || output_received {
-                needs_repaint = true;
-                if output_received && id != active {
-                    // Only mark a *background* tab as having new output; the
-                    // active tab is already visible, so there is nothing to
-                    // notify the user of.
-                    session.has_new_output_since_active = true;
-                }
+            if output_received && id != active {
+                session.has_new_output_since_active = true;
             }
             session
                 .controller
                 .forward_terminal_replies(&mut session.terminal);
             session.controller.flush_pending_writes();
             session.controller.flush_pending_resize();
+            if let Some(delay) = session.controller.next_resize_repaint_delay() {
+                context.request_repaint_after(delay);
+            }
         }
         if needs_repaint {
             context.request_repaint();
@@ -9589,6 +9581,74 @@ mod tests {
                 .is_some_and(|chip| chip.pulse_new_output),
             "a background tab's modest output must set the pulse flag"
         );
+    }
+
+    #[test]
+    fn drained_terminal_output_does_not_request_a_redundant_frame() {
+        let context = egui::Context::default();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        for _ in 0..4 {
+            let mut output =
+                context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        transport.push_event(festerm_session::SessionEvent::Output(
+            b"current frame".to_vec(),
+        ));
+        let mut output = context.run_ui(Default::default(), |ui| {
+            app.pump_all_sessions(ui.ctx());
+            assert!(app
+                .state
+                .session_tab(tab)
+                .unwrap()
+                .terminal
+                .row_text(0)
+                .unwrap()
+                .starts_with("current frame"));
+        });
+        output.textures_delta.clear();
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+
+        for _ in 0..10_000 {
+            transport.push_event(festerm_session::SessionEvent::Output(b"x".to_vec()));
+        }
+        let mut output = context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .repaint_delay
+                .is_zero(),
+            "a bounded drain must schedule the remaining events"
+        );
+    }
+
+    #[test]
+    fn pending_terminal_resize_rearms_an_early_frame() {
+        use festerm_ui_egui::EncodedInputSink;
+
+        let context = egui::Context::default();
+        let (mut app, tab, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        for _ in 0..4 {
+            let mut output =
+                context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let controller = &mut app.state.session_tab_mut(tab).unwrap().controller;
+        controller.record_terminal_resize(festerm_core::Dimensions::new(80, 24).unwrap());
+        controller.record_terminal_resize(festerm_core::Dimensions::new(81, 24).unwrap());
+        let mut output = context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+        output.textures_delta.clear();
+        let controller = &app.state.session_tab(tab).unwrap().controller;
+        if controller.next_resize_repaint_delay().is_some() {
+            assert!(
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
+                    <= festerm_ui_egui::TERMINAL_RESIZE_DEBOUNCE
+            );
+        } else {
+            assert_eq!(controller.resize_probe().generations().len(), 2);
+        }
     }
 
     #[test]

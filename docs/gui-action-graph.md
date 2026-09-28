@@ -68,6 +68,16 @@ matched workload delivery, font, grid, native-window identity and CPU. Neither
 GUI frame counts nor offscreen timings establish physical presentation latency.
 See `validation/terminal-performance/README.md` and CP-18.
 
+The supported native path now retains immutable pixels for unchanged
+presentation regions. Small updates redraw only changed regions before normal
+egui-wgpu composition. Session pumping does not request an extra repaint for
+output already displayed by the current frame; bounded-drain continuation and
+background unread state remain independent. Pending resize deadlines re-arm
+an early repaint until the debounced resize can be sent, without an idle poll.
+Session availability uses egui's single-pass wake API rather than its zero-delay
+two-pass widget-settling policy. Every event still requests a wake, including
+events arriving during a frame; no output/frame-rate budget is introduced.
+
 ## How to use the graph
 
 Each test run starts at a named checkpoint, follows one or more edges, asserts

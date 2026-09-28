@@ -1,12 +1,13 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string] $WindowsTerminal,
+    [string] $WindowsTerminal,
     [Parameter(Mandatory)][string] $ResultDirectory,
     [string] $FesTerm = 'target\release\festerm.exe',
     [ValidateSet('quiet','localized','streaming','full-redraw')]
     [string[]] $Workloads = @('quiet','localized','streaming','full-redraw'),
     [switch] $RegisterBundledFont,
-    [switch] $IncludeFullRepaintControl
+    [switch] $IncludeFullRepaintControl,
+    [switch] $FesTermOnly
 )
 
 Set-StrictMode -Version Latest
@@ -14,8 +15,11 @@ $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT' -or $env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'This native desktop probe requires Windows and FESTERM_RUN_OPTIONAL_VALIDATION=1.'
 }
-if (-not $RegisterBundledFont) {
+if (-not $FesTermOnly -and -not $RegisterBundledFont) {
     throw 'Explicit -RegisterBundledFont consent is required for this matched-font probe.'
+}
+if ($FesTermOnly -and $IncludeFullRepaintControl) {
+    throw 'The Windows Terminal full-repaint control cannot run with FesTermOnly.'
 }
 if ($null -ne $env:FESTERM_EXPERIMENTAL_DIRECT2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
     throw 'The fesTerm comparison requires automatic Direct2D selection (unset or 1).'
@@ -24,23 +28,28 @@ $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 . "$root\scripts\windows-application-window.ps1"
 if (-not [IO.Path]::IsPathRooted($FesTerm)) { $FesTerm = Join-Path $root $FesTerm }
 $FesTerm = (Resolve-Path -LiteralPath $FesTerm).Path
-$WindowsTerminal = (Resolve-Path -LiteralPath $WindowsTerminal).Path
-$wtDirectory = Split-Path -Parent $WindowsTerminal
-if (-not (Test-Path -LiteralPath "$wtDirectory\.portable" -PathType Leaf)) {
-    throw 'Windows Terminal must be a separate portable distribution with its .portable marker.'
+if (-not $FesTermOnly) {
+    if (-not $WindowsTerminal) { throw 'Supply a portable Windows Terminal path or use -FesTermOnly.' }
+    $WindowsTerminal = (Resolve-Path -LiteralPath $WindowsTerminal).Path
+    $wtDirectory = Split-Path -Parent $WindowsTerminal
+    if (-not (Test-Path -LiteralPath "$wtDirectory\.portable" -PathType Leaf)) {
+        throw 'Windows Terminal must be a separate portable distribution with its .portable marker.'
+    }
 }
 $child = (Resolve-Path -LiteralPath "$root\target\release\festerm-pty-test-child.exe").Path
 if (Test-Path -LiteralPath $ResultDirectory) { throw 'Use a new evidence directory; old runs are retained.' }
 $ResultDirectory = [IO.Path]::GetFullPath($ResultDirectory)
 New-Item -ItemType Directory -Path $ResultDirectory | Out-Null
-if (Get-Process -Name WindowsTerminal -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $WindowsTerminal }) {
-    throw 'The specified portable Windows Terminal already has a running process.'
+if (-not $FesTermOnly) {
+    if (Get-Process -Name WindowsTerminal -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $WindowsTerminal }) {
+        throw 'The specified portable Windows Terminal already has a running process.'
+    }
+    $settingsDirectory = Join-Path $wtDirectory 'settings'
+    if (Test-Path -LiteralPath "$settingsDirectory\settings.json") {
+        throw 'Use a fresh portable Windows Terminal; this probe does not overwrite existing settings.'
+    }
+    New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
 }
-$settingsDirectory = Join-Path $wtDirectory 'settings'
-if (Test-Path -LiteralPath "$settingsDirectory\settings.json") {
-    throw 'Use a fresh portable Windows Terminal; this probe does not overwrite existing settings.'
-}
-New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
 
 Add-Type -TypeDefinition @'
 using System;
@@ -74,6 +83,8 @@ public static class TuiComparisonNative {
         if(GetWindowThreadProcessId(w,out owner)==0 || owner!=(uint)processId) throw new InvalidOperationException("Window owner changed.");
         var deadline=System.Diagnostics.Stopwatch.StartNew();
         while(GetForegroundWindow()==IntPtr.Zero && deadline.ElapsedMilliseconds<2000) System.Threading.Thread.Sleep(50);
+        if(GetForegroundWindow()==w || SetForegroundWindow(w)) return;
+        if(!SetWindowPos(w,IntPtr.Zero,0,0,0,0,0x43)) throw new Win32Exception();
         if(GetForegroundWindow()==w || SetForegroundWindow(w)) return;
         uint foreground=GetWindowThreadProcessId(GetForegroundWindow(),out owner),current=GetCurrentThreadId();
         if(foreground==0 || foreground==current) throw new InvalidOperationException("Foreground activation unavailable.");
@@ -145,13 +156,15 @@ $fonts = [Collections.Generic.List[string]]::new()
 $results = [Collections.Generic.List[object]]::new()
 $runs = foreach ($workload in $Workloads) {
     [pscustomobject]@{Host='festerm';Workload=$workload;FullRepaint=$false}
-    [pscustomobject]@{Host='windows-terminal';Workload=$workload;FullRepaint=$false}
+    if (-not $FesTermOnly) {
+        [pscustomobject]@{Host='windows-terminal';Workload=$workload;FullRepaint=$false}
+    }
 }
 if ($IncludeFullRepaintControl) {
     $runs += [pscustomobject]@{Host='windows-terminal-full-repaint';Workload='localized';FullRepaint=$true}
 }
 try {
-    foreach ($face in @('Regular','Bold','Italic','BoldItalic')) {
+    foreach ($face in $(if ($FesTermOnly) { @() } else { @('Regular','Bold','Italic','BoldItalic') })) {
         $font = "$root\assets\fonts\jetbrains-mono\JetBrainsMonoNL-$face.ttf"
         [TuiComparisonNative]::AddFont($font)
         $fonts.Add($font)
@@ -211,6 +224,7 @@ terminal_ligatures = false
         $process = Start-Process -FilePath $executable -WorkingDirectory $root -PassThru -NoNewWindow `
             -RedirectStandardOutput "$directory\stdout.log" -RedirectStandardError "$directory\stderr.log"
         $window = [IntPtr]::Zero
+        $forcedResizeRepaints = 0
         try {
             $deadline = [DateTime]::UtcNow.AddSeconds(25)
             do {
@@ -236,8 +250,12 @@ terminal_ligatures = false
                     ConvertTo-Json -Compress -Depth 4 | Add-Content -LiteralPath "$directory\geometry.jsonl"
                 [TuiComparisonNative]::Resize($window,$width,$height)
                 Start-Sleep -Seconds 2
-                [TuiComparisonNative]::Refresh($window)
-                Start-Sleep -Milliseconds 500
+                $settled = Read-Geometry "$start.geometry.json"
+                if ($settled.columns -ne 120 -or $settled.rows -ne 40) {
+                    [TuiComparisonNative]::Refresh($window)
+                    $forcedResizeRepaints++
+                    Start-Sleep -Milliseconds 500
+                }
             }
             $geometry = Read-Geometry "$start.geometry.json"
             if ($geometry.columns -ne 120 -or $geometry.rows -ne 40) { throw "$name could not establish a 120x40 PTY." }
@@ -335,6 +353,10 @@ terminal_ligatures = false
                 ProducerSha256=(Get-FileHash -LiteralPath $child -Algorithm SHA256).Hash
                 SampleSeconds=$elapsed
                 SampleStartedUnixMs=$sampleStarted
+                LogicalProcessors=[Environment]::ProcessorCount
+                WorkingSetBytes=$process.WorkingSet64
+                PrivateBytes=$process.PrivateMemorySize64
+                ForcedResizeRepaints=$forcedResizeRepaints
                 GuiFramesPerSecond=$(if($isFesTerm){($afterFrames-$beforeFrames)/$elapsed}else{$null})
                 Direct2DFramesPerSecond=$(if($isFesTerm){($nativeAfter-$nativeBefore)/$elapsed}else{$null})
                 Producer=$producer;Intervals=$intervals
@@ -376,7 +398,7 @@ terminal_ligatures = false
         try { [TuiComparisonNative]::RemoveFont($font) }
         catch { $cleanupErrors += $_.ToString() }
     }
-    if (Test-Path -LiteralPath "$settingsDirectory\settings.json") {
+    if (-not $FesTermOnly -and (Test-Path -LiteralPath "$settingsDirectory\settings.json")) {
         Remove-Item -LiteralPath "$settingsDirectory\settings.json"
     }
     if ($cleanupErrors.Count -gt 0) { throw ($cleanupErrors -join "`n") }
