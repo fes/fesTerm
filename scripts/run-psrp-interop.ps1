@@ -181,6 +181,37 @@ function Wait-EndpointReady([string]$ConfigurationName, [string]$WorkDir) {
                     $detail = $detail.Substring(0, [Math]::Min(768, $detail.Length))
                     [Console]::Error.WriteLine("readiness attempt failed: $($_.Exception.GetType().Name) $detail")
                     $reportedFailure = $true
+                    if ($name -ne 'Microsoft.PowerShell') {
+                        $diagnosticSession = $null
+                        try {
+                            $diagnosticSession = New-PSSession -ComputerName 127.0.0.1 -Port 5986 -UseSSL `
+                                -Authentication Negotiate -Credential $credential -ConfigurationName Microsoft.PowerShell `
+                                -SessionOption $options
+                            $diagnostic = Invoke-Command -Session $diagnosticSession -ArgumentList $name -ScriptBlock {
+                                param($configuration)
+                                $xml = [xml](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Plugin\$configuration" -ErrorAction Stop).ConfigXML
+                                $plugin = [Environment]::ExpandEnvironmentVariables($xml.PlugInConfiguration.Filename)
+                                $config = Join-Path (Split-Path -Parent $plugin) 'RemotePowerShellConfig.txt'
+                                $readable = $false
+                                $writable = $false
+                                foreach ($access in @([IO.FileAccess]::Read, [IO.FileAccess]::ReadWrite)) {
+                                    try {
+                                        $file = [IO.File]::Open($config, [IO.FileMode]::Open, $access, [IO.FileShare]::ReadWrite)
+                                        $file.Dispose()
+                                        if ($access -eq [IO.FileAccess]::Read) { $readable = $true } else { $writable = $true }
+                                    } catch [UnauthorizedAccessException] {
+                                        # Report access denial without changing ACLs or file contents.
+                                    }
+                                }
+                                "plugin-config-readable=$readable plugin-config-readwrite=$writable"
+                            }
+                            [Console]::Error.WriteLine([string]$diagnostic)
+                        } catch {
+                            [Console]::Error.WriteLine("plugin diagnostic failed: $($_.Exception.GetType().Name)")
+                        } finally {
+                            if ($diagnosticSession) { Remove-PSSession -Session $diagnosticSession -ErrorAction Stop }
+                        }
+                    }
                 }
             } finally {
                 if ($session) { Remove-PSSession -Session $session -ErrorAction Stop }
