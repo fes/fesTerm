@@ -22,6 +22,8 @@ const ENV_DOMAIN: &str = "FESTERM_PSRP_INTEROP_DOMAIN";
 const ENV_PASSWORD: &str = "FESTERM_PSRP_INTEROP_PASSWORD";
 const ENV_CA_PEM: &str = "FESTERM_PSRP_INTEROP_CA_PEM";
 const ENV_CA_PEM_PATH: &str = "FESTERM_PSRP_INTEROP_CA_PEM_PATH";
+const ENV_PS7_CONFIG: &str = "FESTERM_PSRP_INTEROP_PS7_CONFIG";
+const ENV_PS7_REQUIRED: &str = "FESTERM_PSRP_INTEROP_PS7_REQUIRED";
 
 struct InteropConfig {
     host: String,
@@ -72,40 +74,71 @@ impl InteropConfig {
     }
 
     fn connect(&self) -> Arc<PowerShellSession> {
-        let endpoint = PowerShellEndpoint::https(self.host.clone())
+        self.connect_configuration(None)
+    }
+
+    fn endpoint(&self, configuration_name: Option<&str>) -> PowerShellEndpoint {
+        let mut endpoint = PowerShellEndpoint::https(self.host.clone())
             .expect("loopback host must be accepted")
             .with_port(self.port)
             .with_trusted_ca_pem(self.ca_pem.clone())
             .expect("trusted CA PEM must be accepted")
             .with_local_bind_address(Some(IpAddr::from([127, 0, 0, 1])))
             .expect("loopback local bind must be accepted");
-        let options = PowerShellOptions {
+        if let Some(name) = configuration_name {
+            endpoint = endpoint
+                .with_configuration_name(name)
+                .expect("configuration name must be accepted");
+        }
+        endpoint
+    }
+
+    fn options(&self) -> PowerShellOptions {
+        PowerShellOptions {
             connect_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             cancel_drain_timeout: Duration::from_secs(3),
             shutdown_timeout: Duration::from_secs(5),
             max_events_per_command: 128,
             ..PowerShellOptions::default()
-        };
-        let credentials = PowerShellCredentials::with_domain(
+        }
+    }
+
+    fn credentials(&self) -> PowerShellCredentials {
+        PowerShellCredentials::with_domain(
             self.username.clone(),
             self.domain.clone(),
             SecretBytes::from_secret_string(self.password.as_str().to_owned()),
         )
-        .expect("interop username and password must be valid");
+        .expect("interop username and password must be valid")
+    }
+
+    fn try_connect(
+        &self,
+        configuration_name: Option<&str>,
+    ) -> Result<PowerShellSession, PowerShellSessionError> {
+        let endpoint = self.endpoint(configuration_name);
+        let options = self.options();
+        let credentials = self.credentials();
         let (tx, rx) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let _ = tx.send(PowerShellSession::connect(endpoint, options, credentials));
         });
         match rx.recv_timeout(Duration::from_secs(30)) {
-            Ok(Ok(session)) => Arc::new(session),
-            Ok(Err(error)) => panic!("connect to native PSRP endpoint failed: {error:?}"),
+            Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 panic!("connect to native PSRP endpoint exceeded 30s deadline")
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("connect to native PSRP endpoint worker exited without a result")
             }
+        }
+    }
+
+    fn connect_configuration(&self, configuration_name: Option<&str>) -> Arc<PowerShellSession> {
+        match self.try_connect(configuration_name) {
+            Ok(session) => Arc::new(session),
+            Err(error) => panic!("connect to native PSRP endpoint failed: {error:?}"),
         }
     }
 }
@@ -509,4 +542,148 @@ fn native_psrp_close_is_idempotent_and_prevents_new_commands() {
         session.start_script("'should-not-run'"),
         Err(PowerShellSessionError::Closed)
     ));
+}
+
+fn close_bounded(session: &Arc<PowerShellSession>, context: &str) {
+    let session = Arc::clone(session);
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = tx.send(session.close());
+    });
+    match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => panic!("close {context} PSRP session failed: {error:?}"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("close {context} PSRP session exceeded 30s deadline")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("close {context} PSRP session worker exited without a result")
+        }
+    }
+}
+
+fn assert_edition_and_major(
+    session: &Arc<PowerShellSession>,
+    expected_edition: &str,
+    expected_major: i32,
+) {
+    let events = run_script(
+        session,
+        "$PSVersionTable.PSEdition; [int]$PSVersionTable.PSVersion.Major",
+        Duration::from_secs(15),
+    );
+    assert!(
+        output_strings(&events).contains(&expected_edition.to_string()),
+        "expected PSEdition {expected_edition:?}, got outputs {:?}",
+        output_strings(&events)
+    );
+    assert!(
+        output_i32(&events).contains(&expected_major),
+        "expected PSVersion major {expected_major}, got outputs {:?}",
+        output_i32(&events)
+    );
+}
+
+fn assert_same_runspace_and_cancellation(session: &Arc<PowerShellSession>, marker: &str) {
+    let set = format!("$global:FestermConfigMarker = '{marker}'; 'marker-set'");
+    assert_eq!(
+        output_strings(&run_script(session, &set, Duration::from_secs(15))),
+        ["marker-set"]
+    );
+
+    let mut command = start_script_bounded(
+        session,
+        "'cancel-ready'; Start-Sleep -Seconds 30; 'unexpected-success'",
+        Duration::from_secs(15),
+    );
+    wait_for_output(&mut command, "cancel-ready", Duration::from_secs(10));
+    command.cancel();
+    let kind = collect_failure(&mut command, Duration::from_secs(10));
+    assert_ne!(
+        kind,
+        PowerShellCommandFailureKind::TimedOut,
+        "cancellation must resolve before the bounded deadline"
+    );
+    assert!(
+        matches!(
+            kind,
+            PowerShellCommandFailureKind::Cancelled | PowerShellCommandFailureKind::Stopped
+        ),
+        "cancellation must confirm a remote stop, got {kind:?}"
+    );
+
+    assert!(
+        output_strings(&run_script(
+            session,
+            "$global:FestermConfigMarker; 'after-cancel'",
+            Duration::from_secs(15)
+        ))
+        .contains(&marker.to_string()),
+        "the same runspace must retain state set before cancellation"
+    );
+}
+
+#[test]
+#[ignore = "requires GitHub-hosted Windows loopback WinRM HTTPS endpoint"]
+fn native_psrp_default_configuration_targets_windows_powershell() {
+    let cfg = InteropConfig::from_env();
+    let session = cfg.connect();
+    // The default resource URI must actually reach Windows PowerShell 5.1,
+    // proven by the reported edition/major rather than a bare success.
+    assert_edition_and_major(&session, "Desktop", 5);
+    close_bounded(&session, "default");
+}
+
+#[test]
+#[ignore = "requires GitHub-hosted Windows loopback WinRM HTTPS endpoint"]
+fn native_psrp_unknown_configuration_fails_without_fallback() {
+    let cfg = InteropConfig::from_env();
+    // A syntactically valid but unregistered configuration must fail to
+    // connect; it must never silently fall back to the default endpoint.
+    let error = cfg
+        .try_connect(Some("Festerm.Unregistered.Config"))
+        .expect_err("unregistered configuration must not connect");
+    assert!(
+        !matches!(error, PowerShellSessionError::UnsupportedAuth(_)),
+        "unexpected pre-network rejection for unknown configuration: {error:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires GitHub-hosted Windows loopback WinRM HTTPS endpoint"]
+fn native_psrp_powershell7_configuration_when_registered() {
+    let cfg = InteropConfig::from_env();
+    // The isolated hosted harness sets FESTERM_PSRP_INTEROP_PS7_REQUIRED when it
+    // has provisioned a PowerShell 7 session configuration (pwsh is expected on
+    // GitHub-hosted Windows runners). In that required mode a missing/blank
+    // configuration is a hard failure, so a green run can never imply the
+    // PowerShell 7 endpoint was qualified when it was actually skipped.
+    let required = env::var(ENV_PS7_REQUIRED)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    let config_name = env::var(ENV_PS7_CONFIG)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let config_name = match config_name {
+        Some(name) => name,
+        None if required => panic!(
+            "{ENV_PS7_REQUIRED} is set but {ENV_PS7_CONFIG} is missing: the PowerShell 7 session \
+             configuration was not provisioned; refusing to report success without qualifying the \
+             Core 7 endpoint"
+        ),
+        None => {
+            eprintln!(
+                "skipping PowerShell 7 endpoint qualification: {ENV_PS7_CONFIG} not set (PowerShell \
+                 7 session configuration was not provisioned on this runner)"
+            );
+            return;
+        }
+    };
+
+    let session = cfg.connect_configuration(Some(&config_name));
+    // Prove the PowerShell 7 resource URI actually reached a Core 7 host.
+    assert_edition_and_major(&session, "Core", 7);
+    let marker = format!("festerm-ps7-{}", std::process::id());
+    assert_same_runspace_and_cancellation(&session, &marker);
+    close_bounded(&session, "PowerShell 7");
 }

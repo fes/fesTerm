@@ -5,11 +5,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use festerm_powershell::{
-    value_to_display_text, PowerShellCommandMessage, PowerShellCredentials, PowerShellEndpoint,
-    PowerShellOptions, PowerShellSession,
+    value_to_display_text, PipelineEvent, PowerShellCommandMessage, PowerShellCredentials,
+    PowerShellEndpoint, PowerShellOptions, PowerShellSession, PsValue,
 };
 use festerm_secret_store::SecretBytes;
-use psrp_rs::{PipelineEvent, PsValue};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OutputStream {
@@ -21,6 +20,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let invocation = Invocation::parse(env::args().skip(1))?;
 
     let mut endpoint = PowerShellEndpoint::https(invocation.host)?;
+    if let Some(name) = invocation.configuration_name {
+        endpoint = endpoint.with_configuration_name(name)?;
+    }
     if let Some(path) = invocation.ca_pem_file {
         endpoint = endpoint.with_trusted_ca_pem(std::fs::read_to_string(path)?)?;
     }
@@ -86,12 +88,14 @@ struct Invocation {
     ca_pem_file: Option<PathBuf>,
     local_address: Option<IpAddr>,
     ask_local_address: bool,
+    configuration_name: Option<String>,
 }
 
 impl Invocation {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut local_address = None;
         let mut ask_local_address = false;
+        let mut configuration_name = None;
         let mut positional = Vec::new();
         let mut args = args;
         while let Some(arg) = args.next() {
@@ -109,6 +113,13 @@ impl Invocation {
                     }
                     ask_local_address = true;
                 }
+                "--configuration" => {
+                    if configuration_name.is_some() {
+                        return Err("configuration name was supplied more than once".into());
+                    }
+                    let value = args.next().ok_or(USAGE)?;
+                    configuration_name = Some(validate_configuration(&value)?);
+                }
                 "--help" | "-h" => return Err(USAGE.into()),
                 _ if arg.starts_with("--local-address=") => {
                     if local_address.is_some() {
@@ -116,6 +127,13 @@ impl Invocation {
                     }
                     let value = arg.strip_prefix("--local-address=").ok_or(USAGE)?;
                     local_address = Some(value.parse()?);
+                }
+                _ if arg.starts_with("--configuration=") => {
+                    if configuration_name.is_some() {
+                        return Err("configuration name was supplied more than once".into());
+                    }
+                    let value = arg.strip_prefix("--configuration=").ok_or(USAGE)?;
+                    configuration_name = Some(validate_configuration(value)?);
                 }
                 _ if arg.starts_with('-') => return Err(USAGE.into()),
                 _ => positional.push(arg),
@@ -139,11 +157,22 @@ impl Invocation {
             ca_pem_file,
             local_address,
             ask_local_address,
+            configuration_name,
         })
     }
 }
 
-const USAGE: &str = "usage: psrp-shell [--local-address IP | --ask-local-address] <host> <username> [domain] [ca-pem-file]";
+const USAGE: &str = "usage: psrp-shell [--local-address IP | --ask-local-address] [--configuration NAME] <host> <username> [domain] [ca-pem-file]";
+
+fn validate_configuration(value: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Validate at parse time by reusing the public endpoint builder, so a
+    // malformed name (empty, out-of-charset, a flag mistaken for a value, or a
+    // full resource URI) is rejected before any credential prompt or network
+    // use. The returned normalized name is stored for the eventual endpoint.
+    let endpoint = PowerShellEndpoint::https("configuration-check.invalid")
+        .and_then(|endpoint| endpoint.with_configuration_name(value))?;
+    Ok(endpoint.configuration_name().to_string())
+}
 
 fn prompt_local_address() -> Result<Option<IpAddr>, Box<dyn std::error::Error>> {
     eprintln!("Source address only; this does not enforce an adapter, VPN path, or DNS policy.");
@@ -255,6 +284,95 @@ mod tests {
         .unwrap();
         assert!(invocation.ask_local_address);
         assert_eq!(invocation.local_address, None);
+        assert_eq!(invocation.configuration_name, None);
+    }
+
+    #[test]
+    fn psrp_configuration_cli_selects_endpoint_and_preserves_positionals() {
+        for flag in ["--configuration", "--configuration=PowerShell.7"] {
+            let args: Vec<String> = if flag == "--configuration" {
+                vec!["--configuration", "PowerShell.7", "server.test", "user"]
+            } else {
+                vec![flag, "server.test", "user"]
+            }
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+            let invocation = Invocation::parse(args.into_iter()).unwrap();
+            assert_eq!(invocation.host, "server.test");
+            assert_eq!(invocation.username, "user");
+            assert_eq!(
+                invocation.configuration_name.as_deref(),
+                Some("PowerShell.7")
+            );
+        }
+
+        let invocation = Invocation::parse(
+            [
+                "--configuration",
+                "Microsoft.PowerShell",
+                "--local-address=127.0.0.1",
+                "server.test",
+                "user",
+                "domain",
+                "ca.pem",
+            ]
+            .map(str::to_owned)
+            .into_iter(),
+        )
+        .unwrap();
+        assert_eq!(
+            invocation.configuration_name.as_deref(),
+            Some("Microsoft.PowerShell")
+        );
+        assert!(invocation.local_address.unwrap().is_loopback());
+        assert_eq!(invocation.domain.as_deref(), Some("domain"));
+        assert_eq!(invocation.ca_pem_file, Some(PathBuf::from("ca.pem")));
+    }
+
+    #[test]
+    fn psrp_configuration_cli_rejects_missing_or_duplicate_flag() {
+        for flags in [
+            vec!["--configuration"],
+            vec!["--configuration", "A", "--configuration", "B"],
+            vec!["--configuration=A", "--configuration=B"],
+        ] {
+            assert!(Invocation::parse(
+                ["server.test", "user"]
+                    .into_iter()
+                    .chain(flags)
+                    .map(str::to_owned)
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn psrp_configuration_cli_rejects_malformed_values_at_parse_time() {
+        for flags in [
+            vec!["--configuration", ""],
+            vec!["--configuration", " "],
+            vec!["--configuration", ".leading-dot"],
+            vec!["--configuration", "bad name"],
+            vec![
+                "--configuration",
+                "http://schemas.microsoft.com/powershell/X",
+            ],
+            vec!["--configuration", "--local-address"],
+            vec!["--configuration=", ""],
+            vec!["--configuration=--ask-local-address"],
+        ] {
+            assert!(
+                Invocation::parse(
+                    ["server.test", "user"]
+                        .into_iter()
+                        .chain(flags.iter().copied())
+                        .map(str::to_owned)
+                )
+                .is_err(),
+                "expected parse failure for {flags:?}"
+            );
+        }
     }
 
     #[test]

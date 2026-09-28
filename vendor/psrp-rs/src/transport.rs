@@ -93,9 +93,26 @@ impl<'c> WinrmPsrpTransport<'c> {
         host: &str,
         creation_fragments: &[u8],
     ) -> Result<Self> {
+        Self::open_with_resource_uri(client, host, creation_fragments, RESOURCE_URI_PSRP).await
+    }
+
+    /// Open a PSRP shell against an explicit PowerShell session configuration
+    /// resource URI.
+    ///
+    /// Behaves exactly like [`open`](Self::open) but lets the caller select a
+    /// non-default endpoint (for example PowerShell 7 or a restricted/JEA
+    /// configuration). The chosen `resource_uri` is retained by the returned
+    /// [`Shell`] and used for every subsequent Create/Command/Receive/Signal/
+    /// Delete operation; there is no fallback to the default configuration.
+    pub async fn open_with_resource_uri(
+        client: &'c WinrmClient,
+        host: &str,
+        creation_fragments: &[u8],
+        resource_uri: &str,
+    ) -> Result<Self> {
         let creation_b64 = crate::clixml::encode::base64_encode(creation_fragments);
         let shell = client
-            .open_psrp_shell(host, &creation_b64, RESOURCE_URI_PSRP)
+            .open_psrp_shell(host, &creation_b64, resource_uri)
             .await?;
         // PSRP shells do NOT use Execute Command — the shell IS the PS
         // process. Receive/Send operate directly on the shell, using

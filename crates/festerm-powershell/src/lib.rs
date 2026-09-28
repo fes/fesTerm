@@ -11,12 +11,19 @@ use std::time::{Duration, Instant};
 
 use festerm_secret_store::SecretBytes;
 use psrp_rs::{
-    AuthMethod, Pipeline, PipelineEvent, PipelineState, PsObject, PsValue, RunspacePool,
-    WinrmClient, WinrmConfig, WinrmCredentials, WinrmError, WinrmPsrpTransport,
+    AuthMethod, Pipeline, RunspacePool, WinrmClient, WinrmConfig, WinrmCredentials, WinrmError,
+    WinrmPsrpTransport, RESOURCE_URI_PSRP_BASE,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroize;
+
+/// Structured PSRP value and event types embedded in this crate's public
+/// event/command API, re-exported so consumers (for example the GUI renderer)
+/// can handle results without a direct dependency on the vendored `psrp-rs`
+/// crate. These carry object/stream semantics and must never be fed into the
+/// terminal VT byte-stream parser.
+pub use psrp_rs::{PipelineEvent, PipelineState, PsObject, PsValue};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PowerShellEndpoint {
@@ -24,9 +31,20 @@ pub struct PowerShellEndpoint {
     port: u16,
     trusted_ca_pem: Option<String>,
     local_bind_address: Option<IpAddr>,
+    configuration_name: String,
 }
 
 impl PowerShellEndpoint {
+    /// Default PowerShell session configuration name (Windows PowerShell).
+    pub const DEFAULT_CONFIGURATION_NAME: &'static str = "Microsoft.PowerShell";
+    /// Explicit Windows PowerShell (5.1) session configuration name. Identical
+    /// to [`DEFAULT_CONFIGURATION_NAME`](Self::DEFAULT_CONFIGURATION_NAME); it
+    /// is provided so callers can select it deliberately.
+    pub const WINDOWS_POWERSHELL_CONFIGURATION_NAME: &'static str = "Microsoft.PowerShell";
+    /// Explicit PowerShell 7 session configuration name registered by
+    /// `Enable-PSRemoting` from a PowerShell 7 installation.
+    pub const POWERSHELL_7_CONFIGURATION_NAME: &'static str = "PowerShell.7";
+
     pub fn https(host: impl Into<String>) -> Result<Self, PowerShellSessionError> {
         let host = validate_host(host.into())?;
         Ok(Self {
@@ -34,6 +52,7 @@ impl PowerShellEndpoint {
             port: 5986,
             trusted_ca_pem: None,
             local_bind_address: None,
+            configuration_name: Self::DEFAULT_CONFIGURATION_NAME.to_string(),
         })
     }
 
@@ -62,6 +81,23 @@ impl PowerShellEndpoint {
         Ok(self)
     }
 
+    /// Select the PowerShell session configuration (endpoint) by name.
+    ///
+    /// The name is validated and mapped to the endpoint's WSMan resource URI
+    /// for the complete shell lifecycle. The default is
+    /// [`DEFAULT_CONFIGURATION_NAME`](Self::DEFAULT_CONFIGURATION_NAME);
+    /// alternatives such as [`POWERSHELL_7_CONFIGURATION_NAME`](Self::POWERSHELL_7_CONFIGURATION_NAME)
+    /// or a restricted/JEA configuration are deliberate selections, never
+    /// silent fallbacks. Selecting a configuration does not grant its endpoint
+    /// permissions or claim JEA authorization.
+    pub fn with_configuration_name(
+        mut self,
+        name: impl Into<String>,
+    ) -> Result<Self, PowerShellSessionError> {
+        self.configuration_name = validate_configuration_name(name.into())?;
+        Ok(self)
+    }
+
     #[must_use]
     pub fn host(&self) -> &str {
         &self.host
@@ -80,6 +116,18 @@ impl PowerShellEndpoint {
     #[must_use]
     pub fn local_bind_address(&self) -> Option<IpAddr> {
         self.local_bind_address
+    }
+
+    #[must_use]
+    pub fn configuration_name(&self) -> &str {
+        &self.configuration_name
+    }
+
+    /// The WSMan resource URI selecting this endpoint's PowerShell session
+    /// configuration for the entire shell lifecycle.
+    #[must_use]
+    pub fn resource_uri(&self) -> String {
+        format!("{RESOURCE_URI_PSRP_BASE}{}", self.configuration_name)
     }
 }
 
@@ -460,12 +508,18 @@ fn run_worker(
         }
     };
     let open_result = runtime.block_on(async {
+        let resource_uri = endpoint.resource_uri();
         let (rpid, creation) =
             RunspacePool::<WinrmPsrpTransport<'_>>::build_creation_fragments(1, 1)
                 .map_err(|error| map_psrp_error(&error))?;
-        let transport = WinrmPsrpTransport::open(&client, endpoint.host(), &creation)
-            .await
-            .map_err(|error| map_psrp_error(&error))?;
+        let transport = WinrmPsrpTransport::open_with_resource_uri(
+            &client,
+            endpoint.host(),
+            &creation,
+            &resource_uri,
+        )
+        .await
+        .map_err(|error| map_psrp_error(&error))?;
         RunspacePool::open_from_transport(transport, rpid, 1, 1)
             .await
             .map_err(|error| map_psrp_error(&error))
@@ -931,6 +985,42 @@ fn validate_host(host: String) -> Result<String, PowerShellSessionError> {
     Ok(host)
 }
 
+fn validate_configuration_name(name: String) -> Result<String, PowerShellSessionError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "configuration name must not be empty",
+        ));
+    }
+    if trimmed.len() > 256 {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "configuration name must be at most 256 bytes",
+        ));
+    }
+    // Restrict to a safe subset that maps unambiguously into the resource URI
+    // (ASCII letters/digits and the `.`, `_`, `-` separators used by names
+    // such as Microsoft.PowerShell, PowerShell.7 and custom/JEA endpoints).
+    // SOAP/XML escaping remains a transport responsibility as defense in depth.
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "configuration name may only contain ASCII letters, digits, '.', '_' or '-'",
+        ));
+    }
+    if !trimmed
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+    {
+        return Err(PowerShellSessionError::InvalidConfiguration(
+            "configuration name must start with an ASCII letter or digit",
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
 fn validate_local_bind_address(address: Option<IpAddr>) -> Result<(), PowerShellSessionError> {
     let Some(address) = address else {
         return Ok(());
@@ -1137,6 +1227,73 @@ mod tests {
     fn endpoint_validation_rejects_url_shaped_hosts() {
         assert!(PowerShellEndpoint::https("https://win.local/wsman").is_err());
         assert!(PowerShellEndpoint::https("user@win.local").is_err());
+    }
+
+    #[test]
+    fn endpoint_configuration_defaults_to_windows_powershell_resource_uri() {
+        let endpoint = PowerShellEndpoint::https("win.local").unwrap();
+        assert_eq!(endpoint.configuration_name(), "Microsoft.PowerShell");
+        assert_eq!(
+            endpoint.resource_uri(),
+            "http://schemas.microsoft.com/powershell/Microsoft.PowerShell"
+        );
+    }
+
+    #[test]
+    fn endpoint_selects_explicit_configurations_without_fallback() {
+        for (name, expected) in [
+            (
+                PowerShellEndpoint::WINDOWS_POWERSHELL_CONFIGURATION_NAME,
+                "http://schemas.microsoft.com/powershell/Microsoft.PowerShell",
+            ),
+            (
+                PowerShellEndpoint::POWERSHELL_7_CONFIGURATION_NAME,
+                "http://schemas.microsoft.com/powershell/PowerShell.7",
+            ),
+            (
+                "Custom_JEA-Endpoint.1",
+                "http://schemas.microsoft.com/powershell/Custom_JEA-Endpoint.1",
+            ),
+        ] {
+            let endpoint = PowerShellEndpoint::https("win.local")
+                .unwrap()
+                .with_configuration_name(name)
+                .unwrap();
+            assert_eq!(endpoint.configuration_name(), name);
+            assert_eq!(endpoint.resource_uri(), expected);
+        }
+    }
+
+    #[test]
+    fn endpoint_configuration_name_trims_but_preserves_selection() {
+        let endpoint = PowerShellEndpoint::https("win.local")
+            .unwrap()
+            .with_configuration_name("  PowerShell.7  ")
+            .unwrap();
+        assert_eq!(endpoint.configuration_name(), "PowerShell.7");
+    }
+
+    #[test]
+    fn endpoint_configuration_name_rejects_unsafe_or_bounded_input() {
+        let base = PowerShellEndpoint::https("win.local").unwrap();
+        for name in [
+            "",
+            "   ",
+            ".leading-dot",
+            "-leading-dash",
+            "has space",
+            "inject\"/uri",
+            "path/segment",
+            "under..score<",
+            "http://schemas.microsoft.com/powershell/Microsoft.PowerShell",
+        ] {
+            assert!(
+                base.clone().with_configuration_name(name).is_err(),
+                "{name:?} should be rejected"
+            );
+        }
+        let too_long = "A".repeat(257);
+        assert!(base.with_configuration_name(too_long).is_err());
     }
 
     #[test]

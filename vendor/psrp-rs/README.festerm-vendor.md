@@ -30,7 +30,14 @@ narrow patches needed before adoption:
 6. passing the active pipeline UUID through the stop operation, independently
    of the transport's current receive command, with canonical WSMan ID casing,
    retaining the stop-sent state across incremental events, and distinguishing
-   a transport-confirmed stop from a stop that still needs a pipeline event.
+   a transport-confirmed stop from a stop that still needs a pipeline event;
+7. `WinrmPsrpTransport::open_with_resource_uri`, a thin sibling of `open` that
+   forwards an explicit PowerShell session-configuration resource URI to the
+   `Shell` so callers can select a non-default endpoint (PowerShell 7 or a
+   restricted/JEA configuration) for the whole shell lifecycle; `open` keeps
+   its previous behavior by delegating with the default `RESOURCE_URI_PSRP`,
+   and the vendored `winrm-rs` `RESOURCE_URI_PSRP_BASE` is re-exported for URI
+   construction.
 
 For WSMan, a successful PowerShell Signal response acknowledges the stop.
 This follows Microsoft's `ClientPowerShellDataStructureHandler.OnSignalCompleted`

@@ -738,6 +738,14 @@ fn signal_ctrl_c_request(
     )
 }
 
+/// Whether a WSMan resource URI selects a PowerShell remoting session
+/// configuration (the default `Microsoft.PowerShell`, PowerShell 7, or a
+/// custom/JEA configuration). Used to pick the PowerShell-specific Ctrl+C
+/// signal code for any PowerShell endpoint rather than only the default.
+fn is_powershell_resource_uri(resource_uri: &str) -> bool {
+    resource_uri.starts_with(RESOURCE_URI_PSRP_BASE)
+}
+
 /// Build a WS-Management Signal (Ctrl+C) SOAP envelope for a specific
 /// shell ResourceURI.
 pub(crate) fn signal_ctrl_c_request_with_uri(
@@ -757,7 +765,7 @@ pub(crate) fn signal_ctrl_c_request_with_uri(
         max_envelope_size,
     );
     let escaped_command_id = xml_escape(command_id);
-    let signal_code = if resource_uri == RESOURCE_URI_PSRP {
+    let signal_code = if is_powershell_resource_uri(resource_uri) {
         SIGNAL_PSRP_CTRL_C
     } else {
         SIGNAL_CTRL_C

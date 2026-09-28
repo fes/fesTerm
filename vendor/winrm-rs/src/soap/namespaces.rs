@@ -4,6 +4,11 @@
 pub(crate) const RESOURCE_URI_CMD: &str =
     "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/cmd";
 
+/// Base of every PowerShell remoting plugin resource URI. A session
+/// configuration name is appended to select an explicit endpoint; the default
+/// configuration name is `Microsoft.PowerShell`.
+pub const RESOURCE_URI_PSRP_BASE: &str = "http://schemas.microsoft.com/powershell/";
+
 /// PowerShell remoting plugin resource URI (the default PS configuration).
 pub const RESOURCE_URI_PSRP: &str = "http://schemas.microsoft.com/powershell/Microsoft.PowerShell";
 

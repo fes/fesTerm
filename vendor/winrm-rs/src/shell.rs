@@ -1271,4 +1271,109 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, WinrmError::Cancelled), "got: {err}");
     }
+
+    // Regression: a non-default PSRP session-configuration resource URI must be
+    // carried on EVERY shell-lifecycle request — Create, Command, Receive,
+    // Signal (Ctrl+C cancellation) and Delete — with no fallback to the default
+    // Microsoft.PowerShell URI. Each mock additionally requires the custom URI,
+    // so a request that used the wrong URI would 404 and fail the operation.
+    #[tokio::test]
+    async fn custom_psrp_resource_uri_is_used_for_every_lifecycle_request() {
+        const CUSTOM_URI: &str = "http://schemas.microsoft.com/powershell/PowerShell.7";
+
+        let server = MockServer::start().await;
+        let port = server.address().port();
+
+        // Create shell (WS-Transfer Create) with the custom resource URI.
+        Mock::given(method("POST"))
+            .and(body_string_contains(CUSTOM_URI))
+            .and(body_string_contains("transfer/Create"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r"<s:Envelope><s:Body><rsp:Shell><rsp:ShellId>SH-PS7</rsp:ShellId></rsp:Shell></s:Body></s:Envelope>",
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Execute command.
+        Mock::given(method("POST"))
+            .and(body_string_contains(CUSTOM_URI))
+            .and(body_string_contains("shell/Command"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r"<s:Envelope><s:Body><rsp:CommandResponse><rsp:CommandId>CMD-PS7</rsp:CommandId></rsp:CommandResponse></s:Body></s:Envelope>",
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Receive output.
+        Mock::given(method("POST"))
+            .and(body_string_contains(CUSTOM_URI))
+            .and(body_string_contains("shell/Receive"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"<s:Envelope><s:Body><rsp:ReceiveResponse>
+                    <rsp:Stream Name="stdout" CommandId="CMD-PS7">YWJj</rsp:Stream>
+                    <rsp:CommandState CommandId="CMD-PS7" State="http://schemas.microsoft.com/wbem/wsman/1/windows/shell/CommandState/Done">
+                        <rsp:ExitCode>0</rsp:ExitCode>
+                    </rsp:CommandState>
+                </rsp:ReceiveResponse></s:Body></s:Envelope>"#,
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Signal (Ctrl+C cancellation).
+        Mock::given(method("POST"))
+            .and(body_string_contains(CUSTOM_URI))
+            .and(body_string_contains("shell/Signal"))
+            .and(body_string_contains(
+                "<rsp:Code>powershell/signal/ctrl_c</rsp:Code>",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("<s:Envelope><s:Body/></s:Envelope>"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Delete shell.
+        Mock::given(method("POST"))
+            .and(body_string_contains(CUSTOM_URI))
+            .and(body_string_contains("transfer/Delete"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("<s:Envelope><s:Body/></s:Envelope>"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        let client = WinrmClient::new(basic_config(port), test_creds()).unwrap();
+        let shell = client
+            .open_psrp_shell("127.0.0.1", "Y3JlYXRpb24=", CUSTOM_URI)
+            .await
+            .expect("create must use the custom resource URI");
+        assert_eq!(shell.resource_uri(), CUSTOM_URI);
+
+        let cmd_id = shell
+            .start_command_with_id("", &["ZnJhZw=="], "CMD-PS7")
+            .await
+            .expect("command must use the custom resource URI");
+        assert_eq!(cmd_id, "CMD-PS7");
+
+        let output = shell
+            .receive_next("CMD-PS7")
+            .await
+            .expect("receive must use the custom resource URI");
+        assert!(output.done);
+
+        shell
+            .signal_ctrl_c("CMD-PS7")
+            .await
+            .expect("cancellation Signal must use the custom resource URI");
+
+        shell
+            .close()
+            .await
+            .expect("delete must use the custom resource URI");
+    }
 }

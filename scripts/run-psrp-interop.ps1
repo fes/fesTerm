@@ -15,7 +15,9 @@ $interopEnvNames = @(
     'FESTERM_PSRP_INTEROP_DOMAIN',
     'FESTERM_PSRP_INTEROP_PASSWORD',
     'FESTERM_PSRP_INTEROP_CA_PEM',
-    'FESTERM_PSRP_INTEROP_CA_PEM_PATH'
+    'FESTERM_PSRP_INTEROP_CA_PEM_PATH',
+    'FESTERM_PSRP_INTEROP_PS7_CONFIG',
+    'FESTERM_PSRP_INTEROP_PS7_REQUIRED'
 )
 
 function Write-Result([string]$Line) {
@@ -100,6 +102,49 @@ function Add-EndpointExecuteAce([string]$Sddl, [Security.Principal.SecurityIdent
     return $descriptor.GetSddlForm([Security.AccessControl.AccessControlSections]::All)
 }
 
+function Invoke-BoundedProcess([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutMs, [string]$WorkDir) {
+    # Run a child process under a hard deadline with sanitized, capped output so
+    # the harness never depends on the workflow timeout as its only bound and
+    # never leaks unbounded or secret-bearing child output.
+    $stdoutPath = Join-Path $WorkDir ("proc-out-" + [Guid]::NewGuid().ToString('N') + '.log')
+    $stderrPath = Join-Path $WorkDir ("proc-err-" + [Guid]::NewGuid().ToString('N') + '.log')
+    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $exitCode = $null
+    try {
+        if (-not $process.WaitForExit($TimeoutMs)) {
+            if (-not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            }
+            $process.WaitForExit(5000) | Out-Null
+            throw 'bounded-process-timeout'
+        }
+        $exitCode = $process.ExitCode
+    } finally {
+        foreach ($streamPath in @($stdoutPath, $stderrPath)) {
+            if (Test-Path -LiteralPath $streamPath) {
+                $reader = [System.IO.StreamReader]::new($streamPath)
+                try {
+                    $buffer = [char[]]::new(4096)
+                    $count = $reader.ReadBlock($buffer, 0, $buffer.Length)
+                    $content = [string]::new($buffer, 0, $count)
+                } finally {
+                    $reader.Dispose()
+                }
+                if ($content) {
+                    if ($password) { $content = $content.Replace($password, '[redacted]') }
+                    $content = [regex]::Replace($content, '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', ' ')
+                    $content = $content.Substring(0, [Math]::Min(1024, $content.Length))
+                    [Console]::Error.WriteLine("psrp-interop child-output $content")
+                }
+                Remove-Item -LiteralPath $streamPath -ErrorAction Ignore
+            }
+        }
+        $process.Dispose()
+    }
+    return $exitCode
+}
+
 function Save-InteropEnvironment {
     $saved = @{}
     foreach ($name in $interopEnvNames) {
@@ -144,6 +189,8 @@ $leafCert = $null
 $rootStoreAdded = $false
 $listenerCreationAttempted = $false
 $originalEndpointSddl = $null
+$ps7ConfigName = $null
+$ps7Registered = $false
 $scriptFailure = $null
 $failureReason = 'setup-failed'
 $testSucceeded = $false
@@ -154,6 +201,11 @@ $password = $null
 $securePassword = $null
 $cleanupErrors = [System.Collections.Generic.List[string]]::new()
 $envSnapshot = Save-InteropEnvironment
+# After snapshotting, clear any ambient PowerShell 7 targeting so setup cannot
+# point the required PS7 test at a preexisting endpoint we do not own; only the
+# owned provisioning below may set these, and the snapshot is restored on exit.
+Remove-Item Env:\FESTERM_PSRP_INTEROP_PS7_CONFIG -ErrorAction Ignore
+Remove-Item Env:\FESTERM_PSRP_INTEROP_PS7_REQUIRED -ErrorAction Ignore
 $wsmanCaptured = $false
 $originalIPv4Filter = $null
 $originalIPv6Filter = $null
@@ -188,6 +240,11 @@ try {
     if ($existingLoopbackHttps) { throw 'loopback-https-listener-already-exists' }
 
     $nonce = [Guid]::NewGuid().ToString('N')
+    # A uniquely named, owned PowerShell 7 session configuration. Using a unique
+    # name (rather than the well-known PowerShell.7) proves an arbitrary
+    # configured Core 7 endpoint while guaranteeing we never clobber or depend on
+    # a preexisting configuration; a name collision below is treated as fatal.
+    $ps7ConfigName = "FestermInterop7$($nonce.Substring(0, 12))"
     $workDir = Join-Path $env:RUNNER_TEMP "festerm-psrp-interop-$nonce"
     New-Item -ItemType Directory -Path $workDir -Force | Out-Null
     $caPemPath = Join-Path $workDir 'festerm-psrp-ca.pem'
@@ -255,6 +312,34 @@ try {
     $updatedSddl = Add-EndpointExecuteAce -Sddl $originalEndpointSddl -Sid $sid
     Set-PSSessionConfiguration -Name Microsoft.PowerShell -SecurityDescriptorSddl $updatedSddl -Force | Out-Null
 
+    # Register PowerShell 7 as a second explicitly selectable endpoint on the
+    # same loopback HTTPS listener. This registers only an owned, uniquely named
+    # session configuration (no new listeners, no firewall or profile changes)
+    # and is cleaned up by Unregister below. pwsh is expected on GitHub-hosted
+    # Windows runners, so its absence or a name collision is a hard failure: the
+    # PS7 endpoint is required, never silently skipped to a green result.
+    $failureReason = 'provision-powershell7-failed'
+    $pwshCommand = Get-Command pwsh -ErrorAction SilentlyContinue
+    if (-not $pwshCommand) { throw 'powershell7-required-but-pwsh-missing' }
+    $existingPs7 = Get-PSSessionConfiguration -Name $ps7ConfigName -ErrorAction SilentlyContinue
+    if ($existingPs7) { throw 'powershell7-owned-config-name-collision' }
+    $failureReason = 'register-powershell7-failed'
+    # Mark before registering so a partial registration is still cleaned.
+    $ps7Registered = $true
+    # Register from pwsh so the endpoint hosts PowerShell 7 itself, via a bounded
+    # child process with a hard deadline and sanitized, capped output.
+    $registerScript = "`$ErrorActionPreference = 'Stop'; Register-PSSessionConfiguration -Name '$ps7ConfigName' -Force -NoServiceRestart | Out-Null"
+    $registerArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', $registerScript)
+    $registerExit = Invoke-BoundedProcess -FilePath $pwshCommand.Source -ArgumentList $registerArgs -TimeoutMs 120000 -WorkDir $workDir
+    if ($registerExit -ne 0) { throw 'register-powershell7-command-failed' }
+    $registeredPs7 = Get-PSSessionConfiguration -Name $ps7ConfigName -ErrorAction SilentlyContinue
+    if (-not $registeredPs7) { throw 'register-powershell7-verification-failed' }
+    $ps7Sddl = Add-EndpointExecuteAce -Sddl $registeredPs7.SecurityDescriptorSddl -Sid $sid
+    Set-PSSessionConfiguration -Name $ps7ConfigName -SecurityDescriptorSddl $ps7Sddl -Force -NoServiceRestart | Out-Null
+    Restart-Service WinRM -Force
+    $env:FESTERM_PSRP_INTEROP_PS7_CONFIG = $ps7ConfigName
+    $env:FESTERM_PSRP_INTEROP_PS7_REQUIRED = '1'
+
     $env:FESTERM_PSRP_INTEROP_HOST = '127.0.0.1'
     $env:FESTERM_PSRP_INTEROP_PORT = '5986'
     $env:FESTERM_PSRP_INTEROP_USER = $userName
@@ -280,6 +365,13 @@ try {
     if ($originalEndpointSddl) {
         Add-CleanupError $cleanupErrors 'restore-endpoint-sddl' {
             Set-PSSessionConfiguration -Name Microsoft.PowerShell -SecurityDescriptorSddl $originalEndpointSddl -Force | Out-Null
+        }
+    }
+    if ($ps7Registered) {
+        Add-CleanupError $cleanupErrors 'unregister-powershell7' {
+            if (Get-PSSessionConfiguration -Name $ps7ConfigName -ErrorAction SilentlyContinue) {
+                Unregister-PSSessionConfiguration -Name $ps7ConfigName -Force -NoServiceRestart -ErrorAction Stop
+            }
         }
     }
     if ($listenerCreationAttempted) {

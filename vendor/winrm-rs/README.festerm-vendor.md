@@ -22,14 +22,23 @@ local patches remain deliberately narrow:
 4. bounded cancellation during execute/receive and best-effort stop/delete
    cleanup, without treating a stalled receive as a completed command;
 5. Ctrl+C signals use the shell's actual ResourceURI and PowerShell-specific
-   signal code rather than the generic WinRS control operation;
+   signal code for any PowerShell session configuration (default, PowerShell 7
+   or custom/JEA), selected by the PowerShell resource-URI prefix rather than an
+   exact match against only the default, and never the generic WinRS control
+   operation for a PowerShell endpoint;
 6. bounded numeric WSMan fault details remain available without exposing the
    remote fault reason in routine transport diagnostics;
 7. optional explicit local source-IP binding for all native WinRM HTTP
    connections, including pooled reqwest requests and the feature-gated
    CredSSP direct TCP path, with fail-closed validation for unsupported bind
    addresses and no unbound fallback;
-8. standalone vendored-crate buildability in this repository with the required
+8. an explicit PowerShell session-configuration resource URI base
+   (`RESOURCE_URI_PSRP_BASE`) exported alongside the default `RESOURCE_URI_PSRP`
+   so a caller can select a non-default endpoint (for example PowerShell 7 or a
+   restricted/JEA configuration); the chosen resource URI is XML-escaped in the
+   SOAP header and retained by the `Shell` for every Create/Command/Receive/
+   Signal/Delete without any fallback to the default configuration;
+9. standalone vendored-crate buildability in this repository with the required
    Rust 1.98 toolchain.
 
 fesTerm's native backend only enables HTTPS + NTLM initially and does not claim

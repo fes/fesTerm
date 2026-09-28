@@ -101,4 +101,7 @@ pub use transport::{PsrpTransport, WinrmPsrpTransport};
 
 // Re-export the `winrm-rs` types commonly needed by callers so they
 // don't have to depend on `winrm-rs` directly.
-pub use winrm_rs::{AuthMethod, WinrmClient, WinrmConfig, WinrmCredentials, WinrmError};
+pub use winrm_rs::{
+    AuthMethod, RESOURCE_URI_PSRP, RESOURCE_URI_PSRP_BASE, WinrmClient, WinrmConfig,
+    WinrmCredentials, WinrmError,
+};
