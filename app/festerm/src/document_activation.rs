@@ -1104,14 +1104,16 @@ fn os_path_bytes(path: &Path) -> Vec<u8> {
 #[cfg(windows)]
 fn path_from_os_bytes(bytes: &[u8]) -> io::Result<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "odd utf-16 path bytes",
         ));
     }
     let wide: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .collect();
     Ok(PathBuf::from(OsString::from_wide(&wide)))
