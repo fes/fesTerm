@@ -81,6 +81,7 @@
       "status": "partial",
       "prerequisites": [
         "native GUI lifecycle, accessibility and keyboard usability with an authorized endpoint on each desktop platform",
+        "Core 7 native suite blocked by non-admin server plugin fault 2689860592; run 36369262032 confirms plugin configuration readable but read/write denied, matching the upstream configuration reader",
         "cross-host macOS and Linux HTTPS/NTLM interoperability and approved corporate endpoint authentication",
         "restricted/JEA permissions and interactive-host behavior require separate qualification",
         "remote sessiond attachment and enterprise broker/device-compliance integration are not implemented"

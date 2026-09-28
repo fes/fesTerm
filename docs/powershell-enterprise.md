@@ -179,6 +179,48 @@ PowerShell/HTTPS/NTLM. It does not qualify PowerShell 7, cross-host macOS/Linux
 clients, domain authentication, a corporate Dev Box, or enrolled-device policy.
 CP-20 remains partial until those separately claimed combinations have evidence.
 
+#### Current Core 7 blocker
+
+The extended harness requires an owned Core 7 configuration rather than
+silently skipping it. Hosted PowerShell 7.6.6 initially lacked the staged WinRM
+plugin. The harness now runs the installed `Install-PowerShellRemoting.ps1`
+(plugin files/registration only, not broad `Enable-PSRemoting`) and registers
+the uniquely owned configuration. Both setup children complete successfully.
+Authenticated readiness runs in a child process with a hard 120-second deadline,
+separate from the native-client cases.
+
+In [run 36369262032](https://github.com/fes/fesTerm/actions/runs/36369262032),
+Windows PowerShell readiness succeeded, but the owned Core 7 endpoint rejected
+the generated non-admin identity with WSMan provider fault `2689860592`
+(`0xa05403f0`, `pwrshplugin.dll`). This occurs with Microsoft's `New-PSSession`,
+before fesTerm's Rust client cases run. The eight-case extended suite therefore
+remains blocked, not passed or successfully skipped.
+
+Upstream reports [#14274](https://github.com/PowerShell/PowerShell/issues/14274)
+and [#18741](https://github.com/PowerShell/PowerShell/issues/18741) describe the
+same provider error. The final run also probes the configuration file under
+the same non-admin identity through the working Windows PowerShell endpoint:
+`plugin-config-readable=True plugin-config-readwrite=False`. No file contents
+or permissions are changed. The upstream
+[configuration reader](https://github.com/PowerShell/PowerShell-Native/blob/0e619cee3591727a7beb1554b8e300fb790395d2/src/powershell-native/nativemsh/pwrshcommon/ConfigFileReader.cpp)
+constructs `std::wfstream` without a read-only mode, which requests read/write
+access even though this path only reads the file. This establishes the
+non-admin permission mismatch described upstream; a rebuilt read-only plugin
+has not been qualified here.
+
+The harness does not grant write access to installed plugin/runtime configuration,
+switch the test account to administrator, or weaken TLS to conceal the failure.
+A suitable server-side resolution is a vendor-fixed plugin that opens this
+configuration read-only, preserving non-admin access and protected runtime
+paths. Exact-configuration client support is implemented, but this is not
+evidence of native Core 7 interoperability.
+
+Desktop/configuration and protocol regressions are independently covered by
+full CI [36367985241](https://github.com/fes/fesTerm/actions/runs/36367985241)
+and [36368810721](https://github.com/fes/fesTerm/actions/runs/36368810721), with
+all five jobs passing in each run. They do not turn the blocked native Core 7
+gate or corporate/phone prerequisites into accepted capabilities.
+
 The first passing run with strict cancellation continuity is
 [36355786297](https://github.com/fes/fesTerm/actions/runs/36355786297), at
 `a7b0d12ef203f4b113c55d4fb2b282712c69c389`. All five native cases passed:
