@@ -182,16 +182,21 @@ function Wait-EndpointReady([string]$ConfigurationName, [string]$WorkDir) {
                     [Console]::Error.WriteLine("readiness attempt failed: $($_.Exception.GetType().Name) $detail")
                     $reportedFailure = $true
                     if ($name -ne 'Microsoft.PowerShell') {
+                        $pluginPath = $null
+                        if ([string]$_.Exception.Message -match 'path="([^"]+\\pwrshplugin.dll)"') {
+                            $pluginPath = $Matches[1]
+                        }
                         $diagnosticSession = $null
                         try {
+                            if (-not $pluginPath -or $pluginPath -notlike "$env:windir\System32\PowerShell\*\pwrshplugin.dll") {
+                                throw 'unexpected-plugin-diagnostic-path'
+                            }
+                            $configPath = Join-Path (Split-Path -Parent $pluginPath) 'RemotePowerShellConfig.txt'
                             $diagnosticSession = New-PSSession -ComputerName 127.0.0.1 -Port 5986 -UseSSL `
                                 -Authentication Negotiate -Credential $credential -ConfigurationName Microsoft.PowerShell `
                                 -SessionOption $options
-                            $diagnostic = Invoke-Command -Session $diagnosticSession -ArgumentList $name -ScriptBlock {
-                                param($configuration)
-                                $xml = [xml](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Plugin\$configuration" -ErrorAction Stop).ConfigXML
-                                $plugin = [Environment]::ExpandEnvironmentVariables($xml.PlugInConfiguration.Filename)
-                                $config = Join-Path (Split-Path -Parent $plugin) 'RemotePowerShellConfig.txt'
+                            $diagnostic = Invoke-Command -Session $diagnosticSession -ArgumentList $configPath -ScriptBlock {
+                                param($config)
                                 $readable = $false
                                 $writable = $false
                                 foreach ($access in @([IO.FileAccess]::Read, [IO.FileAccess]::ReadWrite)) {
