@@ -357,22 +357,22 @@ jobs:
             desktop="$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
             test -n "$desktop"
             python - "$desktop" <<'PY'
-            import sys
-            from pathlib import Path
+          import sys
+          from pathlib import Path
 
-            desktop = Path(sys.argv[1]).read_text(encoding="utf-8")
-            required = {
-                "Exec=festerm --open -- %F",
-                "MimeType=text/markdown",
-                "Terminal=false",
-                "Type=Application",
-            }
-            missing = sorted(required - set(desktop.splitlines()))
-            if missing:
-                raise SystemExit(f"AppImage desktop entry missing {missing}: {desktop!r}")
-            if "text/plain" in desktop:
-                raise SystemExit("AppImage desktop entry must not register broad text/plain")
-            PY
+          desktop = Path(sys.argv[1]).read_text(encoding="utf-8")
+          required = {
+              "Exec=festerm --open -- %F",
+              "MimeType=text/markdown",
+              "Terminal=false",
+              "Type=Application",
+          }
+          missing = sorted(required - set(desktop.splitlines()))
+          if missing:
+              raise SystemExit(f"AppImage desktop entry missing {missing}: {desktop!r}")
+          if "text/plain" in desktop:
+              raise SystemExit("AppImage desktop entry must not register broad text/plain")
+          PY
             rm -rf squashfs-root
           )
       - name: Rebuild package-managed Linux binary and Debian package

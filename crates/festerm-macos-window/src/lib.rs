@@ -316,6 +316,7 @@ impl OpenDocumentState {
         self.callbacks = None;
     }
 
+    #[cfg(any(target_os = "macos", test))]
     fn enqueue_path(&mut self, path: PathBuf) {
         if self.paths.is_empty() {
             if let Some(callbacks) = &self.callbacks {
@@ -331,6 +332,7 @@ impl OpenDocumentState {
         }
     }
 
+    #[cfg(any(target_os = "macos", test))]
     fn enqueue_error(&mut self, error: OpenDocumentError) {
         if self.errors.is_empty() && self.dropped_errors == 0 {
             if let Some(callbacks) = &self.callbacks {
@@ -416,6 +418,7 @@ fn push_bounded_error(errors: &mut Vec<OpenDocumentError>, error: OpenDocumentEr
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn wake_callback_from(
     state: &Arc<Mutex<OpenDocumentState>>,
 ) -> Option<Arc<dyn Fn() + Send + Sync>> {
@@ -426,6 +429,7 @@ fn wake_callback_from(
         .clone()
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn wake_after_enqueue(state: &Arc<Mutex<OpenDocumentState>>) {
     if let Some(wake) = wake_callback_from(state) {
         wake();

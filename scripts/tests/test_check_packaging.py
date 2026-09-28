@@ -1,4 +1,7 @@
 import importlib.util
+import shutil
+import subprocess
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -11,6 +14,24 @@ SPEC.loader.exec_module(packaging)
 
 
 class PackagingMetadataTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("bash"), "Linux package smoke requires bash")
+    def test_linux_appimage_smoke_has_valid_shell_and_heredoc_syntax(self):
+        workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(
+            encoding="utf-8"
+        )
+        step = workflow.split("      - name: Build unsigned Linux AppImage\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        result = subprocess.run(
+            ["bash", "-n"],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("here-document", result.stderr)
+
     def test_repository_packaging_metadata_is_consistent(self):
         packaging.verify()
 
