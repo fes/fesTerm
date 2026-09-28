@@ -95,7 +95,7 @@ jobs:
         run: cargo test -p festerm-powershell --locked
 
       - name: Provision ephemeral loopback WinRM and run ignored native PSRP tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: powershell
         env:
           FESTERM_RUN_OPTIONAL_VALIDATION: '1'

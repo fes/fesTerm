@@ -145,6 +145,47 @@ function Invoke-BoundedProcess([string]$FilePath, [string[]]$ArgumentList, [int]
     return $exitCode
 }
 
+function Wait-EndpointReady([string]$ConfigurationName, [string]$WorkDir) {
+    if ($ConfigurationName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$') { throw 'invalid-readiness-configuration' }
+    # WSMan operation timeouts do not bound Invoke-Command as a whole. A child
+    # deadline bounds connect, execution and cleanup together, before Rust cases.
+    $probe = {
+        $ErrorActionPreference = 'Stop'
+        $name = '__CONFIGURATION__'
+        $secure = ConvertTo-SecureString $env:FESTERM_PSRP_INTEROP_PASSWORD -AsPlainText -Force
+        $credential = [System.Management.Automation.PSCredential]::new(
+            "$($env:COMPUTERNAME)\$($env:FESTERM_PSRP_INTEROP_USER)", $secure)
+        $options = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 15000 -CancelTimeout 5000
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($clock.ElapsedMilliseconds -lt 110000) {
+            $session = $null
+            $ready = $false
+            try {
+                $session = New-PSSession -ComputerName 127.0.0.1 -Port 5986 -UseSSL `
+                    -Authentication Negotiate -Credential $credential -ConfigurationName $name `
+                    -SessionOption $options
+                $edition = Invoke-Command -Session $session -ScriptBlock { $PSVersionTable.PSEdition }
+                $ready = -not [string]::IsNullOrWhiteSpace([string]$edition)
+            } catch {
+                [Console]::Error.WriteLine("readiness attempt failed: $($_.Exception.GetType().Name)")
+            } finally {
+                if ($session) { Remove-PSSession -Session $session -ErrorAction Stop }
+            }
+            if ($ready) {
+                [Console]::Error.WriteLine("readiness ready configuration=$name edition=$edition")
+                exit 0
+            }
+            Start-Sleep -Milliseconds 2000
+        }
+        exit 1
+    }.ToString().Replace('__CONFIGURATION__', $ConfigurationName)
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
+    $exit = Invoke-BoundedProcess -FilePath "$PSHOME\powershell.exe" `
+        -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) `
+        -TimeoutMs 120000 -WorkDir $WorkDir
+    if ($exit -ne 0) { throw "endpoint-readiness-failed:$ConfigurationName" }
+}
+
 function Save-InteropEnvironment {
     $saved = @{}
     foreach ($name in $interopEnvNames) {
@@ -191,6 +232,8 @@ $listenerCreationAttempted = $false
 $originalEndpointSddl = $null
 $ps7ConfigName = $null
 $ps7Registered = $false
+$ps7PluginInstalledByUs = $false
+$ps7InstalledEndpoints = @()
 $scriptFailure = $null
 $failureReason = 'setup-failed'
 $testSucceeded = $false
@@ -323,6 +366,44 @@ try {
     if (-not $pwshCommand) { throw 'powershell7-required-but-pwsh-missing' }
     $existingPs7 = Get-PSSessionConfiguration -Name $ps7ConfigName -ErrorAction SilentlyContinue
     if ($existingPs7) { throw 'powershell7-owned-config-name-collision' }
+
+    # PowerShell 7 does not register its WinRM plugin by default, so a custom
+    # Register-PSSessionConfiguration fails with "pwrshplugin.dll is missing"
+    # (observed on hosted runners) unless the install-owned plugin has been
+    # placed at %windir%\System32\PowerShell\<version>\pwrshplugin.dll. The
+    # canonical, network-free way to do that is the install-owned script
+    # Install-PowerShellRemoting.ps1 shipped in pwsh's $PSHOME: it copies the
+    # plugin DLL, writes RemotePowerShellConfig.txt, and registers the plugin
+    # registry key. It does NOT create listeners, firewall rules, or run
+    # Set-WSManQuickConfig, so it is strictly narrower than Enable-PSRemoting and
+    # introduces no global network exposure. We run it only if the plugin is not
+    # already present (never clobbering a preexisting install) and record every
+    # PowerShell.7* endpoint it creates so we can unregister them on cleanup.
+    $ps7BasePluginEndpoint = Get-PSSessionConfiguration -Name 'PowerShell.7' -ErrorAction SilentlyContinue
+    if (-not $ps7BasePluginEndpoint) {
+        $pwshHome = Split-Path -Parent $pwshCommand.Source
+        $installScript = Join-Path $pwshHome 'Install-PowerShellRemoting.ps1'
+        if (-not (Test-Path -LiteralPath $installScript)) { throw 'powershell7-install-script-missing' }
+        $failureReason = 'install-powershell7-plugin-failed'
+        $preexistingPs7Endpoints = @(
+            Get-PSSessionConfiguration -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'PowerShell.7*' } |
+                ForEach-Object { $_.Name }
+        )
+        # Mark before running so any endpoints it creates are still cleaned up.
+        $ps7PluginInstalledByUs = $true
+        $installArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$installScript`"")
+        $installExit = Invoke-BoundedProcess -FilePath $pwshCommand.Source -ArgumentList $installArgs -TimeoutMs 180000 -WorkDir $workDir
+        if ($installExit -ne 0) { throw 'install-powershell7-plugin-command-failed' }
+        $ps7BasePluginEndpoint = Get-PSSessionConfiguration -Name 'PowerShell.7' -ErrorAction SilentlyContinue
+        if (-not $ps7BasePluginEndpoint) { throw 'install-powershell7-plugin-verification-failed' }
+        $ps7InstalledEndpoints = @(
+            Get-PSSessionConfiguration -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'PowerShell.7*' -and $preexistingPs7Endpoints -notcontains $_.Name } |
+                ForEach-Object { $_.Name }
+        )
+    }
+
     $failureReason = 'register-powershell7-failed'
     # Mark before registering so a partial registration is still cleaned.
     $ps7Registered = $true
@@ -348,6 +429,16 @@ try {
     Remove-Item Env:\FESTERM_PSRP_INTEROP_CA_PEM -ErrorAction Ignore
     $env:FESTERM_PSRP_INTEROP_CA_PEM_PATH = $caPemPath
 
+    # Gate the native client cases on an explicit, bounded, fully authenticated
+    # readiness check for each endpoint that the Rust suite will target: the
+    # default Windows PowerShell configuration and the owned Core 7 config. This
+    # warms cold WinRM plugins after the service restart so the first client
+    # connect does not fail spuriously, while keeping TLS validation intact and
+    # never retrying or masking the client test cases themselves.
+    $failureReason = 'endpoint-readiness-failed'
+    Wait-EndpointReady -ConfigurationName 'Microsoft.PowerShell' -WorkDir $workDir
+    Wait-EndpointReady -ConfigurationName $ps7ConfigName -WorkDir $workDir
+
     $failureReason = 'test-failed'
     cargo test -p festerm-powershell --test psrp_interop --locked -- --ignored --test-threads=1 --nocapture
     if ($LASTEXITCODE -ne 0) { throw 'cargo-test-failed' }
@@ -372,6 +463,26 @@ try {
             if (Get-PSSessionConfiguration -Name $ps7ConfigName -ErrorAction SilentlyContinue) {
                 Unregister-PSSessionConfiguration -Name $ps7ConfigName -Force -NoServiceRestart -ErrorAction Stop
             }
+        }
+    }
+    if ($ps7PluginInstalledByUs) {
+        $ps7InstalledEndpoints = @(
+            Get-PSSessionConfiguration -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'PowerShell.7*' -and $preexistingPs7Endpoints -notcontains $_.Name } |
+                ForEach-Object { $_.Name }
+        )
+        # Unregister every PowerShell.7* endpoint that the install-owned plugin
+        # script created (only those not already present beforehand), so the
+        # narrowly-scoped plugin install leaves no owned endpoints behind. The
+        # copied plugin DLL under %windir%\System32\PowerShell resides on the
+        # ephemeral, isolated hosted runner only and is discarded with the VM.
+        foreach ($installedEndpoint in $ps7InstalledEndpoints) {
+            $endpointName = $installedEndpoint
+            Add-CleanupError $cleanupErrors "unregister-$endpointName" {
+                if (Get-PSSessionConfiguration -Name $endpointName -ErrorAction SilentlyContinue) {
+                    Unregister-PSSessionConfiguration -Name $endpointName -Force -NoServiceRestart -ErrorAction Stop
+                }
+            }.GetNewClosure()
         }
     }
     if ($listenerCreationAttempted) {
