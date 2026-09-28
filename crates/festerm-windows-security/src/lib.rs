@@ -7,7 +7,11 @@ pub mod named_pipe;
 
 #[cfg(windows)]
 mod imp {
-    use std::{io, mem, ptr};
+    use std::{
+        io, mem,
+        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        ptr,
+    };
 
     use windows_sys::Win32::{
         Foundation::{
@@ -15,7 +19,7 @@ mod imp {
             HANDLE_FLAG_INHERIT,
         },
         Security::{
-            AddAccessAllowedAceEx, GetLengthSid, GetTokenInformation, InitializeAcl,
+            AddAccessAllowedAceEx, EqualSid, GetLengthSid, GetTokenInformation, InitializeAcl,
             SetTokenInformation, TokenDefaultDacl, TokenUser, ACL, ACL_REVISION,
             TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
         },
@@ -23,7 +27,9 @@ mod imp {
             Console::{
                 GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
             },
-            Threading::{GetCurrentProcess, OpenProcessToken},
+            Threading::{
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
         },
     };
 
@@ -148,6 +154,38 @@ mod imp {
         } else {
             Ok(storage)
         }
+    }
+
+    pub(super) fn process_belongs_to_current_user(process_id: u32) -> io::Result<bool> {
+        // SAFETY: querying a PID does not transfer or inherit any caller handle.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: OpenProcess returned one owned valid handle.
+        let process = unsafe { OwnedHandle::from_raw_handle(process) };
+        let server_user = process_user(process.as_raw_handle())?;
+        // SAFETY: this pseudo-handle is borrowed, never closed.
+        let own_user = process_user(unsafe { GetCurrentProcess() })?;
+        // SAFETY: both aligned buffers contain TOKEN_USER records returned by
+        // GetTokenInformation and remain alive throughout the SID comparison.
+        let same_user = unsafe {
+            let server = &*server_user.as_ptr().cast::<TOKEN_USER>();
+            let own = &*own_user.as_ptr().cast::<TOKEN_USER>();
+            EqualSid(server.User.Sid, own.User.Sid) != 0
+        };
+        Ok(same_user)
+    }
+
+    fn process_user(process: HANDLE) -> io::Result<Vec<usize>> {
+        let mut token = ptr::null_mut();
+        // SAFETY: process is a live borrowed process handle and token is writable.
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: OpenProcessToken returned one owned valid handle.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        token_information(token.as_raw_handle(), TokenUser)
     }
 
     fn set_token_default_dacl(

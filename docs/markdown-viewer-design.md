@@ -24,6 +24,18 @@ or take ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
+- **Desktop Open With:** installed desktop packages advertise `.md` and
+  `.markdown` without replacing the user's default application. Finder document
+  events and `festerm --open -- <paths...>` enter a bounded application queue,
+  not terminal drag-and-drop or SFTP upload handling. New documents open in the
+  last-active window's Preview mode; an already-open document focuses its
+  existing view across windows without reloading unsaved text. Requests wait
+  while a blocking dialog or open-error notice is active. Multiple files are
+  opened in order, with ordinary local-document load failures shown explicitly.
+  A file-bearing second launch forwards to the process owning the per-user
+  activation endpoint before loading workspace/configuration state; an ordinary
+  no-argument launch retains independent-process behavior. Linux AppImage
+  associations require desktop integration, not just downloading the image.
 - **Local:** More actions **Open File…** opens the application file picker, which
   lists text and Markdown files. Its **File or folder path** field accepts pasted
   absolute paths, `~/...`, and paths relative to the displayed folder. Enter or

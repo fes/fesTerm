@@ -621,6 +621,24 @@ shutdown acceptance.
 | --- | --- | --- | --- |
 | CP-18 | On supported Windows x64 WARP, compare eligible root-terminal rendering with `FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) versus the supported Direct2D path (unset by default, or explicit `1` for compatibility). Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths remain ordinary painting, no blank/stale frame appears, `0` disables the path, `1` cannot force unsupported conditions, and hardware rendering is unchanged. | Automated framebuffer + native performance + manual interaction; experimental | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and explicit palette-budget fallback. `validation/direct2d/run.ps1` provides the isolated replay and is available through the optional runner with `FESTERM_RUN_DIRECT2D_PROBE=1`. Compare `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer` with `FESTERM_EXPERIMENTAL_DIRECT2D=0` for the ordinary baseline and, on a known eligible WARP host, the supported unset default (or explicit `1`) for the candidate, adding `-RequireDirect2D` to validate automatic/default selection and to reject `0` or invalid values. The aggregate optional Windows runner keeps that strict dense/native-required check explicitly behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or ARM64 machines still run their ordinary optional suite. The probe requires actual native frames and preserves existing CPU/FPS budgets. Single-host sparse/dense application measurements and the keep-#239/#240 review are in the probe README; intermittent idle failures are tracked by #242. Owner approval makes this bounded WARP path default-on, but issue #244 still owns mixed-DPI, multi-window, device-loss, latency, memory and representative-hardware qualification, and ADR-0039 remains Proposed. |
 
+### Desktop Markdown file associations
+
+| ID | Scenario | Evidence class | Current evidence / remaining acceptance |
+| --- | --- | --- | --- |
+| CP-19 | Install the direct-distribution macOS app, current-user Windows NSIS package, or Linux Debian/integrated AppImage. Choose fesTerm in Open With for `.md` and `.markdown`, cold and warm, including multiple files, spaces/Unicode, a blocking dialog, an existing dirty document in another window, and a missing file. Confirm document tabs, no terminal input/upload, unchanged default handler, and clean upgrade/uninstall association behavior. | Automated routing/packaging + native lifecycle + usability | Deterministic application, ingress and packaging coverage accompanies the implementation. Native installed-package menu discovery, OS foreground/focus restrictions, upgrade/uninstall and AppImage desktop integration remain qualification work; no Store/mobile document-access claim. |
+
+On 2026-09-28, an isolated macOS bundle with private configuration/runtime paths
+received a cold LaunchServices `.md` open, a warm `.markdown` open, and a real
+secondary-process CLI open in the same responsive frontend. The secondary
+exited without creating its configuration file. The temporary process and
+LaunchServices registration were removed afterward. The committed main-thread
+AppleEvent harness separately covers the AppKit launch/handler-replacement
+interval, cold buffering, warm backpressure ordering and non-file rejection.
+Native package smoke asserts generated macOS/Linux metadata and Windows
+installed/upgrade/uninstall registration while preserving a sentinel default.
+This is not a claim about Finder menu presentation or Windows/Linux foreground
+behavior, and does not close CP-19.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

@@ -1,5 +1,10 @@
 //! AppKit integration kept outside the cross-platform application crate.
 
+use std::collections::VecDeque;
+use std::fmt;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
 /// Semantic application command emitted by the native macOS menu. The app
 /// translates these through the same command paths used by chrome, shortcuts,
 /// and the command palette.
@@ -144,6 +149,763 @@ impl<T> Default for NativeMenuSync<T> {
         Self {
             applied: None,
             pending: false,
+        }
+    }
+}
+
+/// Maximum file-open requests retained before the app drains Finder document
+/// open events. The bound protects cold start and inactive-window bursts from
+/// unbounded memory growth.
+pub const OPEN_DOCUMENT_REQUEST_CAPACITY: usize = 64;
+
+/// Maximum parse/overflow errors retained before the app drains Finder
+/// document open events.
+pub const OPEN_DOCUMENT_ERROR_CAPACITY: usize = 16;
+
+/// Maximum filesystem-representation bytes accepted for one Finder document
+/// URL. This avoids retaining unexpectedly large event payloads.
+pub const OPEN_DOCUMENT_PATH_BYTE_CAPACITY: usize = 4096;
+
+/// Typed non-path details for a native document-open event that could not be
+/// converted into a usable filesystem path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OpenDocumentError {
+    MissingDirectObject,
+    EmptyDocumentList,
+    InvalidDocumentDescriptor,
+    NonFileUrl,
+    MissingFilePath,
+    PathTooLong { bytes: usize, max_bytes: usize },
+    DocumentListTruncated { discarded: usize },
+    RequestQueueFull { dropped: usize },
+    ErrorQueueFull { dropped: usize },
+}
+
+impl fmt::Display for OpenDocumentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingDirectObject => {
+                write!(formatter, "open-document event did not include documents")
+            }
+            Self::EmptyDocumentList => {
+                write!(
+                    formatter,
+                    "open-document event did not include any documents"
+                )
+            }
+            Self::InvalidDocumentDescriptor => {
+                write!(
+                    formatter,
+                    "open-document event included an unsupported document item"
+                )
+            }
+            Self::NonFileUrl => write!(formatter, "open-document event included a non-file URL"),
+            Self::MissingFilePath => {
+                write!(
+                    formatter,
+                    "open-document event included a file URL without a path"
+                )
+            }
+            Self::PathTooLong { bytes, max_bytes } => write!(
+                formatter,
+                "open-document path was too large ({bytes} bytes, maximum {max_bytes})"
+            ),
+            Self::DocumentListTruncated { discarded } => write!(
+                formatter,
+                "open-document event exceeded the document limit; discarded {discarded} item(s)"
+            ),
+            Self::RequestQueueFull { dropped } => write!(
+                formatter,
+                "open-document request queue was full; discarded {dropped} document(s)"
+            ),
+            Self::ErrorQueueFull { dropped } => write!(
+                formatter,
+                "open-document error queue was full; discarded {dropped} error(s)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for OpenDocumentError {}
+
+/// Buffered Finder document-open work for one-shot fallback draining. Prefer
+/// [`OpenDocumentBridge::register_callbacks`] so native events hand off to the
+/// application queue without a per-frame polling path.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OpenDocumentDrain {
+    pub paths: Vec<PathBuf>,
+    pub errors: Vec<OpenDocumentError>,
+}
+
+/// Result from an application-owned open-document enqueue callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenDocumentEnqueueResult {
+    Accepted,
+    Backpressured,
+}
+
+impl From<bool> for OpenDocumentEnqueueResult {
+    fn from(accepted: bool) -> Self {
+        if accepted {
+            Self::Accepted
+        } else {
+            Self::Backpressured
+        }
+    }
+}
+
+/// Application callbacks used by the native AppleEvent bridge to hand off
+/// document-open events without requiring a per-frame polling path.
+#[derive(Clone)]
+pub struct OpenDocumentCallbacks {
+    enqueue_path: Arc<dyn Fn(PathBuf) -> OpenDocumentEnqueueResult + Send + Sync>,
+    enqueue_error: Arc<dyn Fn(OpenDocumentError) -> OpenDocumentEnqueueResult + Send + Sync>,
+}
+
+impl OpenDocumentCallbacks {
+    pub fn new(
+        enqueue_path: Arc<dyn Fn(PathBuf) -> OpenDocumentEnqueueResult + Send + Sync>,
+        enqueue_error: Arc<dyn Fn(OpenDocumentError) -> OpenDocumentEnqueueResult + Send + Sync>,
+    ) -> Self {
+        Self {
+            enqueue_path,
+            enqueue_error,
+        }
+    }
+}
+
+/// Remaining buffered native document-open work after attempting callback
+/// delivery.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OpenDocumentPending {
+    pub paths: usize,
+    pub errors: usize,
+}
+
+/// Error returned when installing the native macOS open-document bridge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenDocumentBridgeInstallError {
+    NotMainThread,
+    AlreadyInstalled,
+}
+
+#[derive(Default)]
+struct OpenDocumentState {
+    paths: VecDeque<PathBuf>,
+    errors: VecDeque<OpenDocumentError>,
+    dropped_errors: usize,
+    callbacks: Option<OpenDocumentCallbacks>,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl OpenDocumentState {
+    fn register_wake_callback(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.wake = Some(wake);
+    }
+
+    fn clear_wake_callback(&mut self) {
+        self.wake = None;
+    }
+
+    fn register_callbacks(&mut self, callbacks: OpenDocumentCallbacks) -> OpenDocumentPending {
+        self.callbacks = Some(callbacks);
+        self.flush_pending_to_callbacks()
+    }
+
+    fn clear_callbacks(&mut self) {
+        self.callbacks = None;
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    fn enqueue_path(&mut self, path: PathBuf) {
+        if self.paths.is_empty() {
+            if let Some(callbacks) = &self.callbacks {
+                if (callbacks.enqueue_path)(path.clone()) == OpenDocumentEnqueueResult::Accepted {
+                    return;
+                }
+            }
+        }
+        if self.paths.len() < OPEN_DOCUMENT_REQUEST_CAPACITY {
+            self.paths.push_back(path);
+        } else {
+            self.enqueue_error(OpenDocumentError::RequestQueueFull { dropped: 1 });
+        }
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    fn enqueue_error(&mut self, error: OpenDocumentError) {
+        if self.errors.is_empty() && self.dropped_errors == 0 {
+            if let Some(callbacks) = &self.callbacks {
+                if (callbacks.enqueue_error)(error.clone()) == OpenDocumentEnqueueResult::Accepted {
+                    return;
+                }
+            }
+        }
+        if self.errors.len() < OPEN_DOCUMENT_ERROR_CAPACITY {
+            self.errors.push_back(error);
+        } else {
+            self.dropped_errors = self.dropped_errors.saturating_add(1);
+        }
+    }
+
+    fn flush_pending_to_callbacks(&mut self) -> OpenDocumentPending {
+        let Some(callbacks) = &self.callbacks else {
+            return self.pending();
+        };
+
+        while let Some(path) = self.paths.front().cloned() {
+            if (callbacks.enqueue_path)(path) == OpenDocumentEnqueueResult::Backpressured {
+                return self.pending();
+            }
+            self.paths.pop_front();
+        }
+
+        while let Some(error) = self.errors.front().cloned() {
+            if (callbacks.enqueue_error)(error) == OpenDocumentEnqueueResult::Backpressured {
+                return self.pending();
+            }
+            self.errors.pop_front();
+        }
+
+        if self.dropped_errors > 0 {
+            let error = OpenDocumentError::ErrorQueueFull {
+                dropped: self.dropped_errors,
+            };
+            if (callbacks.enqueue_error)(error) == OpenDocumentEnqueueResult::Accepted {
+                self.dropped_errors = 0;
+            }
+        }
+
+        self.pending()
+    }
+
+    fn pending(&self) -> OpenDocumentPending {
+        OpenDocumentPending {
+            paths: self.paths.len(),
+            errors: self
+                .errors
+                .len()
+                .saturating_add(usize::from(self.dropped_errors > 0)),
+        }
+    }
+
+    fn drain(&mut self) -> OpenDocumentDrain {
+        let mut errors = self.errors.drain(..).collect::<Vec<_>>();
+        if self.dropped_errors > 0 {
+            push_bounded_error(
+                &mut errors,
+                OpenDocumentError::ErrorQueueFull {
+                    dropped: std::mem::take(&mut self.dropped_errors),
+                },
+            );
+        }
+        OpenDocumentDrain {
+            paths: self.paths.drain(..).collect(),
+            errors,
+        }
+    }
+}
+
+fn push_bounded_error(errors: &mut Vec<OpenDocumentError>, error: OpenDocumentError) {
+    if errors.len() < OPEN_DOCUMENT_ERROR_CAPACITY {
+        errors.push(error);
+    } else if let OpenDocumentError::ErrorQueueFull { dropped } = error {
+        let replacement = OpenDocumentError::ErrorQueueFull {
+            dropped: dropped.saturating_add(1),
+        };
+        let _ = errors.pop();
+        errors.push(replacement);
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn wake_callback_from(
+    state: &Arc<Mutex<OpenDocumentState>>,
+) -> Option<Arc<dyn Fn() + Send + Sync>> {
+    state
+        .lock()
+        .expect("open-document bridge mutex poisoned")
+        .wake
+        .clone()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn wake_after_enqueue(state: &Arc<Mutex<OpenDocumentState>>) {
+    if let Some(wake) = wake_callback_from(state) {
+        wake();
+    }
+}
+
+/// Handle for native Finder document-open AppleEvents.
+///
+/// Install this before starting eframe so launch-time `kAEOpenDocuments`
+/// events can be buffered. After the application activation queue exists,
+/// register callbacks; buffered work is then retried without converting these
+/// native events into egui dropped-files.
+pub struct OpenDocumentBridge {
+    state: Arc<Mutex<OpenDocumentState>>,
+    installed: bool,
+    #[cfg(target_os = "macos")]
+    handler: Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
+}
+
+impl OpenDocumentBridge {
+    pub fn unavailable() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(OpenDocumentState::default())),
+            installed: false,
+            #[cfg(target_os = "macos")]
+            handler: None,
+        }
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.installed
+    }
+
+    pub fn register_ui_wake_callback(&self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.reassert_open_document_handler();
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .register_wake_callback(wake);
+    }
+
+    pub fn clear_ui_wake_callback(&self) {
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .clear_wake_callback();
+    }
+
+    pub fn register_callbacks(&self, callbacks: OpenDocumentCallbacks) -> OpenDocumentPending {
+        self.reassert_open_document_handler();
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .register_callbacks(callbacks)
+    }
+
+    pub fn clear_callbacks(&self) {
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .clear_callbacks();
+    }
+
+    /// Attempts to deliver buffered cold-start events to registered callbacks.
+    /// The bridge peeks one buffered item at a time and removes it only after
+    /// the application callback reports capacity.
+    pub fn flush_pending_to_callbacks(&self) -> OpenDocumentPending {
+        self.reassert_open_document_handler();
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .flush_pending_to_callbacks()
+    }
+
+    pub fn pending(&self) -> OpenDocumentPending {
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .pending()
+    }
+
+    pub fn drain(&self) -> OpenDocumentDrain {
+        self.state
+            .lock()
+            .expect("open-document bridge mutex poisoned")
+            .drain()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn reassert_open_document_handler(&self) {
+        if let Some(handler) = &self.handler {
+            open_documents::register_apple_event_handler(handler);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn reassert_open_document_handler(&self) {}
+}
+
+/// Installs the macOS Finder open-document AppleEvent bridge.
+///
+/// On non-macOS platforms this is a compile-safe no-op that returns an
+/// unavailable bridge.
+#[cfg(target_os = "macos")]
+pub fn install_open_document_bridge() -> Result<OpenDocumentBridge, OpenDocumentBridgeInstallError>
+{
+    open_documents::install()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install_open_document_bridge() -> Result<OpenDocumentBridge, OpenDocumentBridgeInstallError>
+{
+    Ok(OpenDocumentBridge::unavailable())
+}
+
+#[cfg(target_os = "macos")]
+mod open_documents {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, Sel};
+    use objc2::{class, define_class, msg_send, sel, DefinedClass, MainThreadOnly};
+    use objc2_app_kit::NSApplicationDidFinishLaunchingNotification;
+    use objc2_foundation::{
+        MainThreadMarker, NSAppleEventDescriptor, NSAppleEventManager,
+        NSAppleEventManagerWillProcessFirstEventNotification, NSNotification, NSNotificationCenter,
+        NSObject, NSObjectProtocol, NSURL,
+    };
+
+    use super::{
+        wake_after_enqueue, OpenDocumentBridge, OpenDocumentBridgeInstallError, OpenDocumentError,
+        OpenDocumentState, OPEN_DOCUMENT_ERROR_CAPACITY, OPEN_DOCUMENT_PATH_BYTE_CAPACITY,
+        OPEN_DOCUMENT_REQUEST_CAPACITY,
+    };
+
+    const K_CORE_EVENT_CLASS: u32 = 0x6165_7674; // 'aevt'
+    const K_AE_OPEN_DOCUMENTS: u32 = 0x6f64_6f63; // 'odoc'
+    const KEY_DIRECT_OBJECT: u32 = 0x2d2d_2d2d; // '----'
+
+    static ACTIVE_OPEN_DOCUMENT_HANDLER: AtomicPtr<AnyObject> =
+        AtomicPtr::new(std::ptr::null_mut());
+    static ORIGINAL_FINISH_LAUNCHING: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
+    static INSTALL_FINISH_LAUNCHING_HOOK: std::sync::Once = std::sync::Once::new();
+
+    struct OpenDocumentHandlerIvars {
+        state: Arc<Mutex<OpenDocumentState>>,
+    }
+
+    define_class!(
+        // SAFETY: NSObject imposes no additional subclassing invariants. The
+        // handler is installed on the main thread and only touches bounded
+        // Rust queues behind a mutex.
+        #[unsafe(super = NSObject)]
+        #[thread_kind = MainThreadOnly]
+        #[ivars = OpenDocumentHandlerIvars]
+        struct OpenDocumentHandler;
+
+        // SAFETY: NSObjectProtocol has no additional safety requirements.
+        unsafe impl NSObjectProtocol for OpenDocumentHandler {}
+
+        impl OpenDocumentHandler {
+            #[unsafe(method(handleOpenDocuments:withReplyEvent:))]
+            fn handle_open_documents(
+                &self,
+                event: &NSAppleEventDescriptor,
+                _reply: &NSAppleEventDescriptor,
+            ) {
+                enqueue_event(&self.ivars().state, event);
+                wake_after_enqueue(&self.ivars().state);
+            }
+
+            #[unsafe(method(applicationDidFinishLaunching:))]
+            fn application_did_finish_launching(&self, _notification: &NSNotification) {
+                register_apple_event_handler(self);
+            }
+
+            #[unsafe(method(appleEventManagerWillProcessFirstEvent:))]
+            fn apple_event_manager_will_process_first_event(&self, _notification: &NSNotification) {
+                register_apple_event_handler(self);
+            }
+        }
+    );
+
+    impl OpenDocumentHandler {
+        fn new(state: Arc<Mutex<OpenDocumentState>>, mtm: MainThreadMarker) -> Retained<Self> {
+            let this = Self::alloc(mtm).set_ivars(OpenDocumentHandlerIvars { state });
+            // SAFETY: NSObject's init signature is correct.
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    pub fn install() -> Result<OpenDocumentBridge, OpenDocumentBridgeInstallError> {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return Err(OpenDocumentBridgeInstallError::NotMainThread);
+        };
+        if !ACTIVE_OPEN_DOCUMENT_HANDLER
+            .load(Ordering::SeqCst)
+            .is_null()
+        {
+            return Err(OpenDocumentBridgeInstallError::AlreadyInstalled);
+        }
+        let state = Arc::new(Mutex::new(OpenDocumentState::default()));
+        let handler = OpenDocumentHandler::new(state.clone(), mtm);
+        install_finish_launching_hook();
+        ACTIVE_OPEN_DOCUMENT_HANDLER.store(
+            (&*handler as *const OpenDocumentHandler)
+                .cast_mut()
+                .cast::<AnyObject>(),
+            Ordering::SeqCst,
+        );
+        register_apple_event_handler(&handler);
+        let center = NSNotificationCenter::defaultCenter();
+        // SAFETY: `handler` implements `handleOpenDocuments:withReplyEvent:`
+        // with the NSAppleEventManager handler signature and
+        // `applicationDidFinishLaunching:` with the NSNotification observer
+        // signature. The bridge retains it until Drop removes both
+        // registrations.
+        unsafe {
+            center.addObserver_selector_name_object(
+                &handler,
+                sel!(applicationDidFinishLaunching:),
+                Some(NSApplicationDidFinishLaunchingNotification),
+                None,
+            );
+            center.addObserver_selector_name_object(
+                &handler,
+                sel!(appleEventManagerWillProcessFirstEvent:),
+                Some(NSAppleEventManagerWillProcessFirstEventNotification),
+                None,
+            );
+        }
+        Ok(OpenDocumentBridge {
+            state,
+            installed: true,
+            handler: Some(handler.into()),
+        })
+    }
+
+    fn install_finish_launching_hook() {
+        INSTALL_FINISH_LAUNCHING_HOOK.call_once(|| {
+            let method = class!(NSApplication)
+                .instance_method(sel!(finishLaunching))
+                .expect("NSApplication finishLaunching method");
+            // SAFETY: The replacement has the Objective-C instance method
+            // ABI for `-[NSApplication finishLaunching]` and calls the
+            // previous implementation before reasserting only this
+            // process-wide AppleEvent handler.
+            let previous = unsafe {
+                method.set_implementation(std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(&AnyObject, Sel),
+                    objc2::runtime::Imp,
+                >(festerm_finish_launching))
+            };
+            ORIGINAL_FINISH_LAUNCHING.store(previous as *mut (), Ordering::SeqCst);
+        });
+    }
+
+    unsafe extern "C-unwind" fn festerm_finish_launching(this: &AnyObject, selector: Sel) {
+        let original = ORIGINAL_FINISH_LAUNCHING.load(Ordering::SeqCst);
+        assert!(
+            !original.is_null(),
+            "original AppKit launch method is installed"
+        );
+        // SAFETY: Stored from `Method::set_implementation` for the same
+        // selector and class, so the implementation has the
+        // `finishLaunching` method ABI.
+        let original: unsafe extern "C-unwind" fn(&AnyObject, Sel) =
+            unsafe { std::mem::transmute(original) };
+        unsafe { original(this, selector) };
+        let handler = ACTIVE_OPEN_DOCUMENT_HANDLER.load(Ordering::SeqCst);
+        if !handler.is_null() {
+            // SAFETY: The bridge retains the active handler while this global
+            // pointer is set, and Drop clears it before releasing.
+            let handler = unsafe { &*handler };
+            register_apple_event_handler(handler);
+        }
+    }
+
+    pub(super) fn register_apple_event_handler(handler: &AnyObject) {
+        let manager = NSAppleEventManager::sharedAppleEventManager();
+        // SAFETY: `handler` implements `handleOpenDocuments:withReplyEvent:`
+        // with the NSAppleEventManager handler signature, is retained by the
+        // returned bridge, and the selector is registered only for the
+        // process-wide open-documents AppleEvent pair. AppKit's launch path may
+        // install its default open-documents handler at finishLaunching, so the
+        // finish-launching observer re-applies this registration without
+        // replacing the application delegate.
+        unsafe {
+            let _: () = msg_send![
+                &*manager,
+                setEventHandler: handler,
+                andSelector: sel!(handleOpenDocuments:withReplyEvent:),
+                forEventClass: K_CORE_EVENT_CLASS,
+                andEventID: K_AE_OPEN_DOCUMENTS,
+            ];
+        }
+    }
+
+    fn enqueue_event(state: &Arc<Mutex<OpenDocumentState>>, event: &NSAppleEventDescriptor) {
+        let mut parsed = parse_event(event);
+        let mut state = state.lock().expect("open-document bridge mutex poisoned");
+        for path in parsed.paths.drain(..) {
+            state.enqueue_path(path);
+        }
+        for error in parsed.errors.drain(..) {
+            state.enqueue_error(error);
+        }
+    }
+
+    pub(super) struct ParsedOpenDocuments {
+        pub(super) paths: Vec<PathBuf>,
+        pub(super) errors: Vec<OpenDocumentError>,
+    }
+
+    pub(super) fn parse_event(event: &NSAppleEventDescriptor) -> ParsedOpenDocuments {
+        // SAFETY: `event` is supplied by NSAppleEventManager to this handler;
+        // the selector returns an optional NSAppleEventDescriptor for the
+        // direct-object keyword.
+        let direct: Option<Retained<NSAppleEventDescriptor>> =
+            unsafe { msg_send![event, paramDescriptorForKeyword: KEY_DIRECT_OBJECT] };
+        let Some(direct) = direct else {
+            return ParsedOpenDocuments {
+                paths: Vec::new(),
+                errors: vec![OpenDocumentError::MissingDirectObject],
+            };
+        };
+        parse_document_descriptor(&direct)
+    }
+
+    fn parse_document_descriptor(descriptor: &NSAppleEventDescriptor) -> ParsedOpenDocuments {
+        let item_count = descriptor.numberOfItems();
+        if item_count <= 0 {
+            return parse_one_document_descriptor(descriptor).unwrap_or_else(|| {
+                ParsedOpenDocuments {
+                    paths: Vec::new(),
+                    errors: vec![OpenDocumentError::EmptyDocumentList],
+                }
+            });
+        }
+
+        let mut paths = Vec::new();
+        let mut errors = Vec::new();
+        let mut dropped_errors = 0usize;
+        let item_count = item_count as usize;
+        let processed_count = item_count.min(OPEN_DOCUMENT_REQUEST_CAPACITY);
+        if item_count > processed_count {
+            push_parse_error(
+                &mut errors,
+                &mut dropped_errors,
+                OpenDocumentError::DocumentListTruncated {
+                    discarded: item_count - processed_count,
+                },
+            );
+        }
+        for index in 1..=processed_count {
+            match descriptor.descriptorAtIndex(index as isize) {
+                Some(item) => match file_url_path(&item) {
+                    Ok(path) => paths.push(path),
+                    Err(error) => push_parse_error(&mut errors, &mut dropped_errors, error),
+                },
+                None => push_parse_error(
+                    &mut errors,
+                    &mut dropped_errors,
+                    OpenDocumentError::InvalidDocumentDescriptor,
+                ),
+            }
+        }
+        finish_parse_errors(&mut errors, dropped_errors);
+        ParsedOpenDocuments { paths, errors }
+    }
+
+    fn parse_one_document_descriptor(
+        descriptor: &NSAppleEventDescriptor,
+    ) -> Option<ParsedOpenDocuments> {
+        match file_url_path(descriptor) {
+            Ok(path) => Some(ParsedOpenDocuments {
+                paths: vec![path],
+                errors: Vec::new(),
+            }),
+            Err(OpenDocumentError::InvalidDocumentDescriptor) => None,
+            Err(error) => Some(ParsedOpenDocuments {
+                paths: Vec::new(),
+                errors: vec![error],
+            }),
+        }
+    }
+
+    fn file_url_path(descriptor: &NSAppleEventDescriptor) -> Result<PathBuf, OpenDocumentError> {
+        let Some(url) = descriptor.fileURLValue() else {
+            return Err(OpenDocumentError::InvalidDocumentDescriptor);
+        };
+        path_from_file_url(&url)
+    }
+
+    fn path_from_file_url(url: &NSURL) -> Result<PathBuf, OpenDocumentError> {
+        if !url.isFileURL() {
+            return Err(OpenDocumentError::NonFileUrl);
+        }
+        let representation = url.fileSystemRepresentation();
+        // SAFETY: NSURL returns a process-owned NUL-terminated filesystem
+        // representation pointer valid for immediate use.
+        let path = unsafe { CStr::from_ptr(representation.as_ptr()) };
+        let bytes = path.to_bytes();
+        if bytes.is_empty() {
+            return Err(OpenDocumentError::MissingFilePath);
+        }
+        if bytes.len() > OPEN_DOCUMENT_PATH_BYTE_CAPACITY {
+            return Err(OpenDocumentError::PathTooLong {
+                bytes: bytes.len(),
+                max_bytes: OPEN_DOCUMENT_PATH_BYTE_CAPACITY,
+            });
+        }
+        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+
+    fn push_parse_error(
+        errors: &mut Vec<OpenDocumentError>,
+        dropped_errors: &mut usize,
+        error: OpenDocumentError,
+    ) {
+        if errors.len() < OPEN_DOCUMENT_ERROR_CAPACITY {
+            errors.push(error);
+        } else {
+            *dropped_errors = dropped_errors.saturating_add(1);
+        }
+    }
+
+    fn finish_parse_errors(errors: &mut Vec<OpenDocumentError>, dropped_errors: usize) {
+        if dropped_errors == 0 {
+            return;
+        }
+        let summary = OpenDocumentError::ErrorQueueFull {
+            dropped: dropped_errors,
+        };
+        if errors.len() < OPEN_DOCUMENT_ERROR_CAPACITY {
+            errors.push(summary);
+        } else {
+            let _ = errors.pop();
+            errors.push(OpenDocumentError::ErrorQueueFull {
+                dropped: dropped_errors.saturating_add(1),
+            });
+        }
+    }
+
+    impl Drop for super::OpenDocumentBridge {
+        fn drop(&mut self) {
+            if self.installed {
+                let Some(handler) = self.handler.take() else {
+                    return;
+                };
+                let handler_ptr = (&*handler as *const AnyObject).cast_mut();
+                let _ = ACTIVE_OPEN_DOCUMENT_HANDLER.compare_exchange(
+                    handler_ptr,
+                    std::ptr::null_mut(),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                );
+                let manager = NSAppleEventManager::sharedAppleEventManager();
+                let center = NSNotificationCenter::defaultCenter();
+                // SAFETY: This unregisters the process-wide handler for the
+                // exact AppleEvent class/id installed above, then removes the
+                // retained NSObject from its finish-launching observer
+                // registration.
+                unsafe {
+                    let _: () = msg_send![
+                        &*manager,
+                        removeEventHandlerForEventClass: K_CORE_EVENT_CLASS,
+                        andEventID: K_AE_OPEN_DOCUMENTS,
+                    ];
+                    center.removeObserver(&handler);
+                }
+            }
         }
     }
 }
@@ -977,9 +1739,17 @@ pub fn reclaim_first_responder(_: ()) {}
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[cfg(target_os = "macos")]
+    use super::OPEN_DOCUMENT_PATH_BYTE_CAPACITY;
     use super::{
-        native_menu_state, traffic_light_origin_y, NativeMenuAction, NativeMenuCommand,
-        NativeMenuState, NativeMenuSync, OwnedNativeMenuState,
+        native_menu_state, traffic_light_origin_y, wake_after_enqueue, NativeMenuAction,
+        NativeMenuCommand, NativeMenuState, NativeMenuSync, OpenDocumentBridge,
+        OpenDocumentCallbacks, OpenDocumentEnqueueResult, OpenDocumentError, OpenDocumentPending,
+        OwnedNativeMenuState, OPEN_DOCUMENT_ERROR_CAPACITY, OPEN_DOCUMENT_REQUEST_CAPACITY,
     };
 
     #[test]
@@ -1074,5 +1844,329 @@ mod tests {
     fn traffic_light_origin_centers_button_in_chrome_band() {
         assert_eq!(traffic_light_origin_y(40.0, 14.0, 12.0), 20.0);
         assert_eq!(traffic_light_origin_y(20.0, 24.0, 12.0), -10.0);
+    }
+
+    #[test]
+    fn open_document_bridge_buffers_paths_and_errors_until_drained() {
+        let bridge = OpenDocumentBridge::unavailable();
+        {
+            let mut state = bridge.state.lock().expect("open document state");
+            state.enqueue_path(PathBuf::from("/Users/example/one.txt"));
+            state.enqueue_error(OpenDocumentError::NonFileUrl);
+        }
+
+        let drain = bridge.drain();
+        assert_eq!(drain.paths, vec![PathBuf::from("/Users/example/one.txt")]);
+        assert_eq!(drain.errors, vec![OpenDocumentError::NonFileUrl]);
+        assert!(bridge.drain().paths.is_empty());
+        assert!(bridge.drain().errors.is_empty());
+    }
+
+    #[test]
+    fn open_document_bridge_bounds_requests_without_exposing_dropped_paths() {
+        let bridge = OpenDocumentBridge::unavailable();
+        {
+            let mut state = bridge.state.lock().expect("open document state");
+            for index in 0..(OPEN_DOCUMENT_REQUEST_CAPACITY + 2) {
+                state.enqueue_path(PathBuf::from(format!("/Users/example/{index}.txt")));
+            }
+        }
+
+        let drain = bridge.drain();
+        assert_eq!(drain.paths.len(), OPEN_DOCUMENT_REQUEST_CAPACITY);
+        assert_eq!(
+            drain
+                .errors
+                .iter()
+                .filter(|error| matches!(error, OpenDocumentError::RequestQueueFull { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn open_document_bridge_summarizes_error_overflow() {
+        let bridge = OpenDocumentBridge::unavailable();
+        {
+            let mut state = bridge.state.lock().expect("open document state");
+            for _ in 0..(OPEN_DOCUMENT_ERROR_CAPACITY + 3) {
+                state.enqueue_error(OpenDocumentError::InvalidDocumentDescriptor);
+            }
+        }
+
+        let drain = bridge.drain();
+        assert_eq!(drain.errors.len(), OPEN_DOCUMENT_ERROR_CAPACITY);
+        assert_eq!(
+            drain.errors.last(),
+            Some(&OpenDocumentError::ErrorQueueFull { dropped: 4 })
+        );
+    }
+
+    #[test]
+    fn open_document_errors_have_user_facing_display_text() {
+        assert_eq!(
+            OpenDocumentError::DocumentListTruncated { discarded: 7 }.to_string(),
+            "open-document event exceeded the document limit; discarded 7 item(s)"
+        );
+        assert!(
+            !OpenDocumentError::NonFileUrl
+                .to_string()
+                .contains("NonFileUrl"),
+            "display text should not expose debug enum formatting"
+        );
+    }
+
+    #[test]
+    fn open_document_callbacks_receive_warm_events_without_buffering() {
+        let bridge = OpenDocumentBridge::unavailable();
+        let paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let path_sink = paths.clone();
+        let error_sink = errors.clone();
+        bridge.register_callbacks(OpenDocumentCallbacks::new(
+            Arc::new(move |path| {
+                path_sink.lock().expect("path sink").push(path);
+                OpenDocumentEnqueueResult::Accepted
+            }),
+            Arc::new(move |error| {
+                error_sink.lock().expect("error sink").push(error);
+                OpenDocumentEnqueueResult::Accepted
+            }),
+        ));
+
+        {
+            let mut state = bridge.state.lock().expect("open document state");
+            state.enqueue_path(PathBuf::from("/Users/example/warm.txt"));
+            state.enqueue_error(OpenDocumentError::NonFileUrl);
+        }
+
+        assert_eq!(
+            paths.lock().expect("path sink").as_slice(),
+            &[PathBuf::from("/Users/example/warm.txt")]
+        );
+        assert_eq!(
+            errors.lock().expect("error sink").as_slice(),
+            &[OpenDocumentError::NonFileUrl]
+        );
+        assert_eq!(bridge.pending(), OpenDocumentPending::default());
+    }
+
+    #[test]
+    fn open_document_callbacks_peek_and_retry_buffered_work_on_capacity() {
+        let bridge = OpenDocumentBridge::unavailable();
+        {
+            let mut state = bridge.state.lock().expect("open document state");
+            state.enqueue_path(PathBuf::from("/Users/example/first.txt"));
+            state.enqueue_path(PathBuf::from("/Users/example/second.txt"));
+        }
+
+        let capacity = Arc::new(AtomicUsize::new(1));
+        let delivered = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capacity_for_callback = capacity.clone();
+        let delivered_for_callback = delivered.clone();
+        let pending = bridge.register_callbacks(OpenDocumentCallbacks::new(
+            Arc::new(move |path| {
+                if capacity_for_callback
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                        value.checked_sub(1)
+                    })
+                    .is_ok()
+                {
+                    delivered_for_callback
+                        .lock()
+                        .expect("delivered paths")
+                        .push(path);
+                    OpenDocumentEnqueueResult::Accepted
+                } else {
+                    OpenDocumentEnqueueResult::Backpressured
+                }
+            }),
+            Arc::new(|_| OpenDocumentEnqueueResult::Accepted),
+        ));
+
+        assert_eq!(pending.paths, 1);
+        assert_eq!(
+            delivered.lock().expect("delivered paths").as_slice(),
+            &[PathBuf::from("/Users/example/first.txt")]
+        );
+
+        capacity.store(1, Ordering::SeqCst);
+        assert_eq!(
+            bridge.flush_pending_to_callbacks(),
+            OpenDocumentPending::default()
+        );
+        assert_eq!(
+            delivered.lock().expect("delivered paths").as_slice(),
+            &[
+                PathBuf::from("/Users/example/first.txt"),
+                PathBuf::from("/Users/example/second.txt")
+            ]
+        );
+    }
+
+    #[test]
+    fn open_document_bridge_wake_callback_is_replaceable_and_clearable() {
+        let bridge = OpenDocumentBridge::unavailable();
+        let first = Arc::new(AtomicUsize::new(0));
+        let first_wake = first.clone();
+        bridge.register_ui_wake_callback(Arc::new(move || {
+            first_wake.fetch_add(1, Ordering::SeqCst);
+        }));
+        wake_after_enqueue(&bridge.state);
+        assert_eq!(first.load(Ordering::SeqCst), 1);
+
+        let second = Arc::new(AtomicUsize::new(0));
+        let second_wake = second.clone();
+        bridge.register_ui_wake_callback(Arc::new(move || {
+            second_wake.fetch_add(1, Ordering::SeqCst);
+        }));
+        wake_after_enqueue(&bridge.state);
+        assert_eq!(first.load(Ordering::SeqCst), 1);
+        assert_eq!(second.load(Ordering::SeqCst), 1);
+
+        bridge.clear_ui_wake_callback();
+        wake_after_enqueue(&bridge.state);
+        assert_eq!(second.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn open_document_appleevent_descriptor_coerces_file_urls_to_paths() {
+        use objc2::rc::Retained;
+        use objc2::{class, msg_send};
+        use objc2_foundation::{NSAppleEventDescriptor, NSString, NSURL};
+
+        const K_CORE_EVENT_CLASS: u32 = 0x6165_7674;
+        const K_AE_OPEN_DOCUMENTS: u32 = 0x6f64_6f63;
+        const KEY_DIRECT_OBJECT: u32 = 0x2d2d_2d2d;
+
+        let target = NSAppleEventDescriptor::currentProcessDescriptor();
+        let event: Retained<NSAppleEventDescriptor> = unsafe {
+            msg_send![
+                class!(NSAppleEventDescriptor),
+                appleEventWithEventClass: K_CORE_EVENT_CLASS,
+                eventID: K_AE_OPEN_DOCUMENTS,
+                targetDescriptor: &*target,
+                returnID: 0i16,
+                transactionID: 0i32,
+            ]
+        };
+        let list = NSAppleEventDescriptor::listDescriptor();
+        let first = PathBuf::from("/Users/example/fesTerm open with.txt");
+        let second = PathBuf::from("/Users/example/second.md");
+        for (index, expected) in [first.clone(), second.clone()].into_iter().enumerate() {
+            let url = NSURL::fileURLWithPath(&NSString::from_str(
+                expected.to_str().expect("utf-8 test path"),
+            ));
+            let file = NSAppleEventDescriptor::descriptorWithFileURL(&url);
+            list.insertDescriptor_atIndex(&file, (index + 1) as isize);
+        }
+        unsafe {
+            let _: () = msg_send![
+                &*event,
+                setParamDescriptor: &*list,
+                forKeyword: KEY_DIRECT_OBJECT,
+            ];
+        }
+
+        let parsed = super::open_documents::parse_event(&event);
+        assert_eq!(parsed.paths, vec![first, second]);
+        assert!(parsed.errors.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn open_document_appleevent_descriptor_processing_is_bounded() {
+        use objc2::rc::Retained;
+        use objc2::{class, msg_send};
+        use objc2_foundation::{NSAppleEventDescriptor, NSString, NSURL};
+
+        const K_CORE_EVENT_CLASS: u32 = 0x6165_7674;
+        const K_AE_OPEN_DOCUMENTS: u32 = 0x6f64_6f63;
+        const KEY_DIRECT_OBJECT: u32 = 0x2d2d_2d2d;
+
+        let target = NSAppleEventDescriptor::currentProcessDescriptor();
+        let event: Retained<NSAppleEventDescriptor> = unsafe {
+            msg_send![
+                class!(NSAppleEventDescriptor),
+                appleEventWithEventClass: K_CORE_EVENT_CLASS,
+                eventID: K_AE_OPEN_DOCUMENTS,
+                targetDescriptor: &*target,
+                returnID: 0i16,
+                transactionID: 0i32,
+            ]
+        };
+        let list = NSAppleEventDescriptor::listDescriptor();
+        for index in 0..(OPEN_DOCUMENT_REQUEST_CAPACITY + 2) {
+            let path = PathBuf::from(format!("/Users/example/bounded-{index}.txt"));
+            let url = NSURL::fileURLWithPath(&NSString::from_str(
+                path.to_str().expect("utf-8 test path"),
+            ));
+            let file = NSAppleEventDescriptor::descriptorWithFileURL(&url);
+            list.insertDescriptor_atIndex(&file, (index + 1) as isize);
+        }
+        unsafe {
+            let _: () = msg_send![
+                &*event,
+                setParamDescriptor: &*list,
+                forKeyword: KEY_DIRECT_OBJECT,
+            ];
+        }
+
+        let parsed = super::open_documents::parse_event(&event);
+        assert_eq!(parsed.paths.len(), OPEN_DOCUMENT_REQUEST_CAPACITY);
+        assert_eq!(
+            parsed.errors,
+            vec![OpenDocumentError::DocumentListTruncated { discarded: 2 }]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn open_document_appleevent_rejects_oversized_paths_without_retaining_them() {
+        use objc2::rc::Retained;
+        use objc2::{class, msg_send};
+        use objc2_foundation::{NSAppleEventDescriptor, NSString, NSURL};
+
+        const K_CORE_EVENT_CLASS: u32 = 0x6165_7674;
+        const K_AE_OPEN_DOCUMENTS: u32 = 0x6f64_6f63;
+        const KEY_DIRECT_OBJECT: u32 = 0x2d2d_2d2d;
+
+        let target = NSAppleEventDescriptor::currentProcessDescriptor();
+        let event: Retained<NSAppleEventDescriptor> = unsafe {
+            msg_send![
+                class!(NSAppleEventDescriptor),
+                appleEventWithEventClass: K_CORE_EVENT_CLASS,
+                eventID: K_AE_OPEN_DOCUMENTS,
+                targetDescriptor: &*target,
+                returnID: 0i16,
+                transactionID: 0i32,
+            ]
+        };
+        let oversized = format!(
+            "/Users/example/{}",
+            "x".repeat(OPEN_DOCUMENT_PATH_BYTE_CAPACITY + 1)
+        );
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&oversized));
+        let file = NSAppleEventDescriptor::descriptorWithFileURL(&url);
+        let list = NSAppleEventDescriptor::listDescriptor();
+        list.insertDescriptor_atIndex(&file, 1);
+        unsafe {
+            let _: () = msg_send![
+                &*event,
+                setParamDescriptor: &*list,
+                forKeyword: KEY_DIRECT_OBJECT,
+            ];
+        }
+
+        let parsed = super::open_documents::parse_event(&event);
+        assert!(parsed.paths.is_empty());
+        assert_eq!(
+            parsed.errors,
+            vec![OpenDocumentError::PathTooLong {
+                bytes: oversized.len(),
+                max_bytes: OPEN_DOCUMENT_PATH_BYTE_CAPACITY
+            }]
+        );
     }
 }

@@ -5156,6 +5156,41 @@ impl FesTermApp {
     /// and it is only ever handed to the root viewport - and because the two
     /// pieces it excludes, native window chrome and native-window smoke, are
     /// deliberately primary-window-only.
+    pub(crate) fn document_activation_blocked(&self) -> bool {
+        self.window_close_accepted
+            || self.overlays.blocks_terminal_input()
+            || self.overlays.open_refusal.is_some()
+            || self.state.has_pending_open_refusal()
+    }
+
+    pub(crate) fn has_local_document(&self, path: &std::path::Path) -> bool {
+        self.state.local_document_tab(path).is_some()
+    }
+
+    pub(crate) fn open_external_document(
+        &mut self,
+        path: std::path::PathBuf,
+        context: &egui::Context,
+    ) {
+        self.state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path,
+                replacing: None,
+            },
+            context,
+        );
+    }
+
+    pub(crate) fn report_document_activation_error(&mut self, detail: String) {
+        self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
+            name: "Document request".to_owned(),
+            path: String::new(),
+            headline: "The document request could not be accepted".to_owned(),
+            detail,
+        });
+        self.overlays.open_refusal_focused = false;
+    }
+
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
         if context.input(|i| i.viewport().close_requested()) {
             self.evaluate_close_request(context);
@@ -6225,6 +6260,21 @@ mod tests {
         kittest::{NodeT, Queryable},
         Harness, SnapshotOptions,
     };
+
+    #[test]
+    fn external_document_activation_waits_for_modal_and_error_acknowledgement() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        assert!(!app.document_activation_blocked());
+        app.overlays.about_open = true;
+        assert!(app.document_activation_blocked());
+        app.overlays.about_open = false;
+        app.report_document_activation_error("The pending document queue is full.".to_owned());
+        assert!(app.document_activation_blocked());
+        app.overlays.open_refusal = None;
+        assert!(!app.document_activation_blocked());
+        app.window_close_accepted = true;
+        assert!(app.document_activation_blocked());
+    }
 
     fn smoke_artifact_directory(name: &str) -> PathBuf {
         let directory = std::env::current_dir()

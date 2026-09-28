@@ -7,9 +7,16 @@
 //! process, and keeps every window's configuration coherent by broadcasting
 //! each committed write to its siblings.
 
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
 use eframe::egui;
 
 use crate::app::FesTermApp;
+use crate::document_activation::{ActivationError, ActivationQueue};
 use crate::tabs::{Tab, TabMoveRequest};
 
 /// The stable identity of one open window, used for its egui `ViewportId` and
@@ -69,6 +76,10 @@ pub(crate) struct FesTermApplication {
     /// renders into `ViewportId::ROOT`.
     windows: Vec<Window>,
     next_window_id: u64,
+    last_active_window: WindowId,
+    document_activation: ActivationQueue,
+    native_documents: Option<festerm_macos_window::OpenDocumentBridge>,
+    activation_errors: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl FesTermApplication {
@@ -80,6 +91,10 @@ impl FesTermApplication {
                 placement: None,
             }],
             next_window_id: 1,
+            last_active_window: WindowId::PRIMARY,
+            document_activation: ActivationQueue::default(),
+            native_documents: None,
+            activation_errors: Default::default(),
         }
     }
 
@@ -110,6 +125,118 @@ impl FesTermApplication {
         &mut self.windows[0].app
     }
 
+    pub(crate) fn install_document_activation(
+        &mut self,
+        queue: ActivationQueue,
+        context: &egui::Context,
+    ) {
+        let context = context.clone();
+        queue.set_waker(Arc::new(move || context.request_repaint()));
+        self.document_activation = queue;
+    }
+
+    fn process_document_activation(&mut self, context: &egui::Context) {
+        if self
+            .windows
+            .iter()
+            .any(|window| window.app.document_activation_blocked())
+        {
+            return;
+        }
+        let error = self
+            .activation_errors
+            .lock()
+            .expect("activation errors lock healthy")
+            .pop_front();
+        if let Some(error) = error {
+            let index = self.window_index(self.last_active_window).unwrap_or(0);
+            self.windows[index]
+                .app
+                .report_document_activation_error(error);
+            self.focus_window(index, context);
+            self.flush_native_document_backlog();
+            return;
+        }
+        // One request per pass lets the ordinary document-open error surface
+        // retain focus and acknowledgement before the next file is attempted.
+        if let Some(path) = self.document_activation.pop_front() {
+            let metrics = self.document_activation.metrics();
+            tracing::debug!(
+                target: "festerm::app",
+                queued = metrics.queue_depth,
+                high_watermark = metrics.queue_high_watermark,
+                "processing document activation"
+            );
+            self.open_external_document(path, context);
+            self.flush_native_document_backlog();
+        }
+    }
+
+    pub(crate) fn install_native_document_activation(
+        &mut self,
+        bridge: festerm_macos_window::OpenDocumentBridge,
+        context: &egui::Context,
+    ) {
+        use festerm_macos_window::{OpenDocumentCallbacks, OpenDocumentEnqueueResult};
+        if !bridge.is_installed() {
+            return;
+        }
+        let errors = self.activation_errors.clone();
+        let enqueue_error = Arc::new(move |message: String| {
+            let mut errors = errors.lock().expect("activation errors lock healthy");
+            if errors.len() == festerm_macos_window::OPEN_DOCUMENT_ERROR_CAPACITY {
+                OpenDocumentEnqueueResult::Backpressured
+            } else {
+                errors.push_back(message);
+                OpenDocumentEnqueueResult::Accepted
+            }
+        });
+        let queue = self.document_activation.clone();
+        let path_error = enqueue_error.clone();
+        bridge.register_callbacks(OpenDocumentCallbacks::new(
+            Arc::new(move |path| match queue.enqueue([path]) {
+                Ok(()) => OpenDocumentEnqueueResult::Accepted,
+                Err(ActivationError::QueueFull) => OpenDocumentEnqueueResult::Backpressured,
+                Err(error) => path_error(error.to_string()),
+            }),
+            Arc::new(move |error| enqueue_error(error.to_string())),
+        ));
+        let wake_context = context.clone();
+        bridge.register_ui_wake_callback(Arc::new(move || wake_context.request_repaint()));
+        self.native_documents = Some(bridge);
+        context.request_repaint();
+    }
+
+    fn flush_native_document_backlog(&self) {
+        if let Some(bridge) = &self.native_documents {
+            bridge.flush_pending_to_callbacks();
+        }
+    }
+
+    fn open_external_document(&mut self, path: PathBuf, context: &egui::Context) {
+        let index = self
+            .windows
+            .iter()
+            .position(|window| window.app.has_local_document(&path))
+            .or_else(|| self.window_index(self.last_active_window))
+            .unwrap_or(0);
+        self.windows[index]
+            .app
+            .open_external_document(path, context);
+        self.focus_window(index, context);
+    }
+
+    fn focus_window(&mut self, index: usize, context: &egui::Context) {
+        let window = &self.windows[index];
+        self.last_active_window = window.id;
+        context.send_viewport_cmd_to(
+            window.id.viewport_id(),
+            egui::ViewportCommand::Minimized(false),
+        );
+        context.send_viewport_cmd_to(window.id.viewport_id(), egui::ViewportCommand::Focus);
+        context.request_repaint();
+    }
+
     #[cfg(test)]
     pub(crate) fn window_count(&self) -> usize {
         self.windows.len()
@@ -134,6 +261,9 @@ impl FesTermApplication {
             // `eframe::App::ui` gives the primary window - so the window's
             // content goes straight into it.
             context.show_viewport_immediate(window.id.viewport_id(), builder, |ui, _class| {
+                if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
+                    self.last_active_window = window.id;
+                }
                 app.frame_logic(ui.ctx());
                 app.ui_content(ui);
             });
@@ -423,11 +553,15 @@ impl eframe::App for FesTermApplication {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
+            self.last_active_window = WindowId::PRIMARY;
+        }
         eframe::App::ui(self.primary_mut(), ui, frame);
         let context = ui.ctx().clone();
         self.show_secondary_windows(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
         self.settle_windows(&context);
+        self.process_document_activation(&context);
         tracing::debug!(
             target: "festerm::rendering",
             gui_frame_number = context.cumulative_frame_nr(),
@@ -446,6 +580,97 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    #[test]
+    fn external_documents_open_in_last_active_window_and_reuse_dirty_views() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        application.last_active_window = application.windows[1].id;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes with spaces.md");
+        std::fs::write(&path, "# Original\n").unwrap();
+        application.open_external_document(path.clone(), &context);
+        assert_eq!(application.window_mut(0).tab_count_for_test(), 1);
+        assert_eq!(application.window_mut(1).tab_count_for_test(), 2);
+        let tab = application.window_mut(1).active_tab_id_for_test();
+        let documents = application.window_mut(1).documents_for_test().clone();
+        let id = documents.borrow().find_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(id)
+            .unwrap()
+            .text_mut()
+            .replace(0..0, "Unsaved\n")
+            .unwrap();
+
+        application.last_active_window = WindowId::PRIMARY;
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application.open_external_document(path.clone(), &context);
+        assert_eq!(application.last_active_window, application.windows[1].id);
+        assert_eq!(application.window_mut(1).active_tab_id_for_test(), tab);
+        assert_eq!(application.window_mut(1).tab_count_for_test(), 3);
+        assert_eq!(application.window_mut(0).tab_count_for_test(), 1);
+        let documents = documents.borrow();
+        assert_eq!(documents.len(), 1);
+        let document = documents.get(id).unwrap();
+        assert_eq!(document.views(), 1);
+        assert!(document.text().is_dirty());
+        assert_eq!(document.text().text(), "Unsaved\n# Original\n");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "# Original\n");
+    }
+
+    #[test]
+    fn external_document_missing_file_preserves_tabs_and_blocks_later_requests() {
+        let (mut application, context) = application();
+        let directory = tempfile::tempdir().unwrap();
+        let before = application.primary_mut().active_tab_id_for_test();
+        application.open_external_document(directory.path().join("missing.md"), &context);
+        assert_eq!(application.primary_mut().active_tab_id_for_test(), before);
+        assert_eq!(application.primary_mut().tab_count_for_test(), 1);
+        assert!(application.primary_mut().document_activation_blocked());
+    }
+
+    #[test]
+    fn document_activation_queue_waits_behind_errors_without_losing_later_files() {
+        let (mut application, context) = application();
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing.md");
+        let later = directory.path().join("later.md");
+        std::fs::write(&later, "# Later\n").unwrap();
+        application
+            .document_activation
+            .enqueue([missing, later.clone()])
+            .unwrap();
+        application.process_document_activation(&context);
+        assert!(application.primary_mut().document_activation_blocked());
+        assert_eq!(application.document_activation.metrics().queue_depth, 1);
+        application.process_document_activation(&context);
+        assert_eq!(application.document_activation.metrics().queue_depth, 1);
+        assert!(!application.primary_mut().has_local_document(&later));
+    }
+
+    #[test]
+    fn document_activation_batch_opens_one_document_per_pass_in_order() {
+        let (mut application, context) = application();
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first.md");
+        let second = directory.path().join("second.markdown");
+        std::fs::write(&first, "# First\n").unwrap();
+        std::fs::write(&second, "# Second\n").unwrap();
+        application
+            .document_activation
+            .enqueue([first.clone(), second.clone()])
+            .unwrap();
+        application.process_document_activation(&context);
+        assert!(application.primary_mut().has_local_document(&first));
+        assert!(!application.primary_mut().has_local_document(&second));
+        application.process_document_activation(&context);
+        assert!(application.primary_mut().has_local_document(&second));
+        assert_eq!(application.primary_mut().tab_count_for_test(), 3);
+        assert_eq!(application.document_activation.metrics().queue_depth, 0);
     }
 
     /// The first window is eframe's root viewport. Anything else leaves it
