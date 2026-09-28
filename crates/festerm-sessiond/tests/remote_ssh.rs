@@ -4,7 +4,10 @@ use std::{
     io,
     path::PathBuf,
     process::{Command, Stdio},
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -17,6 +20,8 @@ use festerm_session::{
 use festerm_sessiond::{PersistentSession, RemoteSshEndpoint};
 use festerm_ssh::{HostIdentity, SshAuthentication, SshConnectionProfile};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -31,7 +36,11 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = PathBuf::from("/tmp").join(format!("fs-rssh-{}-{stamp:x}", std::process::id()));
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let root = PathBuf::from("/tmp").join(format!(
+            "fs-rssh-{}-{stamp:x}-{sequence:x}",
+            std::process::id()
+        ));
         std::fs::create_dir(&root).unwrap();
         let output = helper_command(
             &root,
