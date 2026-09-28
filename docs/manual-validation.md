@@ -589,6 +589,34 @@ comparisons at 100%, 125% and 200%, including fractional clipping and translucen
 before/after qualification still uses the isolated `-FesTermOnly` driver and a
 fresh quiet-desktop interval; no installed application is changed by these tests.
 
+**Default-off host-copy prototype (ADR-0040):** with owner authorization,
+`FESTERM_EXPERIMENTAL_HOST_COPY=1` adds a final-target copy on the eligible
+Windows x64 WARP/BGRA path only. Unset/`0` and all unsupported app routes retain
+existing behavior. Deterministic exact-pixel coverage exercises DPI changes,
+resize, fractional clipping, overlays, opacity fallback, screenshot-target
+usage transitions, and older immutable callbacks after subsequent frames;
+MSAA/depth and incompatible targets are rejected.
+The real-app off/on plus reversed localized campaign passed desktop guards
+and verified actual copy counters: localized mean CPU 8.448% to 5.158%,
+streaming 5.246% to 3.520%, full redraw 11.805% to 9.152%, quiet counter-rounded
+to zero. Producer completion and frame cadence were retained, but individual
+displayed frames and latency were not measured. An initial input-contaminated
+attempt was rejected; every accepted CPU sample required forced cleanup.
+See the terminal-performance README for hashes, memory snapshots and all
+result ranges. This does not close CP-18, approve the vendored architecture,
+or qualify mixed-monitor DPI, native screenshot/overlay presentation,
+multiwindow/transparent surfaces, device recovery, hardware-negative routing,
+latency or graceful shutdown. Run both host-copy settings during those checks,
+and verify fallback instead of assuming a requested copy actually executed.
+
+The final prototype's isolated native-window self-smoke also passed with
+host copying off and on: observed focus, four resize generations, real PTY
+output continuity and CSI 6n recognition. Enabled logs contain actual copies
+at changed sizes; disabled logs contain none. Both self-smoke processes exited
+normally, unlike the separate CPU workload windows. This adds native
+focus/resize evidence, not native screenshot, independent OS-input or general
+shutdown acceptance.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | CP-18 | On supported Windows x64 WARP, compare eligible root-terminal rendering with `FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) versus the supported Direct2D path (unset by default, or explicit `1` for compatibility). Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths remain ordinary painting, no blank/stale frame appears, `0` disables the path, `1` cannot force unsupported conditions, and hardware rendering is unchanged. | Automated framebuffer + native performance + manual interaction; experimental | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and explicit palette-budget fallback. `validation/direct2d/run.ps1` provides the isolated replay and is available through the optional runner with `FESTERM_RUN_DIRECT2D_PROBE=1`. Compare `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer` with `FESTERM_EXPERIMENTAL_DIRECT2D=0` for the ordinary baseline and, on a known eligible WARP host, the supported unset default (or explicit `1`) for the candidate, adding `-RequireDirect2D` to validate automatic/default selection and to reject `0` or invalid values. The aggregate optional Windows runner keeps that strict dense/native-required check explicitly behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or ARM64 machines still run their ordinary optional suite. The probe requires actual native frames and preserves existing CPU/FPS budgets. Single-host sparse/dense application measurements and the keep-#239/#240 review are in the probe README; intermittent idle failures are tracked by #242. Owner approval makes this bounded WARP path default-on, but issue #244 still owns mixed-DPI, multi-window, device-loss, latency, memory and representative-hardware qualification, and ADR-0039 remains Proposed. |

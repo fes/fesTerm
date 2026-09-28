@@ -32,12 +32,12 @@ fn complete(state: &egui_wgpu::RenderState) {
         .expect("complete renderer work");
 }
 
-fn draw(
+pub(super) fn draw(
     state: &egui_wgpu::RenderState,
-    target: &wgpu::TextureView,
+    texture: &wgpu::Texture,
     screen: &egui_wgpu::ScreenDescriptor,
     primitives: &[ClippedPrimitive],
-) {
+) -> bool {
     let mut renderer = state.renderer.write();
     let mut encoder = state.device.create_command_encoder(&Default::default());
     let extra = renderer.update_buffers(
@@ -47,12 +47,19 @@ fn draw(
         primitives,
         screen,
     );
+    let copy = renderer.final_callback_copy(primitives, screen, texture);
+    let paint = if copy.is_some() {
+        &primitives[..primitives.len() - 1]
+    } else {
+        primitives
+    };
+    let target = texture.create_view(&Default::default());
     {
         let mut pass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("residual CPU probe"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: &target,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -63,13 +70,18 @@ fn draw(
                 ..Default::default()
             })
             .forget_lifetime();
-        renderer.render(&mut pass, primitives, screen);
+        renderer.render(&mut pass, paint, screen);
     }
+    if let Some(copy) = copy {
+        copy.encode(&mut encoder, texture);
+    }
+    let copied = copy.is_some();
     state
         .queue
         .submit(extra.into_iter().chain([encoder.finish()]));
     drop(renderer);
     complete(state);
+    copied
 }
 
 struct CompositePaint {
@@ -247,7 +259,10 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
     )
 }
 
-fn read_image(state: &egui_wgpu::RenderState, texture: &wgpu::Texture) -> image::RgbaImage {
+pub(super) fn read_image(
+    state: &egui_wgpu::RenderState,
+    texture: &wgpu::Texture,
+) -> image::RgbaImage {
     let stride = (texture.width() * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
         * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let buffer = state.device.create_buffer(&wgpu::BufferDescriptor {
@@ -300,7 +315,11 @@ fn read_image(state: &egui_wgpu::RenderState, texture: &wgpu::Texture) -> image:
     image::RgbaImage::from_raw(texture.width(), texture.height(), bytes).unwrap()
 }
 
-fn assert_same_pixels(reference: &image::RgbaImage, actual: &image::RgbaImage, label: &str) {
+pub(super) fn assert_same_pixels(
+    reference: &image::RgbaImage,
+    actual: &image::RgbaImage,
+    label: &str,
+) {
     assert_eq!(reference.dimensions(), actual.dimensions(), "{label}");
     assert_eq!(
         reference
@@ -330,12 +349,7 @@ fn draw_with_copy(
     assert!(surface.origin[0] + surface.texture.width() <= texture.width());
     assert!(surface.origin[1] + surface.texture.height() <= texture.height());
     // This test owns the target. An ordinary egui callback cannot do this copy.
-    draw(
-        state,
-        &texture.create_view(&Default::default()),
-        screen,
-        preceding,
-    );
+    draw(state, texture, screen, preceding);
     let mut encoder = state.device.create_command_encoder(&Default::default());
     let mut destination = texture.as_image_copy();
     destination.origin = wgpu::Origin3d {
@@ -424,7 +438,11 @@ fn profile_terminal_residual_cpu() {
         Some(value) if value == "1" => true,
         _ => panic!("FESTERM_TUI_PROFILE_COPY expects 1 or unset"),
     };
-    if direct_copy {
+    let host_copy =
+        super::host_copy_requested(std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY").as_deref())
+            .expect("valid host-copy preference");
+    assert!(!(direct_copy && host_copy), "select only one copy probe");
+    if direct_copy || host_copy {
         state.target_format = wgpu::TextureFormat::Bgra8Unorm;
         *state.renderer.write() =
             egui_wgpu::Renderer::new(&state.device, state.target_format, Default::default());
@@ -436,7 +454,7 @@ fn profile_terminal_residual_cpu() {
     context.set_theme(egui::ThemePreference::Dark);
     context.set_visuals(festerm_ui_egui::theme::default_visuals());
     crate::software_background::install(&context, &state);
-    let status = super::native::install(&context, &state).unwrap();
+    let status = super::native::install_with_host_copy(&context, &state, host_copy).unwrap();
     let scene = std::env::var_os("FESTERM_TUI_PROFILE_SCENE")
         .map(|value| value.into_string().expect("profile scene must be UTF-8"))
         .unwrap_or_else(|| "terminal".into());
@@ -498,12 +516,11 @@ fn profile_terminal_residual_cpu() {
             | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let target = texture.create_view(&Default::default());
     for _ in 0..8 {
         let (mut output, _) = step(&[]);
         renderer.handle_delta(&mut output.textures_delta);
         let paint = context.tessellate(output.shapes, context.pixels_per_point());
-        draw(&state, &target, &screen, &paint);
+        draw(&state, &texture, &screen, &paint);
     }
     let (mut output, actual_dimensions) = step(&Workload::Localized.setup());
     renderer.handle_delta(&mut output.textures_delta);
@@ -514,7 +531,7 @@ fn profile_terminal_residual_cpu() {
         assert_eq!(actual_dimensions, dimensions);
         renderer.handle_delta(&mut output.textures_delta);
         primitives = context.tessellate(output.shapes, context.pixels_per_point());
-        draw(&state, &target, &screen, &primitives);
+        draw(&state, &texture, &screen, &primitives);
     }
     assert!(
         status.active.load(Ordering::Relaxed),
@@ -535,11 +552,11 @@ fn profile_terminal_residual_cpu() {
         &surface,
         CompositeProbe::InterpolatedLoad,
     ));
-    draw(&state, &target, &screen, &primitives);
+    draw(&state, &texture, &screen, &primitives);
     let original_image = read_image(&state, &texture);
-    draw(&state, &target, &screen, &sampled);
+    draw(&state, &texture, &screen, &sampled);
     let sampled_image = read_image(&state, &texture);
-    draw(&state, &target, &screen, &interpolated);
+    draw(&state, &texture, &screen, &interpolated);
     let interpolated_image = read_image(&state, &texture);
     original_image.save(directory.join("original.png")).unwrap();
     sampled_image.save(directory.join("sampled.png")).unwrap();
@@ -771,11 +788,14 @@ fn profile_terminal_residual_cpu() {
                         draw_with_copy(&state, &texture, &screen, &paint, &current);
                         last_copied_frame = Some(paint);
                     } else {
-                        draw(&state, &target, &screen, &paint);
+                        let copied = draw(&state, &texture, &screen, &paint);
+                        if host_copy {
+                            assert!(copied, "host-copy probe silently fell back");
+                        }
                     }
                 }
             } else {
-                draw(&state, &target, &screen, &frozen);
+                draw(&state, &texture, &screen, &frozen);
             }
         };
         for _ in 0..5 {
@@ -796,7 +816,7 @@ fn profile_terminal_residual_cpu() {
         let cpu = process_cpu_time().unwrap() - cpu_start;
         if let Some(paint) = last_copied_frame {
             let copied = read_image(&state, &texture);
-            draw(&state, &target, &screen, &paint);
+            draw(&state, &texture, &screen, &paint);
             let reference = read_image(&state, &texture);
             assert_same_pixels(
                 &reference,
@@ -839,6 +859,7 @@ fn profile_terminal_residual_cpu() {
                 "grid":[120,40], "interval_ms":100, "exact_sampled_pixels":true,
                 "exact_interpolated_pixels":true,
                 "direct_copy_probe":direct_copy,
+                "host_copy_probe":host_copy,
                 "scene":scene, "removed_fill_triangles":removed_fill_triangles,
                 "primitives":metadata, "measurements":measurements,
             }))
