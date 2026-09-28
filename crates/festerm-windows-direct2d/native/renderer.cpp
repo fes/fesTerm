@@ -665,6 +665,18 @@ extern "C" HRESULT festerm_d2d_draw(Bridge* bridge, ID3D12Resource** output) {
     });
 }
 
+extern "C" HRESULT festerm_d2d_process_cpu_ticks(uint64_t* output) {
+    if (!output) return E_INVALIDARG;
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
+        return HRESULT_FROM_WIN32(GetLastError());
+    const auto ticks = [](FILETIME value) {
+        return (uint64_t(value.dwHighDateTime) << 32) | value.dwLowDateTime;
+    };
+    *output = ticks(kernel) + ticks(user);
+    return S_OK;
+}
+
 #ifdef FESTERM_D2D_PROBE
 static std::vector<Frame> frames(std::istream& stream, Renderer& renderer,
     const std::map<uint32_t, Texture>& textures) {
@@ -702,13 +714,9 @@ static std::vector<Frame> frames(std::istream& stream, Renderer& renderer,
 }
 
 static double cpu_ms() {
-    FILETIME created, exited, kernel, user;
-    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
-        throw std::runtime_error("GetProcessTimes failed");
-    const auto ticks = [](FILETIME value) {
-        return (uint64_t(value.dwHighDateTime) << 32) | value.dwLowDateTime;
-    };
-    return double(ticks(kernel) + ticks(user)) / 10000;
+    uint64_t ticks = 0;
+    check(festerm_d2d_process_cpu_ticks(&ticks));
+    return double(ticks) / 10000;
 }
 
 static void self_test() {

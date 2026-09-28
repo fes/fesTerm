@@ -413,6 +413,7 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    local_persistence_provider: PersistenceProviderKind,
     /// The deterministic local tab created only for native-window smoke. The
     /// ordinary no-workspace product path starts at Launcher instead.
     primary_tab: Option<TabId>,
@@ -867,6 +868,7 @@ impl FesTermApp {
         };
         Self {
             state,
+            local_persistence_provider: detect_default_local_persistence_provider(),
             primary_tab,
             window_was_focused: true,
             window_title: APPLICATION_TITLE.to_owned(),
@@ -2219,30 +2221,22 @@ impl FesTermApp {
                 needs_repaint = true;
             }
             let hit_limit = session.pump_session_events();
-            // `hit_limit` alone only reports whether the bounded per-frame
-            // drain was exhausted (backpressure) - a normal, modest burst of
-            // output drains well under the per-frame cap and reports
-            // `false` there even though real output was ingested. Use
-            // `last_pump_output_received()` for "did output actually
-            // arrive", both for scheduling a repaint and for the
-            // background-tab "new output" chip pulse (feature request #68);
-            // relying on `hit_limit` for the latter meant it almost never
-            // fired for ordinary output.
+            // Backend availability already woke this frame, and pumping runs
+            // before painting. Request another frame only for an incomplete
+            // drain, not for output this frame will already display.
+            needs_repaint |= hit_limit;
             let output_received = session.controller.last_pump_output_received();
-            if hit_limit || output_received {
-                needs_repaint = true;
-                if output_received && id != active {
-                    // Only mark a *background* tab as having new output; the
-                    // active tab is already visible, so there is nothing to
-                    // notify the user of.
-                    session.has_new_output_since_active = true;
-                }
+            if output_received && id != active {
+                session.has_new_output_since_active = true;
             }
             session
                 .controller
                 .forward_terminal_replies(&mut session.terminal);
             session.controller.flush_pending_writes();
             session.controller.flush_pending_resize();
+            if let Some(delay) = session.controller.next_resize_repaint_delay() {
+                context.request_repaint_after(delay);
+            }
         }
         if needs_repaint {
             context.request_repaint();
@@ -4885,20 +4879,28 @@ impl FesTermApp {
         egui::Panel::bottom("status_bar")
             .resizable(false)
             .show_separator_line(false)
-            .frame(egui::Frame::new().fill(theme::SURFACE_WINDOW))
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                festerm_ui_egui::statusbar::show(
+                crate::software_background::show_frame(
                     ui,
-                    festerm_ui_egui::statusbar::StatusBarContent {
-                        mode,
-                        context,
-                        dimensions: dimensions.as_deref(),
-                        system: system.as_deref(),
-                        status,
-                        status_label,
-                        detail: detail.as_deref(),
-                        durable_session: durable_session.as_deref(),
-                        port_forwards: port_forwards.as_deref(),
+                    egui::Frame::new().fill(theme::SURFACE_WINDOW),
+                    |ui| {
+                        // Preserve the full-width stretch previously supplied by Panel's frame.
+                        ui.set_min_width(ui.available_width());
+                        festerm_ui_egui::statusbar::show(
+                            ui,
+                            festerm_ui_egui::statusbar::StatusBarContent {
+                                mode,
+                                context,
+                                dimensions: dimensions.as_deref(),
+                                system: system.as_deref(),
+                                status,
+                                status_label,
+                                detail: detail.as_deref(),
+                                durable_session: durable_session.as_deref(),
+                                port_forwards: port_forwards.as_deref(),
+                            },
+                        )
                     },
                 );
             });
@@ -5520,7 +5522,7 @@ impl FesTermApp {
                         self.state.configuration(),
                         pending_edit,
                         pending_create,
-                        detect_default_local_persistence_provider(),
+                        self.local_persistence_provider,
                     );
                 }
                 TabContent::MarkdownViewer(tab) => {
@@ -6141,6 +6143,7 @@ impl FesTermApp {
         let state = AppState::for_test_with_configuration(configuration);
         Self {
             state,
+            local_persistence_provider: PersistenceProviderKind::FestermSessiond,
             primary_tab: None,
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke: None,
@@ -6188,7 +6191,7 @@ impl FesTermApp {
         (app, tab)
     }
 
-    fn for_test_with_fake_ssh_session(
+    pub(crate) fn for_test_with_fake_ssh_session(
         events: impl IntoIterator<Item = festerm_session::SessionEvent>,
     ) -> (Self, TabId, crate::session_controller::fake::FakeSshSession) {
         let mut app = Self::for_test_with_configuration(Configuration::empty());
@@ -6200,6 +6203,15 @@ impl FesTermApp {
             22,
         );
         (app, tab, session)
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub(crate) fn active_terminal_dimensions_for_test(&self) -> festerm_core::Dimensions {
+        self.state
+            .session_tab(self.state.active())
+            .expect("active test terminal")
+            .terminal
+            .dimensions()
     }
 }
 
@@ -6242,6 +6254,38 @@ mod tests {
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         (harness, transport)
+    }
+
+    #[test]
+    fn profiles_repaints_reuse_the_composition_root_provider_default() {
+        for (provider, label) in [
+            (PersistenceProviderKind::FestermSessiond, "fesTerm native"),
+            (PersistenceProviderKind::Tmux, "tmux"),
+            (PersistenceProviderKind::Screen, "GNU screen"),
+        ] {
+            let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+            app.local_persistence_provider = provider;
+            app.state
+                .dispatch(AppCommand::OpenProfiles, &egui::Context::default());
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 1000.0))
+                .with_max_steps(16)
+                .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            harness.run();
+            harness.run_steps(5);
+            harness.get_by_label("New Profile").click();
+            harness.run();
+            harness.get_by_label("Local").click();
+            harness.run();
+            harness.get_by_label("Use a durable local session").click();
+            harness.run();
+            harness.run_steps(5);
+            assert_eq!(
+                harness.get_by_label(label).accesskit_node().toggled(),
+                Some(accesskit::Toggled::True),
+                "repainting Profiles must use the captured default, not rescan the host PATH",
+            );
+        }
     }
 
     #[test]
@@ -9554,6 +9598,74 @@ mod tests {
                 .is_some_and(|chip| chip.pulse_new_output),
             "a background tab's modest output must set the pulse flag"
         );
+    }
+
+    #[test]
+    fn drained_terminal_output_does_not_request_a_redundant_frame() {
+        let context = egui::Context::default();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        for _ in 0..4 {
+            let mut output =
+                context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        transport.push_event(festerm_session::SessionEvent::Output(
+            b"current frame".to_vec(),
+        ));
+        let mut output = context.run_ui(Default::default(), |ui| {
+            app.pump_all_sessions(ui.ctx());
+            assert!(app
+                .state
+                .session_tab(tab)
+                .unwrap()
+                .terminal
+                .row_text(0)
+                .unwrap()
+                .starts_with("current frame"));
+        });
+        output.textures_delta.clear();
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+
+        for _ in 0..10_000 {
+            transport.push_event(festerm_session::SessionEvent::Output(b"x".to_vec()));
+        }
+        let mut output = context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .repaint_delay
+                .is_zero(),
+            "a bounded drain must schedule the remaining events"
+        );
+    }
+
+    #[test]
+    fn pending_terminal_resize_rearms_an_early_frame() {
+        use festerm_ui_egui::EncodedInputSink;
+
+        let context = egui::Context::default();
+        let (mut app, tab, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        for _ in 0..4 {
+            let mut output =
+                context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let controller = &mut app.state.session_tab_mut(tab).unwrap().controller;
+        controller.record_terminal_resize(festerm_core::Dimensions::new(80, 24).unwrap());
+        controller.record_terminal_resize(festerm_core::Dimensions::new(81, 24).unwrap());
+        let mut output = context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+        output.textures_delta.clear();
+        let controller = &app.state.session_tab(tab).unwrap().controller;
+        if controller.next_resize_repaint_delay().is_some() {
+            assert!(
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
+                    <= festerm_ui_egui::TERMINAL_RESIZE_DEBOUNCE
+            );
+        } else {
+            assert_eq!(controller.resize_probe().generations().len(), 2);
+        }
     }
 
     #[test]

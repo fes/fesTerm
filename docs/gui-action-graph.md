@@ -25,11 +25,18 @@ reduced motion automatically without changing the persisted setting.
 Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
-For the large Launcher panel backgrounds, Windows DX12 CPU adapters may use
-the textureless fill pipeline while retaining egui's layout, rounded geometry
-and clipping. Hardware and unsupported surfaces retain standard painting.
+For Launcher, connection forms, Settings cards, Profiles panels, the chrome
+band and the status-bar frame, Windows
+DX12 CPU adapters may use the textureless fill pipeline while retaining egui's
+layout, rounded geometry, borders and clipping. Hardware and unsupported
+surfaces retain standard painting.
 Pixel-equivalence and adapter-policy tests accompany CP-16's native evidence;
 no discovery, unread-state or command-routing semantics change.
+
+For `PROF-01` and `PROF-06`, the default local persistence provider is detected
+once when the composition root creates a window, not by scanning `PATH` on
+each Profiles repaint. Existing profiles and explicit provider choices are
+unaffected; a new window captures a new default.
 
 The native CPU oracle for these edges and `TERM-01` must identify the real
 PID-owned application window, not winit's visible event-target tool window.
@@ -53,6 +60,30 @@ still reports ineligibility. Input ownership, geometry, clipping, colors and
 output consumption remain unchanged. A rejected native frame keeps ordinary
 painting in the same frame. CP-18 tracks the remaining
 native qualification; ADR-0039 remains Proposed and issue #244 remains open.
+
+`TERM-01` also has a controlled TUI performance corpus: quiet populated content,
+localized status updates, streaming primary-screen output, full alternate-screen
+redraws, and recorded Copilot/Vim/htop/tmux screens. The optional completed-render
+replay checks pixels; the separately opt-in Windows Terminal comparison checks
+matched workload delivery, font, grid, native-window identity and CPU. Neither
+GUI frame counts nor offscreen timings establish physical presentation latency.
+See `validation/terminal-performance/README.md` and CP-18.
+
+The optional residual-CPU probe separates frozen full-application composition
+from terminal preparation/drawing using completed GPU work and process-wide CPU
+time. Its diagnostic mesh omissions are not valid production optimizations.
+The chrome fill optimization must preserve every pixel, including fractional
+DPI, clipping and translucent fallback, without changing update cadence.
+
+The supported native path now retains immutable pixels for unchanged
+presentation regions. Small updates redraw only changed regions before normal
+egui-wgpu composition. Session pumping does not request an extra repaint for
+output already displayed by the current frame; bounded-drain continuation and
+background unread state remain independent. Pending resize deadlines re-arm
+an early repaint until the debounced resize can be sent, without an idle poll.
+Session availability uses egui's single-pass wake API rather than its zero-delay
+two-pass widget-settling policy. Every event still requests a wake, including
+events arriving during a frame; no output/frame-rate budget is introduced.
 
 ## How to use the graph
 

@@ -117,7 +117,12 @@ struct EguiRepaintNotifier(egui::Context);
 
 impl SessionEventNotifier for EguiRepaintNotifier {
     fn notify(&self) {
-        self.0.request_repaint();
+        // egui 0.36's zero-delay API schedules TWO frames for widget settling.
+        // Session events are consumed before painting, so only one is needed.
+        // Its nonzero API avoids that extra frame; one nanosecond is not a
+        // frame-rate budget (egui subtracts predicted frame time before waking).
+        self.0
+            .request_repaint_after(std::time::Duration::from_nanos(1));
     }
 }
 
@@ -5190,6 +5195,43 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_notifier_wakes_one_frame_without_a_settling_repaint() {
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        let wakes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = wakes.clone();
+        context.set_request_repaint_callback(move |info| {
+            observed.lock().unwrap().push(info.delay);
+        });
+        let notifier = make_notifier(&context);
+        notifier.notify();
+        assert_eq!(*wakes.lock().unwrap(), [std::time::Duration::ZERO]);
+        let mut output = context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+        assert_eq!(wakes.lock().unwrap().len(), 1);
+
+        let mut output = context.run_ui(Default::default(), |_| notifier.notify());
+        output.textures_delta.clear();
+        assert!(
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .repaint_delay
+                .is_zero(),
+            "output arriving during a frame must still wake a following frame"
+        );
+        let mut output = context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+    }
 
     fn launcher_ids(state: &AppState) -> Vec<TabId> {
         state

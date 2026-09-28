@@ -505,6 +505,15 @@ reproduces its draw cost without desktop input. Native measurements and their
 limits are in `validation/windows-warp/README.md`. This does not replace CP-16's
 accelerated-device, mixed-DPI or usability review.
 
+The same path now covers bordered Settings/Profiles panels, connection forms,
+and running-session groups. `replay_warp_ui_surfaces` renders the real
+application UI at 3548 x 2150 pixels, separately times UI construction and
+completed drawing/readback, and can compare every pixel against a preserved
+baseline. `textureless_bordered_panels_match_pixels_across_dpi` covers border
+geometry in normal CI. Native Settings scrolling, profile interaction, window
+drag/resize responsiveness, and Windows Terminal comparison remain additional
+evidence: an offscreen replay does not establish their latency or parity.
+
 ### Experimental Direct2D qualification
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes
@@ -529,6 +538,56 @@ alone was not a rendering fix. The later hot-stack investigation and Launcher
 rasterization mitigation are documented separately in
 `validation/windows-warp/README.md`, without retroactively classifying that
 older sample.
+
+**Active TUI versus quiet terminal:** `replay_terminal_tui_workloads` adds real
+Copilot/Vim/htop/tmux captures and four shared synthetic workloads with actual
+completed rendering and the existing two-level per-channel native pixel
+tolerance. Repainting the quiet fixture in this offscreen test is deliberately
+forced; it is not an idle-CPU observation. See
+`validation/terminal-performance/README.md` for opt-in execution.
+The separate native comparison uses two isolated applications, temporarily
+registers the bundled font with explicit consent, verifies Windows Terminal's
+reported face and both 120x40 PTYs, and requires quiet warmup/sample intervals.
+Unlike the maximized-window budget probe above, these windows are sized to a
+matched grid; their different physical client/chrome dimensions are recorded.
+Producer write completion and GUI frame counts do not prove displayed updates
+or presentation latency. Native image/interaction review, mixed DPI, device
+recovery, and issue #263's dragging investigation remain separate evidence.
+
+Retained native rendering adds automated multi-frame pixel comparisons across
+100%, 125% and 200% scaling, fractional clipping, erase/recolor/underline,
+cursor, emoji, disabled-painter transitions and overlays. Native texture tests
+also preserve older frame pixels after changed/erased regions and reject invalid
+geometry before reuse. The optional TUI replay requires late localized updates
+to redraw less than one quarter of the terminal surface. These checks are not
+native CPU or presentation-latency measurements. Use the native driver's
+`-FesTermOnly` mode for matched baseline/candidate binaries without starting
+Windows Terminal or registering fonts; JSON records CPU capacity, memory
+snapshots and whether geometry setup required a forced redraw.
+
+The optional `profile_terminal_residual_cpu` measures process-wide CPU with a
+persistent offscreen target and completed submissions, excluding screenshot
+readback from timing. It can include the real app chrome around a deterministic
+fake session, but does not measure ConPTY or native presentation. Its solid-fill
+omission and nearest-sampler cases are explicitly diagnostic. The probe also
+isolates image copying, native solid patches, UI capture and unchanged
+retained validation. `FESTERM_TUI_PROFILE_CASES` selects named cases with strict
+validation. `FESTERM_TUI_PROFILE_COPY=1` adds a BGRA direct-copy compositor
+experiment that requires exact initial/final pixels and owns the target outside
+the production callback. The same-format shader is its control; cadence and
+CPU-ms/frame must be reviewed, not CPU percentage alone. These additions do not
+qualify native presentation or change the production renderer.
+The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
+CPU; its campaign stopped at a later foreground-activation failure. Streaming,
+full-redraw, force-full-repaint control and repeated parity evidence remain
+incomplete. The measured renderer-host boundary and rejected experiments are
+recorded in the terminal-performance README and #267; CP-18 remains open.
+The fesTerm samples required forced cleanup after the graceful-close timeout,
+so sample validity does not qualify shutdown behavior.
+The production chrome/status-bar fill optimization has exact framebuffer
+comparisons at 100%, 125% and 200%, including fractional clipping and translucent fallback. Native
+before/after qualification still uses the isolated `-FesTermOnly` driver and a
+fresh quiet-desktop interval; no installed application is changed by these tests.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
