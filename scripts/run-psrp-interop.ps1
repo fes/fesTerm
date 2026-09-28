@@ -110,6 +110,9 @@ function Invoke-BoundedProcess([string]$FilePath, [string[]]$ArgumentList, [int]
     $stderrPath = Join-Path $WorkDir ("proc-err-" + [Guid]::NewGuid().ToString('N') + '.log')
     $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    # Retain the native handle before waiting: Windows PowerShell's process
+    # wrapper can otherwise lose ExitCode after a fast child has exited.
+    $process.Handle | Out-Null
     $exitCode = $null
     try {
         if (-not $process.WaitForExit($TimeoutMs)) {
@@ -120,6 +123,8 @@ function Invoke-BoundedProcess([string]$FilePath, [string[]]$ArgumentList, [int]
             throw 'bounded-process-timeout'
         }
         $exitCode = $process.ExitCode
+        if ($null -eq $exitCode) { throw 'bounded-process-exit-code-unavailable' }
+        [Console]::Error.WriteLine("psrp-interop child-exit-code=$exitCode")
     } finally {
         foreach ($streamPath in @($stdoutPath, $stderrPath)) {
             if (Test-Path -LiteralPath $streamPath) {
