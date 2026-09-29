@@ -103,6 +103,13 @@ The first implementation supports CommonMark plus these bounded GFM features:
 - fenced code blocks with an optional language label and Copy action; and
 - deterministic, bundled syntax highlighting for a documented language set.
 
+Table columns are measured from unwrapped cell content before sharing the
+reading width. A cell whose measured galley fits the final, integer-normalized
+wrap constraint reuses it; only a squeezed cell needs another layout. This is
+frame-local reuse, not a persistent cache or block virtualization: every cell
+remains a selectable label with the same alignment, Find formatting and
+source identity.
+
 Inline and block raw HTML are displayed as inert source or an explicit
 `HTML not rendered` placeholder. They are never interpreted. Footnotes, math,
 Mermaid/diagrams, custom containers, includes, embedded web content, and
@@ -138,6 +145,12 @@ Find is scoped to the decoded document and works in Preview and Source. It
 shows `N of M`, supports next/previous with wrap, highlights all visible
 matches with a stronger current match, and preserves the current match across
 a same-source manual reload when possible.
+
+All non-overlapping literal matches remain available in source order; Find
+does not cap or truncate the result set. Ordered source-position lookups reuse
+the already-counted Unicode prefix, and highlighting visits only the matches
+overlapping each text run. These are internal cost reductions, not changes to
+match counts, current-match selection, clipping, or Unicode source offsets.
 
 Text selection and Copy produce plain text by default. Code-block Copy copies
 only code content, excluding the language label and line numbers. A future

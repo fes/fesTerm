@@ -266,10 +266,20 @@ the editor, Markdown Preview/Source and both SFTP panes. Deterministic
 regressions cover virtualized directory scrolling through the last row,
 whole-list selection/filtering, Open File activation, Save As selection and
 overwrite wording, editor syntax/Find formats and clipped wrapped line numbers,
-and Markdown source-cache reload/UTF-8 behavior. This extends automated
-evidence for SFTPG-01, EDIT-04/05/06 and MD-04/06; it does not qualify native
-scroll/input latency, GPU presentation, transfer throughput, screen-reader
-navigation or the FD-05/FD-06 native drag/reveal gestures.
+and Markdown source-cache reload/UTF-8 behavior. Markdown Find additionally
+checks complete ordered Unicode/multiline positions and indexed
+Preview/Source highlighting against a full-scan format oracle. The release
+probe includes both Find-heavy views and a separate 20,000-match single-line
+query measurement; no Markdown matches are discarded to achieve the result.
+Four further scenes isolate Preview headings, prose, code and tables. A
+complete constrained-layout oracle checks table-galley reuse across fractional
+wrap widths, DPI, Unicode, empty cells, styles and Find; ordinary table width
+and wrapping regressions remain in place. Separate production-widget gallery
+comparisons cover visible presentation, not native latency.
+This extends automated evidence for SFTPG-01, EDIT-04/05/06 and MD-04/06;
+it does not qualify native scroll/input latency, GPU presentation, transfer
+throughput, screen-reader navigation or the FD-05/FD-06 native drag/reveal
+gestures.
 
 ### Terminal-content search
 

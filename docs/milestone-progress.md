@@ -23,6 +23,43 @@ live/history/alternate buffers, Unicode graphemes and DPI scales. Native
 cross-platform menu placement, screen-reader delivery and human readability
 remain explicit TI-10/TI-14 evidence, not claims derived from headless layout.
 
+## Reusing measured Markdown table cells
+
+Plain Preview still laid out every table cell twice: once to measure its
+natural column width and again at the assigned width, even when it already
+fit. The renderer now retains the first galley and only lays out squeezed
+cells again. It still measures every cell before assigning columns and builds
+every selectable label; neither layout feedback nor offscreen virtualization
+is introduced.
+
+The reuse decision follows epaint's integer wrap-width normalization. A
+complete galley oracle covers the rounding boundaries, six DPI scales, empty
+and styled Unicode cells, and Find, rather than assuming that matching row
+counts proves equivalent output. Repeated release comparisons measured 11.6%
+lower mixed-Preview construction and a further 5.9% reduction with Find against
+the earlier Find improvement. The isolated table timings overlap and did not
+improve in both orders, so they are not a separate qualified speedup. All final
+scene geometry counts agree, and production galleries differ only in generated
+fixture PID digits. The full ranges, variable controls and limited measurement
+scope are recorded in `validation/terminal-performance/README.md`.
+
+## Removing repeated work from Markdown Find
+
+The next document pass found two separate sources of Find cost: every rendered
+text run scanned the entire match list, and each match on a long Unicode line
+counted its source position from the beginning again. Highlighting now locates
+the overlapping ordered range directly, while source-position construction
+counts only the new portion of a line. The viewer still retains every match,
+with the same Unicode offsets, current-match emphasis and navigation behavior.
+
+The release probe now separates Source Find, Preview Find and a 20,000-hit
+Unicode-line query from ordinary rendering. Repeated comparisons confirm the
+Find improvement, not an improvement to plain Preview. Full-scan formatting
+oracles and separate production-widget galleries protect presentation;
+the measurements, unchanged controls and native-evidence boundaries are in
+`validation/terminal-performance/README.md`. Neither this slice nor the earlier
+directory/editor changes establish Windows Terminal parity.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown
