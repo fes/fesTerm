@@ -644,6 +644,138 @@ localized updates redraw less than one quarter of the terminal surface.
 Native before/after CPU results must be recorded separately from these pixel
 and damage-area assertions.
 
+## Narrow damage and native draw culling
+
+The next optimization keeps the supported Windows x64 WARP path and its
+existing frame policy. Within each changed strip, it compares whole triangle
+prefixes/suffixes and bounds both removed and replacement geometry. A one-pixel
+margin protects edge coverage. Changed primitive structure, clips or texture
+identity retain conservative strip damage; texture, scale and surface changes
+still invalidate retention.
+
+The patch replays original primitives in their original order and raster
+coordinates. Merely shrinking the old strip render target changed low-order
+mask pixels, and splitting a resampled glyph across strip clips also differed
+from full rendering. Both approaches were rejected. The final path preserves
+the full frame's raster origin, clips painting to the damage, and skips native
+quad draws outside that clip only **after complete frame validation**.
+Published images remain immutable. Temporary images include origin padding;
+their aggregate pixel area cannot exceed one full surface, and geometry must
+leave room for the clearing rectangle. Otherwise the original full draw runs.
+`updated_pixels` measures replacements in the result, not padding cleared in
+those temporary images.
+
+### Guarded native results
+
+The release original/candidate/candidate/original sequence used all four
+workloads in each run: 16 valid samples, with no concurrent build or probe.
+Windows x64, 16 logical processors, Microsoft Basic Render Driver/WARP
+`10.0.26100.9278`, 2058x1658 physical fesTerm clients, 192 DPI, 120x40 cells
+and bundled JetBrains Mono NL were unchanged. Host copying was explicitly
+disabled with `FESTERM_EXPERIMENTAL_HOST_COPY=0`.
+
+| Workload | Original CPU range | Candidate CPU range | Original / candidate GUI frames/s |
+| --- | ---: | ---: | --- |
+| Quiet | 0.048-0.068% | 0.000-0.019% | 0 / 0 |
+| Localized | 8.943-9.469% | 5.955-6.546% | 10.034-10.043 / 10.014-10.047 |
+| Streaming | 5.749-6.593% | 5.567-6.458% | 11.217-11.434 / 11.242-11.717 |
+| Full redraw | 7.914-12.978% | 10.860-11.213% | 10.024-10.031 / 10.019-10.032 |
+
+Localized mean CPU fell from **9.206% to 6.250%, a 32.1% reduction**.
+Streaming/full-redraw results overlap and are variable; no improvement is
+claimed for either. In particular, full-redraw mean CPU was 5.7% higher in
+this sequence, within the much wider original range. Quiet counter-level
+differences are not a useful relative speedup.
+
+Each producer completed 200 ticks at 100ms, with identical bytes per workload:
+3,990 quiet, 23,790 localized, 28,182 streaming and 796,990 full redraw.
+Final writes ranged from 20,000.265 to 20,001.070ms. Input, foreground,
+responsiveness, geometry and native-renderer guards passed. Localized
+working-set snapshots changed from 225.89-235.28 to 182.38-186.73 MiB;
+private bytes from 496.75-505.68 to 452.07-456.00 MiB. These are snapshots,
+not peaks or long-run memory qualification. All 16 fesTerm processes required
+the existing PID-scoped forced cleanup after the close timeout; this does not
+qualify shutdown.
+
+### Completed-work and pixel evidence
+
+The application-scene offscreen ABBA profile used five warmups and 100 completed
+draws at requested 10Hz for each case. All four initial application images
+matched exactly. Ranges below include both observations, in CPU-ms/frame:
+
+| Case | Original CPU | Candidate CPU | Original / candidate completed wall ms/frame |
+| --- | ---: | ---: | --- |
+| Localized, including final composition | 115.16-117.03 | 75.94-85.00 | 51.37-51.42 / 32.13-34.79 |
+| UI/native update, excluding final composition | 41.25-44.53 | 13.59-13.91 | 32.38-32.53 / 13.12-13.80 |
+
+Mean complete-frame CPU fell 30.7%; the UI/native stage fell 67.9%.
+Completed offscreen wall time fell 34.9%, **not a native input/presentation
+latency claim**. Frozen-composition controls ranged from 53.44 to 94.84
+CPU-ms/frame across the same runs: scheduling/worker variability remains
+substantial, and isolated costs must not be subtracted as an exact breakdown.
+Last localized replacements fell from 258,432 to 21,105 of 2,982,063 pixels
+(8.7% to 0.7%); this does not count temporary-image padding or final composition.
+
+New deterministic regressions require exact native/full-frame equality at
+100%, 125%, 150% and 200%, including moved/deleted glyphs, resampling,
+translucent overlap, feathered triangles, fractional coordinates, clip changes,
+texture replacement, resize and older-frame ownership. They cover removed
+triangles, changed corners, conservative metadata fallback and both geometry
+and aggregate scratch-area limits. Existing invalid-unused-vertex validation
+and the ordinary/native terminal comparisons keep their original checks.
+The eight-workload replay still requires the existing maximum two-level
+native/ordinary per-channel tolerance, not a relaxed oracle.
+
+### Remaining Windows Terminal gap
+
+A separate guarded comparison completed all four workloads and the requested
+Windows Terminal full-repaint control with the same producer, font and grid.
+These are individual pairs, not repeated parity qualification:
+
+| Workload | fesTerm candidate CPU | Windows Terminal 1.23.20211.0 CPU |
+| --- | ---: | ---: |
+| Quiet | 0.010% | 0.000% |
+| Localized | 5.227% | 0.165% |
+| Streaming | 5.143% | 0.291% |
+| Full redraw | 12.383% | 1.155% |
+
+The Windows Terminal localized force-full-repaint control measured 0.640%.
+All nine samples passed guards; all four fesTerm instances again required
+forced cleanup. Earlier retained candidate runs had different reference
+costs (0.864% localized and 0.302% requested full repaint), so these controls
+do not establish a universal partial/full-repaint ratio.
+The active-workload parity target is still missed by a wide margin. Final
+shader composition remains, host copying stays default-off, and hardware,
+mixed-monitor, device-loss, dragging and physical-latency evidence under
+CP-18/#244/#263/#267 remains open.
+
+### Reproduction and artifact identity
+
+The source baseline is v0.7.1, `1310a2be0f2bc3b36b0ed282932747ca4e5a0278`.
+Use the existing staging script, `compare-windows.ps1 -FesTermOnly`, and fresh
+directories in original/candidate/candidate/original order. Leave host copying
+off. For the shorter offscreen sequence, select
+`frozen-all,localized-all,localized-without-composition,frozen-all-repeat` in
+`FESTERM_TUI_PROFILE_CASES` and pass the first `original.png` through
+`FESTERM_TUI_PROFILE_REFERENCE`. Explicitly wait for each executable to exit;
+do not overlap GUI-subsystem executables or run builds during sampling.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Original native application | `2336943EC113BCC03D6CCABD08E0665F01DCFA442DD9B415C3A60DD1C2968322` |
+| Candidate native application | `BA444FB42500177E439F196445D188043B6234D3E1F68ADE4C821D5F4DF45055` |
+| Original test/probe executable | `06C71C54F4396AFF3396BB25CFCE05920A64E3DAD9F2ADCF6C8DA1A2ED240521` |
+| Candidate test/probe executable | `670D06EB7E99553804810BC15E36D99122A7B6DB2D0595F0481AB7CE98BEE654` |
+| Shared producer | `F4A3E5C56BBFC8576255A38CC3E8665624753572CA52C70FB5F252FFC7BF9899` |
+| Windows Terminal executable | `5BE86C25DA23D4C6F0042EF4CD836DECC1E1AF0E476724D6FC9270F3C5F6CB68` |
+
+Local evidence is retained under `target\perf-campaign\terminal-bounded-native-*`,
+`terminal-bounded-profile-*` and `terminal-bounded-windows-terminal`.
+Earlier full-canvas and uncapped intermediate candidates remain separately in
+`terminal-native-abba-*`, `terminal-damage-abba-*`, `terminal-final-native-*`
+and `terminal-final-profile-*`; their numbers are not substituted for the
+final bounded candidate above.
+
 ## Native retained-rendering and wakeup results
 
 The next implementation preserves the frame-rate/input/output policy but

@@ -350,6 +350,13 @@ public:
         for (const auto& group : frame) {
             context->PushAxisAlignedClip(group.clip, D2D1_ANTIALIAS_MODE_ALIASED);
             for (const auto& item : group.draws) {
+                // Preparation validated the whole mesh; retain a pixel of edge coverage.
+                if (item.kind != Draw::Triangle &&
+                    (item.destination.right < group.clip.left - 1 ||
+                     item.destination.bottom < group.clip.top - 1 ||
+                     item.destination.left > group.clip.right + 1 ||
+                     item.destination.top > group.clip.bottom + 1))
+                    continue;
                 brush->SetColor(item.color.straight());
                 switch (item.kind) {
                 case Draw::Rectangle:
