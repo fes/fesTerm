@@ -70,6 +70,52 @@ in CP-19 rather than inferred from a metadata file or a unit test. AppImages
 require desktop integration; mobile and Store-specific document permissions
 remain outside this direct-distribution desktop slice.
 
+## Narrowing native damage without changing glyph pixels
+
+The performance campaign returned to the default WARP renderer after measuring
+editor, Markdown and directory-browser work. A localized update still repainted
+whole horizontal strips. Comparing triangle prefixes and suffixes now bounds
+the changed old and new geometry, while native quad draws outside the resulting
+clip are skipped only after complete validation.
+
+Smaller rectangles alone were not correct: moving a resampled mask's raster
+origin or splitting it across strip clips changed low-order pixels. The final
+path replays original glyphs in their original coordinate system, copies only
+the damaged result, and bounds temporary padded raster storage by one full
+surface's pixel area. Exact native/full-frame coverage includes fractional DPI,
+erasure, translucent and feathered overlap, clipping, texture replacement,
+resize and older immutable images.
+
+Review then exposed a different cost that the pixel-area budget did not bound:
+each separated patch cloned and prepared the complete terminal mesh again.
+A deterministic four-patch reproduction counted five native preparations.
+The renderer now prepares once and reuses the original native draw groups
+through separate clips, without moving their raster origin or adding clearing
+geometry. Regressions for 4, 8 and 31 separated changes require one preparation,
+small retained updates, exact full-render pixels and unchanged older images.
+Production timing diagnostics also reduced localized preparations from two to
+one and median preparation time from 2.256 to 1.116ms. However, fresh matched
+native runs did not establish additional whole-application CPU savings:
+localized and streaming sample means increased, while full redraw decreased
+and unchanged composition controls varied. Those adverse results are recorded
+alongside the preparation improvement rather than hidden by it. Per-patch
+draw/submission work and final composition remain.
+
+The initial guarded native original/candidate/candidate/original sequence
+completed all four workloads. Localized mean CPU fell from 9.206% to 6.250%,
+**32.1% lower**, with the same producer bytes and cadence. Streaming and full redraw remain
+variable, without a claimed improvement. Completed-work profiles independently
+reduced localized whole-frame CPU by 30.7% and UI/native work without final
+composition by 67.9%; those are not physical input or presentation latency.
+
+The remaining gap is still substantial: the final matched localized pair was
+5.227% versus Windows Terminal's 0.165%. Full-window composition remains, the
+host-copy prototype stays default-off, and native workload cleanup still needed
+forced termination. The full ranges, rejected pixel experiments, memory
+snapshots, hashes and qualification boundaries are recorded in
+`validation/terminal-performance/README.md`; CP-18 and the remaining renderer
+investigation are not closed.
+
 ## Crossing the final-target boundary without replacing egui
 
 The owner authorized a real-app, default-off prototype after the residual-cost

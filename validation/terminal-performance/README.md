@@ -644,6 +644,234 @@ localized updates redraw less than one quarter of the terminal surface.
 Native before/after CPU results must be recorded separately from these pixel
 and damage-area assertions.
 
+## Narrow damage and native draw culling
+
+The next optimization keeps the supported Windows x64 WARP path and its
+existing frame policy. Within each changed strip, it compares whole triangle
+prefixes/suffixes and bounds both removed and replacement geometry. A one-pixel
+margin protects edge coverage. Changed primitive structure, clips or texture
+identity retain conservative strip damage; texture, scale and surface changes
+still invalidate retention.
+
+The patch replays original primitives in their original order and raster
+coordinates. Merely shrinking the old strip render target changed low-order
+mask pixels, and splitting a resampled glyph across strip clips also differed
+from full rendering. Both approaches were rejected. The final path preserves
+the full frame's raster origin, clips painting to the damage, and skips native
+quad draws outside that clip only **after complete frame validation**.
+Published images remain immutable. Temporary images include origin padding;
+their aggregate pixel area cannot exceed one full surface. Otherwise the
+original full draw runs. The preparation-reuse follow-up below removes the
+extra clearing primitive and its geometry-headroom requirement; complete
+original-frame geometry limits remain enforced.
+`updated_pixels` measures replacements in the result, not padding cleared in
+those temporary images.
+
+### Guarded native results
+
+These native and completed-work results describe the initial narrow-damage
+implementation submitted as `f9c6b9b`, before the preparation-reuse follow-up.
+The release original/candidate/candidate/original sequence used all four
+workloads in each run: 16 valid samples, with no concurrent build or probe.
+Windows x64, 16 logical processors, Microsoft Basic Render Driver/WARP
+`10.0.26100.9278`, 2058x1658 physical fesTerm clients, 192 DPI, 120x40 cells
+and bundled JetBrains Mono NL were unchanged. Host copying was explicitly
+disabled with `FESTERM_EXPERIMENTAL_HOST_COPY=0`.
+
+| Workload | Original CPU range | Candidate CPU range | Original / candidate GUI frames/s |
+| --- | ---: | ---: | --- |
+| Quiet | 0.048-0.068% | 0.000-0.019% | 0 / 0 |
+| Localized | 8.943-9.469% | 5.955-6.546% | 10.034-10.043 / 10.014-10.047 |
+| Streaming | 5.749-6.593% | 5.567-6.458% | 11.217-11.434 / 11.242-11.717 |
+| Full redraw | 7.914-12.978% | 10.860-11.213% | 10.024-10.031 / 10.019-10.032 |
+
+Localized mean CPU fell from **9.206% to 6.250%, a 32.1% reduction**.
+Streaming/full-redraw results overlap and are variable; no improvement is
+claimed for either. In particular, full-redraw mean CPU was 5.7% higher in
+this sequence, within the much wider original range. Quiet counter-level
+differences are not a useful relative speedup.
+
+Each producer completed 200 ticks at 100ms, with identical bytes per workload:
+3,990 quiet, 23,790 localized, 28,182 streaming and 796,990 full redraw.
+Final writes ranged from 20,000.265 to 20,001.070ms. Input, foreground,
+responsiveness, geometry and native-renderer guards passed. Localized
+working-set snapshots changed from 225.89-235.28 to 182.38-186.73 MiB;
+private bytes from 496.75-505.68 to 452.07-456.00 MiB. These are snapshots,
+not peaks or long-run memory qualification. All 16 fesTerm processes required
+the existing PID-scoped forced cleanup after the close timeout; this does not
+qualify shutdown.
+
+### Completed-work and pixel evidence
+
+The application-scene offscreen ABBA profile used five warmups and 100 completed
+draws at requested 10Hz for each case. All four initial application images
+matched exactly. Ranges below include both observations, in CPU-ms/frame:
+
+| Case | Original CPU | Candidate CPU | Original / candidate completed wall ms/frame |
+| --- | ---: | ---: | --- |
+| Localized, including final composition | 115.16-117.03 | 75.94-85.00 | 51.37-51.42 / 32.13-34.79 |
+| UI/native update, excluding final composition | 41.25-44.53 | 13.59-13.91 | 32.38-32.53 / 13.12-13.80 |
+
+Mean complete-frame CPU fell 30.7%; the UI/native stage fell 67.9%.
+Completed offscreen wall time fell 34.9%, **not a native input/presentation
+latency claim**. Frozen-composition controls ranged from 53.44 to 94.84
+CPU-ms/frame across the same runs: scheduling/worker variability remains
+substantial, and isolated costs must not be subtracted as an exact breakdown.
+Last localized replacements fell from 258,432 to 21,105 of 2,982,063 pixels
+(8.7% to 0.7%); this does not count temporary-image padding or final composition.
+
+New deterministic regressions require exact native/full-frame equality at
+100%, 125%, 150% and 200%, including moved/deleted glyphs, resampling,
+translucent overlap, feathered triangles, fractional coordinates, clip changes,
+texture replacement, resize and older-frame ownership. They cover removed
+triangles, changed corners, conservative metadata fallback and both geometry
+and aggregate scratch-area limits. Existing invalid-unused-vertex validation
+and the ordinary/native terminal comparisons keep their original checks.
+The eight-workload replay still requires the existing maximum two-level
+native/ordinary per-channel tolerance, not a relaxed oracle.
+
+### Preparation reuse after review
+
+Owner review found that the scratch-pixel budget did not bound geometry work:
+each separated patch cloned the original primitives and prepared the entire
+terminal-wide mesh again. A deterministic four-patch regression reproduced
+**five native geometry preparations**, including the initial full prepare.
+
+The correction reuses that initial prepared frame for every damage clip.
+Only the clip and padded target size vary; original raster coordinates,
+unsplit glyphs, draw order and the complete texture set stay fixed. Prepared
+dimensions are stored separately from each scratch target's dimensions, so
+later patches can extend beyond an earlier smaller target. Native clearing
+already erases the opaque scratch surface; an extra clearing quad is unnecessary.
+Published images and the aggregate scratch-area bound remain unchanged.
+
+`scattered_retained_damage_prepares_full_geometry_only_once` covers 4 separated
+changes at 1024 pixels high, 8 at 4096 pixels, and 31 narrow left-side changes
+at 4096 pixels. All require exactly one actual native preparation, original
+vertex/index counts, small retained damage, exact full-render pixels and
+unchanged older images. The revised budget regression admits a valid input at
+the primitive limit without adding geometry, while still requiring a full
+redraw when aggregate padded scratch area exceeds one surface. This bounds
+preparation work, not the number of patch draws/submissions or final composition.
+
+The reviewed `f9c6b9b` build, with preparation-count instrumentation only, was
+compared with the reuse build in both ABBA and BAAB order. All 32 native samples
+passed the existing guards, without concurrent builds or probes. Clients stayed
+2058x1658 at 192 DPI, with 120x40 cells, 16 logical processors, the same WARP
+driver and a 4480x2424 monitor work area. Host copying stayed explicitly off.
+These are fresh comparisons against the reviewed implementation, not additional
+samples of the earlier v0.7.1 comparison.
+
+| Workload | Reviewed CPU, ABBA | Reuse CPU, ABBA | Reviewed CPU, BAAB | Reuse CPU, BAAB |
+| --- | ---: | ---: | ---: | ---: |
+| Quiet | 0.010-0.039% | 0.010-0.029% | 0.010-0.029% | 0.010-0.019% |
+| Localized | 6.148-8.087% | 6.856-7.490% | 5.722-6.710% | 6.930-7.434% |
+| Streaming | 4.317-5.291% | 5.842-6.661% | 4.442-6.525% | 4.332-6.441% |
+| Full redraw | 11.879-12.458% | 11.157-12.098% | 11.465-12.975% | 11.004-11.465% |
+
+**No additional whole-application CPU improvement is claimed.** Across both
+orders, localized mean CPU increased 7.7% and streaming increased 13.1%, while
+full redraw decreased 6.3%. Streaming's direction reversed between orders.
+The unchanged frozen-composition controls below also varied substantially.
+These observations do not identify the source of that variation or exclude a
+whole-application regression; the preparation-count bound must not be used to
+explain away the higher process CPU measurements.
+
+Each producer still completed 200 ticks at 100ms and the same bytes per workload
+as above; final writes were 20,000.172-20,001.219ms. Localized GUI construction
+was 9.941-10.128 frames/s for the reviewed build and 10.025-10.150 for reuse.
+All 32 primary samples needed PID-scoped forced cleanup.
+
+The eight corresponding offscreen processes retained exact initial application
+pixels and 21,105 replaced pixels out of 2,982,063 for localized work. Each case
+used five warmups and 100 completed draws at requested 10Hz:
+
+| Case | Reviewed CPU ms/frame | Reuse CPU ms/frame | Reviewed / reuse completed wall ms/frame |
+| --- | ---: | ---: | --- |
+| Frozen composition, first | 58.44-89.84 | 89.22-116.88 | 15.64-17.03 / 15.14-18.62 |
+| Localized, including composition | 96.72-136.41 | 72.81-123.28 | 32.95-35.60 / 30.19-34.73 |
+| UI/native update, excluding composition | 13.59-14.38 | 11.72-18.13 | 12.95-13.97 / 12.42-13.64 |
+| Frozen composition, repeated | 70.31-103.91 | 70.94-103.13 | 15.75-16.56 / 16.21-17.27 |
+
+A separate diagnostic pair enabled `FESTERM_DIRECT2D_TIMINGS=1`; its process CPU
+is not pooled with the primary samples. All 101 sampled localized frames in
+each build recorded the same 13,340 input vertices and two damaged regions.
+Native preparations fell from two to one, geometry-preparation median elapsed
+time from 2.256 to 1.116ms, and total native-painter median from 9.948 to 7.506ms.
+Streaming already used one preparation in both builds, with preparation medians
+of 0.316 and 0.317ms. These are CPU-side elapsed times through native
+allocation/submission, not completed GPU work, process-wide CPU or presentation
+latency. They support the specific preparation correction, not a new parity claim.
+The updated candidate also passed all eight ordinary/native workload replays
+with the unchanged per-channel tolerance and localized-damage-area gate.
+
+| Follow-up artifact | SHA256 |
+| --- | --- |
+| Reviewed application with counter | `F496BA2E9F0059CF93923A36136797D46C52D110EEBB3F626D3E86D8A7B3422F` |
+| Reuse application | `6B15A8B69EA445F4D6578C9B50F5EBFD5426C50AF08B5ACD08B9CF8E079F9976` |
+| Reviewed test/probe with counter | `DCA090B6767108983506AA7D87C032D87FB4C319BCF363A0EFF31EA5F26312D6` |
+| Reuse test/probe | `7CED90DB0A0A3951D8A143532A759B89AB143279CFEB0E155D91FE0640EF4AF1` |
+
+The producer hash is unchanged. Follow-up evidence is retained separately in
+`target\perf-campaign\terminal-prepared2-*`, `terminal-prepared-reverse-*`,
+`terminal-prepared-timings-*`, `terminal-prepared-summary.json` and
+`terminal-prepared-timing-summary.json`; the final candidate replay is in
+`terminal-prepared-replay`. The initial `terminal-prepared-profile-*`
+invocation failed option validation before sampling because the diagnostic copy
+flag was set to `0` rather than left unset; its logs remain separate. Native
+samples were not automatically retried or admitted with weakened guards.
+
+### Remaining Windows Terminal gap
+
+A separate guarded comparison of the initial narrow-damage implementation
+completed all four workloads and the requested Windows Terminal full-repaint
+control with the same producer, font and grid.
+These are individual pairs, not repeated parity qualification:
+
+| Workload | fesTerm candidate CPU | Windows Terminal 1.23.20211.0 CPU |
+| --- | ---: | ---: |
+| Quiet | 0.010% | 0.000% |
+| Localized | 5.227% | 0.165% |
+| Streaming | 5.143% | 0.291% |
+| Full redraw | 12.383% | 1.155% |
+
+The Windows Terminal localized force-full-repaint control measured 0.640%.
+All nine samples passed guards; all four fesTerm instances again required
+forced cleanup. Earlier retained candidate runs had different reference
+costs (0.864% localized and 0.302% requested full repaint), so these controls
+do not establish a universal partial/full-repaint ratio.
+The active-workload parity target is still missed by a wide margin. Final
+shader composition remains, host copying stays default-off, and hardware,
+mixed-monitor, device-loss, dragging and physical-latency evidence under
+CP-18/#244/#263/#267 remains open.
+
+### Initial comparison: reproduction and artifact identity
+
+The source baseline is v0.7.1, `1310a2be0f2bc3b36b0ed282932747ca4e5a0278`.
+Use the existing staging script, `compare-windows.ps1 -FesTermOnly`, and fresh
+directories in original/candidate/candidate/original order. Leave host copying
+off. For the shorter offscreen sequence, select
+`frozen-all,localized-all,localized-without-composition,frozen-all-repeat` in
+`FESTERM_TUI_PROFILE_CASES` and pass the first `original.png` through
+`FESTERM_TUI_PROFILE_REFERENCE`. Explicitly wait for each executable to exit;
+do not overlap GUI-subsystem executables or run builds during sampling.
+
+| Artifact | SHA256 |
+| --- | --- |
+| Original native application | `2336943EC113BCC03D6CCABD08E0665F01DCFA442DD9B415C3A60DD1C2968322` |
+| Candidate native application | `BA444FB42500177E439F196445D188043B6234D3E1F68ADE4C821D5F4DF45055` |
+| Original test/probe executable | `06C71C54F4396AFF3396BB25CFCE05920A64E3DAD9F2ADCF6C8DA1A2ED240521` |
+| Candidate test/probe executable | `670D06EB7E99553804810BC15E36D99122A7B6DB2D0595F0481AB7CE98BEE654` |
+| Shared producer | `F4A3E5C56BBFC8576255A38CC3E8665624753572CA52C70FB5F252FFC7BF9899` |
+| Windows Terminal executable | `5BE86C25DA23D4C6F0042EF4CD836DECC1E1AF0E476724D6FC9270F3C5F6CB68` |
+
+Local evidence is retained under `target\perf-campaign\terminal-bounded-native-*`,
+`terminal-bounded-profile-*` and `terminal-bounded-windows-terminal`.
+Earlier full-canvas and uncapped intermediate candidates remain separately in
+`terminal-native-abba-*`, `terminal-damage-abba-*`, `terminal-final-native-*`
+and `terminal-final-profile-*`; their numbers are not substituted for the
+final bounded candidate above.
+
 ## Native retained-rendering and wakeup results
 
 The next implementation preserves the frame-rate/input/output policy but

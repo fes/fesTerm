@@ -578,6 +578,26 @@ native CPU or presentation-latency measurements. Use the native driver's
 Windows Terminal or registering fonts; JSON records CPU capacity, memory
 snapshots and whether geometry setup required a forced redraw.
 
+Narrow-damage coverage additionally compares native partial/full pixels exactly
+at 100%, 125%, 150% and 200%, including resampled glyphs, feathered/translucent
+overlap, erasure, clipping, texture replacement, resize and immutable older
+frames. Original-frame geometry limits and aggregate padded-raster fallback
+remain enforced. A preparation-count regression covers 4, 8 and 31 separated
+changes in a full-frame-clipped mesh at 1024- and 4096-pixel heights: each
+retained update performs exactly one native geometry preparation, replaces a
+small area, matches a complete native render exactly and preserves older
+published pixels. This bounds preparation work independently of scratch area;
+it does not eliminate per-patch drawing or final composition.
+The [narrow-damage campaign](../validation/terminal-performance/README.md#narrow-damage-and-native-draw-culling)
+initially completed a guarded 16-sample native ABBA sequence: localized mean CPU
+fell 32.1%, with unchanged producer bytes/cadence; streaming/full-redraw remained
+variable and have no claimed improvement. A fresh Windows Terminal comparison
+completed all four workloads and the requested full-repaint control, but active
+parity remains far off. All fesTerm workload windows still required forced
+cleanup. Damage counters describe pixels replaced in the result, not temporary
+raster padding or presentation. This evidence does not close CP-18, qualify
+hardware/monitor transitions, establish physical latency or fix #263 dragging.
+
 The optional `profile_terminal_residual_cpu` measures process-wide CPU with a
 persistent offscreen target and completed submissions, excluding screenshot
 readback from timing. It can include the real app chrome around a deterministic
