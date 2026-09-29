@@ -2114,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-ios-window"
-version = "0.6.0"
+version = "0.7.1"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.4",
@@ -2151,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-mobile"
-version = "0.6.0"
+version = "0.7.1"
 dependencies = [
  "eframe",
  "festerm-core",
