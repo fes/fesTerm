@@ -95,6 +95,8 @@ try {
     Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
 }
 
+$window = [IntPtr]::Zero
+$descendants = @()
 try {
     $deadline = (Get-Date).AddSeconds(10)
     do {
@@ -106,6 +108,8 @@ try {
     if ($window -eq [IntPtr]::Zero) {
         throw 'fesTerm did not create a native application window.'
     }
+    $descendants = @(Get-FesTermOwnedProcessTree -Process $process)
+    $descendants | ConvertTo-Json -Depth 5 | Set-Content "$nativeResultPath.child-tree.json"
 
     [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
     [void] [FesTermOsInputNative]::ShowWindow($window, 5)
@@ -202,14 +206,29 @@ try {
             Boundary='Independent native OS input and external desktop captures, not a CPU sample'
         } | ConvertTo-Json -Depth 6 | Set-Content "$CaptureDirectory\manifest.json"
     }
+} catch {
+    [pscustomobject]@{
+        SourceSha=(& git -C $repositoryRoot rev-parse HEAD)
+        Configuration=$Configuration;SkipBuild=[bool]$SkipBuild
+        ExecutableSha256=(Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
+        ProcessId=$process.Id;Status='fail';Error=$_.ToString()
+        HostCopy=$env:FESTERM_EXPERIMENTAL_HOST_COPY
+        Retention=$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
+    } | ConvertTo-Json -Depth 5 | Set-Content "$nativeResultPath.failure.json"
+    throw
 } finally {
     $process.Refresh()
-    $forced = -not $process.HasExited
-    if ($forced) {
-        Stop-Process -Id $process.Id
-        if (-not $process.WaitForExit(5000)) { throw 'Owned OS-input process cleanup did not finish.' }
+    if ($window -ne [IntPtr]::Zero) {
+        Close-FesTermOwnedApplication -Process $process -Window $window -ConfirmQuit -KnownDescendants $descendants |
+            ConvertTo-Json -Depth 6 | Set-Content "$nativeResultPath.cleanup.json"
+    } else {
+        $forced = -not $process.HasExited
+        if ($forced) {
+            Stop-Process -Id $process.Id
+            if (-not $process.WaitForExit(5000)) { throw 'Owned OS-input process cleanup did not finish.' }
+        }
+        [pscustomobject]@{ProcessId=$process.Id;Forced=$forced;ExitCode=$process.ExitCode} |
+            ConvertTo-Json | Set-Content "$nativeResultPath.cleanup.json"
     }
-    [pscustomobject]@{ProcessId=$process.Id;Forced=$forced;ExitCode=$process.ExitCode} |
-        ConvertTo-Json | Set-Content "$nativeResultPath.cleanup.json"
     if (-not $CaptureDirectory) { Remove-Item -LiteralPath $isolation -Recurse -Force }
 }

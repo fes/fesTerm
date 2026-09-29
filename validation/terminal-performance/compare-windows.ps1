@@ -93,11 +93,6 @@ public static class TuiComparisonNative {
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr w, uint flags);
     [DllImport("user32.dll", SetLastError=true)] static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll", SetLastError=true)] static extern bool RedrawWindow(IntPtr w, IntPtr rect, IntPtr region, uint flags);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr w);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr w, out uint processId);
-    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll", SetLastError=true)] static extern bool AttachThreadInput(uint thread, uint target, bool attach);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr w);
     [DllImport("user32.dll", SetLastError=true)] static extern bool SetWindowPos(IntPtr w, IntPtr z, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll", SetLastError=true)] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
@@ -107,21 +102,6 @@ public static class TuiComparisonNative {
     public static void RemoveFont(string file) { if(!RemoveFontResourceExW(file,0,IntPtr.Zero)) throw new Win32Exception(); }
     public static void Refresh(IntPtr w) {
         if(!RedrawWindow(w,IntPtr.Zero,IntPtr.Zero,0x101)) throw new Win32Exception();
-    }
-    public static void ActivateOwned(IntPtr w,int processId) {
-        uint owner;
-        if(GetWindowThreadProcessId(w,out owner)==0 || owner!=(uint)processId) throw new InvalidOperationException("Window owner changed.");
-        var deadline=System.Diagnostics.Stopwatch.StartNew();
-        while(GetForegroundWindow()==IntPtr.Zero && deadline.ElapsedMilliseconds<2000) System.Threading.Thread.Sleep(50);
-        if(GetForegroundWindow()==w || SetForegroundWindow(w)) return;
-        if(!SetWindowPos(w,IntPtr.Zero,0,0,0,0,0x43)) throw new Win32Exception();
-        if(GetForegroundWindow()==w || SetForegroundWindow(w)) return;
-        uint foreground=GetWindowThreadProcessId(GetForegroundWindow(),out owner),current=GetCurrentThreadId();
-        if(foreground==0 || foreground==current) throw new InvalidOperationException("Foreground activation unavailable.");
-        if(!AttachThreadInput(current,foreground,true)) throw new Win32Exception();
-        try {
-            if(!SetForegroundWindow(w)) throw new InvalidOperationException("Owned window could not become foreground.");
-        } finally { if(!AttachThreadInput(current,foreground,false)) throw new Win32Exception(); }
     }
     public static int[] Metrics(IntPtr w) {
         var old=SetThreadDpiAwarenessContext(new IntPtr(-4)); if(old==IntPtr.Zero) throw new Win32Exception();
@@ -319,7 +299,6 @@ terminal_ligatures = false
                 $window = [FesTermApplicationWindow]::Find($process.Id)
                 $geometry = Read-Geometry "$start.geometry.json"
             } while (($window -eq [IntPtr]::Zero -or $null -eq $geometry) -and [DateTime]::UtcNow -lt $deadline)
-            [TuiComparisonNative]::ActivateOwned($window,$process.Id)
             [FesTermApplicationWindow]::Activate($window,$process.Id)
             if ($null -eq $geometry) { throw "$name did not publish PTY geometry." }
             if ($process.Path -ne $executable) { throw "$name process identity did not match its isolated executable." }

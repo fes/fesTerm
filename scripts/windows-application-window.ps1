@@ -105,15 +105,25 @@ public static class FesTermApplicationWindow {
                 uint owner;
                 uint foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out owner);
                 uint currentThread = GetCurrentThreadId();
-                if (foregroundThread == 0 || foregroundThread == currentThread)
+                uint targetThread = GetWindowThreadProcessId(window, out owner);
+                if (foregroundThread == 0 || targetThread == 0 || owner != processId)
                     throw new InvalidOperationException("Foreground activation is unavailable.");
-                if (!AttachThreadInput(currentThread, foregroundThread, true))
+                bool attachCaller = currentThread != foregroundThread;
+                if (attachCaller && !AttachThreadInput(currentThread, foregroundThread, true))
                     throw new Win32Exception();
                 try {
-                    if (!SetForegroundWindow(window))
-                        throw new InvalidOperationException("Could not activate the owned application window.");
+                    bool attachTarget = targetThread != foregroundThread && targetThread != currentThread;
+                    if (attachTarget && !AttachThreadInput(foregroundThread, targetThread, true))
+                        throw new Win32Exception();
+                    try {
+                        if (!SetForegroundWindow(window))
+                            throw new InvalidOperationException("Could not activate the owned application window.");
+                    } finally {
+                        if (attachTarget && !AttachThreadInput(foregroundThread, targetThread, false))
+                            throw new Win32Exception();
+                    }
                 } finally {
-                    if (!AttachThreadInput(currentThread, foregroundThread, false))
+                    if (attachCaller && !AttachThreadInput(currentThread, foregroundThread, false))
                         throw new Win32Exception();
                 }
             }
@@ -247,18 +257,24 @@ function Get-FesTermOwnedProcessTree {
 
     $Process.Refresh()
     if ($Process.HasExited) { return }
-    $pending = [Collections.Generic.Queue[int]]::new()
-    $pending.Enqueue($Process.Id)
+    $pending = [Collections.Generic.Queue[object]]::new()
+    $pending.Enqueue([pscustomobject]@{ProcessId=$Process.Id;StartedUtc=$Process.StartTime.ToUniversalTime()})
     while ($pending.Count -gt 0) {
         $parent = $pending.Dequeue()
-        foreach ($child in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent")) {
+        foreach ($child in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($parent.ProcessId)")) {
+            if ($child.CreationDate.ToUniversalTime() -lt $parent.StartedUtc) { continue }
             $owned = Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
             if ($null -ne $owned) {
-                $pending.Enqueue($owned.Id)
+                $started = $owned.StartTime.ToUniversalTime()
+                if ($started -lt $parent.StartedUtc -or
+                    [Math]::Abs(($started - $child.CreationDate.ToUniversalTime()).TotalMilliseconds) -gt 1) {
+                    throw 'A candidate descendant PID identity changed.'
+                }
+                $pending.Enqueue([pscustomobject]@{ProcessId=$owned.Id;StartedUtc=$started})
                 [pscustomobject]@{
                     ProcessId = $owned.Id
-                    ParentProcessId = $parent
-                    StartedUtc = $owned.StartTime.ToUniversalTime().ToString('o')
+                    ParentProcessId = $parent.ProcessId
+                    StartedUtc = $started.ToString('o')
                     Executable = $owned.Path
                 }
             }
@@ -270,10 +286,12 @@ function Close-FesTermOwnedApplication {
     param(
         [Parameter(Mandatory)][Diagnostics.Process] $Process,
         [Parameter(Mandatory)][IntPtr] $Window,
-        [switch] $ConfirmQuit
+        [switch] $ConfirmQuit,
+        [object[]] $KnownDescendants = @()
     )
 
-    $descendants = @(Get-FesTermOwnedProcessTree -Process $Process)
+    $descendants = @(@($KnownDescendants) + @(Get-FesTermOwnedProcessTree -Process $Process) |
+        Group-Object ProcessId,StartedUtc | ForEach-Object { $_.Group[0] })
     $confirmed = $false
     $forced = $false
     $closeError = $null

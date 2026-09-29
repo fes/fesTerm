@@ -123,6 +123,12 @@ the same in-app deadline and exact controlled-input acknowledgment. This
 functional runner is separate from quiet CPU measurement and cannot qualify
 mixed-monitor DPI, physical latency or the full CP-18 matrix.
 
+Owned-window activation uses one shared bounded helper. Its fallback temporarily
+joins caller, foreground and target GUI queues and always detaches; no synthetic
+key is sent to an unrelated foreground window. Failure to obtain actual
+foreground remains fatal. OS-input failures retain source/binary diagnostics and
+PID-verified cleanup rather than overwriting a prior attempt.
+
 The native CPU fixture keeps a live child, so one primary `WM_CLOSE` opens the
 normal aggregate Quit confirmation even when per-tab close confirmation is
 disabled. Its driver must explicitly invoke the unique test-owned **Quit

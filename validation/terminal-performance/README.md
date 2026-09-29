@@ -989,9 +989,12 @@ Previously sending only `WM_CLOSE` left this ordinary confirmation pending and
 the harness force-killed the application. The driver now invokes the unique
 **Quit fesTerm** accessibility button belonging to its test window, records
 normal exit and verifies its captured descendant tree has exited. Forced kills
-remain cleanup, fail this oracle and stop the series. Shared activation follows
-the existing comparison driver's bounded owned-window activation procedure;
-it still rejects identity changes or failure to obtain foreground.
+remain cleanup, fail this oracle and stop the series. Shared activation temporarily
+joins the caller, foreground and owned target GUI queues when ordinary activation
+fails, always detaching them in `finally`. Joining only the caller and foreground
+queues can leave a separately threaded application inactive. The driver uses
+this single bounded helper and still rejects identity changes or failure to
+obtain foreground; it does not inject input to manufacture activation.
 
 For bounded resource observations, run a separate single-setting invocation
 with, for example, `-SampleSeconds 300 -ProducerFrames 3100`. The producer's
