@@ -382,8 +382,8 @@ fn capture_logical_line(
 
     let mut text = String::new();
     let mut clicked_range = None;
-    let columns = snapshot.dimensions().columns();
     for content_row in rows {
+        let columns = snapshot.absolute_row_occupied_columns(content_row)?;
         for column in 0..columns {
             let cell = snapshot.absolute_cell(column, content_row)?;
             if cell.is_continuation() {
@@ -1362,7 +1362,52 @@ mod tests {
         let action =
             resolve_context_menu_action(&terminal, target(3, 1), &remote_origin(None)).unwrap();
         assert_eq!(action.generation(), 7);
-        assert!(action.ui_action().preview.contains("notes.md"));
+        assert_eq!(
+            action.ui_action().preview,
+            "deploy@ssh.example.test · /srv/résumé/über-long-directory/notes.md"
+        );
+    }
+
+    #[test]
+    fn wrapped_wide_path_does_not_acquire_padding_spaces() {
+        for (path, printed) in [
+            ("/srv/abcd\u{754c}/notes.md", "/srv/abcd\u{754c}/notes.md"),
+            (
+                "/srv/a  \u{754c}/report  name.md",
+                "\"/srv/a  \u{754c}/report  name.md\"",
+            ),
+        ] {
+            for in_history in [false, true] {
+                let mut terminal = terminal_with(printed, 10);
+                if in_history {
+                    terminal.ingest("\r\n".repeat(24).as_bytes());
+                    assert!(terminal.scrollback_stats().physical_rows() > 0);
+                }
+                let action =
+                    resolve_context_menu_action(&terminal, target(1, 1), &remote_origin(None))
+                        .unwrap();
+                assert_eq!(
+                    action.ui_action().copy,
+                    Some(("Copy path".to_owned(), path.to_owned()))
+                );
+                assert!(
+                    matches!(action.open_request(), Some(TerminalPathOpenRequest::Remote(request)) if request.remote_path == path)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn detects_short_paths_in_retained_rows_without_padded_cells() {
+        let mut terminal = terminal_with("/tmp/notes.md", 80);
+        terminal.ingest("\r\n".repeat(24).as_bytes());
+        let action = resolve_context_menu_action(&terminal, target(2, 0), &local_origin()).unwrap();
+        assert_eq!(action.ui_action().preview, "/tmp/notes.md");
+        assert_eq!(
+            action.ui_action().copy,
+            Some(("Copy path".to_owned(), "/tmp/notes.md".to_owned()))
+        );
+        assert!(resolve_context_menu_action(&terminal, target(79, 0), &local_origin()).is_none());
     }
 
     #[test]
