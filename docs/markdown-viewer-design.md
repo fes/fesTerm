@@ -103,6 +103,13 @@ The first implementation supports CommonMark plus these bounded GFM features:
 - fenced code blocks with an optional language label and Copy action; and
 - deterministic, bundled syntax highlighting for a documented language set.
 
+Fenced highlighting uses the shared syntax engine, with process-wide
+immutable compiled queries but independent document/parser state (ADR 0035).
+The Markdown model walks ordered spans forward when building code lines,
+preserving newline-spanning roles, plain gaps and exact source bytes instead
+of scanning all spans again for every line. Parsing and the existing code-size
+and syntax-budget bounds remain unchanged.
+
 Inline and block raw HTML are displayed as inert source or an explicit
 `HTML not rendered` placeholder. They are never interpreted. Footnotes, math,
 Mermaid/diagrams, custom containers, includes, embedded web content, and

@@ -29,6 +29,17 @@ These are synthetic setup measurements, not native open latency or Windows
 Terminal parity; the exact scope and artifacts are recorded in
 `validation/terminal-performance/README.md`.
 
+With query setup removed, a second loading cost became visible: the fenced-code
+model checked every span against every line. Advancing through the ordered
+spans preserves identical roles and source while removing that repeated work.
+Matched release ABBA and BAAB processes reduced full in-memory loading of a
+4,000-entry JSON fence from 46.39ms to 23.78ms on average (48.7%); 2,000 entries
+improved by 35.3%. These are additional savings over query sharing, not numbers
+pooled with the earlier setup experiment. The 8,000-entry stress case exposed
+the unchanged parse-budget fallback even without Markdown's line projection,
+so it remains unqualified rather than weakening the guard or raising the
+budget. Ordinary UI controls still vary, and no native latency claim follows.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown

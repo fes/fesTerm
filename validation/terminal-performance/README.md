@@ -26,8 +26,8 @@ and final shape/vertex counts. It also retains every warmup UI/tessellation
 time and `preparation_ms` for instrumented scenes (`null` when not measured).
 Preparation excludes writing synthetic input files; egui context setup is
 outside both preparation and frame timings. The editor and SFTP controls run
-before Markdown, followed by a separate warm Rust syntax-constructor
-diagnostic. It uses default egui fonts and the production
+before Markdown, with separate full-model fenced loading and warm Rust
+syntax-constructor diagnostics after the UI scenes. It uses default egui fonts and the production
 dark theme, not the native application's bundled-font installation. It
 measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
@@ -180,6 +180,86 @@ the Save As fixture's modification minute (11:50 to 11:51), verified using
 RGB difference bounds and inspected crops; alpha is identical throughout.
 These checks do not qualify native latency, cold-language startup,
 representative-hardware smoothness, GPU performance or Windows Terminal parity.
+
+### Projecting large fenced blocks without repeated full-span scans
+
+After query sharing, `highlight_code` still scanned every syntax span for
+every code line. The line projection now advances past completed spans and
+stops at the end of the current line, retaining captures that cross newlines.
+The resulting owned pieces, roles, plain gaps and original source are
+unchanged. No parsing, cancellation or size/time bound changes.
+
+The same optional probe adds `fenced_loading` diagnostics for single JSON
+fences with 200, 2,000 and 4,000 entries. Each full `MarkdownLoader::load` starts
+from already-built synthetic in-memory bytes; source construction, disk,
+result destruction, correctness assertions and UI work are outside the
+recorded interval. Each case has eight recorded warmups and 40 measured
+loads. Every entry must retain both string and number roles; fallback aborts
+the process, not just the sample. Reports include source bytes, code lines
+and per-line piece counts (including plain gaps).
+
+This experiment's baseline is `98c1085a04b687a4809a4a42e335c45b8d68de6f`
+(query sharing already enabled) plus the matching expanded probe. On the same
+Windows x64 EPYC host, with no overlapping build or measurement, **all eight**
+ABBA/BAAB processes completed with identical source/line/piece counts and
+unchanged UI fixture/shape/vertex counts. Ranges below are over four per-build
+medians, each from 40 full loads:
+
+| JSON entries | Baseline median ms | Candidate median ms | Reduction in mean medians |
+| --- | ---: | ---: | ---: |
+| 200 | 1.063-1.145 | 0.999-1.018 | 7.8% |
+| 2,000 | 16.588-17.406 | 10.696-11.423 | 35.3% |
+| 4,000 | 45.296-47.174 | 23.392-24.470 | 48.7% |
+
+All three improve in both orders. The 4,000-entry means are
+46.387 to 23.778ms; p95 ranges are 52.619-63.234 versus 27.229-29.541ms.
+This is full model loading, not an isolated mapping-loop speedup. It is not
+native open latency, a 60fps guarantee, or a cold-language benchmark.
+Unchanged forced UI-construction controls remain variable:
+
+| Scene | Baseline median ms/frame | Candidate median ms/frame |
+| --- | ---: | ---: |
+| Editor syntax | 0.317-0.333 | 0.324-0.341 |
+| Editor Find | 0.851-1.032 | 0.833-0.959 |
+| SFTP, 100 entries per pane | 0.749-0.876 | 0.719-0.757 |
+| SFTP, 5,000 entries per pane | 0.712-0.765 | 0.695-0.945 |
+| Mixed Markdown Preview | 13.818-14.497 | 12.764-14.445 |
+| Markdown Source | 4.542-5.254 | 4.780-5.545 |
+
+No steady-state improvement or absence of regression is inferred from these
+controls. In particular, the large SFTP and Source candidate means are higher.
+
+**Retained stress evidence:** an earlier 8,000-entry ABBA completed at
+114.97-115.43ms versus 50.31-51.85ms, but the first reverse-order candidate
+aborted when an entry lost highlighting. It was not retried or pooled with
+the final 4,000-entry series. A separate diagnostic called
+`DocumentSyntax::spans` directly, without Markdown or either line mapper:
+of 128 fresh 8,000-entry attempts, two returned `ParseFailed` and zero spans
+after 40.95/40.20ms; all 128 2,000-entry attempts stayed highlighted. Thus
+parse-budget fallback was independently reproduced without the sweep, not
+silently counted as an improvement. This does not establish the cause of the
+original failed iteration or eliminate the larger case's limitation.
+The final probe uses 4,000 entries with the same mandatory highlight guard;
+the production 40ms budget and accepted size bounds are unchanged.
+
+Final baseline executable SHA256:
+`981F14844E0BEE2C6DB7C7C921B87D7285B1E094547BF8E0E6F29290E86EEB5A`;
+candidate:
+`999691D55A1CAB988EA88C75E781CEED6C209BCA1235080C42F3C473A9A5A2A0`.
+Earlier 8,000-entry baseline/candidate SHA256:
+`66EDF96967BBC6DD94901A6B0AE5F660A6515515F59B103AEDBC62A93D3F762A` /
+`02D3D5FB439F3DF9F86B0F94B2DF409C1BEF93CA04A2AF45EB24643894633E86`.
+Evidence is retained under `target/perf-campaign/fence-span-bounded-*`, with
+`fence-span-bounded-summary.json`, earlier `fence-span-{abba,baab}-*` logs and
+`fence-span-syntax-budget.csv`. Different harnesses are not pooled.
+
+Full-scan equivalence covers empty/plain lines, Unicode, CRLF, missing final
+newlines, adjacent and spanning captures, and real grammar output. Final
+galleries retain 43/46 byte- and pixel-identical PNGs; the other three differ
+only in generated PID digits (34364 to 26156) and the Save As fixture's
+modification minute (12:21 to 12:22), confirmed by inspected RGB-difference
+crops. All alpha channels match. These remain separate from native latency,
+accessibility, representative-hardware and Windows Terminal qualification.
 
 ## Completed-render replay
 

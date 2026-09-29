@@ -282,6 +282,16 @@ unqualified. A control-first reverse-order attempt stopped on the editor's
 `ParseFailed` guard and is retained, not counted as a successful unhighlighted
 sample. See the probe record for both completed and aborted sequences.
 
+Full in-memory fenced-document loading is measured separately at 200, 2,000
+and 4,000 JSON entries, with every entry required to retain string and number
+highlighting. Forward line projection is checked against the former full scan
+for Unicode, multi-line spans, newline boundaries and real grammar output.
+The larger 8,000-entry stress series remains separate: it stopped on a
+highlighting guard, and a syntax-only diagnostic reproduced `ParseFailed`
+without invoking the Markdown projection. The existing parse budget remains;
+these results neither qualify that stress case nor native document-open
+latency.
+
 ### Terminal-content search
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

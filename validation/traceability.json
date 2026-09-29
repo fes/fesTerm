@@ -2103,6 +2103,8 @@
         "source_syntax_cache_follows_successful_reload_not_matching_text_ends",
         "indexed_source_roles_match_full_scan_for_clipped_and_empty_ranges",
         "fenced_highlighting_keeps_block_and_reload_state_separate",
+        "fenced_line_sweep_matches_full_scan_for_unicode_and_multiline_spans",
+        "fenced_highlighting_sweep_matches_full_scan_of_real_grammar_spans",
         "resource_approval_is_per_reference_and_clears",
         "markdown_source_errors_build_content_free_error_states",
         "markdown_load_errors_build_content_free_error_states",

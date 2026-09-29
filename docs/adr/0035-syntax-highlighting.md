@@ -167,6 +167,12 @@ flat. They go through the same grammar set, the same role-to-theme mapping, and
 the same bounds. One highlighter, two surfaces — a second implementation inside
 the renderer would drift within a release.
 
+The Markdown model projects the engine's ordered spans onto code lines with a
+forward scan, retaining spans that cross a newline and skipping those already
+behind it. It does not rescan every span for every line. This changes neither
+the roles nor the original code bytes, including empty lines, CRLF and a final
+line without a newline; unsupported or bounded-out code remains plain.
+
 ## Alternatives considered
 
 - **`syntect`.** Broadest coverage for the least work, and genuinely tempting.
@@ -248,6 +254,12 @@ the fallback for every failure path above.
   unchanged; separately loaded fenced blocks preserve independent highlighting
   and original source. The opt-in `profile_interactive_surfaces` probe records
   preparation and first-frame work separately from steady-state timings.
+- **Fenced-line regression coverage:** the forward projection equals the
+  previous full-span scan for Unicode, newline-spanning captures, adjacent
+  ranges, empty/plain lines and real grammar output. The same optional probe
+  measures full in-memory fenced-document loading, requiring every synthetic
+  JSON entry to retain both string and number roles; a fallback aborts rather
+  than passing as a faster result.
 - **Native/manual evidence required:** binary-size delta and cold-build time
   recorded on each platform, and one manual scan of a large real source file
   for scroll smoothness while a session is producing output.

@@ -545,6 +545,11 @@ retention; first-language compilation and the existing honest size/parse
 fallbacks remain. Constructor reuse, full-span equivalence and independent
 document/block state have deterministic regressions; setup/first-frame
 measurements are opt-in, not a native latency or smoothness qualification.
+The `MD-04` code-line projection also advances through ordered spans rather
+than rescanning the complete fence for every line. Its roles and source bytes
+must equal the full-scan reference across Unicode, multi-line tokens, CRLF,
+empty lines and a final unterminated line; no highlight or parse bound is
+relaxed to obtain a performance result.
 
 ## Coverage map to the GUI design
 

@@ -1,10 +1,11 @@
 use std::{path::PathBuf, time::Instant};
 
 use eframe::egui;
+use festerm_markdown::{Block, LocalMarkdownSource, MarkdownCancellation, MarkdownLoader};
 use festerm_ssh::{
     SftpDirectoryItem, SftpDirectorySnapshot, SftpEntryType, SftpLocation, SftpPath,
 };
-use festerm_syntax::{DocumentSyntax, Language};
+use festerm_syntax::{DocumentSyntax, Language, Role};
 use serde::Serialize;
 
 use crate::{
@@ -129,6 +130,75 @@ fn directory(location: SftpLocation, path: SftpPath, count: usize) -> SftpDirect
     }
 }
 
+fn measure_fenced_loading(path: PathBuf, entries: usize) -> serde_json::Value {
+    let rows: String = (0..entries)
+        .map(|index| {
+            let comma = if index + 1 < entries { "," } else { "" };
+            format!("  \"entry_{index}\": {index}{comma}\n")
+        })
+        .collect();
+    let code = format!("{{\n{rows}}}\n");
+    assert!(code.len() < festerm_markdown::MAX_CODE_BLOCK_BYTES);
+    let text = format!("```json\n{code}```\n");
+    let source = LocalMarkdownSource::new(path).unwrap();
+    let cancellation = MarkdownCancellation::new();
+    let loader = MarkdownLoader::default();
+    let mut times = Vec::with_capacity(MEASURED_FRAMES);
+    let mut warmup_ms = Vec::with_capacity(WARMUP_FRAMES);
+    let mut expected_pieces = None;
+    for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+        let started = Instant::now();
+        let document = loader
+            .load(
+                source.clone().into(),
+                text.len(),
+                text.as_bytes(),
+                &cancellation,
+            )
+            .unwrap();
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(document.source_text(), text);
+        let [Block::CodeBlock(block)] = document.blocks() else {
+            panic!("the loading fixture must remain one fenced block");
+        };
+        assert_eq!(block.code_text(), code);
+        let lines = block.highlighted_lines();
+        assert_eq!(lines.len(), entries + 2);
+        for (line_number, line) in lines[1..=entries].iter().enumerate() {
+            assert!(
+                line.spans()
+                    .iter()
+                    .any(|span| span.role() == Some(Role::StringLiteral))
+                    && line
+                        .spans()
+                        .iter()
+                        .any(|span| span.role() == Some(Role::Number)),
+                "JSON fence ({entries} entries), iteration {iteration}, entry {line_number}: \
+                 every entry must remain highlighted, not silently use a fallback"
+            );
+        }
+        let pieces: usize = lines.iter().map(|line| line.spans().len()).sum();
+        assert_eq!(*expected_pieces.get_or_insert(pieces), pieces);
+        std::hint::black_box(document);
+        if iteration >= WARMUP_FRAMES {
+            times.push(elapsed);
+        } else {
+            warmup_ms.push(elapsed);
+        }
+    }
+    serde_json::json!({
+        "name": format!("json-fence-{entries}-entries"),
+        "source_bytes": text.len(),
+        "code_lines": entries + 2,
+        "highlighted_pieces": expected_pieces.unwrap(),
+        "warmup_load_ms": warmup_ms,
+        "measured_loads": MEASURED_FRAMES,
+        "load_median_ms": percentile(&mut times, 50),
+        "load_p95_ms": percentile(&mut times, 95),
+        "scope": "full MarkdownLoader projection from synthetic in-memory bytes; no disk, UI or native window"
+    })
+}
+
 #[test]
 #[ignore = "optional release UI construction/tessellation probe; not GPU or native latency"]
 fn profile_interactive_surfaces() {
@@ -249,6 +319,10 @@ fn profile_interactive_surfaces() {
         },
     ));
 
+    let fenced_loading: Vec<_> = [200, 2000, 4000]
+        .map(|entries| measure_fenced_loading(fixtures.path().join("fence.md"), entries))
+        .into();
+
     let mut syntax_times = Vec::with_capacity(MEASURED_FRAMES);
     for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
         let started = Instant::now();
@@ -278,6 +352,7 @@ fn profile_interactive_surfaces() {
         "scope": "forced steady-state UI construction and tessellation; no GPU draw or presentation",
         "preparation_scope": "fixture reads and widget construction after writing synthetic input; warmup frames recorded separately; no native window",
         "samples": samples,
+        "fenced_loading": fenced_loading,
         "syntax_preparation": syntax_preparation,
     });
     let json = serde_json::to_string_pretty(&report).unwrap();
