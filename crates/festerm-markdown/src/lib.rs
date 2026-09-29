@@ -2643,6 +2643,53 @@ mod tests {
     }
 
     #[test]
+    fn fenced_highlighting_keeps_block_and_reload_state_separate() {
+        let initial = local_document("```rust\n/* unfinished comment\n```\n");
+        let cases = [
+            (
+                "rust",
+                "fn fresh() { let text = \"e\u{301}\u{754c}\"; let value = 7; }\n",
+            ),
+            ("json", "{\"text\": \"e\u{301}\u{754c}\", \"value\": 7}\n"),
+        ];
+        let source: String = cases
+            .iter()
+            .map(|(language, text)| format!("```{language}\n{text}```\n\n"))
+            .collect();
+        let document = local_document(&source);
+        assert_eq!(document.blocks().len(), cases.len());
+        for (block, (language, text)) in document.blocks().iter().zip(cases) {
+            let Block::CodeBlock(block) = block else {
+                panic!("expected a code block");
+            };
+            assert_eq!(block.code_text(), text);
+            let alone = local_document(&format!("```{language}\n{text}```\n"));
+            let Block::CodeBlock(reference) = &alone.blocks()[0] else {
+                panic!("expected the independently loaded code block");
+            };
+            assert_eq!(block.highlighted_lines(), reference.highlighted_lines());
+            let roles: Vec<_> = block
+                .highlighted_lines()
+                .iter()
+                .flat_map(|line| line.spans().iter().filter_map(HighlightedSpan::role))
+                .collect();
+            assert!(
+                roles.contains(&Role::StringLiteral),
+                "{language}: {roles:?}"
+            );
+            if language == "rust" {
+                assert!(roles.contains(&Role::Keyword), "{language}: {roles:?}");
+            } else {
+                assert!(roles.contains(&Role::Number), "{language}: {roles:?}");
+            }
+        }
+        assert_eq!(
+            initial.source_text(),
+            "```rust\n/* unfinished comment\n```\n"
+        );
+    }
+
+    #[test]
     fn parses_representative_commonmark_and_gfm_document() {
         let markdown = "# Title\n\nParagraph with ~~strike~~ and <https://example.com>.\n\n- [x] done\n- [ ] todo\n  > quoted\n  > - nested\n\n| Name | Value |\n| --- | ---: |\n| one | 1 |\n\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n";
         let document = local_document(markdown);

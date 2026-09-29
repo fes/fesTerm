@@ -271,6 +271,17 @@ evidence for SFTPG-01, EDIT-04/05/06 and MD-04/06; it does not qualify native
 scroll/input latency, GPU presentation, transfer throughput, screen-reader
 navigation or the FD-05/FD-06 native drag/reveal gestures.
 
+The same probe now retains preparation and all eight warmup-frame timings,
+plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
+query compilation during fenced-code loading, rather than steady rendering.
+Per-language query reuse, independently compiled span equivalence, document
+revision/bound isolation and fenced-block isolation extend automated evidence
+for EDIT-16 and MD-04. The recorded Markdown improvement follows Rust editor
+initialization; first-ever language compilation and native open latency remain
+unqualified. A control-first reverse-order attempt stopped on the editor's
+`ParseFailed` guard and is retained, not counted as a successful unhighlighted
+sample. See the probe record for both completed and aborted sequences.
+
 ### Terminal-content search
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

@@ -3,6 +3,32 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing repeated query compilation from document loading
+
+Steady-state measurements hid a much larger Markdown stall: the first Preview
+frame for 400 Rust fences spent roughly ten seconds compiling the same bundled
+highlight query once per block. The legacy viewer paid the same cost while
+constructing its document. Recording preparation and warmup frames, rather
+than discarding them, exposed the shared cause.
+
+The syntax engine now lazily retains one immutable compiled query or compile
+error per supported language. Parsers, trees, source text, revisions, spans
+and cursors remain independent, with the same bounds and visible fallback.
+The tradeoff is bounded process-lifetime retention of the used languages'
+queries; first-language compilation still costs work.
+
+A matched control-first release ABBA comparison reduced first Preview
+construction from about 9.61 seconds to 75.9ms, and viewer preparation from
+9.56 seconds to 15.1ms, after the Rust editor had initialized the language.
+An earlier, separately recorded ABBA/BAAB series agreed on the setup win.
+The final reverse-order attempt stopped on an editor `ParseFailed` guard;
+controls also varied, including adverse editor/Source timings. Neither is
+hidden or used to claim a steady-state improvement. Span/state regressions
+and production-widget pixel comparisons preserve correctness evidence.
+These are synthetic setup measurements, not native open latency or Windows
+Terminal parity; the exact scope and artifacts are recorded in
+`validation/terminal-performance/README.md`.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown

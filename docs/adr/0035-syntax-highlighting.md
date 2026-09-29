@@ -64,6 +64,15 @@ revision; the tree is updated incrementally from the edit that caused it, using
 tree-sitter's own edit/reparse path, never rebuilt from scratch while an
 incremental update is available.
 
+Bundled compiled highlight queries are immutable per-language engine resources,
+not document caches. `festerm-syntax` lazily compiles one query for each used
+member of the closed language set and retains that result for the process
+lifetime. A compile error is retained too; each affected document still reports
+`ParseFailed`, without repeatedly compiling the same invalid bundled query.
+Parsers, trees, source text, revisions and span caches remain document-owned,
+and each query execution owns its cursor. No document contents enter the
+process-wide resource cache.
+
 Highlighting is **read-only over the text**. It produces spans, never bytes. It
 cannot dirty a document, cannot enter the undo history, and cannot change what
 a save writes. This is ADR 0034 §9 restated for a new kind of presentation.
@@ -147,9 +156,9 @@ the outline in the editor options menu, and in the persisted
 an editor that has grammars and does not use them is surprising in a way the
 reverse is not.
 
-Turning it off is immediate and total — no parsing, no cache, no cost — which
-is also the honest escape hatch for anyone whose file or machine makes it
-expensive.
+Turning it off immediately stops that view from requesting highlighting. It
+does not evict immutable process-wide query resources; other views and fenced
+code may still use them.
 
 ### 8. The Markdown preview's fenced code blocks use the same engine
 
@@ -201,6 +210,12 @@ lifetime handling around a tree that outlives the edit that produced it.
 Highlight queries are per-grammar data files that need vendoring and updating
 with their grammars.
 
+Each used language retains one compiled query or compile error until process
+exit, even after its last document closes. Eleven named lazy slots bound that
+retention independently of document/fence count. First use of a language still
+pays for query compilation; sharing it does not remove source parsing, layout
+work, or the existing byte, line and parse-time bounds.
+
 **Bounded blast radius.** Everything here is additive. With highlighting off,
 the editor behaves exactly as it does at ADR 0034's completion, which is also
 the fallback for every failure path above.
@@ -226,6 +241,13 @@ the fallback for every failure path above.
   a document does not change its revision, dirty state, undo depth, or saved
   bytes; the toggle round-trips through `InterfaceSettings.editor`; fenced code
   blocks in the Markdown preview use the same roles as the editor.
+- **Query-resource regression coverage:** repeated and concurrent constructors
+  share a query only within the same language; shared-query spans equal an
+  independently compiled query for all eleven languages and clipped Unicode
+  ranges; edits and size-bound failures in one document leave another document
+  unchanged; separately loaded fenced blocks preserve independent highlighting
+  and original source. The opt-in `profile_interactive_surfaces` probe records
+  preparation and first-frame work separately from steady-state timings.
 - **Native/manual evidence required:** binary-size delta and cold-build time
   recorded on each platform, and one manual scan of a large real source file
   for scroll smoothness while a session is producing output.
