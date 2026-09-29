@@ -258,6 +258,19 @@ used by the keyboard-routing entrypoint. See the
 | FD-05 | In the GUI SFTP file manager (issue #137): drag selected item(s) between the local and remote panes and confirm the same transfer requests the toolbar/rail buttons would queue are enqueued; drag files from Finder/Explorer onto the remote pane and confirm they upload into its current directory; drag files from Finder/Explorer onto the local pane and confirm the drop is rejected with a factual notice; attempt to drag a remote item out to Finder/Explorer/Desktop and confirm the current, documented limitation (no native OS drag-out; use the transfer buttons to download first). | Native functional + usability | Payload plumbing, enqueue rules, and connection/writability gating are automated; the native Finder/Explorer drag gesture itself (both directions) remains manual |
 | FD-06 | In the GUI SFTP file manager's local pane only, right-click a single item and a multi-selection, choose "Reveal in Finder"/"Show in File Explorer"/"Open Containing Folder", and confirm the OS file manager opens focused on the expected item (single selection) or the first selected item (multi-selection); confirm the action is absent from the remote pane's context menu. | Native functional | Per-platform command construction is automated; actually observing the OS file manager focus/selection remains manual |
 
+### Interactive-surface performance
+
+The [interactive-surface performance probe](../validation/terminal-performance/README.md#editor-markdown-and-sftp-ui-construction)
+automates synthetic release UI-construction and tessellation measurements for
+the editor, Markdown Preview/Source and both SFTP panes. Deterministic
+regressions cover virtualized directory scrolling through the last row,
+whole-list selection/filtering, Open File activation, Save As selection and
+overwrite wording, editor syntax/Find formats and clipped wrapped line numbers,
+and Markdown source-cache reload/UTF-8 behavior. This extends automated
+evidence for SFTPG-01, EDIT-04/05/06 and MD-04/06; it does not qualify native
+scroll/input latency, GPU presentation, transfer throughput, screen-reader
+navigation or the FD-05/FD-06 native drag/reveal gestures.
+
 ### Terminal-content search
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

@@ -443,6 +443,7 @@ pub struct MarkdownViewerTab {
     automatic_image_loads: usize,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
+    source_syntax: Option<Vec<festerm_syntax::Span>>,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
 }
@@ -487,6 +488,7 @@ impl MarkdownViewerTab {
             automatic_image_loads: 0,
             pending_scroll: None,
             line_heading_indices: Vec::new(),
+            source_syntax: None,
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -540,6 +542,7 @@ impl MarkdownViewerTab {
             automatic_image_loads: 0,
             pending_scroll: None,
             line_heading_indices: Vec::new(),
+            source_syntax: None,
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -695,6 +698,7 @@ impl MarkdownViewerTab {
                                     image_errors: &self.image_errors,
                                     pending_scroll: &mut self.pending_scroll,
                                     line_heading_indices: &self.line_heading_indices,
+                                    source_syntax: &mut self.source_syntax,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
                                     heading_tops: &mut heading_tops,
                                 };
@@ -750,6 +754,7 @@ impl MarkdownViewerTab {
                     .or_else(|| document.headings().first().map(|_| 0));
                 self.pending_scroll = Some(pending_scroll_for_anchor(&document, anchor));
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
+                self.source_syntax = None;
                 self.document = Some(document);
                 self.error = None;
                 self.stale_snapshot = false;
@@ -1361,6 +1366,7 @@ struct MarkdownRenderState<'a> {
     image_errors: &'a BTreeMap<usize, String>,
     pending_scroll: &'a mut Option<PendingScroll>,
     line_heading_indices: &'a [Option<usize>],
+    source_syntax: &'a mut Option<Vec<festerm_syntax::Span>>,
     outline_keyboard_focus: &'a mut bool,
     /// Where each heading was painted this frame, so a caller that wants to
     /// know which section the reader is looking at can ask the rendering
@@ -2103,7 +2109,7 @@ impl MarkdownRenderState<'_> {
                 // Markdown grammar the editor uses, so one window does not
                 // show the same file coloured on one surface and flat on the
                 // other (ADR 0035 §8).
-                let syntax = source_syntax_spans(ui, document.source_text());
+                let syntax = source_syntax_spans(self.source_syntax, document.source_text());
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let span = document
@@ -2114,7 +2120,7 @@ impl MarkdownRenderState<'_> {
                             line,
                             span,
                             self.find,
-                            roles_within(&syntax, line_start..line_start + line.len()),
+                            roles_within(syntax, line_start..line_start + line.len()),
                         ))
                             .selectable(true)
                             .wrap(),
@@ -2879,30 +2885,16 @@ fn render_text_run(
     ui.add(egui::Label::new(job).selectable(true).wrap());
 }
 
-/// The document's Markdown spans, parsed once and kept for as long as the
-/// snapshot they describe.
-///
-/// A snapshot never changes, so this is a parse per document rather than a
-/// parse per frame; the key includes the text's length and ends so a second
-/// document cannot inherit the first one's colour.
-fn source_syntax_spans(ui: &egui::Ui, source: &str) -> std::sync::Arc<Vec<festerm_syntax::Span>> {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    source.len().hash(&mut hasher);
-    let head = source.len().min(512);
-    source[..head].hash(&mut hasher);
-    source[source.len() - head..].hash(&mut hasher);
-    let key = egui::Id::new(("markdown-source-syntax", hasher.finish()));
-    if let Some(cached) =
-        ui.data(|data| data.get_temp::<std::sync::Arc<Vec<festerm_syntax::Span>>>(key))
-    {
-        return cached;
-    }
-    let mut syntax =
-        festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
-    let spans = std::sync::Arc::new(syntax.spans(source, 0, 0..source.len()).to_vec());
-    ui.data_mut(|data| data.insert_temp(key, std::sync::Arc::clone(&spans)));
-    spans
+/// Owned by the loaded snapshot, and cleared only when a new document replaces it.
+fn source_syntax_spans<'a>(
+    cache: &'a mut Option<Vec<festerm_syntax::Span>>,
+    source: &str,
+) -> &'a [festerm_syntax::Span] {
+    cache.get_or_insert_with(|| {
+        let mut syntax =
+            festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
+        syntax.spans(source, 0, 0..source.len()).to_vec()
+    })
 }
 
 /// The spans covering one line, rebased onto that line's own bytes.
@@ -2910,9 +2902,10 @@ fn roles_within(
     spans: &[festerm_syntax::Span],
     line: std::ops::Range<usize>,
 ) -> Vec<festerm_syntax::Span> {
-    spans
+    let first = spans.partition_point(|span| span.end <= line.start);
+    spans[first..]
         .iter()
-        .filter(|span| span.start < line.end && span.end > line.start)
+        .take_while(|span| span.start < line.end)
         .map(|span| festerm_syntax::Span {
             start: span.start.max(line.start) - line.start,
             end: span.end.min(line.end) - line.start,
@@ -3211,6 +3204,7 @@ pub(crate) struct MarkdownPreviewPane {
     image_errors: BTreeMap<usize, String>,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
+    source_syntax: Option<Vec<festerm_syntax::Span>>,
     outline_keyboard_focus: bool,
     heading_tops: Vec<(usize, f32)>,
     visible_heading: Option<usize>,
@@ -3240,6 +3234,7 @@ impl MarkdownPreviewPane {
             image_errors: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
+            source_syntax: None,
             outline_keyboard_focus: false,
             heading_tops: Vec::new(),
             visible_heading: None,
@@ -3289,6 +3284,7 @@ impl MarkdownPreviewPane {
         ) {
             Ok(document) => {
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
+                self.source_syntax = None;
                 self.outline_selected = document.headings().first().map(|_| 0);
                 self.document = Some(document);
                 self.error = None;
@@ -3339,6 +3335,7 @@ impl MarkdownPreviewPane {
             image_errors: &self.image_errors,
             pending_scroll: &mut self.pending_scroll,
             line_heading_indices: &self.line_heading_indices,
+            source_syntax: &mut self.source_syntax,
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
             heading_tops: &mut heading_tops,
         };
@@ -3951,6 +3948,7 @@ mod tests {
                     image_errors: &image_errors,
                     pending_scroll: &mut pending_scroll,
                     line_heading_indices: &[],
+                    source_syntax: &mut None,
                     outline_keyboard_focus: &mut outline_keyboard_focus,
                     heading_tops: &mut heading_tops,
                 };
@@ -4143,6 +4141,76 @@ mod tests {
                 &Default::default(),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn source_syntax_handles_multibyte_text_at_the_former_cache_key_boundary() {
+        let source = format!(
+            "{}\u{1f680}\n\n# Heading\n\n{}",
+            "x".repeat(511),
+            "y".repeat(600)
+        );
+        let mut cache = None;
+        let spans = source_syntax_spans(&mut cache, &source);
+        assert!(!spans.is_empty());
+        assert!(spans
+            .iter()
+            .all(|span| source.is_char_boundary(span.start) && source.is_char_boundary(span.end)));
+        let first = spans.as_ptr();
+        assert_eq!(source_syntax_spans(&mut cache, &source).as_ptr(), first);
+    }
+
+    #[test]
+    fn source_syntax_cache_follows_successful_reload_not_matching_text_ends() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("snapshot.md");
+        let prefix = format!("{}\n", "prefix\n".repeat(100));
+        let suffix = format!("\n{}", "suffix\n".repeat(100));
+        let before = format!("{prefix}# title\n{suffix}");
+        let after = format!("{prefix}  title\n{suffix}");
+        assert_eq!(before.len(), after.len());
+        assert_eq!(&before[..512], &after[..512]);
+        assert_eq!(&before[before.len() - 512..], &after[after.len() - 512..]);
+        fs::write(&path, &before).unwrap();
+        let mut tab = MarkdownViewerTab::open_local(path.clone());
+        let old = source_syntax_spans(&mut tab.source_syntax, &before).to_vec();
+        fs::write(&path, &after).unwrap();
+        tab.reload();
+        assert!(tab.source_syntax.is_none());
+        assert_eq!(tab.document.as_ref().unwrap().source_text(), after);
+        let fresh = source_syntax_spans(&mut tab.source_syntax, &after).to_vec();
+        assert_ne!(old, fresh);
+        let pointer = tab.source_syntax.as_ref().unwrap().as_ptr();
+        fs::remove_file(path).unwrap();
+        tab.reload();
+        assert!(tab.stale_snapshot);
+        assert_eq!(tab.source_syntax.as_ref().unwrap().as_ptr(), pointer);
+        assert_eq!(tab.document.as_ref().unwrap().source_text(), after);
+    }
+
+    #[test]
+    fn indexed_source_roles_match_full_scan_for_clipped_and_empty_ranges() {
+        let spans: Vec<_> = (0..1000)
+            .map(|index| festerm_syntax::Span {
+                start: index * 3 + 1,
+                end: index * 3 + 3,
+                role: festerm_syntax::Role::Keyword,
+            })
+            .collect();
+        for start in (0..3200).step_by(7) {
+            let end = start + start % 31;
+            let expected: Vec<_> = spans
+                .iter()
+                .filter(|span| span.start < end && span.end > start)
+                .map(|span| festerm_syntax::Span {
+                    start: span.start.max(start) - start,
+                    end: span.end.min(end) - start,
+                    role: span.role,
+                })
+                .collect();
+            assert_eq!(roles_within(&spans, start..end), expected);
+        }
+        assert!(roles_within(&[], 0..100).is_empty());
     }
 
     fn highlighted_sections(job: &LayoutJob) -> Vec<(Range<usize>, String)> {
@@ -4357,6 +4425,7 @@ mod tests {
                         image_errors: &image_errors,
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
+                        source_syntax: &mut None,
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: &mut heading_tops,
                     };
@@ -4424,6 +4493,7 @@ mod tests {
                         image_errors: &image_errors,
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
+                        source_syntax: &mut None,
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: &mut heading_tops,
                     };
