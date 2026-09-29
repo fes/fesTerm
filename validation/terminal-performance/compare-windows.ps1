@@ -29,6 +29,14 @@ if ($null -ne $env:FESTERM_EXPERIMENTAL_HOST_COPY -and
     $env:FESTERM_EXPERIMENTAL_HOST_COPY -notin @('0','1')) {
     throw 'FESTERM_EXPERIMENTAL_HOST_COPY must be unset, 0, or 1.'
 }
+$retainedComposition = $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION -eq '1'
+if ($null -ne $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION -and
+    $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION -notin @('0','1')) {
+    throw 'FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION must be unset, 0, or 1.'
+}
+if ($retainedComposition -and -not $hostCopy) {
+    throw 'Retained composition requires FESTERM_EXPERIMENTAL_HOST_COPY=1.'
+}
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 . "$root\scripts\windows-application-window.ps1"
 if (-not [IO.Path]::IsPathRooted($FesTerm)) { $FesTerm = Join-Path $root $FesTerm }
@@ -209,7 +217,7 @@ confirm_session_close = false
 terminal_font = "jet-brains-mono"
 terminal_ligatures = false
 "@ | Set-Content -LiteralPath $env:FESTERM_CONFIG_PATH -Encoding utf8
-            $env:RUST_LOG = 'festerm=info,festerm::rendering=debug,egui_wgpu::callback_copy=debug,warn'
+            $env:RUST_LOG = 'festerm=info,festerm::rendering=debug,egui_wgpu::callback_copy=debug,egui_wgpu::retained_ui=debug,warn'
         } else {
             $commandline = (@($child) + $arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
             $settings = @{
@@ -281,6 +289,8 @@ terminal_ligatures = false
             $beforeFrames = if ($isFesTerm) { Frame-Count $directory } else { $null }
             $nativeBefore = if ($isFesTerm) { Frame-Count $directory 'direct2d_frame_number' } else { $null }
             $copyBefore = if ($isFesTerm -and $hostCopy) { Frame-Count $directory 'final_callback_copy_frame' } else { $null }
+            $retainedBefore = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_reused_frames' } else { $null }
+            $rebuiltBefore = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_rebuilt_frames' } else { $null }
             $process.Refresh()
             $producerProcess.Refresh()
             $before = $process.TotalProcessorTime.TotalSeconds
@@ -315,6 +325,8 @@ terminal_ligatures = false
             $afterFrames = if ($isFesTerm) { Frame-Count $directory } else { $null }
             $nativeAfter = if ($isFesTerm) { Frame-Count $directory 'direct2d_frame_number' } else { $null }
             $copyAfter = if ($isFesTerm -and $hostCopy) { Frame-Count $directory 'final_callback_copy_frame' } else { $null }
+            $retainedAfter = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_reused_frames' } else { $null }
+            $rebuiltAfter = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_rebuilt_frames' } else { $null }
             $producerProcess.Refresh()
             $producerCpu = $producerProcess.TotalProcessorTime.TotalSeconds-$producerBefore
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
@@ -352,6 +364,9 @@ terminal_ligatures = false
                 if ($hostCopy -and $run.Workload -ne 'quiet' -and $copyAfter -le $copyBefore) {
                     throw "$name did not exercise final-target host copies."
                 }
+                if ($retainedComposition -and $run.Workload -ne 'quiet' -and $retainedAfter -le $retainedBefore) {
+                    throw "$name reused no window prefixes during the measured interval."
+                }
             }
             $result = [pscustomobject]@{
                 Host=$run.Host;Workload=$run.Workload;Status=$(if($valid){'valid'}else{'invalid-input-or-window'})
@@ -371,6 +386,9 @@ terminal_ligatures = false
                 Direct2DFramesPerSecond=$(if($isFesTerm){($nativeAfter-$nativeBefore)/$elapsed}else{$null})
                 HostCopyRequested=($isFesTerm -and $hostCopy)
                 HostCopyFramesPerSecond=$(if($isFesTerm -and $hostCopy){($copyAfter-$copyBefore)/$elapsed}else{$null})
+                RetainedCompositionRequested=($isFesTerm -and $retainedComposition)
+                RetainedUiFramesPerSecond=$(if($isFesTerm -and $retainedComposition){($retainedAfter-$retainedBefore)/$elapsed}else{$null})
+                RetainedUiRebuildsPerSecond=$(if($isFesTerm -and $retainedComposition){($rebuiltAfter-$rebuiltBefore)/$elapsed}else{$null})
                 Producer=$producer;Intervals=$intervals
                 InputChanged=$inputChanged;ForegroundChanged=$foregroundChanged;GeometryChanged=$geometryChanged
             }

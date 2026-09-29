@@ -474,6 +474,198 @@ monitor DPI, multiwindow/transparent surfaces, graphics recovery, hardware
 negative-routing, native screenshot/overlay review, latency and full CP-18
 qualification remain open in #267/#244; dragging remains separate in #263.
 
+### Default-off retained-window prefix prototype
+
+The owner separately authorized Proposed
+[ADR-0041](../../docs/adr/0041-opt-in-retained-window-prefix.md), extending the
+host-copy experiment without enabling either option by default. Set both
+`FESTERM_EXPERIMENTAL_HOST_COPY=1` and
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1` on the supported Windows x64
+DX12 WARP/BGRA path. Compare retention off/on while keeping host-copy on in
+both modes; comparing against shader composition would conflate two changes.
+
+The host retains only the complete UI prefix before the final terminal copy.
+Each frame still constructs the UI, prepares every callback, copies the
+prefix into the actual target, copies the current terminal image and presents
+normally. A miss renders a fresh private image, never overwriting pixels
+referenced by older queued copies. Retention does not preserve a swap-chain
+backbuffer, contain old terminal pixels, skip output or introduce another
+queue submission/completion wait.
+
+The cache owns at most one 16,777,216-pixel image (64 MiB) and 1 MiB of exact
+paint-signature data. Ordered mesh and callback inputs, clips, screen/clear/
+format state and managed-texture identity must match exactly. Unknown
+callbacks, external textures, overlays and incompatible targets retain the
+existing path; lifecycle changes discard the cache. Candidate signatures,
+rebuild images and recorded/in-flight GPU resource lifetimes are additional,
+so these are not peak-allocation or total-process memory bounds.
+
+#### Completed-work comparison on the refreshed terminal baseline
+
+Eight release processes completed ABBA (off/on/on/off), then BAAB
+(on/off/off/on), on main `8721b0bfc7d414123a53e25bae4740f8c5097283` plus the
+prototype. This base includes the reviewed narrow-damage preparation fix.
+Each process used the application scene, 120x40 cells, 2058x1658 physical
+pixels, 200% scale, DX12 Microsoft Basic Render Driver/WARP
+`10.0.26100.9278`, 16 logical processors, five warmups and 100 completed
+frames per case at requested 10 Hz. No build or other benchmark overlapped.
+
+| Case | Retention off mean CPU-ms/frame | Retention on mean CPU-ms/frame | Change |
+| --- | ---: | ---: | ---: |
+| Frozen complete composition, first | 41.796875 | 9.179688 | -78.0% |
+| Localized, including composition | 59.453125 | 29.648438 | -50.1% |
+| UI/native update, excluding composition | 12.226563 | 13.789063 | +12.8% |
+| Frozen complete composition, repeated | 44.453125 | 9.257813 | -79.2% |
+
+Localized off samples ranged from 48.438 to 68.750 CPU-ms/frame, versus
+27.500 to 31.719 on. Frozen controls also varied: first off 25.469-55.938,
+on 8.438-10.313; ending off 30.156-58.594, on 8.438-10.313.
+The no-composition control was adverse and remains visible: off
+9.844-13.438, on 12.031-15.625. It performs no prefix reuse, so the table
+does not establish a benefit for native drawing or UI construction alone.
+
+Every case completed 100 frames at 9.9976-9.9999 Hz. Each enabled localized
+sample reused 93 prefixes and rebuilt seven; both frozen cases reused all
+100. The measured cache held 13,648,656 texture bytes and 37,000 signature
+bytes. All eight initial PNG byte streams and primitive metadata match,
+and the probe requires exact initial and final ordinary-composition pixels.
+Mean completed-draw wall times were 33.078 to 25.623 ms/frame for localized,
+18.101 to 9.626 for initial frozen, and 18.945 to 9.829 for ending frozen.
+These are completed offscreen rendering observations, not native presentation,
+input latency, hardware-GPU benefit or Windows Terminal parity.
+
+The earlier complete series on `207d806f82cf5edd44c048d90778148ace7ea7cd`
+is preserved separately, not pooled with this refreshed baseline. Its
+localized mean was 95.625 to 57.578125 CPU-ms/frame (-39.8%); initial/ending
+frozen means were 40.273438 to 8.671875 and 35.507813 to 7.968750.
+No-composition means were 43.750 to 40.937500. Both orders completed with
+exact initial pixels, the same reuse counts and approximately 10 Hz cadence.
+
+| Measured artifact | SHA256 |
+| --- | --- |
+| Refreshed application | `EFA9E09C528C5616F576AB3AD5A90B016001462ED66CEA07F4575EA45C3D3E65` |
+| Refreshed offscreen probe | `CA601DC905DD9B263EA641649C4FD04173D3FEC6A7940B94455CC7273CB4A778` |
+| Earlier-base offscreen probe | `B50230ED3017EADF9FC7832679FC0626CE1C2C8FADFA0F07E138C0F3FEFD8CA4` |
+| Native workload producer | `F4A3E5C56BBFC8576255A38CC3E8665624753572CA52C70FB5F252FFC7BF9899` |
+
+Raw offscreen evidence is under
+`target\perf-campaign\retained-prefix-872-{abba,baab}-*`;
+`retained-prefix-872-offscreen-summary.json` validates all eight processes,
+hashes, metadata, image bytes, bounds and cadence.
+`retained-prefix-pre-872-summary.json` describes the older-base series.
+
+#### Additional completed-work comparison after context-menu and Markdown merges
+
+A separate release rebuild on main
+`d86850973e79c68e199cda988e548c5bf894c7f4` plus the prototype includes the
+merged context-menu and Markdown Find/table fixes and the final lifetime,
+budget and callback-preparation regressions. Another complete ABBA then BAAB
+series used the same scene, dimensions, WARP adapter, five warmups, 100 frames
+per case and 100 ms interval. Host-copy remained on in both modes. No campaign
+build or other probe overlapped.
+
+| Case | Retention off mean CPU-ms/frame | Retention on mean CPU-ms/frame | Change |
+| --- | ---: | ---: | ---: |
+| Frozen complete composition, first | 40.664063 | 9.843750 | -75.8% |
+| Localized, including composition | 63.398438 | 30.039063 | -52.6% |
+| UI/native update, excluding composition | 14.921875 | 13.046875 | -12.6% |
+| Frozen complete composition, repeated | 48.281250 | 8.398438 | -82.6% |
+
+In ABBA/BAAB chronological order within each mode, localized off samples were
+64.531250, 59.687500, 59.218750 and 70.156250 CPU-ms/frame; on samples were
+30.312500, 30.312500, 28.437500 and 31.093750. Initial frozen off ranged
+33.906-52.188, on 9.531-10.156; ending frozen off 39.531-52.656, on
+7.500-9.531. No-composition off ranged 13.438-15.625, on 11.875-13.594.
+That control performs no prefix reuse, and its direction differs from the
+adverse +12.8% result on `8721b0b`; neither series establishes an independent
+UI-construction or native-drawing improvement.
+
+All 32 cases completed 100 frames at 9.9961-10.0000 Hz. Each enabled localized
+case again reused 93 prefixes and rebuilt seven, while frozen cases reused
+all 100. The current cache again held 13,648,656 texture bytes and 37,000
+signature bytes. Initial PNG bytes and primitive metadata match across all
+eight processes, with exact initial/final ordinary pixels enforced by the
+probe. Mean completed-draw wall times were 34.079 to 27.513 ms/frame for
+localized, 18.671 to 9.919 for initial frozen, and 18.034 to 10.071 for ending
+frozen. These remain offscreen observations, not native presentation or input
+latency measurements.
+
+| Artifact built from `d868509` plus the prototype | SHA256 |
+| --- | --- |
+| Application build, not native-qualified | `67A8AE07F91F5F851855B3DA068F0F957485AC01E96C9A6108E9CF8CF5F6ECD0` |
+| Measured offscreen probe | `DBED5CBDAC540A789A2BBAF25E841237258C9F7C15A3F61BAE38E190804674F2` |
+| Initial PNG, identical across all eight processes | `4becf04f9181a36ec7ef17b8d4b40568c561fedc2ad1ace738a7afd6aad54944` |
+
+Raw evidence is under `target\perf-campaign\retained-prefix-d868-{abba,baab}-*`;
+`retained-prefix-d868-offscreen-summary.json` validates process results,
+executable hashes, source metadata, exact images, frame counts, timings,
+bounds and reuse. This series predates the subsequent syntax/fenced-loading
+merge in #280 and must not be relabelled as a measurement of that later
+source. All three source baselines remain separate.
+
+#### Guarded native attempts remain incomplete
+
+The first native attempt, `retained-prefix-872-native-abba-01-off`, failed
+foreground activation before sampling. Its failure, logs and PID-scoped
+forced cleanup are retained; no result from that attempt is a native CPU
+measurement. The application and its controlled producer both terminated.
+
+After a separately authorized quiet-desktop interval, the fresh
+`retained-prefix-872-native-qualified-abba-01-off` invocation completed all
+four off-mode workloads with valid guards: quiet 0.03876%, localized 3.35713%,
+streaming 4.00932%, full redraw 8.45378% process CPU normalized across 16
+logical processors. All used the same 2058x1658 client, 192 DPI and 120x40
+grid. The following `-abba-02-on` invocation stopped at quiet because
+`InputChanged=true`; foreground and geometry guards remained unchanged.
+There are **no matched active native off/on samples**, and no native CPU
+improvement is claimed. All five test windows required PID-scoped forced
+cleanup. The invalid sample and four valid off-only samples remain in
+`retained-prefix-872-native-incomplete-summary.json`, not in an improvement
+aggregate. No automatic retry or weakened guard was used.
+
+#### Correctness, reproduction and remaining boundary
+
+Native framebuffer regressions compare hits, misses and ordinary fallback
+across 100%, 125% and 200% scale, new UI frames, panel changes, terminal
+movement, clear color, fractional clips, overlays, disabled opacity and
+screenshot-target usage. Texture tests cover full/partial updates, samplers,
+removal, renderer replacement, actual managed-texture exports and external
+bindings. A queued-copy regression submits an old copy only after rebuilding
+and destroying the cache, requiring its original pixels. An oversized
+signature must fall back with identical ordinary pixels and recover on the
+next eligible frame. Both callback preparation phases execute even on hits;
+unkeyed callbacks must still paint. Pure tests cover inclusive size/signature
+thresholds, arithmetic overflow and exact namespace identity.
+
+For the completed-work probe, enable optional validation, keep host-copy on,
+select the application scene and
+`frozen-all,localized-all,localized-without-composition,frozen-all-repeat`,
+then run `profile_terminal_residual_cpu` in balanced off/on orders with fresh
+evidence directories and the first `original.png` as the subsequent reference.
+Leave the separate diagnostic-copy and sampler overrides unset.
+For the guarded desktop driver:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+$env:FESTERM_EXPERIMENTAL_HOST_COPY='1'
+$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION='0'
+.\validation\terminal-performance\compare-windows.ps1 -FesTermOnly `
+  -ResultDirectory '<fresh-retention-off-directory>'
+$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION='1'
+.\validation\terminal-performance\compare-windows.ps1 -FesTermOnly `
+  -ResultDirectory '<fresh-retention-on-directory>'
+```
+
+Repeat all four workloads in both ABBA and BAAB order on an unlocked, unused
+desktop. `RetainedCompositionRequested`, `RetainedUiFramesPerSecond` and
+`RetainedUiRebuildsPerSecond` distinguish requested retention from actual
+reuse; active enabled samples require reuse. Do not automatically retry a
+failed desktop guard or substitute these counters for displayed-frame evidence.
+Mixed-monitor DPI, device recovery, transparent/secondary windows, hardware
+negative routing, memory growth, native screenshot/overlay review and physical
+latency remain separate CP-18 obligations. ADR-0041 stays Proposed and
+architectural review remains required before merge.
+
 ### Prior remaining-gap investigation and renderer-host boundary
 
 **Applicability: Windows x64 DX12 WARP / DevBox, not hardware-GPU or

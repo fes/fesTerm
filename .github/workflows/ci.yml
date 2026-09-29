@@ -107,6 +107,8 @@ jobs:
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Check retained composition invariants in the vendored renderer
+        run: cargo test -p egui-wgpu --lib retained::tests
       - name: Check Windows window selection and rendering policies
         if: matrix.os == 'windows-latest'
         run: python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v

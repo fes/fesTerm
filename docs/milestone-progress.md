@@ -60,6 +60,42 @@ the measurements, unchanged controls and native-evidence boundaries are in
 `validation/terminal-performance/README.md`. Neither this slice nor the earlier
 directory/editor changes establish Windows Terminal parity.
 
+## Retaining unchanged chrome without retaining old terminal pixels
+
+The next terminal experiment asks whether the host needs to rasterize unchanged
+window chrome on every terminal update. The owner authorized a separate,
+default-off prototype under Proposed ADR-0041, keeping host-copy enabled in both
+comparison modes. Egui still constructs the UI and prepares every callback;
+only an exactly matching paint prefix before the terminal copy may reuse pixels.
+The current terminal image is copied afterward, so moving it cannot expose an
+old terminal image inside the cache.
+
+One private image is bounded to 64 MiB and exact signature data to 1 MiB.
+Geometry, clips, clear color, scale, format, managed textures and explicitly
+immutable callbacks determine reuse. Unknown callbacks and external resources
+fall back normally; lifecycle changes discard retained state. Regression tests
+include older queued copies submitted after cache replacement/destruction,
+signature-overflow recovery, both preparation phases on cache hits and exact
+ordinary pixels across texture, DPI, layout, overlay and capture changes.
+
+After the owner merged the narrow-damage preparation fix, a fresh complete
+offscreen ABBA/BAAB series reduced localized mean CPU from 59.45 to 29.65
+CPU-ms/frame, 50.1% lower. A later release rebuild after the context-menu and
+Markdown merges measured 63.40 to 30.04 CPU-ms/frame, 52.6% lower, in another
+complete balanced series. Both preserved approximately 10 Hz cadence, reused
+93 of 100 localized prefixes and matched initial/final complete pixels.
+The no-composition control increased 12.8% in the first series and decreased
+12.6% in the second; it performs no prefix reuse, so no independent native-draw
+or UI-construction saving is qualified. All source baselines remain separate.
+
+An initial native foreground failure and a later input-invalidated, explicitly
+reauthorized attempt are preserved; the latter completed off-mode controls but
+no matched active on-mode sample, so it does not establish native CPU savings.
+Full ranges, hashes, controls and reproduction are in
+`validation/terminal-performance/README.md`. The experiment does not enable
+defaults, close CP-18, establish Windows Terminal parity or replace
+architectural review.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown

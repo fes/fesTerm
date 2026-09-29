@@ -38,6 +38,17 @@ pub(super) fn draw(
     screen: &egui_wgpu::ScreenDescriptor,
     primitives: &[ClippedPrimitive],
 ) -> bool {
+    draw_composed(state, texture, screen, primitives, [0.0; 4], None).0
+}
+
+pub(super) fn draw_composed(
+    state: &egui_wgpu::RenderState,
+    texture: &wgpu::Texture,
+    screen: &egui_wgpu::ScreenDescriptor,
+    primitives: &[ClippedPrimitive],
+    clear: [f32; 4],
+    retained: Option<&mut egui_wgpu::RetainedUi>,
+) -> (bool, Option<bool>) {
     let mut renderer = state.renderer.write();
     let mut encoder = state.device.create_command_encoder(&Default::default());
     let extra = renderer.update_buffers(
@@ -53,8 +64,24 @@ pub(super) fn draw(
     } else {
         primitives
     };
+    let retained = retained.and_then(|retained| {
+        if copy.is_some() {
+            retained.try_render(
+                &renderer,
+                &state.device,
+                &mut encoder,
+                primitives,
+                screen,
+                texture,
+                clear,
+            )
+        } else {
+            retained.clear();
+            None
+        }
+    });
     let target = texture.create_view(&Default::default());
-    {
+    if retained.is_none() {
         let mut pass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("residual CPU probe"),
@@ -62,7 +89,12 @@ pub(super) fn draw(
                     view: &target,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: f64::from(clear[0]),
+                            g: f64::from(clear[1]),
+                            b: f64::from(clear[2]),
+                            a: f64::from(clear[3]),
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -81,7 +113,7 @@ pub(super) fn draw(
         .submit(extra.into_iter().chain([encoder.finish()]));
     drop(renderer);
     complete(state);
-    copied
+    (copied, retained)
 }
 
 struct CompositePaint {
@@ -441,6 +473,14 @@ fn profile_terminal_residual_cpu() {
     let host_copy =
         super::host_copy_requested(std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY").as_deref())
             .expect("valid host-copy preference");
+    let retained_composition = super::retained_composition_requested(
+        std::env::var_os("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION").as_deref(),
+    )
+    .expect("valid retained-composition preference");
+    assert!(
+        !retained_composition || host_copy,
+        "retained composition requires the host-copy probe"
+    );
     assert!(!(direct_copy && host_copy), "select only one copy probe");
     if direct_copy || host_copy {
         state.target_format = wgpu::TextureFormat::Bgra8Unorm;
@@ -455,6 +495,8 @@ fn profile_terminal_residual_cpu() {
     context.set_visuals(festerm_ui_egui::theme::default_visuals());
     crate::software_background::install(&context, &state);
     let status = super::native::install_with_host_copy(&context, &state, host_copy).unwrap();
+    state.renderer.write().retained_composition_enabled = retained_composition;
+    let mut retained_ui = egui_wgpu::RetainedUi::default();
     let scene = std::env::var_os("FESTERM_TUI_PROFILE_SCENE")
         .map(|value| value.into_string().expect("profile scene must be UTF-8"))
         .unwrap_or_else(|| "terminal".into());
@@ -554,6 +596,28 @@ fn profile_terminal_residual_cpu() {
     ));
     draw(&state, &texture, &screen, &primitives);
     let original_image = read_image(&state, &texture);
+    if retained_composition {
+        for expected in [Some(false), Some(true)] {
+            assert_eq!(
+                draw_composed(
+                    &state,
+                    &texture,
+                    &screen,
+                    &primitives,
+                    [0.0; 4],
+                    Some(&mut retained_ui),
+                ),
+                (true, expected),
+                "{:?}",
+                retained_ui.stats(),
+            );
+            assert_same_pixels(
+                &original_image,
+                &read_image(&state, &texture),
+                "retained prefix changed initial application pixels",
+            );
+        }
+    }
     draw(&state, &texture, &screen, &sampled);
     let sampled_image = read_image(&state, &texture);
     draw(&state, &texture, &screen, &interpolated);
@@ -721,8 +785,12 @@ fn profile_terminal_residual_cpu() {
                 Some(callback.clone())
             });
         }
-        let mut last_copied_frame = None;
-        let mut frame = || {
+        let requires_retention = matches!(
+            name.as_str(),
+            "frozen-all" | "localized-all" | "frozen-all-repeat"
+        );
+        let mut last_composited_frame = None;
+        let mut frame = |retained_ui: &mut egui_wgpu::RetainedUi| {
             if name == "sleep-only" {
                 return;
             }
@@ -786,42 +854,80 @@ fn profile_terminal_residual_cpu() {
                     if name == "localized-copy-all" {
                         let current = status.last_surface.lock().unwrap().clone().unwrap();
                         draw_with_copy(&state, &texture, &screen, &paint, &current);
-                        last_copied_frame = Some(paint);
                     } else {
-                        let copied = draw(&state, &texture, &screen, &paint);
+                        let (copied, retained) = draw_composed(
+                            &state,
+                            &texture,
+                            &screen,
+                            &paint,
+                            [0.0; 4],
+                            Some(retained_ui),
+                        );
                         if host_copy {
                             assert!(copied, "host-copy probe silently fell back");
                         }
+                        if retained_composition && requires_retention {
+                            assert!(
+                                retained.is_some(),
+                                "retained prefix silently fell back: {:?}",
+                                retained_ui.stats(),
+                            );
+                        }
                     }
+                    last_composited_frame = Some(paint);
                 }
             } else {
-                draw(&state, &texture, &screen, &frozen);
+                let (copied, retained) = draw_composed(
+                    &state,
+                    &texture,
+                    &screen,
+                    &frozen,
+                    [0.0; 4],
+                    Some(retained_ui),
+                );
+                if retained_composition && requires_retention {
+                    assert!(
+                        copied && retained.is_some(),
+                        "frozen retained prefix silently fell back: {:?}",
+                        retained_ui.stats(),
+                    );
+                }
             }
         };
         for _ in 0..5 {
-            frame();
+            frame(&mut retained_ui);
             std::thread::sleep(INTERVAL);
         }
         complete(&state);
+        let retained_before = retained_ui.stats();
         let cpu_start = process_cpu_time().unwrap();
         let started = Instant::now();
         let mut completed_draw = Duration::ZERO;
         for index in 0..FRAMES {
             let draw_started = Instant::now();
-            frame();
+            frame(&mut retained_ui);
             completed_draw += draw_started.elapsed();
             std::thread::sleep((INTERVAL * (index + 1)).saturating_sub(started.elapsed()));
         }
         let elapsed = started.elapsed();
         let cpu = process_cpu_time().unwrap() - cpu_start;
-        if let Some(paint) = last_copied_frame {
+        let retained_after = retained_ui.stats();
+        if retained_composition && requires_retention {
+            assert!(
+                retained_after.reused_frames > retained_before.reused_frames,
+                "the measured interval reused no prefix: {retained_after:?}",
+            );
+        }
+        if let Some(paint) = last_composited_frame.as_deref().or_else(|| {
+            matches!(name.as_str(), "frozen-all" | "frozen-all-repeat").then_some(frozen.as_slice())
+        }) {
             let copied = read_image(&state, &texture);
-            draw(&state, &texture, &screen, &paint);
+            draw(&state, &texture, &screen, paint);
             let reference = read_image(&state, &texture);
             assert_same_pixels(
                 &reference,
                 &copied,
-                "localized copying changed final pixels",
+                "composition changed final application pixels",
             );
         }
         assert!(
@@ -847,6 +953,13 @@ fn profile_terminal_residual_cpu() {
             "cpu_percent":100.0 * cpu.as_secs_f64() / elapsed.as_secs_f64() / logical_processors as f64,
             "frames_per_second":f64::from(FRAMES) / elapsed.as_secs_f64(),
             "terminal_damage":terminal_damage,
+            "retained_prefix":{
+                "reused_frames":retained_after.reused_frames-retained_before.reused_frames,
+                "rebuilt_frames":retained_after.rebuilt_frames-retained_before.rebuilt_frames,
+                "texture_bytes":retained_after.texture_bytes,
+                "signature_bytes":retained_after.signature_bytes,
+                "decline_reason":retained_after.decline_reason,
+            },
         });
         eprintln!("residual-profile {measurement}");
         measurements.push(measurement);
@@ -860,6 +973,7 @@ fn profile_terminal_residual_cpu() {
                 "exact_interpolated_pixels":true,
                 "direct_copy_probe":direct_copy,
                 "host_copy_probe":host_copy,
+                "retained_composition_probe":retained_composition,
                 "scene":scene, "removed_fill_triangles":removed_fill_triangles,
                 "primitives":metadata, "measurements":measurements,
             }))

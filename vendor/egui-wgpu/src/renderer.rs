@@ -1,4 +1,12 @@
-use std::{borrow::Cow, num::NonZeroU64, ops::Range};
+use std::{
+    borrow::Cow,
+    num::NonZeroU64,
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use ahash::HashMap;
 use bytemuck::Zeroable as _;
@@ -25,7 +33,7 @@ pub type CallbackResources = type_map::TypeMap;
 /// Implement [`CallbackTrait`] and call [`Callback::new_paint_callback`].
 ///
 /// This can be turned into a [`epaint::PaintCallback`] and [`epaint::Shape`].
-pub struct Callback(Box<dyn CallbackTrait>);
+pub struct Callback(pub(crate) Box<dyn CallbackTrait>);
 
 /// An immutable, unblended image equivalent to a callback's entire paint operation.
 ///
@@ -112,6 +120,12 @@ impl Callback {
 ///
 /// See the [`custom3d_wgpu`](https://github.com/emilk/egui/blob/main/crates/egui_demo_app/src/apps/custom3d_wgpu.rs) demo source for a detailed usage example.
 pub trait CallbackTrait: Send + Sync {
+    /// Optional exact, immutable inputs for retaining this paint operation.
+    /// Preparation still runs; unknown or stateful paints must return `None`.
+    fn paint_key(&self) -> Option<crate::CallbackPaintKey> {
+        None
+    }
+
     /// Optional exact replacement for `paint`, without blending or side effects.
     /// Only an enabled host with a compatible final target may use this.
     fn texture_copy(&self) -> Option<&CallbackTextureCopy> {
@@ -272,6 +286,13 @@ pub struct Renderer {
     /// The native host additionally restricts this to opaque root windows without
     /// MSAA/depth and to surfaces supporting COPY_DST. Other hosts may ignore it.
     pub final_callback_copy_enabled: bool,
+
+    /// Experimental retained-prefix painting; requires final callback copying.
+    /// Defaults to false. Native hosts must restrict this to eligible root windows.
+    pub retained_composition_enabled: bool,
+
+    managed_texture_epoch: Arc<()>,
+    managed_textures_exposed: AtomicBool,
 
     pipeline: wgpu::RenderPipeline,
 
@@ -479,6 +500,9 @@ impl Renderer {
 
         Self {
             final_callback_copy_enabled: false,
+            retained_composition_enabled: false,
+            managed_texture_epoch: Arc::new(()),
+            managed_textures_exposed: AtomicBool::new(false),
             pipeline,
             vertex_buffer: SlicedBuffer {
                 buffer: create_vertex_buffer(device, VERTEX_BUFFER_START_CAPACITY),
@@ -501,6 +525,19 @@ impl Renderer {
             options,
             callback_resources: CallbackResources::default(),
         }
+    }
+
+    pub(crate) fn retained_texture_epoch(&self) -> Option<&Arc<()>> {
+        (!self.managed_textures_exposed.load(Ordering::Relaxed))
+            .then_some(&self.managed_texture_epoch)
+    }
+
+    pub(crate) fn retains_texture(&self, id: epaint::TextureId) -> bool {
+        matches!(id, epaint::TextureId::Managed(_))
+            && self
+                .textures
+                .get(&id)
+                .is_some_and(|texture| texture.texture.is_some() && texture.options.is_some())
     }
 
     /// Select an exact texture-copy replacement for the final paint job only.
@@ -723,6 +760,9 @@ impl Renderer {
         image_delta: &epaint::ImageDelta,
     ) {
         profiling::function_scope!();
+        if matches!(id, epaint::TextureId::Managed(_)) {
+            self.managed_texture_epoch = Arc::new(());
+        }
 
         let width = image_delta.image.width() as u32;
         let height = image_delta.image.height() as u32;
@@ -861,6 +901,9 @@ impl Renderer {
     }
 
     pub fn free_texture(&mut self, id: &epaint::TextureId) {
+        if matches!(id, epaint::TextureId::Managed(_)) {
+            self.managed_texture_epoch = Arc::new(());
+        }
         if let Some(texture) = self.textures.remove(id).and_then(|t| t.texture) {
             texture.destroy();
         }
@@ -870,8 +913,14 @@ impl Renderer {
     ///
     /// This could be used by custom paint hooks to render images that have been added through
     /// [`epaint::Context::load_texture`](https://docs.rs/egui/latest/egui/struct.Context.html#method.load_texture).
+    /// Access to managed textures conservatively disables retained-prefix painting
+    /// for this renderer: later external GPU writes cannot be tracked.
     pub fn texture(&self, id: &epaint::TextureId) -> Option<&Texture> {
-        self.textures.get(id)
+        let texture = self.textures.get(id)?;
+        if matches!(id, epaint::TextureId::Managed(_)) {
+            self.managed_textures_exposed.store(true, Ordering::Relaxed);
+        }
+        Some(texture)
     }
 
     /// Registers a [`wgpu::Texture`] with a [`epaint::TextureId`].
@@ -984,6 +1033,10 @@ impl Renderer {
         id: epaint::TextureId,
     ) {
         profiling::function_scope!();
+        if matches!(id, epaint::TextureId::Managed(_)) {
+            self.managed_texture_epoch = Arc::new(());
+            self.managed_textures_exposed.store(true, Ordering::Relaxed);
+        }
 
         let Texture {
             bind_group: user_texture_binding,

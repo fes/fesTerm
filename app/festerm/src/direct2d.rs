@@ -40,6 +40,19 @@ pub(crate) fn install_from_environment(
                 false
             }
         };
+    let retained_composition = match retained_composition_requested(
+        std::env::var_os("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION").as_deref(),
+    ) {
+        Ok(requested) => requested,
+        Err(message) => {
+            tracing::warn!(target: "festerm::rendering", "{message}");
+            false
+        }
+    };
+    if retained_composition && !host_copy {
+        tracing::warn!(target: "festerm::rendering",
+            "retained composition requires FESTERM_EXPERIMENTAL_HOST_COPY=1; retaining existing rendering");
+    }
     let preference = match Preference::from_environment(
         std::env::var_os("FESTERM_EXPERIMENTAL_DIRECT2D").as_deref(),
     ) {
@@ -86,6 +99,14 @@ pub(crate) fn install_from_environment(
         host_copy && state.target_format == wgpu::TextureFormat::Bgra8Unorm,
     ) {
         Ok(_) => {
+            let retained = retained_composition
+                && host_copy
+                && state.target_format == wgpu::TextureFormat::Bgra8Unorm;
+            state.renderer.write().retained_composition_enabled = retained;
+            if retained {
+                tracing::info!(target: "festerm::rendering",
+                    "experimental retained window prefix enabled; ineligible frames retain ordinary composition");
+            }
             tracing::info!(target: "festerm::rendering", ?preference, "Direct2D terminal painter enabled")
         }
         Err(error) => tracing::warn!(target: "festerm::rendering", %error,
@@ -101,6 +122,15 @@ fn host_copy_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static
         Some(value) if value == "0" => Ok(false),
         Some(value) if value == "1" => Ok(true),
         _ => Err("FESTERM_EXPERIMENTAL_HOST_COPY expects 0 or 1; retaining shader composition"),
+    }
+}
+
+fn retained_composition_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static str> {
+    match value {
+        None => Ok(false),
+        Some(value) if value == "0" => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        _ => Err("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION expects 0 or 1; retaining existing composition"),
     }
 }
 
@@ -465,6 +495,19 @@ mod tests {
         }
         for value in ["", "true", "2", " 1"] {
             assert!(host_copy_requested(Some(std::ffi::OsStr::new(value))).is_err());
+        }
+    }
+
+    #[test]
+    fn retained_composition_is_explicitly_opt_in_and_rejects_invalid_values() {
+        for (value, expected) in [(None, false), (Some("0"), false), (Some("1"), true)] {
+            assert_eq!(
+                retained_composition_requested(value.map(std::ffi::OsStr::new)).unwrap(),
+                expected
+            );
+        }
+        for value in ["", "true", "2", " 1"] {
+            assert!(retained_composition_requested(Some(std::ffi::OsStr::new(value))).is_err());
         }
     }
 

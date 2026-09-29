@@ -75,6 +75,16 @@ time. Its diagnostic mesh omissions are not valid production optimizations.
 The chrome fill optimization must preserve every pixel, including fractional
 DPI, clipping and translucent fallback, without changing update cadence.
 
+The separately authorized ADR-0041 prototype adds a default-off retained window
+prefix to the ADR-0040 host-copy path. Both experimental flags are required.
+Only exact, bounded, immutable paint signatures may reuse preceding UI pixels;
+the current terminal image is still copied every frame. Texture changes,
+unknown/stateful callbacks, external texture ownership, overlays and host
+lifecycle changes must invalidate or decline retention without skipping
+preparation or output. CP-18 compares host-copy alone against this additional
+opt-in and requires actual reuse counters, current pixels and unchanged cadence.
+The prototype does not approve its architecture, default enablement or parity.
+
 The supported native path now retains immutable pixels for unchanged
 presentation regions. Small updates redraw only changed regions before normal
 egui-wgpu composition. Session pumping does not request an extra repaint for

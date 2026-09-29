@@ -849,7 +849,8 @@
         "ADR-0012",
         "ADR-0037",
         "ADR-0039",
-        "ADR-0040"
+        "ADR-0040",
+        "ADR-0041"
       ],
       "automated_tests": [
         "native_background_hook_preserves_rectangles_and_translucent_fallback",
@@ -860,6 +861,12 @@
         "host_copy_is_explicitly_opt_in_and_rejects_invalid_values",
         "host_copy_preserves_pixels_dpi_resize_overlays_and_fallback",
         "host_copy_capture_tracks_usage_size_and_format",
+        "retained_composition_is_explicitly_opt_in_and_rejects_invalid_values",
+        "retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement",
+        "retained_prefix_keeps_queued_images_immutable_after_rebuild_and_clear",
+        "retained_prefix_declines_signature_overflow_and_recovers",
+        "retained_prefix_invalidates_texture_updates_removal_renderer_and_external_access",
+        "retained_prefix_declines_unkeyed_callbacks_user_textures_and_external_bindings",
         "native_solid_background_matches_terminal_pixels_across_dpi",
         "srgb_framebuffers_keep_standard_background_pixels",
         "only_eight_bit_gamma_framebuffers_use_the_solid_background_pipeline",

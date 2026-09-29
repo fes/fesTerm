@@ -660,6 +660,39 @@ normally, unlike the separate CPU workload windows. This adds native
 focus/resize evidence, not native screenshot, independent OS-input or general
 shutdown acceptance.
 
+**Default-off retained-prefix prototype (ADR-0041):** the owner separately
+authorized retaining unchanged preceding window/chrome pixels. Enable both
+`FESTERM_EXPERIMENTAL_HOST_COPY=1` and
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`; compare against host-copy alone,
+not against the older shader path. The cache owns one immutable image up to
+64 MiB and up to 1 MiB of exact signatures. Pixel regressions cover panel input
+changes, DPI, terminal movement, clear color, clipping, overlays, disabled
+painting, capture targets, full/partial texture changes, removal, renderer
+replacement, actual managed-texture exports, external bindings and unkeyed
+callback side effects. Additional regressions submit an older queued copy only
+after rebuilding and destroying the cache, require ordinary pixels and recovery
+after an oversized signature, and count both callback preparation phases on
+cache hits. Separate pure tests cover exact bounds and identity keys.
+The cache-owned limits exclude temporary capture/rebuild allocations and
+images retained by recorded or in-flight GPU work.
+
+The optional completed-work probe rejects missing reuse and mismatched initial
+or final pixels. The native comparison driver records reused and rebuilt frame
+rates and rejects active samples with no actual reuse. These safeguards do not
+replace native focus/resize/screenshot checks or qualify mixed-monitor,
+transparent/secondary-window, recovery, memory growth, physical latency or
+hardware-negative-routing behavior. Default enablement and architectural
+approval remain separate from this prototype's implementation and measurements.
+Separate offscreen ABBA/BAAB series on `8721b0b` and `d868509` completed with
+exact pixels, bounded current cache resources, actual reuse and approximately
+10 Hz cadence; source hashes, variable controls and results remain separately
+documented in `validation/terminal-performance/README.md`. The later series
+predates #280's syntax/fenced-loading merge. Native qualification is still incomplete:
+an initial foreground failure produced no sample, then a separately authorized
+attempt completed four off-mode workloads before desktop input invalidated the
+first on-mode quiet sample. No matched native active-workload comparison exists,
+no native improvement is claimed, and neither failure was retried automatically.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | CP-18 | On supported Windows x64 WARP, compare eligible root-terminal rendering with `FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) versus the supported Direct2D path (unset by default, or explicit `1` for compatibility). Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths remain ordinary painting, no blank/stale frame appears, `0` disables the path, `1` cannot force unsupported conditions, and hardware rendering is unchanged. | Automated framebuffer + native performance + manual interaction; experimental | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and explicit palette-budget fallback. `validation/direct2d/run.ps1` provides the isolated replay and is available through the optional runner with `FESTERM_RUN_DIRECT2D_PROBE=1`. Compare `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer` with `FESTERM_EXPERIMENTAL_DIRECT2D=0` for the ordinary baseline and, on a known eligible WARP host, the supported unset default (or explicit `1`) for the candidate, adding `-RequireDirect2D` to validate automatic/default selection and to reject `0` or invalid values. The aggregate optional Windows runner keeps that strict dense/native-required check explicitly behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or ARM64 machines still run their ordinary optional suite. The probe requires actual native frames and preserves existing CPU/FPS budgets. Single-host sparse/dense application measurements and the keep-#239/#240 review are in the probe README; intermittent idle failures are tracked by #242. Owner approval makes this bounded WARP path default-on, but issue #244 still owns mixed-DPI, multi-window, device-loss, latency, memory and representative-hardware qualification, and ADR-0039 remains Proposed. |

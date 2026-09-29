@@ -43,6 +43,7 @@ struct PanelRenderer {
     device: wgpu::Device,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    paint_namespace: Arc<()>,
     #[cfg(test)]
     paints: std::sync::atomic::AtomicUsize,
 }
@@ -54,6 +55,7 @@ struct PanelPaint {
     index_count: u32,
     uniform: wgpu::Buffer,
     bindings: wgpu::BindGroup,
+    geometry: egui::Mesh,
 }
 
 fn panel_renderer_id() -> egui::Id {
@@ -158,20 +160,21 @@ impl PanelRenderer {
             device: device.clone(),
             pipeline,
             layout,
+            paint_namespace: Arc::new(()),
             #[cfg(test)]
             paints: std::sync::atomic::AtomicUsize::new(0),
         }))
     }
 
     fn shape(self: &Arc<Self>, ui: &egui::Ui, shape: egui::Shape) -> egui::Shape {
-        let primitives = ui.ctx().tessellate(
+        let mut primitives = ui.ctx().tessellate(
             vec![egui::epaint::ClippedShape {
                 clip_rect: ui.clip_rect(),
                 shape: shape.clone(),
             }],
             ui.ctx().pixels_per_point(),
         );
-        let mesh = match primitives.as_slice() {
+        let mesh = match primitives.as_mut_slice() {
             [egui::ClippedPrimitive {
                 primitive: egui::epaint::Primitive::Mesh(mesh),
                 ..
@@ -180,7 +183,7 @@ impl PanelRenderer {
                 && !mesh.indices.is_empty()
                 && mesh.is_valid() =>
             {
-                mesh
+                std::mem::take(mesh)
             }
             [] => return egui::Shape::Noop,
             _ => {
@@ -229,12 +232,26 @@ impl PanelRenderer {
                 index_count,
                 uniform,
                 bindings,
+                geometry: mesh,
             },
         ))
     }
 }
 
 impl egui_wgpu::CallbackTrait for PanelPaint {
+    fn paint_key(&self) -> Option<egui_wgpu::CallbackPaintKey> {
+        let vertices: &[u8] = bytemuck::cast_slice(&self.geometry.vertices);
+        let indices: &[u8] = bytemuck::cast_slice(&self.geometry.indices);
+        let mut bytes = Vec::with_capacity(8 + vertices.len() + indices.len());
+        bytes.extend_from_slice(&(vertices.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(vertices);
+        bytes.extend_from_slice(indices);
+        Some(egui_wgpu::CallbackPaintKey {
+            namespace: self.renderer.paint_namespace.clone(),
+            bytes: bytes.into(),
+        })
+    }
+
     fn prepare(
         &self,
         _device: &wgpu::Device,
@@ -328,9 +345,17 @@ fn fragment() -> @location(0) vec4<f32> {
 
 struct SolidBackground {
     pipeline: wgpu::RenderPipeline,
+    paint_namespace: Arc<()>,
 }
 
 impl egui_wgpu::CallbackTrait for SolidBackground {
+    fn paint_key(&self) -> Option<egui_wgpu::CallbackPaintKey> {
+        Some(egui_wgpu::CallbackPaintKey {
+            namespace: self.paint_namespace.clone(),
+            bytes: Arc::from([]),
+        })
+    }
+
     fn paint(
         &self,
         _info: egui::PaintCallbackInfo,
@@ -398,7 +423,10 @@ fn create_callback(render_state: &egui_wgpu::RenderState) -> Option<egui::PaintC
     });
     Some(egui_wgpu::Callback::new_paint_callback(
         egui::Rect::NOTHING,
-        SolidBackground { pipeline },
+        SolidBackground {
+            pipeline,
+            paint_namespace: Arc::new(()),
+        },
     ))
 }
 
