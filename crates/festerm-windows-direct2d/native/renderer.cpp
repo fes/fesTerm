@@ -339,7 +339,8 @@ public:
         return result;
     }
 
-    void draw(const Frame& frame, Color clear = {0,0,0,0}) {
+    void draw(const Frame& frame, Color clear = {0,0,0,0},
+        const D2D1_RECT_F* draw_clip = nullptr) {
         if (on12) {
             ID3D11Resource* resources[]{wrapped.Get()};
             on12->AcquireWrappedResources(resources, 1);
@@ -348,8 +349,22 @@ public:
         context->BeginDraw();
         context->Clear(clear.straight());
         for (const auto& group : frame) {
-            context->PushAxisAlignedClip(group.clip, D2D1_ANTIALIAS_MODE_ALIASED);
+            auto clip = group.clip;
+            if (draw_clip) {
+                clip = {std::max(clip.left, draw_clip->left), std::max(clip.top, draw_clip->top),
+                    std::min(clip.right, draw_clip->right), std::min(clip.bottom, draw_clip->bottom)};
+            }
+            if (group.draws.empty() || clip.right <= clip.left || clip.bottom <= clip.top)
+                continue;
+            context->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
             for (const auto& item : group.draws) {
+                // Preparation validated the whole mesh; retain a pixel of edge coverage.
+                if (item.kind != Draw::Triangle &&
+                    (item.destination.right < clip.left - 1 ||
+                     item.destination.bottom < clip.top - 1 ||
+                     item.destination.left > clip.right + 1 ||
+                     item.destination.top > clip.bottom + 1))
+                    continue;
                 brush->SetColor(item.color.straight());
                 switch (item.kind) {
                 case Draw::Rectangle:
@@ -548,6 +563,7 @@ struct Bridge {
     std::unique_ptr<Renderer> renderer;
     std::map<uint64_t, Texture> textures;
     Frame frame;
+    uint32_t prepared_width{}, prepared_height{};
     std::vector<Vertex> scratch_vertices;
     Color clear{};
     char error[512]{};
@@ -634,13 +650,23 @@ extern "C" HRESULT festerm_d2d_prepare(Bridge* bridge, uint32_t width, uint32_t 
                 normalized_positions, bridge->scratch_vertices));
         }
         bridge->frame = std::move(frame);
+        bridge->prepared_width = width;
+        bridge->prepared_height = height;
         bridge->clear = clear;
     });
 }
 
-extern "C" HRESULT festerm_d2d_draw(Bridge* bridge, ID3D12Resource** output) {
-    if (!bridge || !output) return E_INVALIDARG;
+extern "C" HRESULT festerm_d2d_draw(Bridge* bridge, uint32_t width, uint32_t height,
+    const float* clip, ID3D12Resource** output) {
+    if (!bridge || !clip || !output || !width || !height ||
+        width > bridge->prepared_width || height > bridge->prepared_height) return E_INVALIDARG;
     *output = nullptr;
+    const D2D1_RECT_F draw_clip{clip[0], clip[1], clip[2], clip[3]};
+    if (!std::isfinite(draw_clip.left) || !std::isfinite(draw_clip.top) ||
+        !std::isfinite(draw_clip.right) || !std::isfinite(draw_clip.bottom) ||
+        draw_clip.left < 0 || draw_clip.top < 0 ||
+        draw_clip.right > float(width) || draw_clip.bottom > float(height) ||
+        draw_clip.right <= draw_clip.left || draw_clip.bottom <= draw_clip.top) return E_INVALIDARG;
     return boundary(bridge, [&] {
         auto& renderer = *bridge->renderer;
         D3D12_HEAP_PROPERTIES heap{};
@@ -648,8 +674,8 @@ extern "C" HRESULT festerm_d2d_draw(Bridge* bridge, ID3D12Resource** output) {
         heap.CreationNodeMask = heap.VisibleNodeMask = 1;
         D3D12_RESOURCE_DESC description{};
         description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        description.Width = renderer.width;
-        description.Height = renderer.height;
+        description.Width = width;
+        description.Height = height;
         description.DepthOrArraySize = description.MipLevels = 1;
         description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         description.SampleDesc.Count = 1;
@@ -659,8 +685,8 @@ extern "C" HRESULT festerm_d2d_draw(Bridge* bridge, ID3D12Resource** output) {
         // wgpu loses its device before recording the external work's fence.
         check(renderer.native_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
             &description, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&resource)));
-        renderer.set_target(resource.Get(), renderer.width, renderer.height);
-        renderer.draw(bridge->frame, bridge->clear);
+        renderer.set_target(resource.Get(), width, height);
+        renderer.draw(bridge->frame, bridge->clear, &draw_clip);
         *output = resource.Detach();
     });
 }
