@@ -81,6 +81,14 @@ try {
     [WindowFixture]::SetVisible($root, $true)
     Assert ([FesTermApplicationWindow]::Find($PID) -eq $root) 'Did not select the application window'
     Assert (-not [FesTermApplicationWindow]::Matches($root, 2147483647)) 'Accepted a different process'
+    $rejected = $false
+    try { [FesTermApplicationWindow]::Activate($root, 2147483647) }
+    catch { $rejected = $_.Exception.Message -match 'identity changed' }
+    Assert $rejected 'Activated a foreign window'
+    $rejected = $false
+    try { [void][FesTermApplicationWindow]::ClientGeometry($root, 2147483647) }
+    catch { $rejected = $_.Exception.Message -match 'identity changed' }
+    Assert $rejected 'Read geometry from a foreign window'
     [FesTermApplicationWindow]::RequireResponsive($root, $PID)
     $owned = [WindowFixture]::Create(0, $true, $root)
     $windows.Add($owned)
@@ -98,6 +106,10 @@ try {
     Assert $rejected 'Sent WM_CLOSE to the helper'
     [WindowFixture]::Destroy($root)
     Assert (-not [FesTermApplicationWindow]::Matches($root, $PID)) 'Accepted a stale HWND'
+    $rejected = $false
+    try { [FesTermApplicationWindow]::Activate($root, $PID) }
+    catch { $rejected = $_.Exception.Message -match 'identity changed' }
+    Assert $rejected 'Activated a stale HWND'
     Assert ([FesTermApplicationWindow]::Find($PID) -eq [IntPtr]::Zero) 'Fell back to the helper after close'
     'application-window regression passed'
 } finally {

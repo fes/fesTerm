@@ -3,6 +3,25 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Turning native performance attempts into auditable qualification
+
+The retained-prefix experiment's offscreen savings did not answer the
+default-on question: native attempts stopped at desktop guards, and its CPU
+fixture windows repeatedly needed forced cleanup. The qualification runner now
+declares shipping/host-copy/combined settings in balanced reversed order and
+retains every process, producer, guard and resource interval. A changing-title
+fixture and separate palette fallback control make adverse cases visible
+instead of measuring only the cache's favorable reuse path.
+
+The shutdown investigation found a harness-policy mismatch rather than
+permission to remove a safety prompt: per-tab close confirmation does not
+disable primary-window Quit confirmation. The driver explicitly confirms only
+its own unique Quit button and distinguishes normal whole-tree exit from forced
+cleanup. The independent input runner can use staged release binaries and
+external owned-client captures. None of these automation seams is native
+qualification by itself; #282 still owns the incomplete equipment, resource,
+latency and maintainer-approval boundaries.
+
 ## Removing repeated query compilation from document loading
 
 Steady-state measurements hid a much larger Markdown stall: the first Preview

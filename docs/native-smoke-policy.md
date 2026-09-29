@@ -116,6 +116,19 @@ files alongside the existing native artifacts and any enabled daemon trace;
 runner loss or job-level cancellation can still prevent artifact collection.
 Neither deadline retries a failed smoke.
 
+`run-windows-os-input-smoke.ps1 -Configuration Release -SkipBuild` uses an
+already-staged release application; the default remains the existing debug
+smoke. Optional external captures and maximize/minimize/restore checks retain
+the same in-app deadline and exact controlled-input acknowledgment. This
+functional runner is separate from quiet CPU measurement and cannot qualify
+mixed-monitor DPI, physical latency or the full CP-18 matrix.
+
+The native CPU fixture keeps a live child, so one primary `WM_CLOSE` opens the
+normal aggregate Quit confirmation even when per-tab close confirmation is
+disabled. Its driver must explicitly invoke the unique test-owned **Quit
+fesTerm** button and verify normal process and descendant-tree exit. A forced
+kill is preserved cleanup evidence, not graceful-shutdown acceptance.
+
 ## Flaky failure policy
 
 **No silent retries.**

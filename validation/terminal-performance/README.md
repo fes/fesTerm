@@ -950,6 +950,72 @@ architectural/default-selection decision. Repeated offscreen savings, passing
 CI or merging the opt-in code alone do not satisfy those gates. Retention does
 not implicitly promote its host-copy prerequisite.
 
+#### Current-source native A/B/C qualification
+
+Prepare and stage a clean, committed candidate before starting any measurement:
+
+```powershell
+pwsh -NoProfile -File scripts\stage-conpty.ps1 -Configuration Release
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+pwsh -NoProfile -File validation\terminal-performance\compare-windows.ps1 `
+  -FesTermOnly -QualifyCopyModes -CaptureFinalFrame `
+  -ResultDirectory '<fresh-native-series>'
+python validation\terminal-performance\check_windows.py '<fresh-native-series>'
+```
+
+The driver declares `ABC CBA CBA ABC` before launching anything: four processes
+per setting and workload, using shipping A (`0`,`0`), host-copy B (`1`,`0`) and
+combined C (`1`,`1`). The default corpus also includes `changing-chrome`:
+the repository-owned localized producer changes its OSC title every tick.
+Ordinary eligible active cases require actual copies/reuse; changing chrome
+requires actual rebuilds. `-OverlayControl -Workloads localized` adds a
+separate command-palette fallback series, with test-owned input only before
+quiet warmup. Unsupported overlay copies/reuse must stay zero.
+
+Every run records source and executable/producer hashes, release configuration,
+CPU affinity/capacity, OS/architecture, matched font/grid/client pixels/DPI,
+ordered start/finish times, producer completion/bytes/timestamps, guards and
+per-second CPU/private-memory/working-set/handle/thread observations. Desktop
+captures use the external, foreground-owned client rectangle **after** sampling;
+they are not an application's screenshot request or proof of displayed-frame
+cadence. The portable validator rejects incomplete orders, source/binary/font/
+geometry/delivery changes, invalid guards and forced/incomplete cleanup. It
+preserves adverse controls and reports distributions and all four order blocks;
+it introduces no favorable timing threshold or memory acceptance budget.
+
+The controlled child deliberately remains live after production. Primary-window
+Quit is always confirmed, even with per-tab `confirm_session_close=false`.
+Previously sending only `WM_CLOSE` left this ordinary confirmation pending and
+the harness force-killed the application. The driver now invokes the unique
+**Quit fesTerm** accessibility button belonging to its test window, records
+normal exit and verifies its captured descendant tree has exited. Forced kills
+remain cleanup, fail this oracle and stop the series. Shared activation follows
+the existing comparison driver's bounded owned-window activation procedure;
+it still rejects identity changes or failure to obtain foreground.
+
+For bounded resource observations, run a separate single-setting invocation
+with, for example, `-SampleSeconds 300 -ProducerFrames 3100`. The producer's
+existing 6,000-tick limit is unchanged. Process peaks and interval trends do not
+account for every GPU in-flight allocation; current cache counters and process
+memory are not an approved total-resource budget.
+
+Independent functional runs can select the already-staged release application:
+
+```powershell
+pwsh -NoProfile -File scripts\run-windows-os-input-smoke.ps1 `
+  -Configuration Release -SkipBuild -ExerciseWindowLifecycle `
+  -ResultPath '<fresh-result-path>' -CaptureDirectory '<fresh-capture-directory>'
+```
+
+This keeps the original 20-second in-app deadline and exact PTY acknowledgment.
+It additionally checks maximize/minimize/exact restore and captures the owned
+initial/restored/maximized window; keyboard-routing mode also captures its
+palette. It is not a mixed-DPI transition, all-view interaction or latency gate.
+The aggregate optional runner exposes the balanced series only through
+`FESTERM_RUN_COPY_QUALIFICATION=1` and `FESTERM_COPY_QUALIFICATION_OUT`.
+Both experiments remain default-off and every compound #282 gate stays open
+until its full evidence and required maintainer decisions exist.
+
 ### Prior remaining-gap investigation and renderer-host boundary
 
 **Applicability: Windows x64 DX12 WARP / DevBox, not hardware-GPU or

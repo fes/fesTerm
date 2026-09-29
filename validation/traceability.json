@@ -891,6 +891,7 @@
         "unsupported_native_palette_keeps_the_current_frame_pixels",
         "replay_terminal_tui_workloads",
         "localized_tui_updates_leave_other_rows_unchanged",
+        "changing_chrome_keeps_localized_output_and_changes_the_title_each_tick",
         "tui_workloads_preserve_final_state_when_bytes_are_fragmented",
         "tui_producer_emits_exact_shared_frames_and_a_complete_report",
         "tui_producer_rejects_invalid_workloads_and_budgets",
