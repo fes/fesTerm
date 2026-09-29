@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
 import io
 import json
 import os
@@ -74,6 +75,12 @@ class RetainedComparisonTests(unittest.TestCase):
         value = comparison.read_json(path)
         action(value)
         path.write_text(json.dumps(value), encoding="utf-8")
+
+    def test_digest_covers_more_than_one_chunk(self):
+        content = bytes(range(256)) * 4097
+        path = self.root / "digest-input"
+        path.write_bytes(content)
+        self.assertEqual(comparison.digest(path), hashlib.sha256(content).hexdigest())
 
     def test_complete_series_preserves_samples_and_adverse_controls(self):
         for name, mode in comparison.RUNS:
