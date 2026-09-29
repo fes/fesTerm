@@ -336,6 +336,28 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=skipped reason=explicit-opt-in"
     }
+    if ($env:FESTERM_RUN_RETAINED_COMPARISON -eq '1') {
+        try {
+            if (-not $env:FESTERM_RETAINED_PROBE_EXE -or -not $env:FESTERM_RETAINED_COMPARE_OUT -or
+                -not $env:FESTERM_RETAINED_SOURCE_LABEL) {
+                throw 'Set FESTERM_RETAINED_PROBE_EXE, FESTERM_RETAINED_COMPARE_OUT, and FESTERM_RETAINED_SOURCE_LABEL.'
+            }
+            Invoke-NativeCommand {
+                python "$PSScriptRoot\..\validation\terminal-performance\compare_retained.py" run `
+                    --probe $env:FESTERM_RETAINED_PROBE_EXE `
+                    --directory $env:FESTERM_RETAINED_COMPARE_OUT `
+                    --source-label $env:FESTERM_RETAINED_SOURCE_LABEL
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Balanced retained-prefix comparison failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=skipped reason=explicit-opt-in"
+    }
     if ($env:FESTERM_RUN_TUI_NATIVE_COMPARISON -eq '1') {
         try {
             if (-not $env:FESTERM_WINDOWS_TERMINAL_PORTABLE -or -not $env:FESTERM_TUI_NATIVE_OUT) {

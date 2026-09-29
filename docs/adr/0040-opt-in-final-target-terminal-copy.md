@@ -74,6 +74,11 @@ throttling, queued-frame policy or claim of Windows Terminal parity.
 CPU/frame cadence and exact pixels must be measured together. Lower offscreen
 CPU is not native presentation-latency or device-recovery qualification.
 
+The separate default-selection decision and its concrete evidence gates are
+tracked in [#282](https://github.com/fes/fesTerm/issues/282), including the
+dependent retained-prefix experiment in ADR 0041. Merging this opt-in seam
+does not approve either default.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** Optional host access to the final target;

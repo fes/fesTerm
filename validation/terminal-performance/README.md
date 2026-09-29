@@ -803,6 +803,29 @@ cleanup. The invalid sample and four valid off-only samples remain in
 `retained-prefix-872-native-incomplete-summary.json`, not in an improvement
 aggregate. No automatic retry or weakened guard was used.
 
+After integrating #280, application commit
+`55db37700e092cc7a4e8e657d42e977661ecda91` had SHA256
+`6ED0B471A3C37634A47067924788DFA14151CD8B9C74B9F028511DB0261E0F1C`.
+Its separately authorized off/on native-window smokes both passed: observed
+focus, four resize generations, PTY output 75B to 118B and one CSI 6n reply.
+Both exited normally without desktop input. Off performed 67 host copies and
+no prefix retention; on performed 105 copies, 93 prefix reuses and 12 rebuilds.
+Maximum observed current-cache allocations were 18,151,080 image bytes and
+36,168 signature bytes, not peak-process measurements.
+
+The subsequent fresh guarded series completed four valid off-mode controls:
+quiet 0.03875%, localized 2.86020%, streaming 3.85628%, full redraw 9.34673%
+normalized process CPU. The client remained 2058x1658 at 192 DPI, with a
+120x40 grid; the monitor work area was 3352x2434. The first on-mode quiet
+sample then failed with `InputChanged=true`, unchanged foreground/geometry,
+and no active on-mode sample. All five CPU workload windows again required
+PID-scoped forced cleanup, and all application/producer processes terminated.
+This is neither a completed native comparison nor graceful-shutdown evidence;
+the successful self-smokes do not erase that limitation. Evidence remains in
+`retained-prefix-publication-native-{smoke-*,abba-*}` and
+`retained-prefix-publication-native-incomplete-summary.json`. No further
+desktop attempt is implied or automatically retried.
+
 #### Correctness, reproduction and remaining boundary
 
 Native framebuffer regressions compare hits, misses and ordinary fallback
@@ -817,12 +840,81 @@ next eligible frame. Both callback preparation phases execute even on hits;
 unkeyed callbacks must still paint. Pure tests cover inclusive size/signature
 thresholds, arithmetic overflow and exact namespace identity.
 
-For the completed-work probe, enable optional validation, keep host-copy on,
-select the application scene and
-`frozen-all,localized-all,localized-without-composition,frozen-all-repeat`,
-then run `profile_terminal_residual_cpu` in balanced off/on orders with fresh
-evidence directories and the first `original.png` as the subsequent reference.
-Leave the separate diagnostic-copy and sampler overrides unset.
+The Rust probe and regressions, the guarded native driver, and the interactive
+editor/Markdown/SFTP surface probes are repository-owned, not session-only
+tests. `compare_retained.py` adds reusable ABBA/BAAB orchestration and evidence
+validation for the completed offscreen comparison. It uses one already-built
+release **test executable**, explicitly waits for each process, keeps host-copy
+on, controls the scene/cases and reference image, and removes the independent
+diagnostic-copy/sampler overrides. It never builds during sampling, overwrites
+an evidence directory, retries a failure or accepts incomplete/mixed results.
+
+Build from a stable checkout before measuring, install the existing image-check
+dependency, and identify the exact test artifact rather than selecting an
+arbitrary executable from `target\release\deps`:
+
+```powershell
+python -m pip install -r validation\direct2d\requirements.txt
+$source = git rev-parse HEAD
+$dirty = @(git status --porcelain).Count -ne 0
+$build = cargo test --release -p festerm --no-run --message-format=json
+if ($LASTEXITCODE -ne 0) { throw 'Release probe build failed.' }
+$probe = @($build | ForEach-Object { $_ | ConvertFrom-Json } |
+    Where-Object { $_.reason -eq 'compiler-artifact' -and
+        $_.target.name -eq 'festerm' -and $_.profile.test -and $_.executable })
+if ($probe.Count -ne 1) { throw 'Expected one festerm test executable.' }
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+python validation\terminal-performance\compare_retained.py run `
+    --probe $probe[0].executable --directory '<fresh-evidence-directory>' `
+    --source-label "$source; dirty=$dirty; release test build"
+python validation\terminal-performance\compare_retained.py check '<evidence-directory>'
+```
+
+The source label is an explicit provenance declaration, not proof that an
+arbitrary supplied binary was built from the current checkout. The runner
+records and checks its executable SHA256 before/after each process. Checking
+saved evidence is portable and does not require that executable to remain at
+its original path. All 32 cases must retain exact initial PNG bytes and scene
+metadata, successful initial/final pixel oracles, 100 frames near 10 Hz, finite
+consistent timings, real reuse and current-cache bounds. Adverse CPU results
+are reported, not treated as invalid data or omitted. No timing percentage is
+a normal CI assertion; deterministic fixtures test the runner and rejection
+rules without launching a GPU workload.
+
+The optional Windows suite exposes this through
+`FESTERM_RUN_RETAINED_COMPARISON=1`, with `FESTERM_RETAINED_PROBE_EXE`,
+`FESTERM_RETAINED_COMPARE_OUT` and `FESTERM_RETAINED_SOURCE_LABEL` pointing to
+the prepared executable, fresh output directory and declared source. Keep
+other builds/benchmarks out of the sampling interval. Raw machine captures
+and one-off investigation records remain local evidence, not committed
+fixtures.
+
+The checked-in runner was also exercised end to end using the same immutable
+`DBED5CBD...` probe from the `d868509` series, not the later application build.
+Its separate complete ABBA/BAAB run produced:
+
+| Case | Retention off mean CPU-ms/frame | Retention on mean CPU-ms/frame | Change |
+| --- | ---: | ---: | ---: |
+| Frozen complete composition, first | 43.984375 | 9.531250 | -78.3% |
+| Localized, including composition | 68.085938 | 33.476563 | -50.8% |
+| UI/native update, excluding composition | 12.617188 | 13.710938 | +8.7% |
+| Frozen complete composition, repeated | 37.617188 | 9.218750 | -75.5% |
+
+Localized off samples were 68.281250, 70.625000, 65.000000 and 68.437500;
+on samples were 32.031250, 32.343750, 31.718750 and 37.812500. Frozen first
+off ranged 34.375-56.250, on 8.438-10.313; ending off 30.781-40.469,
+on 7.969-11.250. No-composition off ranged 11.563-14.375, on 11.406-15.156;
+its adverse result remains visible. All 32 cases completed 100 frames at
+9.9932-9.9999 Hz with the same exact initial image/metadata, initial/final
+pixel oracles, 93 localized reuses/seven rebuilds, 100 frozen reuses and
+13,648,656 image/37,000 signature bytes. Mean completed-draw wall times were
+35.077 to 29.677 ms localized, 22.567 to 9.877 first frozen and 20.392 to
+9.909 ending frozen. The portable `check` command independently revalidated
+the saved series at `target\perf-campaign\retained-prefix-runner-qualification-d868`.
+Its manifest, per-process logs/metadata and complete `summary.json` remain
+separate from the earlier run; neither this rerun nor its timing percentages
+is a native default-on qualification.
+
 For the guarded desktop driver:
 
 ```powershell
@@ -845,6 +937,18 @@ Mixed-monitor DPI, device recovery, transparent/secondary windows, hardware
 negative routing, memory growth, native screenshot/overlay review and physical
 latency remain separate CP-18 obligations. ADR-0041 stays Proposed and
 architectural review remains required before merge.
+
+#### Default-on gates for both copy experiments
+
+[#282](https://github.com/fes/fesTerm/issues/282) owns the explicit evidence and
+approval gates for host-copy (#270 / ADR-0040) and retained composition
+(#281 / ADR-0041). It requires current-source shipping-default, host-copy-only
+and combined comparisons; valid native delivery/cadence and adverse controls;
+native visual/lifecycle/recovery/shutdown coverage; peak/in-flight resource
+behavior; independent latency; negative routing and opt-outs; and an explicit
+architectural/default-selection decision. Repeated offscreen savings, passing
+CI or merging the opt-in code alone do not satisfy those gates. Retention does
+not implicitly promote its host-copy prerequisite.
 
 ### Prior remaining-gap investigation and renderer-host boundary
 

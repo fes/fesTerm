@@ -700,7 +700,7 @@ images retained by recorded or in-flight GPU work.
 The optional completed-work probe rejects missing reuse and mismatched initial
 or final pixels. The native comparison driver records reused and rebuilt frame
 rates and rejects active samples with no actual reuse. These safeguards do not
-replace native focus/resize/screenshot checks or qualify mixed-monitor,
+replace remaining native visual/lifecycle checks or qualify mixed-monitor,
 transparent/secondary-window, recovery, memory growth, physical latency or
 hardware-negative-routing behavior. Default enablement and architectural
 approval remain separate from this prototype's implementation and measurements.
@@ -713,6 +713,19 @@ an initial foreground failure produced no sample, then a separately authorized
 attempt completed four off-mode workloads before desktop input invalidated the
 first on-mode quiet sample. No matched native active-workload comparison exists,
 no native improvement is claimed, and neither failure was retried automatically.
+
+On publication commit `55db377`, both retained-prefix off/on native-window
+self-smokes subsequently passed focus, four resize generations, PTY continuity
+and CSI 6n, and exited normally. Enabled logs prove 93 prefix reuses and 12
+rebuilds; disabled logs contain none. A newly authorized native CPU series
+again completed only four off-mode controls before input invalidated on/quiet,
+so no matched active comparison exists. Its five CPU windows needed forced
+cleanup; this does not replace the normal-exit self-smoke evidence or qualify
+general shutdown. All attempts remain separately recorded. The reusable
+offscreen ABBA/BAAB runner and artifact validator are checked in, with synthetic
+CI coverage rather than flaky timing assertions. Explicit default-on gates for
+both copy experiments are tracked in
+[#282](https://github.com/fes/fesTerm/issues/282).
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

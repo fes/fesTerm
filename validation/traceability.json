@@ -970,7 +970,8 @@
       "prerequisites": [
         "IME and complete selection semantics remain platform/capability work",
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review",
-        "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards"
+        "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards",
+        "ADR-0040/0041 default-on evidence and architectural/default-selection decision: https://github.com/fes/fesTerm/issues/282"
       ]
     },
     {

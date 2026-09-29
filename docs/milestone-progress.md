@@ -133,6 +133,25 @@ Full ranges, hashes, controls and reproduction are in
 defaults, close CP-18, establish Windows Terminal parity or replace
 architectural review.
 
+## Making performance evidence repeatable and default decisions explicit
+
+The comparison probes and pixel regressions were already repository-owned,
+but balanced offscreen orchestration and cross-run validation still lived in
+the campaign session. They now have a reusable runner that waits for each
+release test process and rejects mixed binaries, changed images/geometry,
+missing frames/reuse, invalid timing and exceeded cache bounds. Synthetic
+tests cover both orders, environment/reference handling, failure preservation
+and adverse controls without turning variable CPU percentages into CI gates.
+
+The publication build also passed native focus/resize smokes with retention
+off/on and actual enabled reuse. Its fresh CPU attempt nevertheless stopped
+on input before an active on-mode sample, so native savings remain unqualified.
+Issue #282 makes the evidence needed to promote either copy experiment explicit,
+including the shipping-default comparison, latency, recovery, peak/in-flight
+resources, fallback and architectural decisions. The PR template now asks every
+default-off change for those gates or a linked issue; merging a prototype is
+not an implicit decision to enable it.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown

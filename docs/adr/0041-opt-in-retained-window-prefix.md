@@ -95,6 +95,11 @@ callback contract and maintenance burden require architectural review before
 merge. A successful CPU experiment does not establish presentation/input
 latency, device recovery, hardware-GPU benefit, or Windows Terminal parity.
 
+Default enablement is a separate decision tracked in
+[#282](https://github.com/fes/fesTerm/issues/282). It requires comparison with
+the shipping default, not only host-copy alone, and does not implicitly approve
+default enablement of the ADR 0040 prerequisite.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** Explicit immutable callback signatures;

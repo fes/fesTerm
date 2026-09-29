@@ -84,6 +84,10 @@ lifecycle changes must invalidate or decline retention without skipping
 preparation or output. CP-18 compares host-copy alone against this additional
 opt-in and requires actual reuse counters, current pixels and unchanged cadence.
 The prototype does not approve its architecture, default enablement or parity.
+The repository-owned balanced offscreen runner checks cross-run evidence without
+making CPU percentages CI assertions. Default-on gates for both copy experiments,
+including comparison with the shipping default, are explicit in
+[#282](https://github.com/fes/fesTerm/issues/282).
 
 The supported native path now retains immutable pixels for unchanged
 presentation regions. Small updates redraw only changed regions before normal
