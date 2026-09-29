@@ -74,16 +74,23 @@ def rust_test_functions(root: Path) -> set[str]:
     return tests
 
 
-def adr_ids(root: Path) -> tuple[set[str], dict[str, Path]]:
+def adr_ids(root: Path) -> tuple[set[str], dict[str, Path], dict[str, list[str]]]:
     identifiers: set[str] = set()
     paths: dict[str, Path] = {}
-    for path in (root / "docs" / "adr").glob("*.md"):
+    filenames: dict[str, list[str]] = {}
+    for path in sorted((root / "docs" / "adr").glob("*.md")):
         match = ADR_FILE_RE.match(path.name)
         if match:
             identifier = f"ADR-{match.group(1)}"
             identifiers.add(identifier)
-            paths[identifier] = path
-    return identifiers, paths
+            paths.setdefault(identifier, path)
+            filenames.setdefault(identifier, []).append(path.name)
+    duplicates = {
+        identifier: names
+        for identifier, names in filenames.items()
+        if len(names) > 1
+    }
+    return identifiers, paths, duplicates
 
 
 def expand_patterns(patterns: list[str], edges: set[str]) -> set[str]:
@@ -208,7 +215,12 @@ def validate_registry(root: Path, registry_path: Path, base: str | None = None) 
     graph_edges = markdown_ids(graph_path, EDGE_RE)
     manual_scenarios = markdown_ids(manual_path, MANUAL_RE)
     tests = rust_test_functions(root)
-    decisions, decision_paths = adr_ids(root)
+    decisions, decision_paths, duplicate_decisions = adr_ids(root)
+    for identifier, names in sorted(duplicate_decisions.items()):
+        errors.append(
+            f"{identifier} is claimed by more than one file: {', '.join(names)}; "
+            "renumber all but one so each ADR number is unique"
+        )
     legacy = set(registry.get("legacy_adrs_without_validation_impact", []))
     unknown_legacy = legacy - decisions
     if unknown_legacy:
