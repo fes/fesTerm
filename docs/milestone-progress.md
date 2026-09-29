@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Making context-menu targets readable without rewriting them
+
+A refinement milestone interrupted the performance campaign to fix path and
+URL previews with stretched spaces and awkward wrapping. The cause was
+egui's justified menu layout: ordinary labels inherit justification even when
+their input layout job does not request it. Prelaid-out, single-line galleys
+preserve natural spacing, while measured middle elision retains useful
+host/root and filename context inside a bounded menu. Full targets remain
+available on hover and to accessibility; controls are escaped only for display,
+and Open/Go/Copy keep their original values.
+
+A wide-character boundary regression exposed a second source of false spaces:
+path detection read the entire padded grid row rather than the terminal core's
+occupied extent. Reusing that authoritative extent removes synthetic wrap
+gaps while preserving printed spaces and also restores detection in short
+retained-history rows. Automated coverage distinguishes these cases across
+live/history/alternate buffers, Unicode graphemes and DPI scales. Native
+cross-platform menu placement, screen-reader delivery and human readability
+remain explicit TI-10/TI-14 evidence, not claims derived from headless layout.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown

@@ -178,6 +178,12 @@ impl Screen {
         (row < self.dimensions.rows()).then(|| self.soft_wrapped_rows[self.physical_row(row)])
     }
 
+    /// Occupied extent, including printed spaces but excluding untouched
+    /// trailing cells such as the gap before a width-two character wraps.
+    pub fn row_occupied_columns(&self, row: usize) -> Option<usize> {
+        (row < self.dimensions.rows()).then(|| self.occupied_columns[self.physical_row(row)])
+    }
+
     pub fn is_row_dirty(&self, row: usize) -> Option<bool> {
         self.dirty_rows.get(row).copied()
     }

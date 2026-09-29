@@ -552,9 +552,22 @@ or credential metadata is missing. A plain-text HTTP(S) address contributes
 **Go** and **Copy URL**; Go passes through the same validated external-link
 handler as an OSC 8 link. Detection preserves bracketed IPv6 authorities,
 including ports and wrapped addresses, without copying surrounding markup.
-A non-empty
-terminal selection contributes **Copy**. A live session that currently accepts
-input contributes **Paste**. **Find in terminal** remains available in every
+
+Path and URL previews are single-line, normally spaced, small monospace labels,
+not justified paragraphs. Target-bearing menus have at most 320 logical points
+of content width, reduced for a narrower viewport. Display-only middle elision
+favors the host/root and filename/extension; long web targets summarize query
+and fragment contents with explicit ellipses rather than filling the menu with
+opaque parameters. The full target remains available in a wrapping tooltip
+and accessible label. Control characters, line separators, and bidirectional
+controls are visibly escaped; ordinary filename spaces and complete grapheme
+clusters are preserved. None of this formatting changes the frozen Open/Go or
+Copy value. Logical-line detection uses the core's occupied row extent, so
+unprinted padding before a wrapped wide character is not mistaken for a
+filename space, including in retained history.
+
+A non-empty terminal selection contributes **Copy**. A live session that
+currently accepts input contributes **Paste**. **Find in terminal** remains available in every
 retained terminal viewport, including an exited or disconnected read-only
 history. When there is no active selection, the same menu also offers
 **Open Terminal History in Editor** and **Save Terminal History As…**. Both
@@ -2671,9 +2684,11 @@ features. OSC 8 parsing stays restricted to explicit hyperlinks; plain-text
 target detection is bounded by visible terminal cells, frozen when the context
 menu opens, and resolved without shell evaluation.
 
-Explicit links expose their normalized ASCII target in the context menu and
-full tooltip. `Ctrl+click` on Windows/Linux or `Cmd+click` on macOS opens a
-validated target through the application-owned OS-handler command; ordinary
+Explicit links expose a bounded preview of their normalized ASCII target in
+the context menu, with the full target in the tooltip and accessible label,
+following the display-only elision rules above. `Ctrl+click` on Windows/Linux
+or `Cmd+click` on macOS opens a validated target through the application-owned
+OS-handler command; ordinary
 clicks retain terminal selection/mouse behavior. Context actions **Open link**
 and **Copy link** appear only over a real link range. Copying terminal text
 copies visible text, not the hidden URI. Only absolute HTTP and HTTPS URLs with
