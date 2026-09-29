@@ -3,6 +3,30 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Keeping large documents and directories out of each frame
+
+The performance campaign expanded beyond the terminal to the editor, Markdown
+viewer and GUI SFTP browser. A release probe found that 5,000 entries in each
+SFTP pane built about 100,000 shapes even though the final visible geometry
+was almost the same as a short directory. Shared immutable listings and
+fixed-row virtualization remove that offscreen work, including in Open File
+and Save As, without narrowing selection or transfer behavior to visible rows.
+
+The editor's gutter likewise built a galley for every offscreen line, and its
+syntax/Find composition repeatedly scanned ordered spans. Clipping the former
+and sweeping the latter substantially reduced both plain and Find-heavy
+frames. Markdown Source now indexes syntax ranges and owns its cache with the
+loaded snapshot, correcting UTF-8 slicing and same-ends reload defects as well
+as removing repeated whole-document scans.
+
+Alternating original/candidate release probes reduced large-directory UI
+construction from about 166ms to below 0.9ms per forced frame, with unchanged
+final vertex counts. This is not a GPU or input-latency claim. Markdown Preview
+remains expensive, and a fresh guarded Windows Terminal comparison still
+showed the terminal CPU gap. The reproducible method, variability and remaining
+boundaries are in `validation/terminal-performance/README.md`; functional and
+pixel checks remain separate from native performance qualification.
+
 ## Opening Markdown from the desktop
 
 Markdown already had a local document and Preview path, but installing fesTerm

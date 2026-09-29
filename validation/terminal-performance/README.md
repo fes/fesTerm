@@ -4,6 +4,83 @@ This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
 
+## Editor, Markdown and SFTP UI construction
+
+The cross-platform `profile_interactive_surfaces` probe isolates non-terminal
+UI construction from tessellation. Run it in release mode with a fresh,
+absolute output directory:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_SURFACE_PROFILE_OUT = 'C:\evidence\interactive-surfaces'
+cargo test --release -p festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
+```
+
+Set `FESTERM_RUN_SURFACE_PROFILE=1` as well to include it in either aggregate
+optional-validation runner. It renders production widgets from synthetic local
+documents and directory snapshots, without an SSH connection or user
+configuration. Each scene has eight warmup frames and 40 measured, forced
+unchanged frames at 1180x760 points and one pixel per point. `profile.json`
+records UI/tessellation median and p95 wall times separately, fixture sizes,
+and final shape/vertex counts. It uses default egui fonts and the production
+dark theme, not the native application's bundled-font installation. It
+measures neither GPU completion nor native
+idle CPU, input latency, presentation, file transfer throughput or accessibility.
+There is no timing threshold in ordinary CI.
+
+The v0.7.1 follow-up used the same Windows x64, 16-logical-processor EPYC host.
+An original/candidate/candidate/original sequence, with each process explicitly
+waited for and no overlapping benchmark/build, produced these ranges of the
+two per-build **UI construction medians**, in milliseconds per frame:
+
+| Scene | Original | Candidate |
+| --- | ---: | ---: |
+| Editor, 2,000 Rust lines | 0.88-2.60 | 0.32-0.36 |
+| Editor, Find capped at 2,000 matches | 7.32-12.77 | 0.89-0.91 |
+| Markdown Preview, 400 sections | 13.32-13.92 | 13.50-14.84 |
+| Markdown Source, 4,800 lines | 9.36-9.46 | 5.26-5.68 |
+| SFTP, 100 entries per pane | 2.78-2.80 | 0.72-0.73 |
+| SFTP, 5,000 entries per pane | 166.31-166.77 | 0.76-0.88 |
+
+Original test executable SHA256:
+`06C71C54F4396AFF3396BB25CFCE05920A64E3DAD9F2ADCF6C8DA1A2ED240521`;
+candidate:
+`E65340C35EB591FDCD93960463281B06E4D8A671EFEBA5EE978C4585C0F29B8E`.
+The original is v0.7.1 plus this test-only probe and its module registration,
+not an older product version. To reproduce a baseline, add only those two
+test-harness changes to the tag. Keep the same probe and release settings
+on both sides; warm caches and host scheduling visibly affect these results.
+
+SFTP now shares an immutable cached listing rather than cloning all names and
+paths every frame. Only the fixed-height rows around the viewport are built;
+Open File and Save As use the same approach. Selection, sorting, filtering,
+activation and transfers still use the entire listing. The large scene emits
+680 shapes instead of 100,300; final vertex counts are unchanged in all six
+scenes. The editor avoids offscreen gutter galleys and repeated scans of ordered
+syntax/Find spans. Markdown Source locates each line's spans by index, and its
+snapshot-owned syntax cache also fixes UTF-8 boundary panics and stale colors
+after same-length middle-of-document replacements.
+
+Regression coverage includes last-row scrolling and activation in both
+pickers, whole-list selection/filtering, shared-cache invalidation, wrapped
+line numbering, UTF-8 syntax/Find equivalence, successful reload invalidation
+and failed reload retention. The existing production-UI gallery is captured
+to separate directories with `FESTERM_UI_GALLERY_OUT`, never over the committed
+gallery. Of 46 original/candidate PNGs, 43 are byte-identical; the remaining
+three differ only in generated temporary-directory PID digits, verified by
+pixel difference bounds and inspection. These checks are not native usability
+or latency qualification.
+
+**Remaining work:** the unchanged Preview scene shows no improvement. Its
+variable-height blocks, selectable text, tables and resource-dependent layout
+still need a separate investigation; fixed-row virtualization is not valid
+there. These non-terminal results do not close the Windows Terminal gap.
+A fresh valid localized native pair on v0.7.1 measured about 8.69% system CPU
+for fesTerm and 0.49% for Windows Terminal at the same 10 Hz producer cadence.
+Quiet and streaming comparison attempts were rejected when the last-input
+tick changed, without foreground or geometry changes. Those failures remain
+excluded rather than weakening the measurement guards.
+
 ## Completed-render replay
 
 On Windows x64 with DX12 WARP:

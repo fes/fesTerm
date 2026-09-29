@@ -34,6 +34,8 @@ mod search;
 pub mod session_controller;
 mod sftp_file_manager;
 mod software_background;
+#[cfg(test)]
+mod surface_performance;
 mod tabs;
 mod terminal_paths;
 mod text_compare;

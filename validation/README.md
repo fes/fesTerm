@@ -43,6 +43,11 @@ Windows WARP startup/rasterization evidence and the opt-in large-panel replay
 are documented in [`windows-warp/README.md`](windows-warp/README.md). Draw and
 readback timings are separate from native idle-CPU qualification.
 
+The optional [interactive-surface profile](terminal-performance/README.md#editor-markdown-and-sftp-ui-construction)
+separates editor, Markdown and SFTP UI construction from tessellation. Its
+synthetic release workloads and before/after results are not native rendering,
+latency or accessibility acceptance.
+
 `docs/state-of-the-ui.md` is a generated visual survey of the interface. It is
 regenerated rather than maintained by hand, because its purpose is to be
 reviewed repeatedly: a reviewer reads it, recommends changes, the UI changes,

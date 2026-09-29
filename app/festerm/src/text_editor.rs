@@ -2699,9 +2699,12 @@ fn paint_line_numbers(
     let mut number = 1usize;
     let mut starts_line = true;
     for row in &output.galley.rows {
-        if starts_line {
+        let top = output.galley_pos.y + row.pos.y;
+        let visible = top + row.size.y + font.size >= ui.clip_rect().top()
+            && top - font.size <= ui.clip_rect().bottom();
+        if starts_line && visible {
             painter.text(
-                egui::pos2(right, output.galley_pos.y + row.pos.y),
+                egui::pos2(right, top),
                 egui::Align2::RIGHT_TOP,
                 number.to_string(),
                 font.clone(),
@@ -2967,14 +2970,32 @@ fn editor_layout_job(
     cuts.sort_unstable();
     cuts.dedup();
 
+    // Find returns ordered, non-overlapping matches, as does DocumentSyntax.
+    // Advance each channel once instead of rescanning it for every section.
+    debug_assert!(highlights.windows(2).all(|pair| pair[0].1 <= pair[1].0));
+    debug_assert!(spans.windows(2).all(|pair| pair[0].end <= pair[1].start));
+    let mut match_index = 0;
+    let mut syntax_index = 0;
     for pair in cuts.windows(2) {
         let (start, end) = (pair[0], pair[1]);
         if start >= end {
             continue;
         }
+        while highlights
+            .get(match_index)
+            .is_some_and(|(_, match_end, _)| *match_end <= start)
+        {
+            match_index += 1;
+        }
+        while spans
+            .get(syntax_index)
+            .is_some_and(|span| span.end <= start)
+        {
+            syntax_index += 1;
+        }
         let matched = highlights
-            .iter()
-            .find(|(match_start, match_end, _)| *match_start <= start && *match_end >= end);
+            .get(match_index)
+            .filter(|(match_start, match_end, _)| *match_start <= start && *match_end >= end);
         let (background, underline) = match matched {
             // The current match is filled; the rest are washed and ruled. The
             // two differ in shape as well as in colour, so which match Enter
@@ -2987,8 +3008,8 @@ fn editor_layout_job(
             None => (egui::Color32::TRANSPARENT, egui::Stroke::NONE),
         };
         let colour = spans
-            .iter()
-            .find(|span| span.start <= start && span.end >= end)
+            .get(syntax_index)
+            .filter(|span| span.start <= start && span.end >= end)
             .map_or(theme::TEXT_PRIMARY, |span| role_colour(span.role));
         job.append(
             &text[start..end],
@@ -3228,6 +3249,95 @@ mod tests {
             .sections
             .iter()
             .all(|section| section.format.color == theme::TEXT_PRIMARY));
+    }
+
+    #[test]
+    fn ordered_layout_sweep_preserves_utf8_syntax_and_find_formats() {
+        let text = "fn caf\u{e9}() { let value = 42; }\n".repeat(128);
+        let mut syntax =
+            festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Rust);
+        let spans = syntax.spans(&text, 0, 0..text.len()).to_vec();
+        assert!(!spans.is_empty());
+        let highlights: Vec<_> = text
+            .match_indices("fn caf\u{e9}")
+            .enumerate()
+            .map(|(index, (start, matched))| (start, start + matched.len(), index == 64))
+            .collect();
+        let job = editor_layout_job(&text, &highlights, &spans);
+        assert_eq!(job.text, text);
+        for section in &job.sections {
+            let section_start = usize::from(section.byte_range.start);
+            let section_end = usize::from(section.byte_range.end);
+            for (offset, character) in text[section_start..section_end].char_indices() {
+                let start = section_start + offset;
+                let end = start + character.len_utf8();
+                let expected_colour = spans
+                    .iter()
+                    .find(|span| span.start <= start && span.end >= end)
+                    .map_or(theme::TEXT_PRIMARY, |span| role_colour(span.role));
+                assert_eq!(section.format.color, expected_colour);
+                let matched = highlights
+                    .iter()
+                    .find(|(left, right, _)| *left <= start && *right >= end);
+                let expected = match matched {
+                    Some((_, _, true)) => (theme::SURFACE_SELECTION, egui::Stroke::NONE),
+                    Some(_) => (
+                        theme::SEARCH_MATCH_FILL,
+                        egui::Stroke::new(1.0, theme::SEARCH_MATCH_RULE),
+                    ),
+                    None => (egui::Color32::TRANSPARENT, egui::Stroke::NONE),
+                };
+                assert_eq!(
+                    (section.format.background, section.format.underline),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn line_numbers_only_build_galleys_near_the_clipped_wrapped_viewport() {
+        let context = egui::Context::default();
+        let mut text = "a line long enough to wrap over several visual rows\n".repeat(1000);
+        for clip_top in [0.0, 1000.0] {
+            let mut expected = Vec::new();
+            let mut output = context.run_ui(Default::default(), |ui| {
+                ui.set_clip_rect(egui::Rect::from_min_max(
+                    egui::pos2(0.0, clip_top),
+                    egui::pos2(250.0, clip_top + 200.0),
+                ));
+                let edit = egui::TextEdit::multiline(&mut text)
+                    .font(FontId::monospace(EDITOR_TEXT_SIZE))
+                    .desired_width(150.0)
+                    .show(ui);
+                assert!(edit.galley.rows.len() > 2000, "the fixture must wrap");
+                let mut logical_line = 1;
+                let mut first_row = true;
+                for row in &edit.galley.rows {
+                    let top = edit.galley_pos.y + row.pos.y;
+                    if first_row
+                        && top + row.size.y + EDITOR_TEXT_SIZE >= clip_top
+                        && top - EDITOR_TEXT_SIZE <= clip_top + 200.0
+                    {
+                        expected.push(logical_line);
+                    }
+                    first_row = row.ends_with_newline;
+                    logical_line += usize::from(first_row);
+                }
+                paint_line_numbers(ui, &edit, 0.0, 40.0);
+            });
+            output.textures_delta.clear();
+            let painted: Vec<usize> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => text.galley.text().parse().ok(),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(painted, expected);
+            assert!(!painted.is_empty() && painted.len() < 50);
+        }
     }
 
     #[test]

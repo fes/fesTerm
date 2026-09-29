@@ -358,5 +358,21 @@ if ($env:OS -eq 'Windows_NT') {
     }
 }
 
+if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
+    try {
+        Invoke-NativeCommand {
+            cargo test --release -p festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'Interactive surface profile failed.' }
+        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass"
+    } catch {
+        Write-Warning $_
+        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=fail"
+        $status = 'fail'
+    }
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=skipped reason=explicit-opt-in"
+}
+
 Add-Content -Path $ResultPath -Value "`nstatus=$status"
 if ($status -eq 'fail') { exit 1 }

@@ -993,7 +993,7 @@ pub(crate) struct SftpPaneState {
     pub(crate) filter_focus_requested: bool,
     pub(crate) pending_request_id: u64,
     entry_name_keys: Vec<String>,
-    visible_entries_cache: Option<Vec<SftpDirectoryItem>>,
+    visible_entries_cache: Option<Arc<[SftpDirectoryItem]>>,
 }
 
 impl SftpPaneState {
@@ -1046,6 +1046,9 @@ impl SftpPaneState {
     }
 
     fn selected_total_size(&self) -> Option<u64> {
+        if self.selected_paths.is_empty() {
+            return None;
+        }
         let snapshot = self.snapshot.as_ref()?;
         let mut total = 0_u64;
         let mut found = false;
@@ -1067,7 +1070,7 @@ impl SftpPaneState {
             .unwrap_or_default()
     }
 
-    pub(crate) fn visible_entries(&mut self) -> &[SftpDirectoryItem] {
+    pub(crate) fn visible_entries(&mut self) -> Arc<[SftpDirectoryItem]> {
         if self.visible_entries_cache.is_none() {
             let filter = self.filter.trim().to_ascii_lowercase();
             let mut indices = self
@@ -1103,12 +1106,14 @@ impl SftpPaneState {
                         .collect(),
                 );
             } else {
-                self.visible_entries_cache = Some(Vec::new());
+                self.visible_entries_cache = Some(Arc::from([]));
             }
         }
-        self.visible_entries_cache
-            .as_deref()
-            .expect("visible entry cache was just populated")
+        Arc::clone(
+            self.visible_entries_cache
+                .as_ref()
+                .expect("visible entry cache was just populated"),
+        )
     }
 
     fn invalidate_visible_entries(&mut self) {
@@ -1220,7 +1225,7 @@ impl SftpPaneState {
     }
 
     fn move_cursor(&mut self, delta: isize, extend: bool) -> Option<SftpDirectoryItem> {
-        let entries = self.visible_entries().to_vec();
+        let entries = self.visible_entries();
         if entries.is_empty() {
             return None;
         }
@@ -1258,7 +1263,7 @@ impl SftpPaneState {
     }
 
     fn toggle_cursor_selection(&mut self) -> Option<SftpDirectoryItem> {
-        let entries = self.visible_entries().to_vec();
+        let entries = self.visible_entries();
         let current = self
             .cursor_path
             .as_deref()
@@ -1279,7 +1284,7 @@ impl SftpPaneState {
     }
 
     fn activate_cursor(&mut self) -> Option<SftpDirectoryItem> {
-        let entries = self.visible_entries().to_vec();
+        let entries = self.visible_entries();
         let current = self
             .cursor_path
             .as_deref()
@@ -2189,7 +2194,6 @@ impl SftpFileManagerTab {
                 let error_details = pane.details.clone();
                 let footer_items = pane.item_count();
                 let footer_selection = footer_summary(pane);
-                let table_entries = pane.visible_entries().to_vec();
                 ui.vertical(|ui| {
                     egui::Frame::new()
                         .fill(theme::SURFACE_TERMINAL)
@@ -2567,7 +2571,9 @@ impl SftpFileManagerTab {
                                 }
                             });
                             pane_divider(ui, pane_width);
-                            let scroll_output = ScrollArea::vertical()
+                            let table_entries = pane.visible_entries();
+                            let placeholder = pane.loading || table_entries.is_empty();
+                            let scroll_area = ScrollArea::vertical()
                                 .id_salt(("sftp-pane", focus))
                                 .max_height(list_height)
                                 .vertical_scroll_offset(pane.scroll_offset)
@@ -2575,145 +2581,123 @@ impl SftpFileManagerTab {
                                 // directory is short, so the footer stays pinned
                                 // to the pane's bottom edge instead of floating
                                 // up under a half-empty table.
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    if pane.loading {
-                                        ui.add_space(8.0);
+                                .auto_shrink([false, false]);
+                            let mut show_rows = |ui: &mut Ui, range: std::ops::Range<usize>| {
+                                if pane.loading {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        RichText::new("Loading…")
+                                            .font(font_for_text_role(SftpTextRole::TableBody))
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                    return;
+                                }
+                                if table_entries.is_empty() {
+                                    ui.add_space(8.0);
+                                    if pane
+                                        .snapshot
+                                        .as_ref()
+                                        .is_some_and(|snapshot| snapshot.entries.is_empty())
+                                    {
                                         ui.label(
-                                            RichText::new("Loading…")
+                                            RichText::new("This folder is empty.")
                                                 .font(font_for_text_role(SftpTextRole::TableBody))
                                                 .color(theme::TEXT_SECONDARY),
                                         );
-                                        return;
-                                    }
-                                    if table_entries.is_empty() {
-                                        ui.add_space(8.0);
-                                        if pane
-                                            .snapshot
-                                            .as_ref()
-                                            .is_some_and(|snapshot| snapshot.entries.is_empty())
+                                    } else {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "No items match \"{}\".",
+                                                pane.filter
+                                            ))
+                                            .font(font_for_text_role(SftpTextRole::TableBody))
+                                            .color(theme::TEXT_SECONDARY),
+                                        );
+                                        if interactions_enabled
+                                            && ui.button("Clear filter").clicked()
                                         {
-                                            ui.label(
-                                                RichText::new("This folder is empty.")
-                                                    .font(font_for_text_role(
-                                                        SftpTextRole::TableBody,
-                                                    ))
-                                                    .color(theme::TEXT_SECONDARY),
-                                            );
-                                        } else {
-                                            ui.label(
-                                                RichText::new(format!(
-                                                    "No items match \"{}\".",
-                                                    pane.filter
-                                                ))
-                                                .font(font_for_text_role(SftpTextRole::TableBody))
-                                                .color(theme::TEXT_SECONDARY),
-                                            );
-                                            if interactions_enabled
-                                                && ui.button("Clear filter").clicked()
-                                            {
-                                                pane.clear_filter();
-                                            }
+                                            pane.clear_filter();
                                         }
-                                        return;
                                     }
-                                    for item in table_entries.iter().cloned() {
-                                        let key = path_key(&item.path);
-                                        let selected = pane.selected_paths.contains(&key);
-                                        let row = egui::Frame::new()
-                                            .fill(if selected {
-                                                theme::SURFACE_SELECTION
-                                            } else {
-                                                Color32::TRANSPARENT
-                                            })
-                                            // The selection outline is painted
-                                            // *inside* the row rect below rather
-                                            // than set as a `Frame` stroke: a
-                                            // stroke (even a transparent one)
-                                            // widens every row by 2px, which made
-                                            // the listing wider than its pane and
-                                            // forced a horizontal scrollbar.
-                                            .stroke(egui::Stroke::NONE)
-                                            .corner_radius(0.0)
-                                            .inner_margin(egui::Margin::symmetric(0, 0))
-                                            .show(ui, |ui| {
-                                                ui.set_min_height(SFTP_TABLE_ROW_HEIGHT);
-                                                ui.set_max_height(SFTP_TABLE_ROW_HEIGHT);
-                                                ui.horizontal(|ui| {
-                                                    ui.allocate_ui_with_layout(
-                                                        egui::vec2(
-                                                            columns[0],
-                                                            SFTP_TABLE_ROW_HEIGHT,
-                                                        ),
-                                                        Layout::left_to_right(Align::Center),
-                                                        |ui| {
-                                                            // See show_table_text_cell: force the
-                                                            // full column width so the following
-                                                            // Size/Modified/Type cells line up under
-                                                            // their headers instead of collapsing
-                                                            // against the (usually much shorter) name.
-                                                            ui.set_min_width(columns[0]);
-                                                            ui.set_max_width(
-                                                                (columns[0]
-                                                                    - SFTP_TABLE_CELL_PADDING)
-                                                                    .max(0.0),
+                                    return;
+                                }
+                                for item in &table_entries[range] {
+                                    let key = path_key(&item.path);
+                                    let selected = pane.selected_paths.contains(&key);
+                                    let row = egui::Frame::new()
+                                        .fill(if selected {
+                                            theme::SURFACE_SELECTION
+                                        } else {
+                                            Color32::TRANSPARENT
+                                        })
+                                        // The selection outline is painted
+                                        // *inside* the row rect below rather
+                                        // than set as a `Frame` stroke: a
+                                        // stroke (even a transparent one)
+                                        // widens every row by 2px, which made
+                                        // the listing wider than its pane and
+                                        // forced a horizontal scrollbar.
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(0.0)
+                                        .inner_margin(egui::Margin::symmetric(0, 0))
+                                        .show(ui, |ui| {
+                                            ui.set_min_height(SFTP_TABLE_ROW_HEIGHT);
+                                            ui.set_max_height(SFTP_TABLE_ROW_HEIGHT);
+                                            ui.horizontal(|ui| {
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(columns[0], SFTP_TABLE_ROW_HEIGHT),
+                                                    Layout::left_to_right(Align::Center),
+                                                    |ui| {
+                                                        // See show_table_text_cell: force the
+                                                        // full column width so the following
+                                                        // Size/Modified/Type cells line up under
+                                                        // their headers instead of collapsing
+                                                        // against the (usually much shorter) name.
+                                                        ui.set_min_width(columns[0]);
+                                                        ui.set_max_width(
+                                                            (columns[0] - SFTP_TABLE_CELL_PADDING)
+                                                                .max(0.0),
+                                                        );
+                                                        ui.add_space(SFTP_TABLE_CELL_PADDING);
+                                                        // See `show_filter_field`: paint the
+                                                        // icon through an allocated rect (not
+                                                        // directly at `ui.cursor().min`) so this
+                                                        // row's `Align::Center` layout actually
+                                                        // vertically centers it against the name
+                                                        // label beside it.
+                                                        let (icon_rect, _) = ui
+                                                            .allocate_exact_size(
+                                                                egui::vec2(15.0, 15.0),
+                                                                egui::Sense::hover(),
                                                             );
-                                                            ui.add_space(SFTP_TABLE_CELL_PADDING);
-                                                            // See `show_filter_field`: paint the
-                                                            // icon through an allocated rect (not
-                                                            // directly at `ui.cursor().min`) so this
-                                                            // row's `Align::Center` layout actually
-                                                            // vertically centers it against the name
-                                                            // label beside it.
-                                                            let (icon_rect, _) = ui
-                                                                .allocate_exact_size(
-                                                                    egui::vec2(15.0, 15.0),
-                                                                    egui::Sense::hover(),
-                                                                );
-                                                            paint_sftp_glyph(
-                                                                ui.painter(),
-                                                                item_glyph(&item),
-                                                                icon_rect,
-                                                                if selected {
-                                                                    theme::TEXT_PRIMARY
-                                                                } else {
-                                                                    theme::TEXT_SECONDARY
-                                                                },
-                                                            );
-                                                            ui.add_space(5.0);
-                                                            ui.add(
-                                                                egui::Label::new(
-                                                                    RichText::new(&item.name)
-                                                                        .font(font_for_text_role(
-                                                                            SftpTextRole::TableBody,
-                                                                        ))
-                                                                        .color(theme::TEXT_PRIMARY),
-                                                                )
-                                                                .truncate(),
-                                                            );
-                                                        },
-                                                    );
-                                                    show_table_text_cell(
-                                                        ui,
-                                                        columns[1],
-                                                        CellAlign::Right,
-                                                        RichText::new(format_size(item.size))
-                                                            .font(font_for_text_role(
-                                                                SftpTextRole::TableMetadata,
-                                                            ))
-                                                            .color(if selected {
+                                                        paint_sftp_glyph(
+                                                            ui.painter(),
+                                                            item_glyph(item),
+                                                            icon_rect,
+                                                            if selected {
                                                                 theme::TEXT_PRIMARY
                                                             } else {
                                                                 theme::TEXT_SECONDARY
-                                                            }),
-                                                    );
-                                                    show_table_text_cell(
-                                                        ui,
-                                                        columns[2],
-                                                        CellAlign::Left,
-                                                        RichText::new(format_modified(
-                                                            item.modified_at,
-                                                        ))
+                                                            },
+                                                        );
+                                                        ui.add_space(5.0);
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                RichText::new(&item.name)
+                                                                    .font(font_for_text_role(
+                                                                        SftpTextRole::TableBody,
+                                                                    ))
+                                                                    .color(theme::TEXT_PRIMARY),
+                                                            )
+                                                            .truncate(),
+                                                        );
+                                                    },
+                                                );
+                                                show_table_text_cell(
+                                                    ui,
+                                                    columns[1],
+                                                    CellAlign::Right,
+                                                    RichText::new(format_size(item.size))
                                                         .font(font_for_text_role(
                                                             SftpTextRole::TableMetadata,
                                                         ))
@@ -2722,50 +2706,64 @@ impl SftpFileManagerTab {
                                                         } else {
                                                             theme::TEXT_SECONDARY
                                                         }),
-                                                    );
-                                                    show_table_text_cell(
-                                                        ui,
-                                                        columns[3],
-                                                        CellAlign::Left,
-                                                        RichText::new(item_type_label(&item))
-                                                            .font(font_for_text_role(
-                                                                SftpTextRole::TableBody,
-                                                            ))
-                                                            .color(if selected {
-                                                                theme::TEXT_PRIMARY
-                                                            } else {
-                                                                theme::TEXT_SECONDARY
-                                                            }),
-                                                    );
-                                                });
+                                                );
+                                                show_table_text_cell(
+                                                    ui,
+                                                    columns[2],
+                                                    CellAlign::Left,
+                                                    RichText::new(format_modified(
+                                                        item.modified_at,
+                                                    ))
+                                                    .font(font_for_text_role(
+                                                        SftpTextRole::TableMetadata,
+                                                    ))
+                                                    .color(if selected {
+                                                        theme::TEXT_PRIMARY
+                                                    } else {
+                                                        theme::TEXT_SECONDARY
+                                                    }),
+                                                );
+                                                show_table_text_cell(
+                                                    ui,
+                                                    columns[3],
+                                                    CellAlign::Left,
+                                                    RichText::new(item_type_label(item))
+                                                        .font(font_for_text_role(
+                                                            SftpTextRole::TableBody,
+                                                        ))
+                                                        .color(if selected {
+                                                            theme::TEXT_PRIMARY
+                                                        } else {
+                                                            theme::TEXT_SECONDARY
+                                                        }),
+                                                );
                                             });
-                                        let response =
-                                            row.response.interact(Sense::click_and_drag());
-                                        if interactions_enabled {
-                                            // Dragging an item that isn't part of
-                                            // the current selection starts a
-                                            // fresh single-item drag (matching
-                                            // Finder/Explorer), rather than
-                                            // silently dragging whatever was
-                                            // selected before.
-                                            if response.drag_started() && !selected {
-                                                pane.select_single(&item.path);
-                                                pane.cursor_path = Some(key.clone());
-                                            }
-                                            response.dnd_set_drag_payload(SftpPaneDragPayload {
-                                                source: focus,
-                                            });
+                                        });
+                                    let response = row.response.interact(Sense::click_and_drag());
+                                    if interactions_enabled {
+                                        // Dragging an item that isn't part of
+                                        // the current selection starts a
+                                        // fresh single-item drag (matching
+                                        // Finder/Explorer), rather than
+                                        // silently dragging whatever was
+                                        // selected before.
+                                        if response.drag_started() && !selected {
+                                            pane.select_single(&item.path);
+                                            pane.cursor_path = Some(key.clone());
                                         }
-                                        // Reveal in Finder/Explorer (issue #137's
-                                        // follow-up comment): local-pane-only,
-                                        // matches Finder/Explorer's own
-                                        // single-item-or-first-of-selection
-                                        // semantics rather than acting on every
-                                        // selected item at once.
-                                        if interactions_enabled && focus == PaneFocus::Local {
-                                            let reveal_target = if selected
-                                                && pane.selected_paths.len() > 1
-                                            {
+                                        response.dnd_set_drag_payload(SftpPaneDragPayload {
+                                            source: focus,
+                                        });
+                                    }
+                                    // Reveal in Finder/Explorer (issue #137's
+                                    // follow-up comment): local-pane-only,
+                                    // matches Finder/Explorer's own
+                                    // single-item-or-first-of-selection
+                                    // semantics rather than acting on every
+                                    // selected item at once.
+                                    if interactions_enabled && focus == PaneFocus::Local {
+                                        let reveal_target =
+                                            if selected && pane.selected_paths.len() > 1 {
                                                 table_entries
                                                     .iter()
                                                     .find(|candidate| {
@@ -2777,98 +2775,100 @@ impl SftpFileManagerTab {
                                             } else {
                                                 item.path.clone()
                                             };
-                                            response.context_menu(|ui| {
-                                                if ui
-                                                    .button(reveal_in_file_manager_label())
-                                                    .clicked()
-                                                {
-                                                    if let SftpPath::Local(path) = &reveal_target {
-                                                        if let Err(error) =
-                                                            reveal_in_file_manager(path)
-                                                        {
-                                                            pane.set_error(
-                                                                "Couldn't reveal the item."
-                                                                    .to_owned(),
-                                                                error,
-                                                            );
-                                                        }
+                                        response.context_menu(|ui| {
+                                            if ui.button(reveal_in_file_manager_label()).clicked() {
+                                                if let SftpPath::Local(path) = &reveal_target {
+                                                    if let Err(error) = reveal_in_file_manager(path)
+                                                    {
+                                                        pane.set_error(
+                                                            "Couldn't reveal the item.".to_owned(),
+                                                            error,
+                                                        );
                                                     }
-                                                    ui.close();
                                                 }
-                                            });
-                                        }
-                                        // Mockup `.fsftp-table td { border-bottom:
-                                        // 1px solid rgba(53,65,78,.46) }` -- the
-                                        // row rules the mockup uses to keep long
-                                        // listings scannable.
-                                        ui.painter().hline(
-                                            response.rect.x_range(),
-                                            response.rect.bottom() - 0.5,
-                                            egui::Stroke::new(
-                                                SFTP_HAIRLINE,
-                                                theme::BORDER_SUBTLE.gamma_multiply(0.46),
-                                            ),
-                                        );
-                                        if selected && pane_focused {
-                                            ui.painter().rect_stroke(
-                                                response.rect,
-                                                0.0,
-                                                egui::Stroke::new(
-                                                    SFTP_HAIRLINE,
-                                                    theme::ACCENT_PRIMARY,
-                                                ),
-                                                egui::StrokeKind::Inside,
-                                            );
-                                        }
-                                        response.widget_info(|| {
-                                            WidgetInfo::labeled(
-                                                WidgetType::SelectableLabel,
-                                                true,
-                                                format!("{} {}", focus.label(), item.name),
-                                            )
-                                        });
-                                        if interactions_enabled && response.clicked() {
-                                            focused_this_pane = true;
-                                            if ui.input(|input| input.modifiers.shift) {
-                                                let anchor_key = pane
-                                                    .selected_anchor
-                                                    .clone()
-                                                    .or_else(|| pane.cursor_path.clone())
-                                                    .unwrap_or_else(|| key.clone());
-                                                let anchor_index = table_entries
-                                                    .iter()
-                                                    .position(|candidate| {
-                                                        path_key(&candidate.path) == anchor_key
-                                                    })
-                                                    .unwrap_or_default();
-                                                let current_index = table_entries
-                                                    .iter()
-                                                    .position(|candidate| {
-                                                        path_key(&candidate.path) == key
-                                                    })
-                                                    .unwrap_or(anchor_index);
-                                                let start = anchor_index.min(current_index);
-                                                let end = anchor_index.max(current_index);
-                                                pane.selected_paths = table_entries[start..=end]
-                                                    .iter()
-                                                    .map(|candidate| path_key(&candidate.path))
-                                                    .collect();
-                                                pane.selected_anchor = Some(anchor_key);
-                                            } else if ui.input(|input| input.modifiers.command) {
-                                                if !pane.selected_paths.remove(&key) {
-                                                    pane.selected_paths.insert(key.clone());
-                                                }
-                                                pane.selected_anchor = Some(key.clone());
-                                            } else {
-                                                pane.select_single(&item.path);
+                                                ui.close();
                                             }
-                                            pane.cursor_path = Some(key.clone());
-                                        }
-                                        if interactions_enabled && response.double_clicked() {
-                                            request_open = Some(item.clone());
-                                        }
+                                        });
                                     }
-                                });
+                                    // Mockup `.fsftp-table td { border-bottom:
+                                    // 1px solid rgba(53,65,78,.46) }` -- the
+                                    // row rules the mockup uses to keep long
+                                    // listings scannable.
+                                    ui.painter().hline(
+                                        response.rect.x_range(),
+                                        response.rect.bottom() - 0.5,
+                                        egui::Stroke::new(
+                                            SFTP_HAIRLINE,
+                                            theme::BORDER_SUBTLE.gamma_multiply(0.46),
+                                        ),
+                                    );
+                                    if selected && pane_focused {
+                                        ui.painter().rect_stroke(
+                                            response.rect,
+                                            0.0,
+                                            egui::Stroke::new(SFTP_HAIRLINE, theme::ACCENT_PRIMARY),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
+                                    response.widget_info(|| {
+                                        WidgetInfo::labeled(
+                                            WidgetType::SelectableLabel,
+                                            true,
+                                            format!("{} {}", focus.label(), item.name),
+                                        )
+                                    });
+                                    if interactions_enabled && response.clicked() {
+                                        focused_this_pane = true;
+                                        if ui.input(|input| input.modifiers.shift) {
+                                            let anchor_key = pane
+                                                .selected_anchor
+                                                .clone()
+                                                .or_else(|| pane.cursor_path.clone())
+                                                .unwrap_or_else(|| key.clone());
+                                            let anchor_index = table_entries
+                                                .iter()
+                                                .position(|candidate| {
+                                                    path_key(&candidate.path) == anchor_key
+                                                })
+                                                .unwrap_or_default();
+                                            let current_index = table_entries
+                                                .iter()
+                                                .position(|candidate| {
+                                                    path_key(&candidate.path) == key
+                                                })
+                                                .unwrap_or(anchor_index);
+                                            let start = anchor_index.min(current_index);
+                                            let end = anchor_index.max(current_index);
+                                            pane.selected_paths = table_entries[start..=end]
+                                                .iter()
+                                                .map(|candidate| path_key(&candidate.path))
+                                                .collect();
+                                            pane.selected_anchor = Some(anchor_key);
+                                        } else if ui.input(|input| input.modifiers.command) {
+                                            if !pane.selected_paths.remove(&key) {
+                                                pane.selected_paths.insert(key.clone());
+                                            }
+                                            pane.selected_anchor = Some(key.clone());
+                                        } else {
+                                            pane.select_single(&item.path);
+                                        }
+                                        pane.cursor_path = Some(key.clone());
+                                    }
+                                    if interactions_enabled && response.double_clicked() {
+                                        request_open = Some(item.clone());
+                                    }
+                                }
+                            };
+                            let scroll_output = if placeholder {
+                                scroll_area.show(ui, |ui| show_rows(ui, 0..0))
+                            } else {
+                                scroll_area.show_rows(
+                                    ui,
+                                    SFTP_TABLE_ROW_HEIGHT,
+                                    table_entries.len(),
+                                    show_rows,
+                                )
+                            };
                             pane.update_scroll_offset(scroll_output.state.offset.y);
                             // ScrollArea only claims the height its content
                             // needs. Reserve its remaining viewport explicitly
@@ -6200,13 +6200,13 @@ impl MarkdownFilePicker {
         }
 
         let mut picked_item: Option<SftpDirectoryItem> = None;
-        let entries = self.pane.visible_entries().to_vec();
+        let entries = self.pane.visible_entries();
         let scroll_output = ScrollArea::vertical()
             .id_salt("markdown_file_picker_rows")
             .max_height(280.0)
             .vertical_scroll_offset(self.pane.scroll_offset)
-            .show(ui, |ui| {
-                for item in &entries {
+            .show_rows(ui, SFTP_TABLE_ROW_HEIGHT, entries.len(), |ui, range| {
+                for item in &entries[range] {
                     let key = path_key(&item.path);
                     let selected = self.pane.selected_paths.contains(&key);
                     let openable =
@@ -6798,6 +6798,102 @@ mod tests {
     }
 
     #[test]
+    fn visible_entry_snapshots_are_shared_and_invalidated_without_mutating_readers() {
+        let mut pane = SftpPaneState::new(SftpPath::local("/fixture"));
+        let snapshot = SftpDirectorySnapshot {
+            location: SftpLocation::Local,
+            path: pane.current_path.clone(),
+            loaded_at: SystemTime::UNIX_EPOCH,
+            entries: ["zeta.txt", "alpha.txt", "beta.txt"]
+                .into_iter()
+                .map(|name| item(name, SftpEntryType::File, Some(1)))
+                .collect(),
+        };
+        pane.set_snapshot(snapshot.clone(), None);
+        let original = pane.visible_entries();
+        assert!(Arc::ptr_eq(&original, &pane.visible_entries()));
+        assert_eq!(original[0].name, "alpha.txt");
+
+        pane.set_filter("beta".into());
+        let filtered = pane.visible_entries();
+        assert!(!Arc::ptr_eq(&original, &filtered));
+        assert_eq!(filtered.len(), 1);
+        pane.set_filter("beta".into());
+        assert!(Arc::ptr_eq(&filtered, &pane.visible_entries()));
+
+        pane.clear_filter();
+        pane.set_sort(SftpSortColumn::Name);
+        assert_eq!(pane.visible_entries()[0].name, "zeta.txt");
+        assert_eq!(original[0].name, "alpha.txt");
+        pane.set_snapshot(
+            SftpDirectorySnapshot {
+                entries: Vec::new(),
+                ..snapshot
+            },
+            None,
+        );
+        assert!(pane.visible_entries().is_empty());
+        assert_eq!(original.len(), 3);
+        assert_eq!(filtered[0].name, "beta.txt");
+    }
+
+    #[test]
+    fn virtualized_pane_keeps_scrolling_selection_and_filtering_on_the_full_listing() {
+        let mut tab = test_tab();
+        tab.local_pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: SftpLocation::Local,
+                path: SftpPath::local("/fixture"),
+                loaded_at: SystemTime::UNIX_EPOCH,
+                entries: (0..1000)
+                    .map(|index| item(&format!("row-{index:05}.txt"), SftpEntryType::File, Some(1)))
+                    .collect(),
+            },
+            None,
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(620.0, 700.0))
+            .build_ui_state(
+                |ui, tab: &mut SftpFileManagerTab| tab.show_pane(ui, PaneFocus::Local),
+                tab,
+            );
+        harness.run();
+        harness.get_by_label("Local row-00000.txt");
+        assert!(harness.query_by_label("Local row-00500.txt").is_none());
+        harness.state_mut().local_pane.scroll_offset = 500.0 * SFTP_TABLE_ROW_HEIGHT;
+        harness.run();
+        assert!(harness.query_by_label("Local row-00000.txt").is_none());
+        harness.get_by_label("Local row-00500.txt").click();
+        harness.run();
+        let selected = path_key(&SftpPath::local("row-00500.txt"));
+        assert!(harness
+            .state()
+            .local_pane
+            .selected_paths
+            .contains(&selected));
+
+        let pane = &mut harness.state_mut().local_pane;
+        pane.move_cursor(499, true);
+        assert_eq!(pane.selected_count(), 500);
+        assert_eq!(pane.activate_cursor().unwrap().name, "row-00999.txt");
+        assert_eq!(pane.selected_count(), 1);
+        pane.scroll_offset = 0.0;
+        pane.set_filter("row-00999".into());
+        harness.run();
+        harness.get_by_label("Local row-00999.txt");
+        assert!(harness.query_by_label("Local row-00000.txt").is_none());
+        harness.state_mut().local_pane.set_filter("missing".into());
+        harness.run();
+        harness.get_by_label("No items match \"missing\".");
+        harness.get_by_label("Clear filter").click();
+        harness.run();
+        harness.get_by_label("Local row-00000.txt");
+        harness.state_mut().local_pane.loading = true;
+        harness.run();
+        harness.get_by_label("Loading\u{2026}");
+    }
+
+    #[test]
     fn breadcrumb_segments_expose_clickable_ancestors() {
         let remote = breadcrumb_segments(&SftpPath::remote("/srv/releases/2026.09"));
         assert_eq!(
@@ -7230,6 +7326,67 @@ mod tests {
     }
 
     #[test]
+    fn virtualized_open_picker_reaches_the_final_row_and_activates_its_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut picker =
+            MarkdownFilePicker::new(directory.path().to_path_buf(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        picker.pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: SftpLocation::Local,
+                path: SftpPath::local(directory.path()),
+                loaded_at: SystemTime::UNIX_EPOCH,
+                entries: (0..1000)
+                    .map(|index| {
+                        let name = format!("row-{index:05}.txt");
+                        SftpDirectoryItem {
+                            path: SftpPath::local(directory.path().join(&name)),
+                            ..item(&name, SftpEntryType::File, Some(1))
+                        }
+                    })
+                    .collect(),
+            },
+            None,
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 650.0))
+            .build_ui_state(
+                |ui, (picker, outcome): &mut (MarkdownFilePicker, MarkdownPickerOutcome)| {
+                    let current = picker.ui(ui);
+                    if !matches!(current, MarkdownPickerOutcome::Pending) {
+                        *outcome = current;
+                    }
+                },
+                (picker, MarkdownPickerOutcome::Pending),
+            );
+        harness.run();
+        harness.get_by_label("row-00000.txt");
+        assert!(harness.query_by_label("row-00999.txt").is_none());
+        harness.state_mut().0.pane.scroll_offset = 100_000.0;
+        harness.run_steps(2);
+        let last_row = harness.get_by_label("row-00999.txt").rect();
+        assert!(
+            last_row.top() > 0.0 && last_row.bottom() < 650.0,
+            "{last_row:?}"
+        );
+        harness.get_by_label("row-00999.txt").click();
+        harness.run();
+        assert!(harness.query_by_label("row-00000.txt").is_none());
+        assert_eq!(
+            harness.state().0.pane.selected_paths,
+            BTreeSet::from([path_key(&SftpPath::local(
+                directory.path().join("row-00999.txt")
+            ))]),
+        );
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert!(matches!(
+            &harness.state().1,
+            MarkdownPickerOutcome::Open(path) if path == &directory.path().join("row-00999.txt")
+        ));
+    }
+
+    #[test]
     fn markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files() {
         let dir = std::env::temp_dir().join(format!(
             "festerm-markdown-picker-load-{}",
@@ -7578,8 +7735,12 @@ mod tests {
 
     #[test]
     fn markdown_file_picker_path_focus_shortcut_and_cancel_own_pending_results() {
-        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("existing.txt"), b"fixture").unwrap();
+        let mut picker =
+            MarkdownFilePicker::new(directory.path().to_path_buf(), egui::Context::default());
         wait_for_picker_load(&mut picker);
+        assert!(picker.pane.error.is_none());
         let mut harness = Harness::builder()
             .with_size(egui::vec2(800.0, 650.0))
             .build_ui_state(
