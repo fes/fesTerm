@@ -24,6 +24,18 @@ or take ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
+- **Desktop Open With:** installed desktop packages advertise `.md` and
+  `.markdown` without replacing the user's default application. Finder document
+  events and `festerm --open -- <paths...>` enter a bounded application queue,
+  not terminal drag-and-drop or SFTP upload handling. New documents open in the
+  last-active window's Preview mode; an already-open document focuses its
+  existing view across windows without reloading unsaved text. Requests wait
+  while a blocking dialog or open-error notice is active. Multiple files are
+  opened in order, with ordinary local-document load failures shown explicitly.
+  A file-bearing second launch forwards to the process owning the per-user
+  activation endpoint before loading workspace/configuration state; an ordinary
+  no-argument launch retains independent-process behavior. Linux AppImage
+  associations require desktop integration, not just downloading the image.
 - **Local:** More actions **Open File…** opens the application file picker, which
   lists text and Markdown files. Its **File or folder path** field accepts pasted
   absolute paths, `~/...`, and paths relative to the displayed folder. Enter or
@@ -91,6 +103,20 @@ The first implementation supports CommonMark plus these bounded GFM features:
 - fenced code blocks with an optional language label and Copy action; and
 - deterministic, bundled syntax highlighting for a documented language set.
 
+Fenced highlighting uses the shared syntax engine, with process-wide
+immutable compiled queries but independent document/parser state (ADR 0035).
+The Markdown model walks ordered spans forward when building code lines,
+preserving newline-spanning roles, plain gaps and exact source bytes instead
+of scanning all spans again for every line. Parsing and the existing code-size
+and syntax-budget bounds remain unchanged.
+
+Table columns are measured from unwrapped cell content before sharing the
+reading width. A cell whose measured galley fits the final, integer-normalized
+wrap constraint reuses it; only a squeezed cell needs another layout. This is
+frame-local reuse, not a persistent cache or block virtualization: every cell
+remains a selectable label with the same alignment, Find formatting and
+source identity.
+
 Inline and block raw HTML are displayed as inert source or an explicit
 `HTML not rendered` placeholder. They are never interpreted. Footnotes, math,
 Mermaid/diagrams, custom containers, includes, embedded web content, and
@@ -126,6 +152,12 @@ Find is scoped to the decoded document and works in Preview and Source. It
 shows `N of M`, supports next/previous with wrap, highlights all visible
 matches with a stronger current match, and preserves the current match across
 a same-source manual reload when possible.
+
+All non-overlapping literal matches remain available in source order; Find
+does not cap or truncate the result set. Ordered source-position lookups reuse
+the already-counted Unicode prefix, and highlighting visits only the matches
+overlapping each text run. These are internal cost reductions, not changes to
+match counts, current-match selection, clipping, or Unicode source offsets.
 
 Text selection and Copy produce plain text by default. Code-block Copy copies
 only code content, excluding the language label and line numbers. A future

@@ -15,6 +15,8 @@
 //! | `emit-bytes-hex:HEX` | Write the exact bytes encoded by even-length hexadecimal `HEX`. |
 //! | `emit-repeat:COUNT:TEXT` | Write `TEXT` to stdout `COUNT` times, with no extra newline. |
 //! | `emit-frames:COUNT:MILLIS` | Write `FRAME:00` through `FRAME:COUNT-1`, pausing `MILLIS` between lines. |
+//! | `wait-for-file:PATH` | Wait up to 120 seconds for a start marker; publish PTY size in `PATH.geometry.json`. |
+//! | `tui:KIND:COUNT:MILLIS:PATH` | Run a fixed 120x40 TUI workload and write producer statistics to `PATH`. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
 //! | `expect-line-suffix:TEXT` | Fail unless the last complete input line ends with `TEXT`. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
@@ -32,6 +34,12 @@ use std::{
 
 use terminal_size::{terminal_size, Height, Width};
 
+fn publish_report(path: &str, contents: &str) {
+    let temporary = format!("{path}.tmp");
+    std::fs::write(&temporary, contents).expect("write probe report");
+    std::fs::rename(temporary, path).expect("publish probe report");
+}
+
 fn decode_hex_bytes(specification: &str) -> Vec<u8> {
     assert!(
         specification.len().is_multiple_of(2),
@@ -48,6 +56,65 @@ fn decode_hex_bytes(specification: &str) -> Vec<u8> {
                 .unwrap_or_else(|_| panic!("emit-bytes-hex contains non-hex digits: {pair:?}"))
         })
         .collect()
+}
+
+fn emit_tui(specification: &str, out: &mut impl Write) {
+    use festerm_test_support::tui_workload::Workload;
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+    let mut parts = specification.splitn(4, ':');
+    let workload =
+        Workload::parse(parts.next().expect("tui workload")).expect("valid TUI workload");
+    let count: usize = parts
+        .next()
+        .expect("tui count")
+        .parse()
+        .expect("numeric TUI count");
+    let millis: u64 = parts
+        .next()
+        .expect("tui interval")
+        .parse()
+        .expect("numeric TUI interval");
+    let report = parts.next().expect("tui report path");
+    assert!((1..=6000).contains(&count), "TUI count must be 1..=6000");
+    assert!(
+        (1..=1000).contains(&millis),
+        "TUI interval must be 1..=1000 milliseconds"
+    );
+    let dimensions = terminal_size();
+    let setup = workload.setup();
+    out.write_all(&setup).expect("TUI setup write");
+    out.flush().expect("TUI setup flush");
+    let started_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let clock = Instant::now();
+    let mut bytes = setup.len();
+    let mut completed = Vec::with_capacity(count);
+    for frame in 1..=count {
+        let due = Duration::from_millis(millis * frame as u64);
+        thread::sleep(due.saturating_sub(clock.elapsed()));
+        let update = workload.update(frame);
+        out.write_all(&update).expect("TUI update write");
+        out.flush().expect("TUI update flush");
+        bytes += update.len();
+        completed.push(clock.elapsed().as_secs_f64() * 1000.0);
+    }
+    let geometry = dimensions.map_or_else(
+        || "null".to_owned(),
+        |(Width(columns), Height(rows))| format!("{{\"columns\":{columns},\"rows\":{rows}}}"),
+    );
+    let report_json = format!(
+        "{{\"workload\":\"{}\",\"pid\":{},\"frames\":{count},\"bytes\":{bytes},\
+         \"interval_ms\":{millis},\"started_unix_ms\":{started_unix_ms},\
+         \"geometry\":{geometry},\"completed_ms\":{completed:?}}}\n",
+        workload.name(),
+        process::id(),
+    );
+    publish_report(report, &report_json);
+    // Leave the final TUI visible for capture. A following `spin` command keeps
+    // the child alive without sending output or restoring the alternate screen.
 }
 
 fn main() {
@@ -98,6 +165,36 @@ fn main() {
                 out.flush().expect("emit-frames: stdout flush succeeds");
                 thread::sleep(Duration::from_millis(interval_millis));
             }
+        } else if let Some(path) = arg.strip_prefix("wait-for-file:") {
+            let started = std::time::Instant::now();
+            let mut previous = None;
+            while !std::path::Path::new(path)
+                .try_exists()
+                .expect("read start marker status")
+            {
+                let geometry =
+                    terminal_size().map(|(Width(columns), Height(rows))| (columns, rows));
+                if geometry != previous {
+                    if let Some((columns, rows)) = geometry {
+                        let report = format!("{path}.geometry.json");
+                        publish_report(
+                            &report,
+                            &format!(
+                                "{{\"pid\":{},\"columns\":{columns},\"rows\":{rows}}}\n",
+                                process::id()
+                            ),
+                        );
+                    }
+                    previous = geometry;
+                }
+                assert!(
+                    started.elapsed() < Duration::from_secs(120),
+                    "start marker timed out"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+        } else if let Some(specification) = arg.strip_prefix("tui:") {
+            emit_tui(specification, &mut stdout.lock());
         } else if arg == "read-line" {
             last_line.clear();
             stdin

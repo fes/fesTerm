@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     sync::Arc,
     time::{Duration, Instant},
@@ -6,6 +7,8 @@ use std::{
 
 use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
 use festerm_core::{ContentPosition, Dimensions, InputEventOutcome, MouseTrackingMode, Terminal};
+use icu_properties::{props::BidiControl, CodePointSetData};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
@@ -30,6 +33,8 @@ use crate::fonts::DEFAULT_TERMINAL_FONT_SIZE;
 const MIN_TERMINAL_FONT_SIZE: f32 = 8.0;
 const MAX_TERMINAL_FONT_SIZE: f32 = 32.0;
 const TERMINAL_ZOOM_STEP: f32 = 1.0;
+const CONTEXT_MENU_MAX_WIDTH: f32 = 320.0;
+const CONTEXT_TARGET_TOOLTIP_MAX_WIDTH: f32 = 480.0;
 
 /// Application-owned terminal capabilities that affect local viewport
 /// commands without exposing a session backend to the presentation crate.
@@ -95,6 +100,8 @@ pub struct TerminalContextMenuAction {
     pub preview: String,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    /// A frozen value copied without invoking the application's open action.
+    pub copy: Option<(String, String)>,
 }
 
 /// Frozen content hit that opened the current context menu.
@@ -1147,11 +1154,13 @@ impl TerminalView {
         let menu = Popup::context_menu(&response)
             .open_memory(set_open)
             .show(|ui| {
-                style_context_menu(ui);
+                style_context_menu(
+                    ui,
+                    options.context_menu_action.is_some() || self.context_link.is_some(),
+                );
                 let mut rendered_items = false;
                 if let Some(action) = options.context_menu_action.as_ref() {
-                    ui.label(egui::RichText::new(&action.preview).small().monospace())
-                        .on_hover_text(&action.preview);
+                    show_context_target(ui, &action.preview);
                     let clicked = if action.enabled {
                         ui.button(&action.label).clicked()
                     } else {
@@ -1165,6 +1174,12 @@ impl TerminalView {
                         self.pending_context_action_request = true;
                         ui.close();
                     }
+                    if let Some((label, value)) = &action.copy {
+                        if ui.button(label).clicked() {
+                            ui.ctx().copy_text(value.clone());
+                            ui.close();
+                        }
+                    }
                 } else if self.context_target.is_some()
                     && self.context_link.is_none()
                     && selected_text.is_none()
@@ -1177,8 +1192,7 @@ impl TerminalView {
                     if rendered_items {
                         ui.separator();
                     }
-                    ui.label(egui::RichText::new(link.as_ref()).small().monospace())
-                        .on_hover_text(link.as_ref());
+                    show_context_target(ui, link.as_ref());
                     if ui.button("Open link").clicked() {
                         self.pending_link_requests.push_back(link.clone());
                         ui.close();
@@ -1452,10 +1466,312 @@ fn chip_drag_in_flight(context: &egui::Context) -> bool {
     egui::DragAndDrop::has_payload_of_type::<crate::chrome::ChipId>(context)
 }
 
-fn style_context_menu(ui: &mut Ui) {
-    ui.set_min_width(176.0);
+fn style_context_menu(ui: &mut Ui, has_target: bool) {
+    let min_width = if has_target {
+        let margin = egui::Frame::popup(ui.style()).total_margin().sum().x;
+        let width = CONTEXT_MENU_MAX_WIDTH.min((ui.ctx().content_rect().width() - margin).max(0.0));
+        ui.set_max_width(width);
+        176.0_f32.min(width)
+    } else {
+        176.0
+    };
+    ui.set_min_width(min_width);
     ui.spacing_mut().interact_size.y = 30.0;
     ui.spacing_mut().item_spacing.y = 2.0;
+}
+
+fn context_target_parts(target: &str) -> Vec<Cow<'_, str>> {
+    let bidi_controls = CodePointSetData::new::<BidiControl>();
+    let needs_escape = |character: char| {
+        character.is_control()
+            || bidi_controls.contains(character)
+            || matches!(character, '\u{2028}' | '\u{2029}')
+    };
+    target
+        .graphemes(true)
+        .map(|grapheme| {
+            if grapheme.chars().any(needs_escape) {
+                let mut escaped = String::new();
+                for character in grapheme.chars() {
+                    if needs_escape(character) {
+                        escaped.extend(character.escape_default());
+                    } else {
+                        escaped.push(character);
+                    }
+                }
+                Cow::Owned(escaped)
+            } else {
+                Cow::Borrowed(grapheme)
+            }
+        })
+        .collect()
+}
+
+// Presentation only: Open/Go and Copy retain their original frozen targets.
+fn context_target_text(
+    target: &str,
+    max_width: f32,
+    mut measure: impl FnMut(&str) -> f32,
+) -> (String, String) {
+    let parts = context_target_parts(target);
+    let full: String = parts.iter().map(Cow::as_ref).collect();
+    if measure(&full) <= max_width {
+        return (full.clone(), full);
+    }
+
+    let url_summary = (full == target)
+        .then(|| url::Url::parse(target).ok())
+        .flatten()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
+        .map(|url| {
+            let mut summary = url.origin().ascii_serialization();
+            if !url.username().is_empty() || url.password().is_some() {
+                summary = summary.replacen("://", "://…@", 1);
+            }
+            let prefix_end = summary.len() + usize::from(url.path().starts_with('/'));
+            summary.push_str(url.path());
+            if url.query().is_some() {
+                summary.push_str("?…");
+            }
+            if url.fragment().is_some() {
+                summary.push_str("#…");
+            }
+            (summary, prefix_end)
+        });
+    let (parts, preferred_head) = if let Some((summary, prefix_end)) = &url_summary {
+        (
+            context_target_parts(summary),
+            summary[..*prefix_end].graphemes(true).count(),
+        )
+    } else {
+        let mut separators = target
+            .char_indices()
+            .filter(|(_, c)| matches!(c, '/' | '\\'));
+        let prefix_end = if target.starts_with("\\\\") || target.starts_with("//") {
+            separators.nth(3)
+        } else {
+            separators.next()
+        }
+        .map_or(0, |(index, c)| index + c.len_utf8());
+        (parts, target[..prefix_end].graphemes(true).count())
+    };
+    let candidate: String = parts.iter().map(Cow::as_ref).collect();
+    if measure(&candidate) <= max_width {
+        return (full, candidate);
+    }
+
+    let mut best = String::new();
+    let mut low = 0;
+    let mut high = parts.len();
+    while low < high {
+        let kept = low + (high - low) / 2;
+        // Favor the filename/extension, while keeping a recognizable root or host.
+        let head = if preferred_head + 8 <= kept {
+            (kept / 3).max(preferred_head)
+        } else {
+            kept / 3
+        };
+        let tail = kept - head;
+        let candidate: String = parts[..head]
+            .iter()
+            .map(Cow::as_ref)
+            .chain(std::iter::once("…"))
+            .chain(parts[parts.len() - tail..].iter().map(Cow::as_ref))
+            .collect();
+        if measure(&candidate) <= max_width {
+            best = candidate;
+            low = kept + 1;
+        } else {
+            high = kept;
+        }
+    }
+    (full, best)
+}
+
+fn show_context_target(ui: &mut Ui, target: &str) {
+    let mut font = egui::TextStyle::Small.resolve(ui.style());
+    font.family = egui::FontFamily::Monospace;
+    let color = ui.visuals().text_color();
+    let width = ui.available_width().min(CONTEXT_MENU_MAX_WIDTH);
+    let (full, label) = context_target_text(target, width, |text| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), color)
+            .size()
+            .x
+    });
+    let galley = ui.painter().layout_no_wrap(label, font.clone(), color);
+    // A normal Label inherits the menu's horizontal justification, stretching
+    // spaces and wrapped path/URL rows. An explicit galley keeps normal spacing.
+    let response = ui.add(egui::Label::new(galley).selectable(false));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &full));
+    response.on_hover_ui(|ui| {
+        let width = ui.available_width().min(CONTEXT_TARGET_TOOLTIP_MAX_WIDTH);
+        let job = egui::text::LayoutJob::simple(full, font, color, width);
+        let galley = ui.painter().layout_job(job);
+        ui.add(egui::Label::new(galley).selectable(false));
+    });
+}
+
+#[cfg(test)]
+mod context_target_tests {
+    use super::*;
+
+    fn grapheme_width(text: &str) -> f32 {
+        text.graphemes(true).count() as f32
+    }
+
+    #[test]
+    fn context_target_display_escapes_controls_without_changing_real_spaces() {
+        let raw = "/tmp/a  b\tc\r\n\u{202e}e\u{301}-\u{1f469}\u{200d}\u{1f52c}.md";
+        let expected = "/tmp/a  b\\tc\\r\\n\\u{202e}e\u{301}-\u{1f469}\u{200d}\u{1f52c}.md";
+        let (full, label) = context_target_text(raw, 1000.0, grapheme_width);
+        assert_eq!(full, expected);
+        assert_eq!(label, expected);
+        assert_eq!(
+            context_target_parts("e\u{301}\t\u{1f469}\u{200d}\u{1f52c}")
+                .iter()
+                .map(Cow::as_ref)
+                .collect::<Vec<_>>(),
+            ["e\u{301}", "\\t", "\u{1f469}\u{200d}\u{1f52c}"]
+        );
+        assert!(full.chars().all(|c| !c.is_control()));
+        assert!(!full.contains('\u{202e}'));
+    }
+
+    #[test]
+    fn context_target_labels_keep_origins_and_filename_tails() {
+        for (target, prefix, suffix) in [
+            (
+                r"C:\Users\reader\projects\very-long-directory\another-directory\report.final.md",
+                r"C:\",
+                "report.final.md",
+            ),
+            (
+                r"\\server\share\projects\very-long-directory\another-directory\report.final.md",
+                r"\\server\share\",
+                "report.final.md",
+            ),
+            (
+                "deploy@host · /srv/projects/very-long-directory/another-directory/report.final.md",
+                "deploy@host · /",
+                "report.final.md",
+            ),
+            (
+                "https://example.com/projects/very-long-directory/another-directory/report.md?token=abcdefghijklmnopqrstuvwxyz#heading",
+                "https://example.com/",
+                "report.md?…#…",
+            ),
+        ] {
+            let (full, label) = context_target_text(target, 48.0, grapheme_width);
+            assert_eq!(full, target);
+            assert!(label.starts_with(prefix), "{label}");
+            assert!(label.ends_with(suffix), "{label}");
+            assert!(label.contains('…'), "{label}");
+            assert!(grapheme_width(&label) <= 48.0, "{label}");
+            assert!(!label.contains("token="), "{label}");
+        }
+    }
+
+    #[test]
+    fn context_target_url_summaries_identify_omitted_components() {
+        let target = format!(
+            "https://reader:synthetic@example.com:8443/report.md?query={}#heading",
+            "value".repeat(40)
+        );
+        let (full, label) = context_target_text(&target, 48.0, grapheme_width);
+        assert_eq!(full, target);
+        assert_eq!(label, "https://…@example.com:8443/report.md?…#…");
+
+        let short = "https://example.com/report.md?a=1#heading";
+        let (full, label) = context_target_text(short, 48.0, grapheme_width);
+        assert_eq!(full, short);
+        assert_eq!(label, short);
+    }
+
+    #[test]
+    fn context_target_elision_keeps_graphemes_and_escape_sequences_whole() {
+        let target = format!(
+            "/root/{}/e\u{301}\t\u{202e}.md",
+            "\u{1f469}\u{200d}\u{1f52c}".repeat(40)
+        );
+        let parts = context_target_parts(&target);
+        let full: String = parts.iter().map(Cow::as_ref).collect();
+        let mut boundaries = vec![0];
+        for part in &parts {
+            boundaries.push(boundaries.last().unwrap() + part.len());
+        }
+        for width in 0..60 {
+            let (actual_full, label) = context_target_text(&target, width as f32, grapheme_width);
+            assert_eq!(actual_full, full);
+            assert!(grapheme_width(&label) <= width as f32);
+            if label.is_empty() || label == full {
+                continue;
+            }
+            let (head, tail) = label.split_once('…').unwrap();
+            assert!(full.starts_with(head));
+            assert!(full.ends_with(tail));
+            assert!(boundaries.contains(&head.len()));
+            assert!(boundaries.contains(&(full.len() - tail.len())));
+        }
+    }
+
+    #[test]
+    fn context_target_galleys_are_single_line_unjustified_and_width_bounded() {
+        fn text_galleys(shape: &egui::Shape, output: &mut Vec<Arc<egui::Galley>>) {
+            match shape {
+                egui::Shape::Text(text) => output.push(text.galley.clone()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        text_galleys(shape, output);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let target = format!(
+            "deploy@host · /srv/{}/report  final.md",
+            "long-directory/".repeat(20)
+        );
+        for scale in [1.0, 1.25, 2.0] {
+            for viewport_width in [200.0, 800.0] {
+                let context = egui::Context::default();
+                let mut input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(viewport_width, 600.0),
+                    )),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(scale);
+                let mut width = 0.0;
+                let mut output = context.run_ui(input, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        style_context_menu(ui, true);
+                        width = ui.available_width().min(CONTEXT_MENU_MAX_WIDTH);
+                        show_context_target(ui, &target);
+                    });
+                });
+                assert_eq!(output.pixels_per_point, scale);
+                output.textures_delta.clear();
+                let mut galleys = Vec::new();
+                for shape in &output.shapes {
+                    text_galleys(&shape.shape, &mut galleys);
+                }
+                assert_eq!(galleys.len(), 1);
+                let galley = &galleys[0];
+                assert_eq!(galley.rows.len(), 1, "scale={scale}");
+                assert!(!galley.job.justify);
+                assert!(galley.size().x <= width, "scale={scale}, width={width}");
+                assert!(galley.text().contains('…'));
+                assert!(galley.text().ends_with("final.md"));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2914,77 +3230,144 @@ mod tests {
 
     #[test]
     fn terminal_context_menu_exposes_application_owned_action_requests() {
-        struct State {
-            terminal: Terminal,
-            view: TerminalView,
-            sink: Sink,
-        }
-        let state = State {
-            terminal: terminal(80, 24),
-            view: TerminalView::default(),
-            sink: Sink::default(),
-        };
-        let mut harness = Harness::builder()
-            .with_size(Vec2::new(800.0, 600.0))
-            .build_ui_state(
-                |ui, state: &mut State| {
-                    state.view.show_with_options(
-                        ui,
-                        &mut state.terminal,
-                        &mut state.sink,
-                        TerminalViewOptions {
-                            paste_available: false,
-                            context_menu_action: Some(TerminalContextMenuAction {
-                                label: "Open in viewer".to_owned(),
-                                preview: "/tmp/guide.md".to_owned(),
-                                enabled: true,
-                                disabled_reason: None,
-                            }),
-                            history_snapshot_actions: true,
-                            ..TerminalViewOptions::default()
-                        },
-                    );
-                },
-                state,
+        for viewport_width in [200.0, 800.0] {
+            struct State {
+                terminal: Terminal,
+                view: TerminalView,
+                sink: Sink,
+                copy_value: String,
+                copied: Vec<String>,
+            }
+            let state = State {
+                terminal: terminal(80, 24),
+                view: TerminalView::default(),
+                sink: Sink::default(),
+                copy_value: format!(
+                    "/srv/{}/report  name\t\u{202e}.md",
+                    "long-directory/".repeat(20)
+                ),
+                copied: Vec::new(),
+            };
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(viewport_width, 600.0))
+                .build_ui_state(
+                    |ui, state: &mut State| {
+                        state.view.show_with_options(
+                            ui,
+                            &mut state.terminal,
+                            &mut state.sink,
+                            TerminalViewOptions {
+                                paste_available: false,
+                                context_menu_action: Some(TerminalContextMenuAction {
+                                    label: "Open in viewer".to_owned(),
+                                    preview: format!("deploy@host · {}", state.copy_value),
+                                    enabled: true,
+                                    disabled_reason: None,
+                                    copy: Some(("Copy path".to_owned(), state.copy_value.clone())),
+                                }),
+                                history_snapshot_actions: true,
+                                ..TerminalViewOptions::default()
+                            },
+                        );
+                        state.copied.extend(ui.ctx().output(|output| {
+                            output
+                                .commands
+                                .iter()
+                                .filter_map(|command| match command {
+                                    egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                        }));
+                    },
+                    state,
+                );
+            harness.run();
+
+            harness.get_by_label("Terminal viewport").click_secondary();
+            harness.run();
+            assert!(harness.query_by_label("Open in viewer").is_some());
+            assert!(harness.query_by_label("Copy path").is_some());
+            let (accessible_target, _) = context_target_text(
+                &format!("deploy@host · {}", harness.state().copy_value),
+                0.0,
+                |_| 1.0,
             );
-        harness.run();
+            assert!(harness.query_by_label(&accessible_target).is_some());
+            assert!(harness.get_by_label("Copy path").rect().width() <= CONTEXT_MENU_MAX_WIDTH);
+            assert!(harness.get_by_label("Copy path").rect().left() >= 0.0);
+            assert!(harness.get_by_label("Copy path").rect().right() <= viewport_width);
 
-        harness.get_by_label("Terminal viewport").click_secondary();
-        harness.run();
-        assert!(harness.query_by_label("Open in viewer").is_some());
+            harness.get_by_label("Open in viewer").click();
+            harness.run();
 
-        harness.get_by_label("Open in viewer").click();
-        harness.run();
+            assert!(harness.state_mut().view.take_context_action_request());
+            assert!(harness.state_mut().view.take_history_actions().is_empty());
+            assert!(harness.state().sink.0.is_empty());
 
-        assert!(harness.state_mut().view.take_context_action_request());
-        assert!(harness.state_mut().view.take_history_actions().is_empty());
-        assert!(harness.state().sink.0.is_empty());
+            harness.get_by_label("Terminal viewport").click_secondary();
+            harness.run();
+            harness.get_by_label("Copy path").click();
+            harness.run();
+            assert!(!harness.state_mut().view.take_context_action_request());
+            assert!(harness.state().sink.0.is_empty());
+            assert_eq!(
+                harness.state().copied.last(),
+                Some(&harness.state().copy_value)
+            );
 
-        harness.get_by_label("Terminal viewport").click_secondary();
-        harness.run();
-        harness
-            .get_by_label("Open Terminal History in Editor")
-            .click();
-        harness.run();
-        assert_eq!(
-            harness.state_mut().view.take_history_actions(),
-            vec![TerminalHistoryAction::OpenInEditor]
-        );
-        assert!(!harness.state_mut().view.take_context_action_request());
-        assert!(harness.state().sink.0.is_empty());
+            harness.get_by_label("Terminal viewport").click_secondary();
+            harness.run();
+            harness
+                .get_by_label("Open Terminal History in Editor")
+                .click();
+            harness.run();
+            assert_eq!(
+                harness.state_mut().view.take_history_actions(),
+                vec![TerminalHistoryAction::OpenInEditor]
+            );
+            assert!(!harness.state_mut().view.take_context_action_request());
+            assert!(harness.state().sink.0.is_empty());
+        }
     }
 
     #[test]
     fn terminal_context_menu_uses_explicit_link_under_pointer_only() {
-        let mut state = HeadlessViewState::new();
+        struct State {
+            terminal: Terminal,
+            view: TerminalView,
+            sink: Sink,
+            copied: Vec<String>,
+        }
+        let mut state = State {
+            terminal: terminal(80, 24),
+            view: TerminalView::default(),
+            sink: Sink::default(),
+            copied: Vec::new(),
+        };
+        let address = format!(
+            "https://example.com/{}/report.md?token={}",
+            "long-directory/".repeat(10),
+            "value".repeat(30)
+        );
         state
             .terminal
-            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+            .ingest(format!("\x1b]8;;{address}\x1b\\link\x1b]8;;\x1b\\").as_bytes());
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(
-                |ui, state: &mut HeadlessViewState| {
+                |ui, state: &mut State| {
                     state.view.show(ui, &mut state.terminal, &mut state.sink);
+                    state.copied.extend(ui.ctx().output(|output| {
+                        output
+                            .commands
+                            .iter()
+                            .filter_map(|command| match command {
+                                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    }));
                 },
                 state,
             );
@@ -3008,13 +3391,30 @@ mod tests {
 
         assert!(harness.query_by_label("Open link").is_some());
         assert!(harness.query_by_label("Copy link").is_some());
+        assert!(harness.query_by_label(&address).is_some());
+        assert!(harness.get_by_label("Copy link").rect().width() <= CONTEXT_MENU_MAX_WIDTH);
         assert!(harness.state().sink.0.is_empty());
         harness.get_by_label("Open link").click();
         harness.run();
         assert_eq!(
             harness.state_mut().view.take_link_requests(),
-            vec![Arc::<str>::from("https://example.com/")]
+            vec![Arc::<str>::from(address.as_str())]
         );
+
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: link_cell,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        harness.get_by_label("Copy link").click();
+        harness.run();
+        assert_eq!(harness.state().copied.last(), Some(&address));
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
+        assert!(harness.state().sink.0.is_empty());
 
         let non_link_cell = grid.left_top()
             + egui::vec2(

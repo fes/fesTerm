@@ -32,10 +32,24 @@ pub(crate) fn install_from_environment(
     context: &egui::Context,
     state: Option<&egui_wgpu::RenderState>,
 ) {
+    let host_copy =
+        match host_copy_requested(std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY").as_deref()) {
+            Ok(requested) => requested,
+            Err(message) => {
+                tracing::warn!(target: "festerm::rendering", "{message}");
+                false
+            }
+        };
     let preference = match Preference::from_environment(
         std::env::var_os("FESTERM_EXPERIMENTAL_DIRECT2D").as_deref(),
     ) {
-        Ok(Preference::Disabled) => return,
+        Ok(Preference::Disabled) => {
+            if host_copy {
+                tracing::info!(target: "festerm::rendering",
+                    "host copy requires Direct2D; retaining ordinary rendering");
+            }
+            return;
+        }
         Ok(preference) => preference,
         Err(message) => {
             tracing::warn!(target: "festerm::rendering", "{message}");
@@ -43,7 +57,7 @@ pub(crate) fn install_from_environment(
         }
     };
     let Some(state) = state else {
-        if preference == Preference::Enabled {
+        if preference == Preference::Enabled || host_copy {
             tracing::warn!(target: "festerm::rendering", "Direct2D requires wgpu; retaining the current renderer");
         }
         return;
@@ -55,14 +69,22 @@ pub(crate) fn install_from_environment(
         info.backend,
         state.target_format,
     ) {
-        if preference == Preference::Enabled {
+        if preference == Preference::Enabled || host_copy {
             tracing::info!(target: "festerm::rendering",
                 "Direct2D requires Windows x64, a DX12 CPU adapter and 8-bit gamma target; retaining egui-wgpu");
         }
         return;
     }
+    if host_copy && state.target_format != wgpu::TextureFormat::Bgra8Unorm {
+        tracing::info!(target: "festerm::rendering",
+            "host copy requires a BGRA target; retaining shader composition");
+    }
     #[cfg(all(windows, target_arch = "x86_64"))]
-    match native::install(context, state) {
+    match native::install_with_host_copy(
+        context,
+        state,
+        host_copy && state.target_format == wgpu::TextureFormat::Bgra8Unorm,
+    ) {
         Ok(_) => {
             tracing::info!(target: "festerm::rendering", ?preference, "Direct2D terminal painter enabled")
         }
@@ -71,6 +93,15 @@ pub(crate) fn install_from_environment(
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     let _ = context;
+}
+
+fn host_copy_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static str> {
+    match value {
+        None => Ok(false),
+        Some(value) if value == "0" => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        _ => Err("FESTERM_EXPERIMENTAL_HOST_COPY expects 0 or 1; retaining shader composition"),
+    }
 }
 
 fn eligible(device: wgpu::DeviceType, backend: wgpu::Backend, format: wgpu::TextureFormat) -> bool {
@@ -118,6 +149,12 @@ impl TimingConfig {
     }
 }
 
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+mod profile;
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+mod host_copy;
+
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod native {
     use super::*;
@@ -131,16 +168,27 @@ mod native {
     pub(super) struct Status {
         pub(super) active: AtomicBool,
         pub(super) frames: AtomicU64,
+        pub(super) reused_frames: AtomicU64,
         pub(super) first_failure: OnceLock<String>,
+        #[cfg(test)]
+        pub(super) last_updated_pixels: AtomicU64,
+        #[cfg(test)]
+        pub(super) last_surface_pixels: AtomicU64,
+        #[cfg(test)]
+        pub(super) last_surface: Mutex<Option<festerm_windows_direct2d::Surface>>,
     }
 
     struct Paint {
         pipeline: Arc<wgpu::RenderPipeline>,
         bindings: wgpu::BindGroup,
-        _texture: wgpu::Texture,
+        copy: egui_wgpu::CallbackTextureCopy,
     }
 
     impl egui_wgpu::CallbackTrait for Paint {
+        fn texture_copy(&self) -> Option<&egui_wgpu::CallbackTextureCopy> {
+            Some(&self.copy)
+        }
+
         fn paint(
             &self,
             _: egui::PaintCallbackInfo,
@@ -169,9 +217,18 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 ";
 
+    #[cfg(test)]
     pub(super) fn install(
         context: &egui::Context,
         state: &egui_wgpu::RenderState,
+    ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
+        install_with_host_copy(context, state, false)
+    }
+
+    pub(super) fn install_with_host_copy(
+        context: &egui::Context,
+        state: &egui_wgpu::RenderState,
+        host_copy: bool,
     ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
         let timings = match TimingConfig::from_environment(
             std::env::var("FESTERM_DIRECT2D_TIMINGS").ok().as_deref(),
@@ -182,7 +239,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 TimingConfig::Disabled
             }
         };
-        let renderer = Mutex::new(festerm_windows_direct2d::Renderer::new(
+        let renderer = Mutex::new(festerm_windows_direct2d::CachedRenderer::new(
             state.device.clone(),
             state.queue.clone(),
         )?);
@@ -251,7 +308,14 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let status = Arc::new(Status {
             active: AtomicBool::new(true),
             frames: AtomicU64::new(0),
+            reused_frames: AtomicU64::new(0),
             first_failure: OnceLock::new(),
+            #[cfg(test)]
+            last_updated_pixels: AtomicU64::new(0),
+            #[cfg(test)]
+            last_surface_pixels: AtomicU64::new(0),
+            #[cfg(test)]
+            last_surface: Mutex::new(None),
         });
         let observed = status.clone();
         festerm_ui_egui::install_root_terminal_painter(context, move |context, frame| {
@@ -276,7 +340,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
-            let surface = match result {
+            let rendered = match result {
                 Ok(Some(surface)) => surface,
                 Ok(None) => return None,
                 Err(error) => {
@@ -288,6 +352,21 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
+            let updated_regions = rendered.updated_regions;
+            let updated_pixels = rendered.updated_pixels;
+            let surface = rendered.surface;
+            #[cfg(test)]
+            {
+                *observed.last_surface.lock().unwrap() = Some(surface.clone());
+                observed
+                    .last_updated_pixels
+                    .store(updated_pixels, Ordering::Relaxed);
+                observed.last_surface_pixels.store(
+                    u64::from(surface.texture.width()) * u64::from(surface.texture.height()),
+                    Ordering::Relaxed,
+                );
+            }
+
             let mut offset = [0u8; 16];
             offset[0..4].copy_from_slice(&surface.origin[0].to_le_bytes());
             offset[4..8].copy_from_slice(&surface.origin[1].to_le_bytes());
@@ -312,12 +391,21 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     },
                 ],
             });
-            let number = observed.frames.fetch_add(1, Ordering::Relaxed) + 1;
-            if timings.should_log(number) {
+            let number = if updated_regions == 0 {
+                let reused = observed.reused_frames.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::debug!(target: "festerm::rendering", direct2d_reused_frames = reused,
+                    "reused unchanged Direct2D terminal frame");
+                observed.frames.load(Ordering::Relaxed)
+            } else {
+                observed.frames.fetch_add(1, Ordering::Relaxed) + 1
+            };
+            if updated_regions > 0 && timings.should_log(number) {
                 let render_timings = render_timings.as_ref().expect("timing capture enabled");
                 tracing::info!(
                     target: "festerm::rendering",
                     direct2d_frame_number = number,
+                    updated_regions,
+                    updated_pixels,
                     surface_width = render_timings.surface_width,
                     surface_height = render_timings.surface_height,
                     mesh_count = render_timings.mesh_count,
@@ -328,6 +416,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     analysis_ms = render_timings.analysis.as_secs_f64() * 1000.0,
                     texture_upload_ms = render_timings.texture_upload.as_secs_f64() * 1000.0,
                     geometry_prepare_ms = render_timings.geometry_prepare.as_secs_f64() * 1000.0,
+                    geometry_prepare_calls = render_timings.geometry_prepare_calls,
                     native_draw_ms = render_timings.native_draw.as_secs_f64() * 1000.0,
                     composite_ms = composite_started
                         .map(|started| started.elapsed().as_secs_f64() * 1000.0)
@@ -337,7 +426,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                         .unwrap_or_default(),
                     "Direct2D production frame timings"
                 );
-            } else {
+            } else if updated_regions > 0 {
                 tracing::debug!(target: "festerm::rendering", direct2d_frame_number = number,
                     "built Direct2D terminal surface");
             }
@@ -346,10 +435,18 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 Paint {
                     pipeline: pipeline.clone(),
                     bindings,
-                    _texture: surface.texture,
+                    copy: egui_wgpu::CallbackTextureCopy {
+                        texture: surface.texture,
+                        origin: surface.origin,
+                    },
                 },
             ))
         });
+        state.renderer.write().final_callback_copy_enabled = host_copy;
+        if host_copy {
+            tracing::info!(target: "festerm::rendering",
+                "experimental final-target host copy enabled; ineligible frames retain shader composition");
+        }
         Ok(status)
     }
 }
@@ -357,6 +454,19 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_copy_is_explicitly_opt_in_and_rejects_invalid_values() {
+        for (value, expected) in [(None, false), (Some("0"), false), (Some("1"), true)] {
+            assert_eq!(
+                host_copy_requested(value.map(std::ffi::OsStr::new)).unwrap(),
+                expected
+            );
+        }
+        for value in ["", "true", "2", " 1"] {
+            assert!(host_copy_requested(Some(std::ffi::OsStr::new(value))).is_err());
+        }
+    }
 
     #[test]
     fn direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy() {
@@ -669,5 +779,341 @@ mod tests {
             fixture(false, 1.0, false, false, true),
             fixture(true, 1.0, false, false, true)
         );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn retained_terminal_updates_preserve_pixels_across_dpi_and_clipping() {
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+        use festerm_core::{Dimensions, Terminal};
+        use festerm_ui_egui::{EncodedInputSink, TerminalView};
+        use std::sync::atomic::Ordering;
+
+        struct Sink;
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, _: &[u8]) {}
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+        }
+        let sequence = |native: bool, scale: f32, clipped: bool| {
+            let mut setup = default_wgpu_setup();
+            let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                unreachable!()
+            };
+            options.instance_descriptor.backends = wgpu::Backends::DX12;
+            let state = create_render_state(setup, Default::default());
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let context = egui::Context::default();
+            crate::software_background::install(&context, &state);
+            let status = native.then(|| super::native::install(&context, &state).unwrap());
+            let mut terminal = Terminal::new(Dimensions::new(48, 24).unwrap()).unwrap();
+            terminal.ingest(b"\x1b[?25l");
+            for row in 1..=24 {
+                terminal.ingest(
+                    format!("\x1b[{row};1HRow {row:02} 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+                        .as_bytes(),
+                );
+            }
+            terminal.ingest(
+                "\x1b[3;1H\u{754c} e\u{301} \u{1f916} \u{1f469}\u{200d}\u{1f52c}".as_bytes(),
+            );
+            let mut view = TerminalView::default();
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(480.0, 480.0),
+                )),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let updates = [
+                "",
+                "",
+                "",
+                "\x1b[9;3H\x1b[31mPATCH\x1b[0m",
+                "\x1b[9;1H\x1b[2K",
+                "\x1b[9;3H\x1b[4mABCD\x1b[0m",
+                "\x1b[10;5H\x1b[?25h",
+                "\x1b[?25l\x1b[3;1H\u{1f916}\x1b[K",
+                "",
+            ];
+            let mut images = Vec::new();
+            let mut saw_partial = false;
+            for (index, bytes) in updates.iter().enumerate() {
+                terminal.ingest(bytes.as_bytes());
+                let mut output = context.run_ui(input.clone(), |ui| {
+                    ui.painter().rect_filled(
+                        ui.max_rect(),
+                        0.0,
+                        egui::Color32::from_rgb(70, 25, 80),
+                    );
+                    ui.add_enabled_ui(index != 5, |ui| {
+                        if clipped {
+                            ui.set_clip_rect(egui::Rect::from_min_max(
+                                egui::pos2(11.25, 13.5),
+                                egui::pos2(460.5, 469.75),
+                            ));
+                        }
+                        view.show(ui, &mut terminal, &mut Sink);
+                    });
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(15.0, 100.0), egui::vec2(180.0, 25.0)),
+                        6.0,
+                        egui::Color32::from_rgba_unmultiplied(200, 100, 50, 96),
+                    );
+                });
+                renderer.handle_delta(&mut output.textures_delta);
+                images.push(renderer.render(&context, &output).unwrap());
+                if let Some(status) = &status {
+                    assert!(
+                        status.active.load(Ordering::Relaxed),
+                        "{:?}",
+                        status.first_failure.get()
+                    );
+                    let changed = status.last_updated_pixels.load(Ordering::Relaxed);
+                    let full = status.last_surface_pixels.load(Ordering::Relaxed);
+                    saw_partial |= index >= 3 && index != 5 && changed > 0 && changed < full;
+                }
+            }
+            if native {
+                assert!(saw_partial, "fixture must exercise retained updates");
+            }
+            images
+        };
+        for scale in [1.0, 1.25, 2.0] {
+            for clipped in [false, true] {
+                let reference = sequence(false, scale, clipped);
+                let actual = sequence(true, scale, clipped);
+                for (index, (reference, actual)) in reference.iter().zip(&actual).enumerate() {
+                    assert_eq!(reference.dimensions(), actual.dimensions());
+                    let mismatches = reference
+                        .pixels()
+                        .zip(actual.pixels())
+                        .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 2))
+                        .count();
+                    assert_eq!(
+                        mismatches, 0,
+                        "frame={index}, scale={scale}, clipped={clipped}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    #[ignore = "optional completed-render TUI profiling; not native presentation latency"]
+    fn replay_terminal_tui_workloads() {
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+        use festerm_core::{Dimensions, Terminal};
+        use festerm_test_support::{captures, tui_workload::Workload};
+        use festerm_ui_egui::{EncodedInputSink, TerminalView};
+        use std::{path::PathBuf, sync::atomic::Ordering, time::Instant};
+
+        struct Sink;
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, _: &[u8]) {}
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+        }
+
+        assert_eq!(
+            std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
+            Ok("1")
+        );
+        let directory = PathBuf::from(
+            std::env::var_os("FESTERM_TUI_RENDER_OUT").expect("set FESTERM_TUI_RENDER_OUT"),
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_test_writer()
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let cases = [
+            (
+                "copilot",
+                captures::frame_worth_rendering(captures::COPILOT).to_vec(),
+                None,
+            ),
+            (
+                "vim",
+                captures::frame_worth_rendering(captures::VIM).to_vec(),
+                None,
+            ),
+            (
+                "htop",
+                captures::frame_worth_rendering(captures::HTOP).to_vec(),
+                None,
+            ),
+            (
+                "tmux",
+                captures::frame_worth_rendering(captures::TMUX).to_vec(),
+                None,
+            ),
+            ("quiet", Workload::Quiet.setup(), Some(Workload::Quiet)),
+            (
+                "localized",
+                Workload::Localized.setup(),
+                Some(Workload::Localized),
+            ),
+            (
+                "streaming",
+                Workload::Streaming.setup(),
+                Some(Workload::Streaming),
+            ),
+            (
+                "full-redraw",
+                Workload::FullRedraw.setup(),
+                Some(Workload::FullRedraw),
+            ),
+        ];
+        let dimensions = Dimensions::new(captures::COLUMNS, captures::ROWS).unwrap();
+        let mut results = Vec::new();
+        for (name, setup_bytes, workload) in cases {
+            let mut reference: Option<image::RgbaImage> = None;
+            for native in [false, true] {
+                let mut setup = default_wgpu_setup();
+                let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                    unreachable!()
+                };
+                options.instance_descriptor.backends = wgpu::Backends::DX12;
+                let state = create_render_state(setup, Default::default());
+                assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
+                let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+                let context = egui::Context::default();
+                context.set_theme(egui::ThemePreference::Dark);
+                context.set_visuals(festerm_ui_egui::theme::default_visuals());
+                crate::software_background::install(&context, &state);
+                let status = native.then(|| super::native::install(&context, &state).unwrap());
+                let mut terminal = Terminal::new(dimensions).unwrap();
+                terminal.ingest(&setup_bytes);
+                let mut view = TerminalView::default();
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1440.0, 852.0),
+                    )),
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(2.0);
+                let step = |terminal: &mut Terminal, view: &mut TerminalView| {
+                    context.run_ui(input.clone(), |ui| {
+                        view.show(ui, terminal, &mut Sink);
+                    })
+                };
+                for frame in 0..5 {
+                    if let Some(workload) = workload {
+                        terminal.ingest(&workload.update(frame));
+                    }
+                    let mut output = step(&mut terminal, &mut view);
+                    renderer.handle_delta(&mut output.textures_delta);
+                    renderer
+                        .render(&context, &output)
+                        .expect("TUI warmup render");
+                }
+                assert_eq!(terminal.dimensions(), dimensions);
+                assert!(context
+                    .viewport_rect()
+                    .contains_rect(view.diagnostics().grid_rect.unwrap()));
+                let mut timings = Vec::new();
+                let mut image = None;
+                for frame in 5..15 {
+                    let bytes = workload
+                        .map(|workload| workload.update(frame))
+                        .unwrap_or_default();
+                    let started = Instant::now();
+                    terminal.ingest(&bytes);
+                    let parse_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let started = Instant::now();
+                    let mut output = step(&mut terminal, &mut view);
+                    renderer.handle_delta(&mut output.textures_delta);
+                    let ui_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let started = Instant::now();
+                    image = Some(
+                        renderer
+                            .render(&context, &output)
+                            .expect("completed TUI render"),
+                    );
+                    let draw_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let updated_pixels = status.as_ref().map(|status| {
+                        let updated = status.last_updated_pixels.load(Ordering::Relaxed);
+                        let full = status.last_surface_pixels.load(Ordering::Relaxed);
+                        if name == "localized" && frame >= 10 {
+                            assert!(
+                                updated * 4 < full,
+                                "localized update redrew most of the terminal"
+                            );
+                        }
+                        updated
+                    });
+                    timings.push(serde_json::json!({
+                        "frame": frame, "input_bytes": bytes.len(), "parse_ms": parse_ms,
+                        "ui_ms": ui_ms, "draw_readback_ms": draw_ms,
+                        "updated_pixels": updated_pixels,
+                    }));
+                }
+                let image = image.unwrap();
+                image
+                    .save(directory.join(format!(
+                        "{name}-{}.png",
+                        if native { "direct2d" } else { "wgpu" }
+                    )))
+                    .unwrap();
+                if let Some(status) = status {
+                    assert!(
+                        status.active.load(Ordering::Relaxed),
+                        "{name}: native fallback: {:?}",
+                        status.first_failure.get()
+                    );
+                    assert!(
+                        status.frames.load(Ordering::Relaxed) > 0,
+                        "{name}: no native frames"
+                    );
+                }
+                if let Some(reference) = &reference {
+                    assert_eq!(reference.dimensions(), image.dimensions());
+                    let changed = reference
+                        .pixels()
+                        .zip(image.pixels())
+                        .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 2))
+                        .count();
+                    assert_eq!(changed, 0, "{name}: native rendering changed TUI pixels");
+                } else {
+                    reference = Some(image);
+                }
+                let average = |key: &str| {
+                    timings
+                        .iter()
+                        .map(|value| value[key].as_f64().unwrap())
+                        .sum::<f64>()
+                        / timings.len() as f64
+                };
+                eprintln!("tui-replay case={name} native={native} parse_ms={:.3} ui_ms={:.3} draw_readback_ms={:.3}",
+                    average("parse_ms"), average("ui_ms"), average("draw_readback_ms"));
+                results.push(serde_json::json!({"case":name,"native":native,"frames":timings}));
+                std::fs::write(
+                    directory.join("timings.json"),
+                    serde_json::to_vec_pretty(&results).unwrap(),
+                )
+                .unwrap();
+            }
+        }
     }
 }

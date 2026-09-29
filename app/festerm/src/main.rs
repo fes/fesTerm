@@ -12,6 +12,7 @@ mod direct2d;
 #[cfg(all(test, windows))]
 mod direct2d_probe;
 mod discovery;
+mod document_activation;
 // Every entry point here is exercised by its own tests and is called for real
 // once the editor tab lands; the allowance goes with it.
 #[allow(dead_code)]
@@ -33,6 +34,8 @@ mod search;
 pub mod session_controller;
 mod sftp_file_manager;
 mod software_background;
+#[cfg(test)]
+mod surface_performance;
 mod tabs;
 mod terminal_paths;
 mod text_compare;
@@ -117,6 +120,41 @@ fn primary_viewport_builder(
 
 fn main() -> eframe::Result<()> {
     let diagnostics = diagnostics::init();
+    let activation = document_activation::parse_env_activation_args()
+        .and_then(|cli| document_activation::prepare_startup(cli, None));
+    let (activation_queue, _activation_server) = match activation {
+        Ok(document_activation::StartupAction::Primary { queue, server }) => (queue, Some(server)),
+        Ok(document_activation::StartupAction::IndependentNoActivation) => {
+            (document_activation::ActivationQueue::default(), None)
+        }
+        Ok(document_activation::StartupAction::ForwardedToPrimary) => {
+            diagnostics.finish(true);
+            return Ok(());
+        }
+        Ok(document_activation::StartupAction::Help) => {
+            println!("{}", document_activation::help_text());
+            diagnostics.finish(true);
+            return Ok(());
+        }
+        Ok(document_activation::StartupAction::Version) => {
+            println!("fesTerm {}", env!("CARGO_PKG_VERSION"));
+            diagnostics.finish(true);
+            return Ok(());
+        }
+        Err(error) => {
+            diagnostics.finish(false);
+            return show_document_activation_error(error.to_string());
+        }
+    };
+    let native_documents = match festerm_macos_window::install_open_document_bridge() {
+        Ok(bridge) => bridge,
+        Err(error) => {
+            diagnostics.finish(false);
+            return show_document_activation_error(format!(
+                "Native document activation could not start: {error:?}"
+            ));
+        }
+    };
     tracing::info!(target: "festerm::app", "starting fesTerm");
     let startup_configuration = load_startup_configuration();
 
@@ -165,12 +203,46 @@ fn main() -> eframe::Result<()> {
             app.install_native_menu(&creation_context.egui_ctx);
             app.install_wake_monitor(&creation_context.egui_ctx);
             let mut application = FesTermApplication::new(app);
+            application.install_document_activation(activation_queue, &creation_context.egui_ctx);
+            application
+                .install_native_document_activation(native_documents, &creation_context.egui_ctx);
             application.restore_windows(&creation_context.egui_ctx);
             Ok(Box::new(application))
         }),
     );
     diagnostics.finish(result.is_ok());
     result
+}
+
+fn show_document_activation_error(detail: String) -> eframe::Result<()> {
+    struct ActivationError(String);
+
+    impl eframe::App for ActivationError {
+        fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
+            ui.heading("The document request could not be accepted");
+            ui.label(&self.0);
+            ui.add_space(12.0);
+            if ui.button("Close").clicked() {
+                ui.ctx()
+                    .send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    // Release Windows builds have no console. A failed forward must be visible,
+    // but must not restore a second workspace or silently retry an uncertain send.
+    let display = detail.clone();
+    eframe::run_native(
+        "fesTerm - Document request",
+        eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default()
+                .with_inner_size([520.0, 180.0])
+                .with_icon(application_icon_data()),
+            ..Default::default()
+        },
+        Box::new(move |_| Ok(Box::new(ActivationError(display)))),
+    )?;
+    Err(eframe::Error::AppCreation(detail.into()))
 }
 
 /// Chooses the wgpu surface present mode, avoiding vsync-locked presentation

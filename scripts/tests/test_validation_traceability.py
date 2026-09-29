@@ -35,6 +35,28 @@ class TraceabilityCheckerTests(unittest.TestCase):
             {"PASTE-05", "A11Y-01", "ADR-0014"},
         )
 
+    def test_adr_ids_report_numbers_claimed_by_more_than_one_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs" / "adr").mkdir(parents=True)
+            for name in (
+                "0040-opt-in-final-target-terminal-copy.md",
+                "0040-ios-rendering-spike-host.md",
+                "0041-unique.md",
+            ):
+                (root / "docs" / "adr" / name).write_text("# ADR\n", encoding="utf-8")
+            identifiers, _, duplicates = trace.adr_ids(root)
+            self.assertEqual(identifiers, {"ADR-0040", "ADR-0041"})
+            self.assertEqual(
+                duplicates,
+                {
+                    "ADR-0040": [
+                        "0040-ios-rendering-spike-host.md",
+                        "0040-opt-in-final-target-terminal-copy.md",
+                    ]
+                },
+            )
+
     def test_registry_closes_a_minimal_trace(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

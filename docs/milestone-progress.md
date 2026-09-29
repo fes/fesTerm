@@ -3,6 +3,250 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing repeated query compilation from document loading
+
+Steady-state measurements hid a much larger Markdown stall: the first Preview
+frame for 400 Rust fences spent roughly ten seconds compiling the same bundled
+highlight query once per block. The legacy viewer paid the same cost while
+constructing its document. Recording preparation and warmup frames, rather
+than discarding them, exposed the shared cause.
+
+The syntax engine now lazily retains one immutable compiled query or compile
+error per supported language. Parsers, trees, source text, revisions, spans
+and cursors remain independent, with the same bounds and visible fallback.
+The tradeoff is bounded process-lifetime retention of the used languages'
+queries; first-language compilation still costs work.
+
+A matched control-first release ABBA comparison reduced first Preview
+construction from about 9.61 seconds to 75.9ms, and viewer preparation from
+9.56 seconds to 15.1ms, after the Rust editor had initialized the language.
+An earlier, separately recorded ABBA/BAAB series agreed on the setup win.
+The final reverse-order attempt stopped on an editor `ParseFailed` guard;
+controls also varied, including adverse editor/Source timings. Neither is
+hidden or used to claim a steady-state improvement. Span/state regressions
+and production-widget pixel comparisons preserve correctness evidence.
+These are synthetic setup measurements, not native open latency or Windows
+Terminal parity; the exact scope and artifacts are recorded in
+`validation/terminal-performance/README.md`.
+
+With query setup removed, a second loading cost became visible: the fenced-code
+model checked every span against every line. Advancing through the ordered
+spans preserves identical roles and source while removing that repeated work.
+Matched release ABBA and BAAB processes reduced full in-memory loading of a
+4,000-entry JSON fence from 46.39ms to 23.78ms on average (48.7%); 2,000 entries
+improved by 35.3%. These are additional savings over query sharing, not numbers
+pooled with the earlier setup experiment. The 8,000-entry stress case exposed
+the unchanged parse-budget fallback even without Markdown's line projection,
+so it remains unqualified rather than weakening the guard or raising the
+budget. Ordinary UI controls still vary, and no native latency claim follows.
+
+## Making context-menu targets readable without rewriting them
+
+A refinement milestone interrupted the performance campaign to fix path and
+URL previews with stretched spaces and awkward wrapping. The cause was
+egui's justified menu layout: ordinary labels inherit justification even when
+their input layout job does not request it. Prelaid-out, single-line galleys
+preserve natural spacing, while measured middle elision retains useful
+host/root and filename context inside a bounded menu. Full targets remain
+available on hover and to accessibility; controls are escaped only for display,
+and Open/Go/Copy keep their original values.
+
+A wide-character boundary regression exposed a second source of false spaces:
+path detection read the entire padded grid row rather than the terminal core's
+occupied extent. Reusing that authoritative extent removes synthetic wrap
+gaps while preserving printed spaces and also restores detection in short
+retained-history rows. Automated coverage distinguishes these cases across
+live/history/alternate buffers, Unicode graphemes and DPI scales. Native
+cross-platform menu placement, screen-reader delivery and human readability
+remain explicit TI-10/TI-14 evidence, not claims derived from headless layout.
+
+## Reusing measured Markdown table cells
+
+Plain Preview still laid out every table cell twice: once to measure its
+natural column width and again at the assigned width, even when it already
+fit. The renderer now retains the first galley and only lays out squeezed
+cells again. It still measures every cell before assigning columns and builds
+every selectable label; neither layout feedback nor offscreen virtualization
+is introduced.
+
+The reuse decision follows epaint's integer wrap-width normalization. A
+complete galley oracle covers the rounding boundaries, six DPI scales, empty
+and styled Unicode cells, and Find, rather than assuming that matching row
+counts proves equivalent output. Repeated release comparisons measured 11.6%
+lower mixed-Preview construction and a further 5.9% reduction with Find against
+the earlier Find improvement. The isolated table timings overlap and did not
+improve in both orders, so they are not a separate qualified speedup. All final
+scene geometry counts agree, and production galleries differ only in generated
+fixture PID digits. The full ranges, variable controls and limited measurement
+scope are recorded in `validation/terminal-performance/README.md`.
+
+## Removing repeated work from Markdown Find
+
+The next document pass found two separate sources of Find cost: every rendered
+text run scanned the entire match list, and each match on a long Unicode line
+counted its source position from the beginning again. Highlighting now locates
+the overlapping ordered range directly, while source-position construction
+counts only the new portion of a line. The viewer still retains every match,
+with the same Unicode offsets, current-match emphasis and navigation behavior.
+
+The release probe now separates Source Find, Preview Find and a 20,000-hit
+Unicode-line query from ordinary rendering. Repeated comparisons confirm the
+Find improvement, not an improvement to plain Preview. Full-scan formatting
+oracles and separate production-widget galleries protect presentation;
+the measurements, unchanged controls and native-evidence boundaries are in
+`validation/terminal-performance/README.md`. Neither this slice nor the earlier
+directory/editor changes establish Windows Terminal parity.
+
+## Keeping large documents and directories out of each frame
+
+The performance campaign expanded beyond the terminal to the editor, Markdown
+viewer and GUI SFTP browser. A release probe found that 5,000 entries in each
+SFTP pane built about 100,000 shapes even though the final visible geometry
+was almost the same as a short directory. Shared immutable listings and
+fixed-row virtualization remove that offscreen work, including in Open File
+and Save As, without narrowing selection or transfer behavior to visible rows.
+
+The editor's gutter likewise built a galley for every offscreen line, and its
+syntax/Find composition repeatedly scanned ordered spans. Clipping the former
+and sweeping the latter substantially reduced both plain and Find-heavy
+frames. Markdown Source now indexes syntax ranges and owns its cache with the
+loaded snapshot, correcting UTF-8 slicing and same-ends reload defects as well
+as removing repeated whole-document scans.
+
+Alternating original/candidate release probes reduced large-directory UI
+construction from about 166ms to below 0.9ms per forced frame, with unchanged
+final vertex counts. This is not a GPU or input-latency claim. Markdown Preview
+remains expensive, and a fresh guarded Windows Terminal comparison still
+showed the terminal CPU gap. The reproducible method, variability and remaining
+boundaries are in `validation/terminal-performance/README.md`; functional and
+pixel checks remain separate from native performance qualification.
+
+## Opening Markdown from the desktop
+
+Markdown already had a local document and Preview path, but installing fesTerm
+did not make it an Open With target. The missing piece was application
+activation, not another renderer: desktop packages now advertise Markdown
+without claiming the user's default, and file requests enter the same document
+command from startup arguments, local process forwarding and macOS document
+events. Existing views retain their unsaved buffer, requests wait behind dialogs,
+and terminal drops keep their existing path-insertion/upload semantics.
+
+AppKit replaces its open-document handler during launch, so an early handler
+alone passed parsing tests but lost requests before UI attachment. A
+main-thread native harness now covers that interval; the bridge chains the
+original `finishLaunching` method and reinstalls only its document handler,
+without replacing eframe's delegate. An isolated macOS app bundle also received
+cold and warm LaunchServices opens and a real second-process CLI request in the
+same running frontend.
+
+The native package lifecycle and foreground behavior remain explicitly tracked
+in CP-19 rather than inferred from a metadata file or a unit test. AppImages
+require desktop integration; mobile and Store-specific document permissions
+remain outside this direct-distribution desktop slice.
+
+## Narrowing native damage without changing glyph pixels
+
+The performance campaign returned to the default WARP renderer after measuring
+editor, Markdown and directory-browser work. A localized update still repainted
+whole horizontal strips. Comparing triangle prefixes and suffixes now bounds
+the changed old and new geometry, while native quad draws outside the resulting
+clip are skipped only after complete validation.
+
+Smaller rectangles alone were not correct: moving a resampled mask's raster
+origin or splitting it across strip clips changed low-order pixels. The final
+path replays original glyphs in their original coordinate system, copies only
+the damaged result, and bounds temporary padded raster storage by one full
+surface's pixel area. Exact native/full-frame coverage includes fractional DPI,
+erasure, translucent and feathered overlap, clipping, texture replacement,
+resize and older immutable images.
+
+Review then exposed a different cost that the pixel-area budget did not bound:
+each separated patch cloned and prepared the complete terminal mesh again.
+A deterministic four-patch reproduction counted five native preparations.
+The renderer now prepares once and reuses the original native draw groups
+through separate clips, without moving their raster origin or adding clearing
+geometry. Regressions for 4, 8 and 31 separated changes require one preparation,
+small retained updates, exact full-render pixels and unchanged older images.
+Production timing diagnostics also reduced localized preparations from two to
+one and median preparation time from 2.256 to 1.116ms. However, fresh matched
+native runs did not establish additional whole-application CPU savings:
+localized and streaming sample means increased, while full redraw decreased
+and unchanged composition controls varied. Those adverse results are recorded
+alongside the preparation improvement rather than hidden by it. Per-patch
+draw/submission work and final composition remain.
+
+The initial guarded native original/candidate/candidate/original sequence
+completed all four workloads. Localized mean CPU fell from 9.206% to 6.250%,
+**32.1% lower**, with the same producer bytes and cadence. Streaming and full redraw remain
+variable, without a claimed improvement. Completed-work profiles independently
+reduced localized whole-frame CPU by 30.7% and UI/native work without final
+composition by 67.9%; those are not physical input or presentation latency.
+
+The remaining gap is still substantial: the final matched localized pair was
+5.227% versus Windows Terminal's 0.165%. Full-window composition remains, the
+host-copy prototype stays default-off, and native workload cleanup still needed
+forced termination. The full ranges, rejected pixel experiments, memory
+snapshots, hashes and qualification boundaries are recorded in
+`validation/terminal-performance/README.md`; CP-18 and the remaining renderer
+investigation are not closed.
+
+## Crossing the final-target boundary without replacing egui
+
+The owner authorized a real-app, default-off prototype after the residual-cost
+investigation identified expensive shader composition on WARP. A narrow patch
+to pinned egui-wgpu now lets the host replace an eligible final terminal
+callback with an exact image copy, after the surrounding UI pass and before
+the existing submission/presentation. Egui still owns the complete UI, layout
+and input; native images remain immutable, and overlays or incompatible targets
+retain shader painting. Proposed ADR-0040 records the new host seam and its
+maintenance cost rather than treating prototype permission as merge approval.
+
+Guarded native off/on comparisons and a reversed-order localized repeat
+measured localized CPU at 8.45% versus 5.16% on average, a 38.9% reduction
+at approximately 10 updates per second. Streaming fell from 5.25% to 3.52%;
+full redraw from 11.81% to 9.15%; quiet cases counter-rounded to zero.
+Copy counters prove the real host path executed. Exact-pixel regressions cover
+DPI, resize, clipping, overlays, capture targets and older callbacks retained
+across subsequent updates. These are Windows x64 DevBox/WARP results, not
+hardware-GPU savings or Windows Terminal parity.
+
+The offscreen ABBA control also reduced localized CPU work by 25.5%, but
+completed-draw wall times did not improve, so there is no latency claim.
+One earlier native run was rejected for desktop input; all accepted CPU
+samples still needed PID-scoped forced cleanup. Full CP-18 qualification,
+mixed-monitor/recovery evidence, and architectural review remain open.
+The final native-window self-smoke passed focus, four resize generations and
+PTY continuity in both modes and exited normally; it does not erase the
+separate workload-cleanup limitation.
+The reproduction and complete result ranges are in
+`validation/terminal-performance/README.md`. The prototype is enabled only
+by `FESTERM_EXPERIMENTAL_HOST_COPY=1`; nothing is installed or default-enabled.
+
+## Locating the remaining WARP terminal gap
+
+After retained terminal images, single-pass output wakeups and textureless
+chrome, a fresh guarded localized-TUI pair still measured 8.60% system CPU for
+fesTerm versus 0.45% for Windows Terminal. Quiet terminals rounded to zero;
+the later comparison campaign stopped on foreground activation rather than
+weakening its desktop guards. Streaming/full-redraw and repeated parity
+qualification remain incomplete.
+
+Completed-work probes separated cheap UI capture, unchanged validation and
+image copying from the remaining native drawing and final composition.
+Interpolated shader coordinates did not produce a consistent improvement;
+bounded Direct2D sprite batches changed low-order pixels without a useful
+native-work reduction, so both production experiments were reverted.
+
+A test-only direct-copy compositor preserved exact pixels and reduced
+localized CPU by 25.8% in a matched 10Hz run, but still did not reach parity.
+It exposed the next architectural boundary: the app callback does not own
+egui-wgpu's final surface, clear pass or presentation. Avoiding the shader
+copy in production needs a reviewed renderer-host integration, not an unsafe
+callback workaround or an assumption that Rust is inherently slow. The
+reproduction, variability and explicit stopping point are recorded in
+`validation/terminal-performance/README.md`; this follow-up adds diagnostic
+coverage, not a new runtime renderer or completed CP-18 acceptance.
+
 ## Default-selecting Direct2D on the supported WARP path
 
 The Direct2D terminal painter is no longer only an explicit opt-in. With the

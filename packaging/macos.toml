@@ -1,5 +1,5 @@
 name = "festerm"
-version = "0.6.0"
+version = "0.7.1"
 product-name = "fesTerm"
 identifier = "dev.fes.festerm"
 description = "A compact local, SSH, and serial terminal."
@@ -18,3 +18,6 @@ binaries = [
   { path = "festerm", main = true },
   { path = "festerm-sessiond", main = false },
 ]
+
+[macos]
+info-plist-path = "../packaging/macos-info.plist"

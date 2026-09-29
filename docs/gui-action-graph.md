@@ -25,11 +25,18 @@ reduced motion automatically without changing the persisted setting.
 Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
-For the large Launcher panel backgrounds, Windows DX12 CPU adapters may use
-the textureless fill pipeline while retaining egui's layout, rounded geometry
-and clipping. Hardware and unsupported surfaces retain standard painting.
+For Launcher, connection forms, Settings cards, Profiles panels, the chrome
+band and the status-bar frame, Windows
+DX12 CPU adapters may use the textureless fill pipeline while retaining egui's
+layout, rounded geometry, borders and clipping. Hardware and unsupported
+surfaces retain standard painting.
 Pixel-equivalence and adapter-policy tests accompany CP-16's native evidence;
 no discovery, unread-state or command-routing semantics change.
+
+For `PROF-01` and `PROF-06`, the default local persistence provider is detected
+once when the composition root creates a window, not by scanning `PATH` on
+each Profiles repaint. Existing profiles and explicit provider choices are
+unaffected; a new window captures a new default.
 
 The native CPU oracle for these edges and `TERM-01` must identify the real
 PID-owned application window, not winit's visible event-target tool window.
@@ -53,6 +60,30 @@ still reports ineligibility. Input ownership, geometry, clipping, colors and
 output consumption remain unchanged. A rejected native frame keeps ordinary
 painting in the same frame. CP-18 tracks the remaining
 native qualification; ADR-0039 remains Proposed and issue #244 remains open.
+
+`TERM-01` also has a controlled TUI performance corpus: quiet populated content,
+localized status updates, streaming primary-screen output, full alternate-screen
+redraws, and recorded Copilot/Vim/htop/tmux screens. The optional completed-render
+replay checks pixels; the separately opt-in Windows Terminal comparison checks
+matched workload delivery, font, grid, native-window identity and CPU. Neither
+GUI frame counts nor offscreen timings establish physical presentation latency.
+See `validation/terminal-performance/README.md` and CP-18.
+
+The optional residual-CPU probe separates frozen full-application composition
+from terminal preparation/drawing using completed GPU work and process-wide CPU
+time. Its diagnostic mesh omissions are not valid production optimizations.
+The chrome fill optimization must preserve every pixel, including fractional
+DPI, clipping and translucent fallback, without changing update cadence.
+
+The supported native path now retains immutable pixels for unchanged
+presentation regions. Small updates redraw only changed regions before normal
+egui-wgpu composition. Session pumping does not request an extra repaint for
+output already displayed by the current frame; bounded-drain continuation and
+background unread state remain independent. Pending resize deadlines re-arm
+an early repaint until the debounced resize can be sent, without an idle poll.
+Session availability uses egui's single-pass wake API rather than its zero-delay
+two-pass widget-settling policy. Every event still requests a wake, including
+events arriving during a frame; no output/frame-rate budget is introduced.
 
 ## How to use the graph
 
@@ -345,11 +376,11 @@ still belong to a mouse-aware TUI. The full press/release pair has one owner.
 | `TERM-02` | `K2/K4` | Drag/right-click/middle-click with mouse reporting off/on; repeat with Shift. | Unmodified drag ownership follows terminal mode; SelectionClaimed means terminal-owned/unreported, not local selection. Shift+left-drag is a latched local selection escape hatch with zero terminal reports; Shift context-menu/middle-paste/history gestures remain local and separate. Never infer TUI selection merely from a forwarded report. | Escape menu; clear selection by controlled click/type. | P,H,N |
 | `TERM-03` | Selected primary/history text | Copy via shortcut, menu, native Edit; duplicate Copy and Copy without selection at a controlled token prompt. | Soft wraps/Unicode preserved; clipboard not logged; copy clears selection and never sends bytes, interrupt, EOF or Enter. Actual Ctrl+C remains distinct and usable. | Enter a fake token, then replace clipboard with empty fixture. | P,H,N,privacy |
 | `TERM-04` | Primary/history buffer | Single/double/triple/Shift-click and Alt/Option rectangular selection; edge autoscroll. | Word/logical-line/cell ownership rules; wide/combining indivisible; selection persists per session and invalidates only overwritten/evicted content; a single click with no pointer movement never leaves a selection behind, even while heavy output streams in between press and release. | Click safe empty cell or type fixture reset. | P,H,N,U; partial |
-| `TERM-05` | Explicit OSC 8 link | Hover, modifier-click, context Open/Copy; malformed/unfamiliar schemes. | Only explicit range acts; visible text copy excludes URI; known schemes open, unfamiliar confirms, malformed/control target rejects; SSH paths never open locally. | Cancel confirmation/close fixture handler; clear clipboard. | P,H,N,security; partial |
+| `TERM-05` | Explicit OSC 8 link | Hover, modifier-click, context Open/Copy; malformed/unfamiliar schemes. | Only explicit range acts; visible text copy excludes URI; validated HTTP(S) targets open and malformed/control/non-web targets reject. A bounded, normally spaced single-line preview never changes the full Open/Copy target; the full display-safe target remains in the tooltip and accessible label. SSH paths never open locally. | Dismiss menu/close fixture browser; clear clipboard. | P,H,N,security; partial |
 | `TERM-06` | `K2 → IME preedit → K2` | Compose/commit representative text at center and edges. | Preedit is local overlay only; committed text enters once as typing; Escape offered to IME; no history/log/diagnostic copy. | Cancel composition or commit then reset fixture. | N,U; target |
 | `TERM-07` | IME preedit → another surface/session/read-only | Switch/close/focus app field/disconnect. | Uncommitted composition cancels and never reaches wrong owner; read-only rejects composition. | Return to original checkpoint. | N; target |
-| `TERM-08` | Any retained buffer | Open terminal context menu over selection/link/plain text and live/read-only state. | Exact applicable ordering: detected-path action, link actions, Copy, Paste, Find, then history-snapshot actions only without a selection; unavailable entries omitted; disabled path actions explain missing metadata; no session/global actions or Select All. Selection survives. | Escape/outside dismiss; focus restored. | H,V,N |
-| `TERM-09` | Frozen terminal cell range | Right-click a visible local or remote filename/path; click **Open in viewer** only after the menu appears. | Hit detection is bounded to the clicked logical line/cells and remains stable while output scrolls. Absolute local paths and local `~` open existing text/Markdown surfaces. SSH/SFTP paths keep their source identity, reuse the same live verified SSH/SFTP transport that produced the text, and report honest disconnected/subsystem/permission/bounds errors instead of guessing, prompting for hidden trust, or replaying shell/auth state. Relative paths resolve only from trustworthy session cwd metadata (for example text-mode SFTP), never from prompt parsing, launch directories, or shell evaluation. OSC 8 link behavior remains unchanged and may coexist in the same menu. | Dismiss refusal or close the opened viewer/editor. | P,H,N,U,security; partial |
+| `TERM-08` | Any retained buffer | Open terminal context menu over selection/link/plain text and live/read-only state. | Exact applicable ordering: detected path or URL actions, explicit link actions, Copy, Paste, Find, then history-snapshot actions only without a selection; unavailable entries omitted; disabled path Open explains missing metadata while Copy path remains available; no session/global actions or Select All. Target previews never justify or wrap, fit a viewport-aware 320-point content limit, favor recognizable roots/hosts and filename tails, escape display controls, and expose the complete target on hover/accessibility. Menus without targets retain their existing sizing. Selection survives. | Escape/outside dismiss; focus restored. | H,V,N |
+| `TERM-09` | Frozen terminal cell range | Right-click a visible local or remote filename/path or HTTP(S) URL; choose Open/Go or Copy. | Hit detection is bounded to the clicked logical line/cells and remains stable while output scrolls. Core-owned occupied extents exclude synthetic wide-character wrap padding without stripping printed spaces, on the live screen and in retained history. Preview sanitization/elision never alters Open/Go or Copy values. Copy path uses the resolved local/remote path when available, or the detected path otherwise. Go validates and launches through the existing external-link command. Absolute local paths and local `~` open existing text/Markdown surfaces. SSH/SFTP paths keep their source identity, reuse the same live verified SSH/SFTP transport that produced the text, and report honest disconnected/subsystem/permission/bounds errors instead of guessing, prompting for hidden trust, or replaying shell/auth state. Relative paths resolve only from trustworthy session cwd metadata (for example text-mode SFTP), never from prompt parsing, launch directories, or shell evaluation. OSC 8 link behavior remains unchanged and may coexist in the same menu. | Dismiss refusal or close the opened viewer/editor/browser. | P,H,N,U,security; partial |
 | `TERM-10` | `K5/K6 → Editor/Save As` | Open the terminal context menu with no selection and choose **Open Terminal History in Editor** or **Save Terminal History As…**. | The snapshot actions appear only when no text selection is active. They freeze retained primary history plus the currently applicable visible screen into independent plain text, never send PTY input, and stay available for disconnected/exited retained history. A later terminal update cannot mutate the opened editor snapshot. Oversize retained text is refused honestly before any editor buffer is created. | Dismiss the menu, close the snapshot editor, or complete/cancel Save As. | P,H,N |
 
 ## J. Paste and drop safety
@@ -496,6 +527,18 @@ route (`SFTPG-05`) now supplies the concrete remote-file selection action, so
 | `MD-04` | `Viewer → Viewer` | Navigate headings, links, tables, tasks, code, Find, selection/Copy, reload, resize, scale, and accessibility traversal. | The outline remains a bounded vertical sidebar while Preview/Source owns the remaining independently scrollable viewport; behavior meets the chosen readability/fidelity oracle, link/resource policy is enforced, semantic navigation and scroll restoration are accurate, and content stays out of logs/diagnostics. Table columns are measured from their own unwrapped content before the table is drawn: a table that fits keeps its natural column widths, and one that does not share the reading width in proportion to what each column asked for, with a floor that keeps every column wrapping on word boundaries. No column's rendered width may feed back into the width it is measured at on the next frame. An inline code span's highlight is measured against the code font's own glyphs, not the surrounding prose line height, so the pill is centred on the word instead of hanging below its descenders — and dropping the line-height override on the span must not tighten a row that also carries prose. | Clear Find/selection and restore scale/scroll fixture baseline. | P,H,V,N,U,privacy; partial |
 | `MD-05` | `Viewer → SafePrompt/Error` | Exercise raw HTML, scripts, external/local/remote images, data URLs, includes, math/diagram features, malformed and huge resources. | Nothing executes, and nothing loads implicitly except images a *local* document references with a *relative* target, which load on open under the same canonicalization, format and byte/raster-area limits as an explicit load and are additionally capped per document and in concurrency (`docs/adr/0030-native-markdown-viewer.md`, "Automatic loading of local relative images"). Remote documents, absolute URLs, SFTP-origin-relative references and over-budget references all keep their explicit placeholder. A reference that fails to load is attempted once, not once per frame. Unsupported/resource decisions follow accepted policy; cancellation returns to unchanged viewer; bounded failure cannot hang or navigate elsewhere. | Cancel prompt/load, clear resource fixture/cache, return to viewer baseline. | P,H,N,security; partial |
 | `MD-06` | `Viewer → Reloaded/Stale/Closed` | Modify, replace, delete, or conflict with source under the accepted freshness policy. | Manual reload or explicitly designed watching behaves truthfully; no editing/conflict claim if read-only; SSH loss and deletion preserve safe bounded state. | Restore fixture, reload baseline, then close to prior surface. | P,H,N,U; partial |
+| `MD-07` | `Desktop/CLI → Document/Error` | Choose fesTerm in Open With for one or more `.md`/`.markdown` files, cold and already running, or use `festerm --open -- <paths...>`. | The installed handler is optional and does not seize defaults. Native events and bounded user-scoped IPC converge on the document command, never terminal drops/uploads. New files open in Preview in the last-active window; existing files focus their view without losing unsaved edits. Blocking dialogs defer requests; malformed, missing and over-limit requests report errors. | Dismiss errors, close opened documents, or uninstall only fesTerm's association metadata. | H,N,U; partial |
+
+Automated `MD-04` Find regressions preserve the complete ordered match set,
+including long Unicode lines and multiline queries, and compare indexed
+Preview/Source highlighting with a full-scan format oracle. The optional
+interactive-surface probe measures Find-heavy frames and query construction
+separately; it does not replace native `CP-06` qualification.
+Table-cell regressions additionally compare the complete galley against an
+independent constrained layout at fractional widths and 0.75-3 pixels per
+point, allowing only the unused wrap-limit metadata to differ. They require
+measured-galley reuse for fitting cells and preserve wrapping, styles, Unicode,
+Find formatting and intrinsic size without removing any labels.
 
 ## R. Approved text editor and shared document model
 
@@ -523,6 +566,20 @@ exists.
 | `EDIT-14` | `Editor → DirtyClosePrompt` | Close the last view of a dirty document from the chip, the window, application quit, and vi's `:q`; and close a view other views still hold. | Only the final view prompts; the prompt names the document and its fully qualified origin; Save is the default and focused action, Escape is Cancel, and Discard is an explicit separately worded press that Return never triggers; Cancel abandons the close and leaves every view intact. | Cancel the prompt, or save and close. | P,H,V,N,U; design-approved |
 | `EDIT-15` | `Conflict → Compare` | Open Compare from the conflict banner, step through the changes, leave, and try it with an offline or deleted source. | The conflict banner stays pinned with all four actions; both panes are read-only and line-oriented with collapsed unchanged runs, leading `-`/`+` markers, a stated change count, and working Previous/Next; comparing writes nothing and clears no dirty state; a sibling view keeps editing meanwhile; leaving restores the view's caret and scroll; an unfetchable source disables Compare with a reason instead of an empty pane. | Leave Compare; the conflict and the buffer are unchanged. | P,H,V,N,U; design-approved |
 | `EDIT-16` | `Editor → SyntaxHighlighting` | Open a source file in a supported language, one in a language with no grammar, and one past the highlighting size bound; then toggle highlighting off. | Colour is presentation only: it never changes the document's bytes, revision, dirty state, or undo depth; the parse is cached per document revision and shared by every view of the file; only the visible range is queried; an unknown language, an exceeded bound, or a grammar failure falls back to plain text and says which, without a dialog; no application or document state is expressed through a syntax colour. | Turn Syntax highlighting off in the options menu. | P,H,V,N,U; design-approved |
+
+For `EDIT-16` and the fenced-code part of `MD-04`, repeated documents and
+blocks reuse only the immutable compiled query for their language. Parser,
+tree, text, revision, spans and query-cursor state remain independent across
+documents/blocks. The closed grammar set bounds process-lifetime query
+retention; first-language compilation and the existing honest size/parse
+fallbacks remain. Constructor reuse, full-span equivalence and independent
+document/block state have deterministic regressions; setup/first-frame
+measurements are opt-in, not a native latency or smoothness qualification.
+The `MD-04` code-line projection also advances through ordered spans rather
+than rescanning the complete fence for every line. Its roles and source bytes
+must equal the full-scan reference across Unicode, multi-line tokens, CRLF,
+empty lines and a final unterminated line; no highlight or parse bound is
+relaxed to obtain a performance result.
 
 ## Coverage map to the GUI design
 

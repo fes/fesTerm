@@ -214,7 +214,7 @@ impl SaveAsPicker {
             ui.add_space(6.0);
         }
 
-        let entries = self.pane.visible_entries().to_vec();
+        let entries = self.pane.visible_entries();
 
         // The listing is the elastic element: the file-name field, notice and
         // button row are pinned to the bottom of the sheet, and the table
@@ -232,6 +232,7 @@ impl SaveAsPicker {
             .frame(egui::Frame::new())
             .show(ui, |ui| {
                 self.show_table_header(ui, width);
+                let entries = self.pane.visible_entries();
                 self.show_rows(ui, width, &entries);
             });
 
@@ -340,8 +341,8 @@ impl SaveAsPicker {
             .id_salt("save_as_picker_rows")
             .auto_shrink([false, false])
             .vertical_scroll_offset(self.pane.scroll_offset)
-            .show(ui, |ui| {
-                for item in entries {
+            .show_rows(ui, SFTP_TABLE_ROW_HEIGHT, entries.len(), |ui, range| {
+                for item in &entries[range] {
                     let key = path_key(&item.path);
                     let selected = self.pane.selected_paths.contains(&key);
                     let row = ui
@@ -773,6 +774,54 @@ mod tests {
         assert!(matches!(
             harness.state().1.as_ref().expect("an outcome"),
             SaveAsOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn virtualized_save_as_picker_reaches_and_selects_the_final_row() {
+        let directory = TemporaryDirectory::new("virtual-rows");
+        let mut harness = harness_for(&directory, "new.txt");
+        harness.state_mut().0.pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: festerm_ssh::SftpLocation::Local,
+                path: SftpPath::local(&directory.path),
+                loaded_at: std::time::SystemTime::UNIX_EPOCH,
+                entries: (0..1000)
+                    .map(|index| {
+                        let name = format!("row-{index:05}.txt");
+                        SftpDirectoryItem {
+                            path: SftpPath::local(directory.path.join(&name)),
+                            name,
+                            file_type: SftpEntryType::File,
+                            size: Some(1),
+                            modified_at: None,
+                            permissions: None,
+                        }
+                    })
+                    .collect(),
+            },
+            None,
+        );
+        harness.run();
+        harness.get_by_label("row-00000.txt");
+        assert!(harness.query_by_label("row-00999.txt").is_none());
+        harness.state_mut().0.pane.scroll_offset = 100_000.0;
+        harness.run_steps(2);
+        let last_row = harness.get_by_label("row-00999.txt").rect();
+        assert!(
+            last_row.top() > 0.0 && last_row.bottom() < 700.0,
+            "{last_row:?}"
+        );
+        harness.get_by_label("row-00999.txt").click();
+        harness.run();
+        assert!(harness.query_by_label("row-00000.txt").is_none());
+        assert_eq!(harness.state().0.file_name, "row-00999.txt");
+        harness.get_by_label(OVERWRITE_NOTICE);
+        harness.get_by_label("Save").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().1.as_ref(),
+            Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("row-00999.txt")
         ));
     }
 

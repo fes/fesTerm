@@ -13,6 +13,8 @@ festerm-core = { path = "../festerm-core" }
 hashbrown = { version = "=0.17.1", default-features = false, features = ["raw-entry"] }
 icu_properties = { version = "=2.2.0", default-features = false, features = ["compiled_data"] }
 swash = "=0.2.10"
+unicode-segmentation = "=1.13.3"
+url = "2.5"
 
 [dev-dependencies]
 festerm-test-support = { path = "../festerm-test-support" }

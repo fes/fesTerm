@@ -474,6 +474,20 @@ and opt-in redacted session input diagnostics. Synthesized routing and Settings
 render tests cover the implementation; native layout/menu and selected-auth-URL
 qualification remain explicitly tracked rather than inferred from those tests.
 
+The **readable context-target previews** refinement slice
+([#277](https://github.com/fes/fesTerm/issues/277)) fixes stretched spacing and
+wrapping in terminal path/URL menus. Acceptance requires bounded
+single-line labels with useful host/root and filename context, safe display
+escaping with a full tooltip/accessibility label, and unchanged Open/Copy
+targets. It also excludes core-tracked wide-character wrap padding from
+detected paths without trimming real filename spaces. Deterministic layout,
+menu-action and live/history path regressions cover the implementation;
+cross-platform native placement and readability remain in
+`docs/manual-validation.md` TI-10/TI-14 and [#43](https://github.com/fes/fesTerm/issues/43).
+This is a presentation/correctness milestone slice, not a change to the
+selection or right-click ownership work in
+[#94](https://github.com/fes/fesTerm/issues/94).
+
 **Status:** In progress — ADR 0021, native package manifests, package/update
 validation, protected platform-signing configuration, the tag-driven
 draft-first GitHub release workflow, and the explicit signed-update state

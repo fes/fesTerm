@@ -102,6 +102,37 @@ jobs:
           test -f target/release/fesTerm.app/Contents/Info.plist
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleIdentifier)" = "dev.fes.festerm"
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleExecutable)" = "festerm"
+          python - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          info = plistlib.loads(Path("target/release/fesTerm.app/Contents/Info.plist").read_bytes())
+          document_types = info.get("CFBundleDocumentTypes")
+          expected_document_type = {
+              "CFBundleTypeExtensions": ["md", "markdown"],
+              "CFBundleTypeName": "Markdown Document",
+              "CFBundleTypeRole": "Viewer",
+              "LSHandlerRank": "Alternate",
+              "LSItemContentTypes": ["net.daringfireball.markdown", "public.markdown"],
+          }
+          if document_types != [expected_document_type]:
+              raise SystemExit(f"unexpected Markdown document types: {document_types!r}")
+          imported_types = info.get("UTImportedTypeDeclarations")
+          expected_imported_type = {
+              "UTTypeConformsTo": ["public.plain-text", "public.text"],
+              "UTTypeDescription": "Markdown Document",
+              "UTTypeIdentifier": "net.daringfireball.markdown",
+              "UTTypeTagSpecification": {
+                  "public.filename-extension": ["md", "markdown"],
+                  "public.mime-type": "text/markdown",
+              },
+          }
+          if imported_types != [expected_imported_type]:
+              raise SystemExit(f"unexpected Markdown imported types: {imported_types!r}")
+          tags = imported_types[0]["UTTypeTagSpecification"]
+          if "com.apple.ostype" in tags:
+              raise SystemExit("Markdown UTI must not include broad legacy TEXT OSType")
+          PY
       - name: Build unsigned Windows package with verified ConPTY sidecar
         if: matrix.platform == 'windows'
         env:
@@ -116,6 +147,55 @@ jobs:
             throw 'cargo-packager did not produce an NSIS installer'
           }
           $installDirectory = Join-Path $env:LOCALAPPDATA 'fesTerm'
+          $markdownSentinel = 'fesTermSmoke.SentinelMarkdown'
+          function Get-RegistryDefault([string]$Path) {
+            $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+            if (-not $key) { return $null }
+            return $key.GetValue('', $null)
+          }
+          function Get-RegistryValueNames([string]$Path) {
+            $key = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+            if (-not $key) { return @() }
+            return @($key.GetValueNames())
+          }
+          function Initialize-MarkdownSentinel {
+            foreach ($extension in @('.md', '.markdown')) {
+              $path = "HKCU:\Software\Classes\$extension"
+              New-Item -Path $path -Force | Out-Null
+              Set-Item -Path $path -Value $markdownSentinel
+            }
+          }
+          function Assert-MarkdownSentinelDefault {
+            foreach ($extension in @('.md', '.markdown')) {
+              $actual = Get-RegistryDefault "HKCU:\Software\Classes\$extension"
+              if ($actual -ne $markdownSentinel) {
+                throw "NSIS changed $extension default from sentinel '$markdownSentinel' to '$actual'"
+              }
+            }
+          }
+          function Assert-MarkdownOpenWith([bool]$ExpectedPresent) {
+            Assert-MarkdownSentinelDefault
+            $expectedCommand = "`"$installedBinary`" --open -- `"%1`""
+            $command = Get-RegistryDefault 'HKCU:\Software\Classes\fesTerm.Markdown\shell\open\command'
+            foreach ($extension in @('.md', '.markdown')) {
+              $names = Get-RegistryValueNames "HKCU:\Software\Classes\$extension\OpenWithProgids"
+              $hasOpenWith = $names -contains 'fesTerm.Markdown'
+              if ($ExpectedPresent -and -not $hasOpenWith) {
+                throw "NSIS did not add fesTerm.Markdown to $extension OpenWithProgids"
+              }
+              if (-not $ExpectedPresent -and $hasOpenWith) {
+                throw "NSIS uninstall left fesTerm.Markdown in $extension OpenWithProgids"
+              }
+            }
+            if ($ExpectedPresent) {
+              if ($command -ne $expectedCommand) {
+                throw "NSIS Markdown command was '$command', expected '$expectedCommand'"
+              }
+            } elseif ($null -ne $command) {
+              throw "NSIS uninstall left fesTerm.Markdown command '$command'"
+            }
+          }
+          Initialize-MarkdownSentinel
           $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "NSIS clean install failed with exit code $($process.ExitCode)"
@@ -144,10 +224,12 @@ jobs:
           if (-not (Test-Path $uninstaller -PathType Leaf)) {
             throw 'NSIS install did not place an uninstaller'
           }
+          Assert-MarkdownOpenWith $true
           $process = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "NSIS uninstall failed with exit code $($process.ExitCode)"
           }
+          Assert-MarkdownOpenWith $false
           if (Test-Path $installedBinary) {
             throw 'NSIS uninstall left the application binary installed'
           }
@@ -185,6 +267,7 @@ jobs:
             if ($process.ExitCode -ne 0) {
               throw "NSIS v0.2.0 install failed with exit code $($process.ExitCode)"
             }
+            Initialize-MarkdownSentinel
 
             $legacySessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
             $sessionName = "package-upgrade-$PID"
@@ -203,6 +286,7 @@ jobs:
             if (-not (Test-Path $installedSessionDaemon -PathType Leaf)) {
               throw 'NSIS upgrade did not place the release-versioned session daemon'
             }
+            Assert-MarkdownOpenWith $true
             if (-not (Get-Process -Id $daemonPid -ErrorAction SilentlyContinue)) {
               throw 'The v0.2.0 session daemon did not survive the side-by-side upgrade'
             }
@@ -236,6 +320,7 @@ jobs:
             if ($process.ExitCode -ne 0) {
               throw "NSIS upgraded uninstall failed with exit code $($process.ExitCode)"
             }
+            Assert-MarkdownOpenWith $false
           } finally {
             if ($null -ne $daemonPid) {
               $daemon = Get-Process -Id $daemonPid -ErrorAction SilentlyContinue
@@ -269,7 +354,25 @@ jobs:
             test -x squashfs-root/AppRun
             test -x squashfs-root/usr/bin/festerm
             test -x squashfs-root/usr/bin/festerm-sessiond
-            test -n "$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
+            desktop="$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
+            test -n "$desktop"
+            python - "$desktop" <<'PY'
+          import sys
+          from pathlib import Path
+
+          desktop = Path(sys.argv[1]).read_text(encoding="utf-8")
+          required = {
+              "Exec=festerm --open -- %F",
+              "MimeType=text/markdown",
+              "Terminal=false",
+              "Type=Application",
+          }
+          missing = sorted(required - set(desktop.splitlines()))
+          if missing:
+              raise SystemExit(f"AppImage desktop entry missing {missing}: {desktop!r}")
+          if "text/plain" in desktop:
+              raise SystemExit("AppImage desktop entry must not register broad text/plain")
+          PY
             rm -rf squashfs-root
           )
       - name: Rebuild package-managed Linux binary and Debian package
@@ -284,6 +387,26 @@ jobs:
           dpkg-deb --info "$deb" >/dev/null
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm$'
           dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-sessiond$'
+          deb_desktop="$(dpkg-deb --contents "$deb" | awk '/usr\/share\/applications\/.*\.desktop$/ { print $6; exit }')"
+          test -n "$deb_desktop"
+          desktop_entry="$(dpkg-deb --fsys-tarfile "$deb" | tar -xOf - "$deb_desktop")"
+          DESKTOP_ENTRY="$desktop_entry" python - <<'PY'
+          import os
+          import sys
+
+          listing = os.environ["DESKTOP_ENTRY"]
+          required = {
+              "Exec=festerm --open -- %F",
+              "MimeType=text/markdown",
+              "Terminal=false",
+              "Type=Application",
+          }
+          missing = sorted(required - set(listing.splitlines()))
+          if missing:
+              raise SystemExit(f"Debian desktop entry missing {missing}: {listing!r}")
+          if "text/plain" in listing:
+              raise SystemExit("Debian desktop entry must not register broad text/plain")
+          PY
           sudo dpkg --install "$deb"
           test -x /usr/bin/festerm
           test -x /usr/bin/festerm-sessiond

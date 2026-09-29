@@ -87,6 +87,13 @@ Repeatable isolated provider churn is available through
 `python3 scripts/check_running_sessions.py` and the optional-validation runners;
 native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
 
+Desktop packages advertise fesTerm as an optional **Open With** handler for
+`.md` and `.markdown`; `festerm --open -- <paths...>` opens the same document
+tabs from a command line. Existing document views and unsaved text are preserved.
+Linux AppImages require desktop integration to appear in Open With. Native
+association lifecycle qualification is tracked in `docs/manual-validation.md`
+CP-19; registration never changes the user's default Markdown application.
+
 ## Documentation
 
 - [Keyboard bindings and routing](docs/keyboard-shortcuts.md) — persistent

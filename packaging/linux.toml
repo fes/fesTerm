@@ -1,5 +1,5 @@
 name = "festerm"
-version = "0.6.0"
+version = "0.7.1"
 product-name = "fesTerm"
 identifier = "dev.fes.festerm"
 description = "A compact local, SSH, and serial terminal."
@@ -19,11 +19,15 @@ binaries = [
   { path = "festerm", main = true },
   { path = "festerm-sessiond", main = false },
 ]
+file-associations = [
+  { extensions = ["md", "markdown"], mime-type = "text/markdown", name = "Markdown Document", description = "Markdown document", role = "viewer" },
+]
 
 [linux]
 generate-desktop-entry = true
 
 [deb]
+desktop-template = "../packaging/linux-desktop-entry.desktop"
 depends = ["libc6", "libgcc-s1", "libudev1"]
 section = "utils"
 priority = "optional"

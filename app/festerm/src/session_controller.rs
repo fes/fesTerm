@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
-#[cfg(test)]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
@@ -989,6 +987,12 @@ impl<S: Session> SessionController<S> {
                 self.try_resize(size);
             }
         }
+    }
+
+    /// Keep the deadline armed if egui's scheduled frame arrives before it.
+    pub fn next_resize_repaint_delay(&self) -> Option<Duration> {
+        self.debounced_resize
+            .map(|(_, staged)| TERMINAL_RESIZE_DEBOUNCE.saturating_sub(staged.elapsed()))
     }
 
     /// Sends a still-debounced resize immediately, bypassing the rest of
@@ -2294,9 +2298,11 @@ mod tests {
         );
         controller.flush_pending_resize();
         assert_eq!(controller.resize_probe().generations().len(), 1);
+        assert!(controller.next_resize_repaint_delay().is_some());
         std::thread::sleep(TERMINAL_RESIZE_DEBOUNCE);
         controller.flush_pending_resize();
         assert_eq!(controller.resize_probe().generations().len(), 2);
+        assert!(controller.next_resize_repaint_delay().is_none());
     }
 
     #[test]

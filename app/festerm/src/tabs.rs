@@ -117,7 +117,12 @@ struct EguiRepaintNotifier(egui::Context);
 
 impl SessionEventNotifier for EguiRepaintNotifier {
     fn notify(&self) {
-        self.0.request_repaint();
+        // egui 0.36's zero-delay API schedules TWO frames for widget settling.
+        // Session events are consumed before painting, so only one is needed.
+        // Its nonzero API avoids that extra frame; one nanosecond is not a
+        // frame-rate budget (egui subtracts predicted frame time before waking).
+        self.0
+            .request_repaint_after(std::time::Duration::from_nanos(1));
     }
 }
 
@@ -1283,10 +1288,6 @@ impl SessionTab {
             let cleared = self.terminal_path.menu.take().is_some();
             return cleared;
         };
-        let Some(origin) = self.terminal_path.origin.as_ref() else {
-            let cleared = self.terminal_path.menu.take().is_some();
-            return cleared;
-        };
         if self
             .terminal_path
             .menu
@@ -1295,7 +1296,8 @@ impl SessionTab {
         {
             return false;
         }
-        let next = resolve_context_menu_action(&self.terminal, target, origin);
+        let next =
+            resolve_context_menu_action(&self.terminal, target, self.terminal_path.origin.as_ref());
         let changed = self.terminal_path.menu != next;
         self.terminal_path.menu = next;
         changed
@@ -3735,14 +3737,21 @@ impl AppState {
     /// Opens a file in the editor. A second view of a file that is already
     /// open shares its document rather than reading the file again, and a tab
     /// already showing that document is raised instead of duplicated.
-    pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
-        let already_open = self.documents.borrow().find_local(path);
-        if let Some(existing) = already_open.and_then(|id| {
+    pub(crate) fn local_document_tab(&self, path: &Path) -> Option<TabId> {
+        self.documents.borrow().find_local(path).and_then(|id| {
             self.tabs.iter().find_map(|tab| match &tab.content {
                 TabContent::TextEditor(editor) if editor.document() == id => Some(tab.id),
                 _ => None,
             })
-        }) {
+        })
+    }
+
+    pub(crate) fn has_pending_open_refusal(&self) -> bool {
+        self.open_refusal.is_some() || self.pending_open_refusal_notice.is_some()
+    }
+
+    pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
+        if let Some(existing) = self.local_document_tab(path) {
             self.set_active(existing);
             self.workspace_dirty = true;
             return None;
@@ -3953,6 +3962,16 @@ impl AppState {
         match request {
             TerminalPathOpenRequest::Local(request) => {
                 self.dispatch(open_local_command(&request), context);
+            }
+            TerminalPathOpenRequest::Web(target) => {
+                if let Some(target) = festerm_core::normalize_external_web_url(&target) {
+                    self.dispatch(
+                        AppCommand::OpenExternalLink {
+                            target: ExternalLinkTarget::new(target),
+                        },
+                        context,
+                    );
+                }
             }
             TerminalPathOpenRequest::Remote(request) => {
                 let Some(session) = self.session_tab(tab_id) else {
@@ -5183,6 +5202,43 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_notifier_wakes_one_frame_without_a_settling_repaint() {
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            let mut output = context.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+        }
+        let wakes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = wakes.clone();
+        context.set_request_repaint_callback(move |info| {
+            observed.lock().unwrap().push(info.delay);
+        });
+        let notifier = make_notifier(&context);
+        notifier.notify();
+        assert_eq!(*wakes.lock().unwrap(), [std::time::Duration::ZERO]);
+        let mut output = context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+        assert_eq!(wakes.lock().unwrap().len(), 1);
+
+        let mut output = context.run_ui(Default::default(), |_| notifier.notify());
+        output.textures_delta.clear();
+        assert!(
+            output.viewport_output[&egui::ViewportId::ROOT]
+                .repaint_delay
+                .is_zero(),
+            "output arriving during a frame must still wake a following frame"
+        );
+        let mut output = context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+    }
 
     fn launcher_ids(state: &AppState) -> Vec<TabId> {
         state

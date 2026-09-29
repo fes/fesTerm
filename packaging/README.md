@@ -12,6 +12,32 @@ application and its `festerm-sessiond` local-session persistence helper. They
 must be built from the same workspace revision and installed beside each other
 so the application can resolve the helper without searching `PATH`.
 
+The direct desktop packages also advertise fesTerm as an optional Markdown
+**Open With** handler for `.md` and `.markdown` only. This is an alternate
+handler, not a default-owner claim, and it must never register every text file:
+
+- macOS merges `packaging/macos-info.plist` into the generated `Info.plist`.
+  The document type is `Viewer` with `LSHandlerRank=Alternate` and imports the
+  Markdown UTI for extension/MIME discovery when the system does not already
+  provide one.
+- Windows uses the reviewed NSIS template in
+  `packaging/windows-open-with.nsi` instead of cargo-packager's built-in file
+  association macro. The pinned cargo-packager 0.11.8 macro writes the
+  extension default value, which would seize `.md`; fesTerm registers only its
+  current-user `fesTerm.Markdown` ProgID in each extension's
+  `OpenWithProgids` and removes only those owned entries on uninstall. Its
+  command is quoted as `"festerm.exe" --open -- "%1"`. The template copy is
+  derived from cargo-packager 0.11.8 and is carried under
+  `packaging/cargo-packager-template.LICENSE-MIT`; keep attribution, license,
+  and the focused diff against the pinned upstream template when updating it.
+- Linux uses a custom desktop-entry template so both Debian and AppImage
+  generation advertise `MimeType=text/markdown` and invoke
+  `festerm --open -- %F`. AppImages appear in Open With only after the user's
+  desktop environment integrates the AppImage desktop entry.
+
+Application/native launch handling consumes the corresponding platform file
+open event or the shared CLI contract `festerm --open -- <paths...>`.
+
 Windows packages the helper as the immutable
 `festerm-sessiond-<release>.exe`; a release must never reuse another release's
 helper filename. The release workflow copies the already Authenticode-signed

@@ -2,6 +2,7 @@
 
 pub mod captures;
 pub mod replies;
+pub mod tui_workload;
 
 use std::{
     error::Error,

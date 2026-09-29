@@ -2,7 +2,10 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        mpsc::{self, Receiver, TryRecvError},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -443,6 +446,7 @@ pub struct MarkdownViewerTab {
     automatic_image_loads: usize,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
+    source_syntax: Option<Vec<festerm_syntax::Span>>,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
 }
@@ -487,6 +491,7 @@ impl MarkdownViewerTab {
             automatic_image_loads: 0,
             pending_scroll: None,
             line_heading_indices: Vec::new(),
+            source_syntax: None,
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -540,6 +545,7 @@ impl MarkdownViewerTab {
             automatic_image_loads: 0,
             pending_scroll: None,
             line_heading_indices: Vec::new(),
+            source_syntax: None,
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -695,6 +701,7 @@ impl MarkdownViewerTab {
                                     image_errors: &self.image_errors,
                                     pending_scroll: &mut self.pending_scroll,
                                     line_heading_indices: &self.line_heading_indices,
+                                    source_syntax: &mut self.source_syntax,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
                                     heading_tops: &mut heading_tops,
                                 };
@@ -750,6 +757,7 @@ impl MarkdownViewerTab {
                     .or_else(|| document.headings().first().map(|_| 0));
                 self.pending_scroll = Some(pending_scroll_for_anchor(&document, anchor));
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
+                self.source_syntax = None;
                 self.document = Some(document);
                 self.error = None;
                 self.stale_snapshot = false;
@@ -791,6 +799,13 @@ impl MarkdownViewerTab {
 
     pub fn open_find(&mut self) {
         self.find.open();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_find_query_for_test(&mut self, query: &str) -> usize {
+        let document = self.document.as_ref().expect("loaded Markdown fixture");
+        self.find.set_query(document, query.to_owned());
+        self.find.matches().len()
     }
 
     pub fn handle_escape(&mut self) -> bool {
@@ -1361,6 +1376,7 @@ struct MarkdownRenderState<'a> {
     image_errors: &'a BTreeMap<usize, String>,
     pending_scroll: &'a mut Option<PendingScroll>,
     line_heading_indices: &'a [Option<usize>],
+    source_syntax: &'a mut Option<Vec<festerm_syntax::Span>>,
     outline_keyboard_focus: &'a mut bool,
     /// Where each heading was painted this frame, so a caller that wants to
     /// know which section the reader is looking at can ask the rendering
@@ -1836,14 +1852,11 @@ impl MarkdownRenderState<'_> {
         let padding_x = f32::from(TABLE_CELL_PADDING_X);
         let padding_y = f32::from(TABLE_CELL_PADDING_Y);
 
-        // Each cell's text is laid out once, here, and the resulting galley is
-        // what gets painted. `egui::Grid` cannot do this job: it sizes a column
-        // from what the previous frame's cells reported, so a wrapping `Label`
-        // inside it feeds its own wrapped width back in as the column's desired
-        // width. Every frame the column got narrower until the text wrapped one
-        // character per line, which is exactly what a wide two-column reference
-        // table degenerated into.
-        let mut cell_jobs: Vec<Vec<LayoutJob>> = Vec::with_capacity(block.rows().len());
+        // Measure unwrapped cells before assigning column widths; fitting cells
+        // reuse that galley. `egui::Grid` instead feeds last frame's wrapped
+        // widths back into the next layout, which made reference tables shrink
+        // every frame until they wrapped one character per line.
+        let mut cell_galleys = Vec::with_capacity(block.rows().len());
         let mut natural = vec![0.0_f32; column_count];
         for row in block.rows() {
             let mut cells = Vec::with_capacity(column_count);
@@ -1859,15 +1872,14 @@ impl MarkdownRenderState<'_> {
                         text_style
                     },
                 );
-                let mut unwrapped = job.clone();
-                unwrapped.wrap.max_width = f32::INFINITY;
-                let width = ui.painter().layout_job(unwrapped).size().x;
+                let unwrapped = ui.painter().layout_job(job);
+                let width = unwrapped.size().x;
                 if let Some(slot) = natural.get_mut(column) {
                     *slot = slot.max(width + padding_x * 2.0);
                 }
-                cells.push(job);
+                cells.push(unwrapped);
             }
-            cell_jobs.push(cells);
+            cell_galleys.push(cells);
         }
 
         // The frame's 1px inner margin sits between the reading column and the
@@ -1886,21 +1898,23 @@ impl MarkdownRenderState<'_> {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let mut cell_rects: Vec<Vec<egui::Rect>> =
-                            Vec::with_capacity(cell_jobs.len());
-                        for (row, jobs) in block.rows().iter().zip(&cell_jobs) {
+                            Vec::with_capacity(cell_galleys.len());
+                        for (row, cells) in block.rows().iter().zip(cell_galleys) {
                             // A row is only as tall as its tallest wrapped
                             // cell, so every cell has to be laid out before any
                             // of them can be placed.
                             let mut row_height = 0.0_f32;
-                            let mut galleys = Vec::with_capacity(jobs.len());
-                            for (column, job) in jobs.iter().enumerate() {
+                            let mut galleys = Vec::with_capacity(cells.len());
+                            for (column, unwrapped) in cells.into_iter().enumerate() {
                                 let width = widths
                                     .get(column)
                                     .copied()
                                     .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
-                                let mut wrapped = job.clone();
-                                wrapped.wrap.max_width = (width - padding_x * 2.0).max(1.0);
-                                let galley = ui.painter().layout_job(wrapped);
+                                let galley = table_cell_galley(
+                                    ui,
+                                    unwrapped,
+                                    (width - padding_x * 2.0).max(1.0),
+                                );
                                 row_height = row_height.max(galley.size().y + padding_y * 2.0);
                                 galleys.push(galley);
                             }
@@ -2103,7 +2117,7 @@ impl MarkdownRenderState<'_> {
                 // Markdown grammar the editor uses, so one window does not
                 // show the same file coloured on one surface and flat on the
                 // other (ADR 0035 §8).
-                let syntax = source_syntax_spans(ui, document.source_text());
+                let syntax = source_syntax_spans(self.source_syntax, document.source_text());
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let span = document
@@ -2114,7 +2128,7 @@ impl MarkdownRenderState<'_> {
                             line,
                             span,
                             self.find,
-                            roles_within(&syntax, line_start..line_start + line.len()),
+                            roles_within(syntax, line_start..line_start + line.len()),
                         ))
                             .selectable(true)
                             .wrap(),
@@ -2735,6 +2749,17 @@ fn table_column_widths(natural: &[f32], available: f32) -> Vec<f32> {
         .collect()
 }
 
+fn table_cell_galley(ui: &egui::Ui, unwrapped: Arc<egui::Galley>, width: f32) -> Arc<egui::Galley> {
+    // Match epaint's integral wrap-width cache key, including at fractional DPI.
+    let width = width.round();
+    if unwrapped.size().x <= width {
+        return unwrapped;
+    }
+    let mut job = (*unwrapped.job).clone();
+    job.wrap.max_width = width;
+    ui.painter().layout_job(job)
+}
+
 fn inline_layout_job(
     inlines: &[Inline],
     document: &MarkdownDocument,
@@ -2879,30 +2904,16 @@ fn render_text_run(
     ui.add(egui::Label::new(job).selectable(true).wrap());
 }
 
-/// The document's Markdown spans, parsed once and kept for as long as the
-/// snapshot they describe.
-///
-/// A snapshot never changes, so this is a parse per document rather than a
-/// parse per frame; the key includes the text's length and ends so a second
-/// document cannot inherit the first one's colour.
-fn source_syntax_spans(ui: &egui::Ui, source: &str) -> std::sync::Arc<Vec<festerm_syntax::Span>> {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    source.len().hash(&mut hasher);
-    let head = source.len().min(512);
-    source[..head].hash(&mut hasher);
-    source[source.len() - head..].hash(&mut hasher);
-    let key = egui::Id::new(("markdown-source-syntax", hasher.finish()));
-    if let Some(cached) =
-        ui.data(|data| data.get_temp::<std::sync::Arc<Vec<festerm_syntax::Span>>>(key))
-    {
-        return cached;
-    }
-    let mut syntax =
-        festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
-    let spans = std::sync::Arc::new(syntax.spans(source, 0, 0..source.len()).to_vec());
-    ui.data_mut(|data| data.insert_temp(key, std::sync::Arc::clone(&spans)));
-    spans
+/// Owned by the loaded snapshot, and cleared only when a new document replaces it.
+fn source_syntax_spans<'a>(
+    cache: &'a mut Option<Vec<festerm_syntax::Span>>,
+    source: &str,
+) -> &'a [festerm_syntax::Span] {
+    cache.get_or_insert_with(|| {
+        let mut syntax =
+            festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
+        syntax.spans(source, 0, 0..source.len()).to_vec()
+    })
 }
 
 /// The spans covering one line, rebased onto that line's own bytes.
@@ -2910,9 +2921,10 @@ fn roles_within(
     spans: &[festerm_syntax::Span],
     line: std::ops::Range<usize>,
 ) -> Vec<festerm_syntax::Span> {
-    spans
+    let first = spans.partition_point(|span| span.end <= line.start);
+    spans[first..]
         .iter()
-        .filter(|span| span.start < line.end && span.end > line.start)
+        .take_while(|span| span.start < line.end)
         .map(|span| festerm_syntax::Span {
             start: span.start.max(line.start) - line.start,
             end: span.end.min(line.end) - line.start,
@@ -3029,21 +3041,24 @@ fn append_text_segments_from(
         return;
     }
     let mut cursor = skip;
-    let matches: Vec<(usize, usize, bool)> = find
+    let first = find.matches().partition_point(|matched| {
+        matched.span().end().byte_offset() <= span.start().byte_offset()
+    });
+    for (index, matched) in find
         .matches()
         .iter()
         .enumerate()
-        .filter_map(|(index, matched)| {
-            overlap_with_relative_range(span, matched.span()).and_then(|range| {
-                (range.end <= text.len() && range.end > skip).then_some((
-                    range.start.max(skip),
-                    range.end,
-                    find.current_index == Some(index),
-                ))
-            })
-        })
-        .collect();
-    for (start, end, current) in matches {
+        .skip(first)
+        .take_while(|(_, matched)| matched.span().start().byte_offset() < span.end().byte_offset())
+    {
+        let Some(range) = overlap_with_relative_range(span, matched.span()) else {
+            continue;
+        };
+        if range.end > text.len() || range.end <= skip {
+            continue;
+        }
+        let start = range.start.max(skip);
+        let end = range.end;
         if cursor < start {
             job.append(
                 &text[cursor..start],
@@ -3052,7 +3067,7 @@ fn append_text_segments_from(
             );
         }
         let mut format = base_text_format(font.clone(), style);
-        format.background = if current {
+        format.background = if find.current_index == Some(index) {
             theme::ACCENT_PRIMARY.gamma_multiply(0.35)
         } else {
             theme::SURFACE_SELECTION
@@ -3211,6 +3226,7 @@ pub(crate) struct MarkdownPreviewPane {
     image_errors: BTreeMap<usize, String>,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
+    source_syntax: Option<Vec<festerm_syntax::Span>>,
     outline_keyboard_focus: bool,
     heading_tops: Vec<(usize, f32)>,
     visible_heading: Option<usize>,
@@ -3240,6 +3256,7 @@ impl MarkdownPreviewPane {
             image_errors: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
+            source_syntax: None,
             outline_keyboard_focus: false,
             heading_tops: Vec::new(),
             visible_heading: None,
@@ -3289,6 +3306,7 @@ impl MarkdownPreviewPane {
         ) {
             Ok(document) => {
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
+                self.source_syntax = None;
                 self.outline_selected = document.headings().first().map(|_| 0);
                 self.document = Some(document);
                 self.error = None;
@@ -3339,6 +3357,7 @@ impl MarkdownPreviewPane {
             image_errors: &self.image_errors,
             pending_scroll: &mut self.pending_scroll,
             line_heading_indices: &self.line_heading_indices,
+            source_syntax: &mut self.source_syntax,
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
             heading_tops: &mut heading_tops,
         };
@@ -3951,6 +3970,7 @@ mod tests {
                     image_errors: &image_errors,
                     pending_scroll: &mut pending_scroll,
                     line_heading_indices: &[],
+                    source_syntax: &mut None,
                     outline_keyboard_focus: &mut outline_keyboard_focus,
                     heading_tops: &mut heading_tops,
                 };
@@ -4105,6 +4125,78 @@ mod tests {
     }
 
     #[test]
+    fn table_cells_reuse_fitting_galleys_without_changing_layout() {
+        let parsed = document(concat!(
+            "| Left | Right | Empty |\n",
+            "| :--- | ---: | :---: |\n",
+            "| short words | **bold** and *italic* with `e\u{301}\u{754c}` | |\n",
+            "| longer words that must wrap in a narrow cell | ",
+            "~~struck~~ [link](#heading) and \u{1f680} | trailing |\n",
+        ));
+        let Block::Table(table) = &parsed.blocks()[0] else {
+            panic!("expected the table fixture");
+        };
+        for scale in [0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
+            let context = egui::Context::default();
+            context.set_pixels_per_point(scale);
+            let mut output = context.run_ui(Default::default(), |ui| {
+                for query in ["", "e"] {
+                    let mut find = MarkdownFindState::default();
+                    find.set_query(&parsed, query.into());
+                    for style in [InlineRenderStyle::body(), InlineRenderStyle::blockquote()] {
+                        for row in table.rows() {
+                            for cell in row.cells() {
+                                let job = inline_layout_job(
+                                    cell.inlines(),
+                                    &parsed,
+                                    &find,
+                                    FontId::proportional(BODY_TEXT_SIZE - 1.0),
+                                    if row.is_header() {
+                                        style.with_strong()
+                                    } else {
+                                        style
+                                    },
+                                );
+                                let unwrapped = ui.painter().layout_job(job);
+                                for width in [
+                                    1.0,
+                                    40.25,
+                                    40.49,
+                                    40.51,
+                                    (unwrapped.size().x - 0.125).max(1.0),
+                                    unwrapped.size().x.max(1.0),
+                                    unwrapped.size().x + 100.0,
+                                ] {
+                                    let actual = table_cell_galley(ui, unwrapped.clone(), width);
+                                    let mut reference_job = (*unwrapped.job).clone();
+                                    reference_job.wrap.max_width = width;
+                                    let reference = ui.painter().layout_job(reference_job);
+                                    assert_eq!(
+                                        Arc::ptr_eq(&actual, &unwrapped),
+                                        unwrapped.size().x <= reference.job.wrap.max_width,
+                                        "scale={scale}, width={width}"
+                                    );
+                                    let mut normalized = (*actual).clone();
+                                    let mut normalized_job = (*actual.job).clone();
+                                    normalized_job.wrap.max_width = reference.job.wrap.max_width;
+                                    normalized.job = Arc::new(normalized_job);
+                                    assert_eq!(
+                                        &normalized,
+                                        reference.as_ref(),
+                                        "scale={scale}, width={width}, text={:?}",
+                                        unwrapped.job.text
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
     fn a_table_that_does_not_fit_is_shared_out_across_the_reading_width() {
         let widths = table_column_widths(&[120.0, 600.0], 400.0);
         let total: f32 = widths.iter().sum();
@@ -4143,6 +4235,76 @@ mod tests {
                 &Default::default(),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn source_syntax_handles_multibyte_text_at_the_former_cache_key_boundary() {
+        let source = format!(
+            "{}\u{1f680}\n\n# Heading\n\n{}",
+            "x".repeat(511),
+            "y".repeat(600)
+        );
+        let mut cache = None;
+        let spans = source_syntax_spans(&mut cache, &source);
+        assert!(!spans.is_empty());
+        assert!(spans
+            .iter()
+            .all(|span| source.is_char_boundary(span.start) && source.is_char_boundary(span.end)));
+        let first = spans.as_ptr();
+        assert_eq!(source_syntax_spans(&mut cache, &source).as_ptr(), first);
+    }
+
+    #[test]
+    fn source_syntax_cache_follows_successful_reload_not_matching_text_ends() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("snapshot.md");
+        let prefix = format!("{}\n", "prefix\n".repeat(100));
+        let suffix = format!("\n{}", "suffix\n".repeat(100));
+        let before = format!("{prefix}# title\n{suffix}");
+        let after = format!("{prefix}  title\n{suffix}");
+        assert_eq!(before.len(), after.len());
+        assert_eq!(&before[..512], &after[..512]);
+        assert_eq!(&before[before.len() - 512..], &after[after.len() - 512..]);
+        fs::write(&path, &before).unwrap();
+        let mut tab = MarkdownViewerTab::open_local(path.clone());
+        let old = source_syntax_spans(&mut tab.source_syntax, &before).to_vec();
+        fs::write(&path, &after).unwrap();
+        tab.reload();
+        assert!(tab.source_syntax.is_none());
+        assert_eq!(tab.document.as_ref().unwrap().source_text(), after);
+        let fresh = source_syntax_spans(&mut tab.source_syntax, &after).to_vec();
+        assert_ne!(old, fresh);
+        let pointer = tab.source_syntax.as_ref().unwrap().as_ptr();
+        fs::remove_file(path).unwrap();
+        tab.reload();
+        assert!(tab.stale_snapshot);
+        assert_eq!(tab.source_syntax.as_ref().unwrap().as_ptr(), pointer);
+        assert_eq!(tab.document.as_ref().unwrap().source_text(), after);
+    }
+
+    #[test]
+    fn indexed_source_roles_match_full_scan_for_clipped_and_empty_ranges() {
+        let spans: Vec<_> = (0..1000)
+            .map(|index| festerm_syntax::Span {
+                start: index * 3 + 1,
+                end: index * 3 + 3,
+                role: festerm_syntax::Role::Keyword,
+            })
+            .collect();
+        for start in (0..3200).step_by(7) {
+            let end = start + start % 31;
+            let expected: Vec<_> = spans
+                .iter()
+                .filter(|span| span.start < end && span.end > start)
+                .map(|span| festerm_syntax::Span {
+                    start: span.start.max(start) - start,
+                    end: span.end.min(end) - start,
+                    role: span.role,
+                })
+                .collect();
+            assert_eq!(roles_within(&spans, start..end), expected);
+        }
+        assert!(roles_within(&[], 0..100).is_empty());
     }
 
     fn highlighted_sections(job: &LayoutJob) -> Vec<(Range<usize>, String)> {
@@ -4357,6 +4519,7 @@ mod tests {
                         image_errors: &image_errors,
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
+                        source_syntax: &mut None,
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: &mut heading_tops,
                     };
@@ -4424,6 +4587,7 @@ mod tests {
                         image_errors: &image_errors,
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
+                        source_syntax: &mut None,
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: &mut heading_tops,
                     };
@@ -4522,6 +4686,127 @@ mod tests {
             highlighted_sections(&job),
             vec![(4..10, "needle".to_owned())]
         );
+    }
+
+    #[test]
+    fn indexed_find_highlighting_matches_full_scan_with_unicode_and_clipping() {
+        fn full_scan(
+            text: &str,
+            span: SourceSpan,
+            find: &MarkdownFindState,
+            style: InlineRenderStyle,
+            skip: usize,
+        ) -> LayoutJob {
+            let mut job = LayoutJob::default();
+            if skip >= text.len() {
+                return job;
+            }
+            let font = FontId::proportional(14.0);
+            let mut cursor = skip;
+            for (index, matched) in find.matches().iter().enumerate() {
+                let Some(range) = overlap_with_relative_range(span, matched.span()) else {
+                    continue;
+                };
+                if range.end > text.len() || range.end <= skip {
+                    continue;
+                }
+                let start = range.start.max(skip);
+                if cursor < start {
+                    job.append(
+                        &text[cursor..start],
+                        0.0,
+                        base_text_format(font.clone(), style),
+                    );
+                }
+                let mut format = base_text_format(font.clone(), style);
+                format.background = if find.current_index == Some(index) {
+                    theme::ACCENT_PRIMARY.gamma_multiply(0.35)
+                } else {
+                    theme::SURFACE_SELECTION
+                };
+                job.append(&text[start..range.end], 0.0, format);
+                cursor = range.end;
+            }
+            if cursor < text.len() {
+                job.append(&text[cursor..], 0.0, base_text_format(font, style));
+            }
+            job
+        }
+
+        let prefix = "needle ".repeat(17);
+        let target = "  \u{754c} needle e\u{301} needle \u{1f916}\r\nneedle ";
+        let source = format!("{prefix}{target}{}", "needle ".repeat(13));
+        let document = document(&source);
+        let start = prefix.len();
+        let end = start + target.len();
+        let ranges = [
+            start..end,
+            start + 2..end,
+            start + target.find("needle").unwrap() + 2..end,
+            start..end - 3,
+            end..end,
+        ];
+        for query in [
+            "",
+            "absent",
+            "needle",
+            "e\u{301}",
+            "\u{754c}",
+            " ",
+            "\r\nneedle",
+        ] {
+            let mut find = MarkdownFindState::default();
+            find.set_query(&document, query.to_owned());
+            for current in [
+                None,
+                Some(0),
+                Some(17),
+                Some(19),
+                find.matches().len().checked_sub(1),
+            ] {
+                find.current_index = current;
+                for range in &ranges {
+                    let span = document.source_span(range.clone()).unwrap();
+                    let text = &source[range.clone()];
+                    for length in [
+                        text.len(),
+                        text.char_indices()
+                            .next_back()
+                            .map_or(0, |(index, _)| index),
+                    ] {
+                        let text = &text[..length];
+                        for skip in [
+                            0,
+                            text.chars().next().map_or(0, char::len_utf8),
+                            text.len() - text.trim_start_matches(' ').len(),
+                            text.len(),
+                        ] {
+                            for style in [
+                                InlineRenderStyle::body(),
+                                InlineRenderStyle::body().as_inline_code(),
+                                InlineRenderStyle::body().as_link().with_italics(),
+                            ] {
+                                let mut actual = LayoutJob::default();
+                                append_text_segments_from(
+                                    &mut actual,
+                                    text,
+                                    span,
+                                    &find,
+                                    FontId::proportional(14.0),
+                                    style,
+                                    skip,
+                                );
+                                assert_eq!(
+                                    actual,
+                                    full_scan(text, span, &find, style, skip),
+                                    "query={query:?}, current={current:?}, range={range:?}, skip={skip}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

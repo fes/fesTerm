@@ -31,7 +31,7 @@ pub(crate) const SELECTION_BACKGROUND: Color32 = theme::SURFACE_SELECTION;
 pub(crate) const GLYPH_CACHE_CAPACITY: usize = 4_096;
 
 // --- Public re-exports ---
-pub use background::install_terminal_background_callback;
+pub use background::{install_panel_fill_callback, install_terminal_background_callback};
 pub use cache::{
     RenderCacheUpdate, RenderedCell, ResizeOutcome, ResizeTracker, TerminalRenderCache,
 };
@@ -247,6 +247,28 @@ impl<'a> TerminalSnapshot<'a> {
             .row_soft_wrapped(usize::try_from(content_row - stats.screen_row_origin()).ok()?)
     }
 
+    /// The core-owned content extent, not the padded width of the viewport.
+    pub fn absolute_row_occupied_columns(self, content_row: u64) -> Option<usize> {
+        if self.modes.alternate_screen() {
+            return self
+                .terminal
+                .screen()
+                .row_occupied_columns(usize::try_from(content_row).ok()?);
+        }
+        let stats = self.terminal.scrollback_stats();
+        if content_row < stats.screen_row_origin() {
+            let relative_row =
+                usize::try_from(content_row.checked_sub(stats.content_row_origin())?).ok()?;
+            return self
+                .terminal
+                .scrollback_physical_row(relative_row)
+                .map(<[Cell]>::len);
+        }
+        self.terminal
+            .screen()
+            .row_occupied_columns(usize::try_from(content_row - stats.screen_row_origin()).ok()?)
+    }
+
     pub const fn viewport_offset_rows(self) -> usize {
         self.viewport_offset_rows
     }
@@ -272,6 +294,30 @@ mod tests {
     fn terminal(columns: usize, rows: usize) -> Terminal {
         Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
             .expect("test terminal allocation")
+    }
+
+    #[test]
+    fn snapshot_occupied_columns_preserve_spaces_without_wrap_padding() {
+        let mut terminal = terminal(10, 3);
+        terminal.ingest("1234567  \u{754c}".as_bytes());
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        assert_eq!(snapshot.absolute_row_occupied_columns(0), Some(9));
+        assert_eq!(snapshot.absolute_row_occupied_columns(1), Some(2));
+        assert_eq!(snapshot.absolute_row_occupied_columns(2), Some(0));
+        assert_eq!(snapshot.absolute_row_occupied_columns(3), None);
+
+        terminal.ingest(b"\r\n\r\n\r\n");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        assert_eq!(snapshot.absolute_row_occupied_columns(0), Some(9));
+        assert_eq!(snapshot.absolute_row_occupied_columns(1), Some(2));
+
+        terminal.ingest(b"\x1b[?1049h");
+        terminal.ingest("1234567  \u{754c}".as_bytes());
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        assert_eq!(snapshot.absolute_row_occupied_columns(0), Some(9));
+        assert_eq!(snapshot.absolute_row_occupied_columns(1), Some(2));
+        assert_eq!(snapshot.absolute_row_occupied_columns(3), None);
+        assert_eq!(snapshot.absolute_row_occupied_columns(u64::MAX), None);
     }
 
     #[test]
