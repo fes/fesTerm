@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::{
     documents::DocumentRegistry,
-    markdown_viewer::MarkdownViewerTab,
+    markdown_viewer::{MarkdownPreviewPane, MarkdownViewerTab},
     sftp_file_manager::SftpFileManagerTab,
     tabs::TabId,
     text_editor::{EditorMode, TextEditorTab},
@@ -319,6 +319,42 @@ fn profile_interactive_surfaces() {
         },
     ));
 
+    let matches = viewer.set_find_query_for_test("e");
+    assert_eq!(matches, markdown.match_indices("e").count());
+    samples.push(measure("markdown-source-find", matches, |ui| {
+        assert!(viewer.show(ui, tab).is_none());
+    }));
+    viewer.toggle_mode();
+    samples.push(measure("markdown-preview-find", matches, |ui| {
+        assert!(viewer.show(ui, tab).is_none());
+    }));
+
+    for name in [
+        "markdown-preview-headings",
+        "markdown-preview-prose",
+        "markdown-preview-code",
+        "markdown-preview-tables",
+    ] {
+        let text: String = (0..400)
+            .map(|index| match name {
+                "markdown-preview-headings" => format!("## Section {index}\n\n"),
+                "markdown-preview-prose" => {
+                    "A **synthetic** paragraph with `inline code` and ordinary text.\n\n".into()
+                }
+                "markdown-preview-code" => {
+                    format!("```rust\nfn example() {{ let value = {index}; }}\n```\n\n")
+                }
+                "markdown-preview-tables" => {
+                    format!("| Name | Value |\n| --- | --- |\n| Item | {index} |\n\n")
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+        let source = LocalMarkdownSource::new(fixtures.path().join(format!("{name}.md"))).unwrap();
+        let mut pane = MarkdownPreviewPane::new(source.into(), &text);
+        samples.push(measure(name, 400, |ui| pane.show(ui)));
+    }
+
     let fenced_loading: Vec<_> = [200, 2000, 4000]
         .map(|entries| measure_fenced_loading(fixtures.path().join("fence.md"), entries))
         .into();
@@ -341,6 +377,30 @@ fn profile_interactive_surfaces() {
         "p95_ms": percentile(&mut syntax_times, 95),
         "scope": "fresh DocumentSyntax instances after widget scenes; parser/query setup, no source parsing"
     });
+
+    let long_line = "e\u{301} ".repeat(20_000);
+    let long_path = fixtures.path().join("long-line.md");
+    std::fs::write(&long_path, &long_line).unwrap();
+    let mut long_viewer = MarkdownViewerTab::open_local(long_path);
+    let mut find_times = Vec::with_capacity(MEASURED_FRAMES);
+    for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+        let started = Instant::now();
+        let matches = long_viewer.set_find_query_for_test("e\u{301}");
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(matches, 20_000);
+        if iteration >= WARMUP_FRAMES {
+            find_times.push(elapsed);
+        }
+    }
+    let find_model = serde_json::json!({
+        "name": "markdown-find-long-unicode-line",
+        "source_bytes": long_line.len(),
+        "matches": 20_000,
+        "median_ms": percentile(&mut find_times, 50),
+        "p95_ms": percentile(&mut find_times, 95),
+        "scope": "Find query and source-position construction; no UI or parsing"
+    });
+
     let report = serde_json::json!({
         "schema": "festerm-interactive-surface-profile-v1",
         "package_version": env!("CARGO_PKG_VERSION"),
@@ -354,6 +414,7 @@ fn profile_interactive_surfaces() {
         "samples": samples,
         "fenced_loading": fenced_loading,
         "syntax_preparation": syntax_preparation,
+        "find_model": find_model,
     });
     let json = serde_json::to_string_pretty(&report).unwrap();
     std::fs::write(output.join("profile.json"), &json).unwrap();

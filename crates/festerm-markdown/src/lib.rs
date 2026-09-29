@@ -416,9 +416,7 @@ pub struct MarkdownDocument {
     blocks: Vec<Block>,
     headings: Vec<Heading>,
     resource_references: Vec<ResourceReference>,
-    line_starts: Vec<usize>,
-    line_char_offsets: Vec<usize>,
-    source_char_count: usize,
+    source_index: SourceIndex,
 }
 
 impl MarkdownDocument {
@@ -434,9 +432,11 @@ impl MarkdownDocument {
             blocks,
             headings,
             resource_references: Vec::new(),
-            line_starts: vec![0],
-            line_char_offsets: vec![0],
-            source_char_count: 0,
+            source_index: SourceIndex {
+                line_starts: vec![0],
+                line_char_offsets: vec![0],
+                source_char_count: 0,
+            },
         }
     }
 
@@ -446,9 +446,7 @@ impl MarkdownDocument {
         source_index: SourceIndex,
     ) -> Self {
         self.resource_references = resource_references;
-        self.line_starts = source_index.line_starts;
-        self.line_char_offsets = source_index.line_char_offsets;
-        self.source_char_count = source_index.source_char_count;
+        self.source_index = source_index;
         self
     }
 
@@ -474,11 +472,11 @@ impl MarkdownDocument {
     }
 
     pub fn line_count(&self) -> usize {
-        self.line_starts.len()
+        self.source_index.line_starts.len()
     }
 
     pub fn source_char_count(&self) -> usize {
-        self.source_char_count
+        self.source_index.source_char_count
     }
 
     /// Maps one byte range in the decoded source text to line/column metadata.
@@ -489,16 +487,23 @@ impl MarkdownDocument {
         Some(self.source_span_unchecked(byte_range))
     }
 
-    /// Finds non-overlapping literal matches in the decoded source text.
+    /// Finds non-overlapping literal matches in decoded source order.
     pub fn find_matches(&self, query: &str) -> Vec<TextMatch> {
         if query.is_empty() {
             return Vec::new();
         }
 
+        let mut previous = None;
         self.source_text
             .match_indices(query)
-            .map(|(start, matched)| TextMatch {
-                span: self.source_span_unchecked(start..start + matched.len()),
+            .map(|(start, matched)| {
+                let span = self.source_index.span_after(
+                    &self.source_text,
+                    start..start + matched.len(),
+                    previous,
+                );
+                previous = Some(span.end);
+                TextMatch { span }
             })
             .collect()
     }
@@ -518,29 +523,7 @@ impl MarkdownDocument {
     }
 
     fn source_span_unchecked(&self, byte_range: Range<usize>) -> SourceSpan {
-        SourceSpan {
-            byte_start: byte_range.start,
-            byte_end: byte_range.end,
-            start: self.source_position(byte_range.start),
-            end: self.source_position(byte_range.end),
-        }
-    }
-
-    fn source_position(&self, byte_offset: usize) -> SourcePosition {
-        let line_index = self
-            .line_starts
-            .partition_point(|line_start| *line_start <= byte_offset)
-            .saturating_sub(1);
-        let line_start = self.line_starts[line_index];
-        let char_offset = self.line_char_offsets[line_index]
-            + self.source_text[line_start..byte_offset].chars().count();
-        let column = self.source_text[line_start..byte_offset].chars().count();
-        SourcePosition {
-            byte_offset,
-            char_offset,
-            line_index,
-            column,
-        }
+        self.source_index.span(&self.source_text, byte_range)
     }
 }
 
@@ -1298,7 +1281,7 @@ impl ParsedDocument {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceIndex {
     line_starts: Vec<usize>,
     line_char_offsets: Vec<usize>,
@@ -1334,21 +1317,45 @@ impl SourceIndex {
     }
 
     fn span(&self, source_text: &str, byte_range: Range<usize>) -> SourceSpan {
+        self.span_after(source_text, byte_range, None)
+    }
+
+    fn span_after(
+        &self,
+        source_text: &str,
+        byte_range: Range<usize>,
+        previous: Option<SourcePosition>,
+    ) -> SourceSpan {
+        let start = self.position_after(source_text, byte_range.start, previous);
         SourceSpan {
             byte_start: byte_range.start,
             byte_end: byte_range.end,
-            start: self.position(source_text, byte_range.start),
-            end: self.position(source_text, byte_range.end),
+            start,
+            end: self.position_after(source_text, byte_range.end, Some(start)),
         }
     }
 
-    fn position(&self, source_text: &str, byte_offset: usize) -> SourcePosition {
+    fn position_after(
+        &self,
+        source_text: &str,
+        byte_offset: usize,
+        previous: Option<SourcePosition>,
+    ) -> SourcePosition {
         let line_index = self
             .line_starts
             .partition_point(|line_start| *line_start <= byte_offset)
             .saturating_sub(1);
         let line_start = self.line_starts[line_index];
-        let column = source_text[line_start..byte_offset].chars().count();
+        // Ordered matches only count the new part of a line. Other lookups
+        // retain the indexed line start, including backwards and multiline spans.
+        let (start, column) = previous
+            .filter(|position| {
+                position.line_index == line_index && position.byte_offset <= byte_offset
+            })
+            .map_or((line_start, 0), |position| {
+                (position.byte_offset, position.column)
+            });
+        let column = column + source_text[start..byte_offset].chars().count();
         SourcePosition {
             byte_offset,
             char_offset: self.line_char_offsets[line_index] + column,
@@ -3088,6 +3095,81 @@ mod tests {
                 .text(),
             "Next"
         );
+    }
+
+    #[test]
+    fn find_matches_preserve_ordered_unicode_and_multiline_positions() {
+        let document = local_document(
+            "\u{feff}aaaa \u{754c}\u{754c} e\u{301} \u{1f916}\r\nnext e\u{301}\rnext\nend e\u{301}",
+        );
+        let source = document.source_text();
+        for query in [
+            "",
+            "absent",
+            "a",
+            "aa",
+            "\u{754c}",
+            "\u{754c}\u{754c}",
+            "e\u{301}",
+            " ",
+            "\r",
+            "\n",
+            "\r\n",
+            "\u{1f916}\r\nnext",
+            "next\nend",
+        ] {
+            let matches = document.find_matches(query);
+            let expected: Vec<_> = if query.is_empty() {
+                Vec::new()
+            } else {
+                source
+                    .match_indices(query)
+                    .map(|(start, text)| start..start + text.len())
+                    .collect()
+            };
+            assert_eq!(matches.len(), expected.len(), "query={query:?}");
+            for (matched, range) in matches.iter().zip(expected) {
+                assert_eq!(matched.span().byte_range(), range);
+                assert_eq!(Some(matched.span()), document.source_span(range.clone()));
+                for (position, offset) in [
+                    (matched.span().start(), range.start),
+                    (matched.span().end(), range.end),
+                ] {
+                    let prefix = &source[..offset];
+                    assert_eq!(
+                        position,
+                        SourcePosition {
+                            byte_offset: offset,
+                            char_offset: prefix.chars().count(),
+                            line_index: prefix.bytes().filter(|byte| *byte == b'\n').count(),
+                            column: prefix.rsplit('\n').next().unwrap().chars().count(),
+                        },
+                        "query={query:?}, offset={offset}"
+                    );
+                }
+            }
+            assert!(matches.windows(2).all(|pair| {
+                pair[0].span().end().byte_offset() <= pair[1].span().start().byte_offset()
+            }));
+        }
+    }
+
+    #[test]
+    fn find_matches_keep_all_hits_on_a_long_unicode_line() {
+        let document = local_document(&"e\u{301} ".repeat(20_000));
+        let matches = document.find_matches("e\u{301}");
+        assert_eq!(matches.len(), 20_000);
+        assert_eq!(document.line_count(), 1);
+        assert_eq!(document.source_char_count(), 60_000);
+        for (index, matched) in matches.iter().enumerate() {
+            assert_eq!(matched.span().byte_range(), index * 4..index * 4 + 3);
+            assert_eq!(matched.span().start().char_offset(), index * 3);
+            assert_eq!(matched.span().end().char_offset(), index * 3 + 2);
+            assert_eq!(matched.span().start().column(), index * 3);
+            assert_eq!(matched.span().end().column(), index * 3 + 2);
+            assert_eq!(matched.span().start().line_index(), 0);
+            assert_eq!(matched.span().end().line_index(), 0);
+        }
     }
 
     #[test]

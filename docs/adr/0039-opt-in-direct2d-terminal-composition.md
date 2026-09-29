@@ -87,12 +87,19 @@ ordinary full native drawing.
 
 For smaller changes, copy the preceding image into a fresh wgpu-owned texture,
 draw adjacent damaged regions together into fresh native surfaces, and copy
-those patches into the new image on the shared queue. Clear each complete
-damaged region so removed glyphs cannot survive. Quantize raster coordinates
-before subtracting the region origin, preserving half-subpixel rounding at
-region boundaries. Region draws retain the validated full frame's texture set
-instead of repeatedly retiring/reuploading unchanged emoji textures. Unchanged
-frames reuse the same immutable image. Only the latest frame is retained by
+those patches into the new image on the shared queue. Prepare the complete
+validated frame's geometry exactly once, then reuse its immutable native draw
+groups and texture set for every damage clip. Separated damage must not multiply
+full-frame geometry conversion or preparation. Clear each scratch surface to
+the opaque background so removed glyphs cannot survive; no synthetic clearing
+primitive or per-patch copy of the original primitives is required.
+
+Keep the full frame's original raster origin and unsplit glyph geometry while
+clipping native painting and copying only the damage. Temporary targets include
+origin padding, whose aggregate pixel area must not exceed one full surface;
+otherwise use the full draw. The prepared extent remains independent of each
+temporary target's extent. Unchanged frames reuse the same immutable image
+after complete validation/preparation. Only the latest frame is retained by
 this cache; published callbacks retain their independent normal GPU lifetimes.
 
 This optimization preserves the existing native/UI ownership boundary and
@@ -162,6 +169,8 @@ because the supported WARP path now defaults on.
 - **Automated tests required:** `native_bounds_crop_sparse_paints_and_validate_indices`,
   `shared_surfaces_preserve_pixels_and_previous_frame_ownership`,
   `retained_frames_update_only_changed_regions_and_preserve_older_pixels`,
+  `scattered_retained_damage_prepares_full_geometry_only_once`,
+  `retained_geometry_and_raster_budgets_preserve_valid_frames`,
   `raster_grid_normalization_is_independent_of_damage_origin`,
   `retained_terminal_updates_preserve_pixels_across_dpi_and_clipping`,
   `session_notifier_wakes_one_frame_without_a_settling_repaint`,
