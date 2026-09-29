@@ -139,6 +139,12 @@ shows `N of M`, supports next/previous with wrap, highlights all visible
 matches with a stronger current match, and preserves the current match across
 a same-source manual reload when possible.
 
+All non-overlapping literal matches remain available in source order; Find
+does not cap or truncate the result set. Ordered source-position lookups reuse
+the already-counted Unicode prefix, and highlighting visits only the matches
+overlapping each text run. These are internal cost reductions, not changes to
+match counts, current-match selection, clipping, or Unicode source offsets.
+
 Text selection and Copy produce plain text by default. Code-block Copy copies
 only code content, excluding the language label and line numbers. A future
 **Copy as Markdown** command may be added only with a precise source-range

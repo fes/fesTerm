@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing repeated work from Markdown Find
+
+The next document pass found two separate sources of Find cost: every rendered
+text run scanned the entire match list, and each match on a long Unicode line
+counted its source position from the beginning again. Highlighting now locates
+the overlapping ordered range directly, while source-position construction
+counts only the new portion of a line. The viewer still retains every match,
+with the same Unicode offsets, current-match emphasis and navigation behavior.
+
+The release probe now separates Source Find, Preview Find and a 20,000-hit
+Unicode-line query from ordinary rendering. Repeated comparisons confirm the
+Find improvement, not an improvement to plain Preview. Full-scan formatting
+oracles and separate production-widget galleries protect presentation;
+the measurements, unchanged controls and native-evidence boundaries are in
+`validation/terminal-performance/README.md`. Neither this slice nor the earlier
+directory/editor changes establish Windows Terminal parity.
+
 ## Keeping large documents and directories out of each frame
 
 The performance campaign expanded beyond the terminal to the editor, Markdown

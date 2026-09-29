@@ -143,6 +143,30 @@ fn profile_interactive_surfaces() {
     }));
     assert_eq!(editor.find_match_count_for_test(), 2000);
 
+    // Keep controls before Markdown query work: its CPU duration must not
+    // condition the timings of otherwise unchanged widgets later in the probe.
+    for (name, count) in [
+        ("sftp-100-rows-per-pane", 100),
+        ("sftp-5000-rows-per-pane", 5000),
+    ] {
+        let context = egui::Context::default();
+        let mut browser = SftpFileManagerTab::for_gallery(
+            "Performance fixture".into(),
+            "test".into(),
+            "fixture.example.com".into(),
+            22,
+            directory(SftpLocation::Local, SftpPath::local(fixtures.path()), count),
+            directory(SftpLocation::Remote, SftpPath::remote("/fixture"), count),
+            None,
+            None,
+            Default::default(),
+            &context,
+        );
+        samples.push(measure(name, count * 2, |ui| {
+            assert!(browser.show(ui, tab).is_none());
+        }));
+    }
+
     let markdown: String = (0..400)
         .map(|index| {
             format!(
@@ -169,28 +193,39 @@ fn profile_interactive_surfaces() {
             assert!(viewer.show(ui, tab).is_none());
         },
     ));
+    let matches = viewer.set_find_query_for_test("e");
+    assert_eq!(matches, markdown.match_indices("e").count());
+    samples.push(measure("markdown-source-find", matches, |ui| {
+        assert!(viewer.show(ui, tab).is_none());
+    }));
+    viewer.toggle_mode();
+    samples.push(measure("markdown-preview-find", matches, |ui| {
+        assert!(viewer.show(ui, tab).is_none());
+    }));
 
-    for (name, count) in [
-        ("sftp-100-rows-per-pane", 100),
-        ("sftp-5000-rows-per-pane", 5000),
-    ] {
-        let context = egui::Context::default();
-        let mut browser = SftpFileManagerTab::for_gallery(
-            "Performance fixture".into(),
-            "test".into(),
-            "fixture.example.com".into(),
-            22,
-            directory(SftpLocation::Local, SftpPath::local(fixtures.path()), count),
-            directory(SftpLocation::Remote, SftpPath::remote("/fixture"), count),
-            None,
-            None,
-            Default::default(),
-            &context,
-        );
-        samples.push(measure(name, count * 2, |ui| {
-            assert!(browser.show(ui, tab).is_none());
-        }));
+    let long_line = "e\u{301} ".repeat(20_000);
+    let long_path = fixtures.path().join("long-line.md");
+    std::fs::write(&long_path, &long_line).unwrap();
+    let mut long_viewer = MarkdownViewerTab::open_local(long_path);
+    let mut find_times = Vec::with_capacity(MEASURED_FRAMES);
+    for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+        let started = Instant::now();
+        let matches = long_viewer.set_find_query_for_test("e\u{301}");
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(matches, 20_000);
+        if iteration >= WARMUP_FRAMES {
+            find_times.push(elapsed);
+        }
     }
+    let find_model = serde_json::json!({
+        "name": "markdown-find-long-unicode-line",
+        "source_bytes": long_line.len(),
+        "matches": 20_000,
+        "median_ms": percentile(&mut find_times, 50),
+        "p95_ms": percentile(&mut find_times, 95),
+        "scope": "Find query and source-position construction; no UI or parsing"
+    });
+
     let report = serde_json::json!({
         "schema": "festerm-interactive-surface-profile-v1",
         "package_version": env!("CARGO_PKG_VERSION"),
@@ -201,6 +236,7 @@ fn profile_interactive_surfaces() {
         "measured_frames": MEASURED_FRAMES,
         "scope": "forced steady-state UI construction and tessellation; no GPU draw or presentation",
         "samples": samples,
+        "find_model": find_model,
     });
     let json = serde_json::to_string_pretty(&report).unwrap();
     std::fs::write(output.join("profile.json"), &json).unwrap();

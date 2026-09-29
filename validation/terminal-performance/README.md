@@ -81,6 +81,72 @@ Quiet and streaming comparison attempts were rejected when the last-input
 tick changed, without foreground or geometry changes. Those failures remain
 excluded rather than weakening the measurement guards.
 
+### Markdown Find follow-up
+
+The next comparison uses `207d806` (the merged UI-construction improvement)
+plus the same extended test harness on both sides. It adds the viewer's Source
+and Preview with 4,800 literal matches, and separately times an 80,000-byte
+single Unicode line containing 20,000 matches. The latter measures Find query
+and source-position construction only, not parsing or UI; its counts and
+median/p95 times are recorded in `find_model`. All matches are retained.
+
+The highlighting path now binary-searches the first overlapping match and
+visits only the relevant ordered range, without allocating a per-run match
+list. The model retains its source index and counts forward from the previous
+position on the same line instead of recounting each Unicode prefix. Other
+line/backwards lookups still use indexed line starts.
+
+On the same Windows x64 EPYC host, both original/candidate/candidate/original
+and candidate/original/original/candidate release sequences completed without
+overlapping builds or probes. These are ranges of **four per-build medians**
+across those eight processes, not confidence intervals:
+
+| Measurement | Original ms | Candidate ms |
+| --- | ---: | ---: |
+| Editor, 2,000 Rust lines, per frame | 0.32-0.43 | 0.32-0.33 |
+| Editor Find, capped at 2,000 matches, per frame | 0.84-0.90 | 0.84-0.88 |
+| SFTP, 100 entries per pane, per frame | 0.73-0.77 | 0.73-0.76 |
+| SFTP, 5,000 entries per pane, per frame | 0.70-0.79 | 0.68-0.80 |
+| Plain Markdown Preview, 400 sections, per frame | 13.90-15.64 | 12.88-14.37 |
+| Plain Markdown Source, 4,800 lines, per frame | 5.13-5.88 | 4.76-5.84 |
+| Viewer Source Find, 4,800 matches, per frame | 23.63-25.43 | 6.42-7.01 |
+| Viewer Preview Find, 4,800 matches, per frame | 38.17-39.49 | 15.96-16.41 |
+| Unicode-line Find query, 20,000 matches | 142.62-145.55 | 1.35-1.37 |
+
+Means of the repeated medians fell by 72.9% for Source Find, 58.3% for Preview
+Find and 99.1% for the Unicode-line query. Plain Preview/Source ranges overlap,
+so this slice does not claim an ordinary-rendering improvement. All eight
+scenes kept identical final shape and vertex counts; Find counts and source
+bytes were also checked in every process.
+
+An earlier exploratory ordering put the long query probe before SFTP and
+produced markedly different timings for unchanged SFTP controls. The final
+shared harness runs editor/SFTP controls before any Markdown work and leaves
+the query probe until last. Repeating both alternating orders with that
+harness removed the SFTP discrepancy; the earlier data remains separate
+rather than being pooled into the table. Host scheduling, warmup and preceding
+work can materially affect these sub-millisecond controls.
+
+Original test executable SHA256:
+`3221FF01F1D82E02D203A1F2AB8361D7D2307833EE916D5B310CC3289CE9059C`;
+candidate:
+`4561B1CAF7EDAC1EB6794A8CFE34EE054B61DB7ECB2761A14ACDC660C7A8F5C0`.
+Local raw evidence uses the `markdown-find-ordered-abba-` and
+`markdown-find-ordered-baab-` prefixes under `target/perf-campaign`.
+To reconstruct the original, apply only the updated
+`surface_performance.rs` and test-only `set_find_query_for_test` helper to
+`207d806`, not the highlighting or source-index changes.
+
+Deterministic tests compare complete highlighted layout jobs with a full-scan
+oracle across current-match indices, styles, Unicode, multiline queries,
+clipping and skipped leading spaces. Source-position tests check independent
+byte/scalar/line/column oracles and retain every hit in the 20,000-match case.
+Separately captured original/candidate production galleries are pixel-identical
+in 43 of 46 scenes; the remaining three contain only changing fixture PID
+digits, verified by difference bounds and side-by-side inspection. This is
+UI/model evidence, not GPU completion, native input latency or `CP-06`
+readability/accessibility qualification.
+
 ## Completed-render replay
 
 On Windows x64 with DX12 WARP:

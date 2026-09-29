@@ -510,6 +510,12 @@ route (`SFTPG-05`) now supplies the concrete remote-file selection action, so
 | `MD-06` | `Viewer → Reloaded/Stale/Closed` | Modify, replace, delete, or conflict with source under the accepted freshness policy. | Manual reload or explicitly designed watching behaves truthfully; no editing/conflict claim if read-only; SSH loss and deletion preserve safe bounded state. | Restore fixture, reload baseline, then close to prior surface. | P,H,N,U; partial |
 | `MD-07` | `Desktop/CLI → Document/Error` | Choose fesTerm in Open With for one or more `.md`/`.markdown` files, cold and already running, or use `festerm --open -- <paths...>`. | The installed handler is optional and does not seize defaults. Native events and bounded user-scoped IPC converge on the document command, never terminal drops/uploads. New files open in Preview in the last-active window; existing files focus their view without losing unsaved edits. Blocking dialogs defer requests; malformed, missing and over-limit requests report errors. | Dismiss errors, close opened documents, or uninstall only fesTerm's association metadata. | H,N,U; partial |
 
+Automated `MD-04` Find regressions preserve the complete ordered match set,
+including long Unicode lines and multiline queries, and compare indexed
+Preview/Source highlighting with a full-scan format oracle. The optional
+interactive-surface probe measures Find-heavy frames and query construction
+separately; it does not replace native `CP-06` qualification.
+
 ## R. Approved text editor and shared document model
 
 `EDIT-01` is resolved by the design decisions recorded in

@@ -798,6 +798,13 @@ impl MarkdownViewerTab {
         self.find.open();
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_find_query_for_test(&mut self, query: &str) -> usize {
+        let document = self.document.as_ref().expect("loaded Markdown fixture");
+        self.find.set_query(document, query.to_owned());
+        self.find.matches().len()
+    }
+
     pub fn handle_escape(&mut self) -> bool {
         if self.find.is_open() || !self.find.query().is_empty() {
             self.find.clear();
@@ -3022,21 +3029,24 @@ fn append_text_segments_from(
         return;
     }
     let mut cursor = skip;
-    let matches: Vec<(usize, usize, bool)> = find
+    let first = find.matches().partition_point(|matched| {
+        matched.span().end().byte_offset() <= span.start().byte_offset()
+    });
+    for (index, matched) in find
         .matches()
         .iter()
         .enumerate()
-        .filter_map(|(index, matched)| {
-            overlap_with_relative_range(span, matched.span()).and_then(|range| {
-                (range.end <= text.len() && range.end > skip).then_some((
-                    range.start.max(skip),
-                    range.end,
-                    find.current_index == Some(index),
-                ))
-            })
-        })
-        .collect();
-    for (start, end, current) in matches {
+        .skip(first)
+        .take_while(|(_, matched)| matched.span().start().byte_offset() < span.end().byte_offset())
+    {
+        let Some(range) = overlap_with_relative_range(span, matched.span()) else {
+            continue;
+        };
+        if range.end > text.len() || range.end <= skip {
+            continue;
+        }
+        let start = range.start.max(skip);
+        let end = range.end;
         if cursor < start {
             job.append(
                 &text[cursor..start],
@@ -3045,7 +3055,7 @@ fn append_text_segments_from(
             );
         }
         let mut format = base_text_format(font.clone(), style);
-        format.background = if current {
+        format.background = if find.current_index == Some(index) {
             theme::ACCENT_PRIMARY.gamma_multiply(0.35)
         } else {
             theme::SURFACE_SELECTION
@@ -4592,6 +4602,127 @@ mod tests {
             highlighted_sections(&job),
             vec![(4..10, "needle".to_owned())]
         );
+    }
+
+    #[test]
+    fn indexed_find_highlighting_matches_full_scan_with_unicode_and_clipping() {
+        fn full_scan(
+            text: &str,
+            span: SourceSpan,
+            find: &MarkdownFindState,
+            style: InlineRenderStyle,
+            skip: usize,
+        ) -> LayoutJob {
+            let mut job = LayoutJob::default();
+            if skip >= text.len() {
+                return job;
+            }
+            let font = FontId::proportional(14.0);
+            let mut cursor = skip;
+            for (index, matched) in find.matches().iter().enumerate() {
+                let Some(range) = overlap_with_relative_range(span, matched.span()) else {
+                    continue;
+                };
+                if range.end > text.len() || range.end <= skip {
+                    continue;
+                }
+                let start = range.start.max(skip);
+                if cursor < start {
+                    job.append(
+                        &text[cursor..start],
+                        0.0,
+                        base_text_format(font.clone(), style),
+                    );
+                }
+                let mut format = base_text_format(font.clone(), style);
+                format.background = if find.current_index == Some(index) {
+                    theme::ACCENT_PRIMARY.gamma_multiply(0.35)
+                } else {
+                    theme::SURFACE_SELECTION
+                };
+                job.append(&text[start..range.end], 0.0, format);
+                cursor = range.end;
+            }
+            if cursor < text.len() {
+                job.append(&text[cursor..], 0.0, base_text_format(font, style));
+            }
+            job
+        }
+
+        let prefix = "needle ".repeat(17);
+        let target = "  \u{754c} needle e\u{301} needle \u{1f916}\r\nneedle ";
+        let source = format!("{prefix}{target}{}", "needle ".repeat(13));
+        let document = document(&source);
+        let start = prefix.len();
+        let end = start + target.len();
+        let ranges = [
+            start..end,
+            start + 2..end,
+            start + target.find("needle").unwrap() + 2..end,
+            start..end - 3,
+            end..end,
+        ];
+        for query in [
+            "",
+            "absent",
+            "needle",
+            "e\u{301}",
+            "\u{754c}",
+            " ",
+            "\r\nneedle",
+        ] {
+            let mut find = MarkdownFindState::default();
+            find.set_query(&document, query.to_owned());
+            for current in [
+                None,
+                Some(0),
+                Some(17),
+                Some(19),
+                find.matches().len().checked_sub(1),
+            ] {
+                find.current_index = current;
+                for range in &ranges {
+                    let span = document.source_span(range.clone()).unwrap();
+                    let text = &source[range.clone()];
+                    for length in [
+                        text.len(),
+                        text.char_indices()
+                            .next_back()
+                            .map_or(0, |(index, _)| index),
+                    ] {
+                        let text = &text[..length];
+                        for skip in [
+                            0,
+                            text.chars().next().map_or(0, char::len_utf8),
+                            text.len() - text.trim_start_matches(' ').len(),
+                            text.len(),
+                        ] {
+                            for style in [
+                                InlineRenderStyle::body(),
+                                InlineRenderStyle::body().as_inline_code(),
+                                InlineRenderStyle::body().as_link().with_italics(),
+                            ] {
+                                let mut actual = LayoutJob::default();
+                                append_text_segments_from(
+                                    &mut actual,
+                                    text,
+                                    span,
+                                    &find,
+                                    FontId::proportional(14.0),
+                                    style,
+                                    skip,
+                                );
+                                assert_eq!(
+                                    actual,
+                                    full_scan(text, span, &find, style, skip),
+                                    "query={query:?}, current={current:?}, range={range:?}, skip={skip}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
