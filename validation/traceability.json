@@ -2137,6 +2137,7 @@
         "a_table_column_that_fits_is_not_wrapped_one_character_per_line",
         "a_table_too_wide_for_the_reading_column_still_wraps_on_words",
         "a_table_that_fits_keeps_its_natural_column_widths",
+        "table_cells_reuse_fitting_galleys_without_changing_layout",
         "a_table_that_does_not_fit_is_shared_out_across_the_reading_width",
         "a_table_narrower_than_its_floor_falls_back_to_the_floor",
         "the_markdown_pickers_table_spans_the_same_width_as_its_filter_field",

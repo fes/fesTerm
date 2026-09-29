@@ -515,6 +515,11 @@ including long Unicode lines and multiline queries, and compare indexed
 Preview/Source highlighting with a full-scan format oracle. The optional
 interactive-surface probe measures Find-heavy frames and query construction
 separately; it does not replace native `CP-06` qualification.
+Table-cell regressions additionally compare the complete galley against an
+independent constrained layout at fractional widths and 0.75-3 pixels per
+point, allowing only the unused wrap-limit metadata to differ. They require
+measured-galley reuse for fitting cells and preserve wrapping, styles, Unicode,
+Find formatting and intrinsic size without removing any labels.
 
 ## R. Approved text editor and shared document model
 

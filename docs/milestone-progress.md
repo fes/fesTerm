@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reusing measured Markdown table cells
+
+Plain Preview still laid out every table cell twice: once to measure its
+natural column width and again at the assigned width, even when it already
+fit. The renderer now retains the first galley and only lays out squeezed
+cells again. It still measures every cell before assigning columns and builds
+every selectable label; neither layout feedback nor offscreen virtualization
+is introduced.
+
+The reuse decision follows epaint's integer wrap-width normalization. A
+complete galley oracle covers the rounding boundaries, six DPI scales, empty
+and styled Unicode cells, and Find, rather than assuming that matching row
+counts proves equivalent output. Repeated release comparisons measured 11.6%
+lower mixed-Preview construction and a further 5.9% reduction with Find against
+the earlier Find improvement. The isolated table timings overlap and did not
+improve in both orders, so they are not a separate qualified speedup. All final
+scene geometry counts agree, and production galleries differ only in generated
+fixture PID digits. The full ranges, variable controls and limited measurement
+scope are recorded in `validation/terminal-performance/README.md`.
+
 ## Removing repeated work from Markdown Find
 
 The next document pass found two separate sources of Find cost: every rendered

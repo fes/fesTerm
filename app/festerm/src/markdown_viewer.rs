@@ -2,7 +2,10 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        mpsc::{self, Receiver, TryRecvError},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -1849,14 +1852,11 @@ impl MarkdownRenderState<'_> {
         let padding_x = f32::from(TABLE_CELL_PADDING_X);
         let padding_y = f32::from(TABLE_CELL_PADDING_Y);
 
-        // Each cell's text is laid out once, here, and the resulting galley is
-        // what gets painted. `egui::Grid` cannot do this job: it sizes a column
-        // from what the previous frame's cells reported, so a wrapping `Label`
-        // inside it feeds its own wrapped width back in as the column's desired
-        // width. Every frame the column got narrower until the text wrapped one
-        // character per line, which is exactly what a wide two-column reference
-        // table degenerated into.
-        let mut cell_jobs: Vec<Vec<LayoutJob>> = Vec::with_capacity(block.rows().len());
+        // Measure unwrapped cells before assigning column widths; fitting cells
+        // reuse that galley. `egui::Grid` instead feeds last frame's wrapped
+        // widths back into the next layout, which made reference tables shrink
+        // every frame until they wrapped one character per line.
+        let mut cell_galleys = Vec::with_capacity(block.rows().len());
         let mut natural = vec![0.0_f32; column_count];
         for row in block.rows() {
             let mut cells = Vec::with_capacity(column_count);
@@ -1872,15 +1872,14 @@ impl MarkdownRenderState<'_> {
                         text_style
                     },
                 );
-                let mut unwrapped = job.clone();
-                unwrapped.wrap.max_width = f32::INFINITY;
-                let width = ui.painter().layout_job(unwrapped).size().x;
+                let unwrapped = ui.painter().layout_job(job);
+                let width = unwrapped.size().x;
                 if let Some(slot) = natural.get_mut(column) {
                     *slot = slot.max(width + padding_x * 2.0);
                 }
-                cells.push(job);
+                cells.push(unwrapped);
             }
-            cell_jobs.push(cells);
+            cell_galleys.push(cells);
         }
 
         // The frame's 1px inner margin sits between the reading column and the
@@ -1899,21 +1898,23 @@ impl MarkdownRenderState<'_> {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
                         let mut cell_rects: Vec<Vec<egui::Rect>> =
-                            Vec::with_capacity(cell_jobs.len());
-                        for (row, jobs) in block.rows().iter().zip(&cell_jobs) {
+                            Vec::with_capacity(cell_galleys.len());
+                        for (row, cells) in block.rows().iter().zip(cell_galleys) {
                             // A row is only as tall as its tallest wrapped
                             // cell, so every cell has to be laid out before any
                             // of them can be placed.
                             let mut row_height = 0.0_f32;
-                            let mut galleys = Vec::with_capacity(jobs.len());
-                            for (column, job) in jobs.iter().enumerate() {
+                            let mut galleys = Vec::with_capacity(cells.len());
+                            for (column, unwrapped) in cells.into_iter().enumerate() {
                                 let width = widths
                                     .get(column)
                                     .copied()
                                     .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
-                                let mut wrapped = job.clone();
-                                wrapped.wrap.max_width = (width - padding_x * 2.0).max(1.0);
-                                let galley = ui.painter().layout_job(wrapped);
+                                let galley = table_cell_galley(
+                                    ui,
+                                    unwrapped,
+                                    (width - padding_x * 2.0).max(1.0),
+                                );
                                 row_height = row_height.max(galley.size().y + padding_y * 2.0);
                                 galleys.push(galley);
                             }
@@ -2746,6 +2747,17 @@ fn table_column_widths(natural: &[f32], available: f32) -> Vec<f32> {
             TABLE_MIN_COLUMN_WIDTH + (width - TABLE_MIN_COLUMN_WIDTH).max(0.0) / slack * budget
         })
         .collect()
+}
+
+fn table_cell_galley(ui: &egui::Ui, unwrapped: Arc<egui::Galley>, width: f32) -> Arc<egui::Galley> {
+    // Match epaint's integral wrap-width cache key, including at fractional DPI.
+    let width = width.round();
+    if unwrapped.size().x <= width {
+        return unwrapped;
+    }
+    let mut job = (*unwrapped.job).clone();
+    job.wrap.max_width = width;
+    ui.painter().layout_job(job)
 }
 
 fn inline_layout_job(
@@ -4110,6 +4122,78 @@ mod tests {
     fn a_table_that_fits_keeps_its_natural_column_widths() {
         let widths = table_column_widths(&[120.0, 260.0], 600.0);
         assert_eq!(widths, vec![120.0, 260.0]);
+    }
+
+    #[test]
+    fn table_cells_reuse_fitting_galleys_without_changing_layout() {
+        let parsed = document(concat!(
+            "| Left | Right | Empty |\n",
+            "| :--- | ---: | :---: |\n",
+            "| short words | **bold** and *italic* with `e\u{301}\u{754c}` | |\n",
+            "| longer words that must wrap in a narrow cell | ",
+            "~~struck~~ [link](#heading) and \u{1f680} | trailing |\n",
+        ));
+        let Block::Table(table) = &parsed.blocks()[0] else {
+            panic!("expected the table fixture");
+        };
+        for scale in [0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
+            let context = egui::Context::default();
+            context.set_pixels_per_point(scale);
+            let mut output = context.run_ui(Default::default(), |ui| {
+                for query in ["", "e"] {
+                    let mut find = MarkdownFindState::default();
+                    find.set_query(&parsed, query.into());
+                    for style in [InlineRenderStyle::body(), InlineRenderStyle::blockquote()] {
+                        for row in table.rows() {
+                            for cell in row.cells() {
+                                let job = inline_layout_job(
+                                    cell.inlines(),
+                                    &parsed,
+                                    &find,
+                                    FontId::proportional(BODY_TEXT_SIZE - 1.0),
+                                    if row.is_header() {
+                                        style.with_strong()
+                                    } else {
+                                        style
+                                    },
+                                );
+                                let unwrapped = ui.painter().layout_job(job);
+                                for width in [
+                                    1.0,
+                                    40.25,
+                                    40.49,
+                                    40.51,
+                                    (unwrapped.size().x - 0.125).max(1.0),
+                                    unwrapped.size().x.max(1.0),
+                                    unwrapped.size().x + 100.0,
+                                ] {
+                                    let actual = table_cell_galley(ui, unwrapped.clone(), width);
+                                    let mut reference_job = (*unwrapped.job).clone();
+                                    reference_job.wrap.max_width = width;
+                                    let reference = ui.painter().layout_job(reference_job);
+                                    assert_eq!(
+                                        Arc::ptr_eq(&actual, &unwrapped),
+                                        unwrapped.size().x <= reference.job.wrap.max_width,
+                                        "scale={scale}, width={width}"
+                                    );
+                                    let mut normalized = (*actual).clone();
+                                    let mut normalized_job = (*actual.job).clone();
+                                    normalized_job.wrap.max_width = reference.job.wrap.max_width;
+                                    normalized.job = Arc::new(normalized_job);
+                                    assert_eq!(
+                                        &normalized,
+                                        reference.as_ref(),
+                                        "scale={scale}, width={width}, text={:?}",
+                                        unwrapped.job.text
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            output.textures_delta.clear();
+        }
     }
 
     #[test]

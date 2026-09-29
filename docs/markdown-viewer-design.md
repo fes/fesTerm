@@ -103,6 +103,13 @@ The first implementation supports CommonMark plus these bounded GFM features:
 - fenced code blocks with an optional language label and Copy action; and
 - deterministic, bundled syntax highlighting for a documented language set.
 
+Table columns are measured from unwrapped cell content before sharing the
+reading width. A cell whose measured galley fits the final, integer-normalized
+wrap constraint reuses it; only a squeezed cell needs another layout. This is
+frame-local reuse, not a persistent cache or block virtualization: every cell
+remains a selectable label with the same alignment, Find formatting and
+source identity.
+
 Inline and block raw HTML are displayed as inert source or an explicit
 `HTML not rendered` placeholder. They are never interpreted. Footnotes, math,
 Mermaid/diagrams, custom containers, includes, embedded web content, and

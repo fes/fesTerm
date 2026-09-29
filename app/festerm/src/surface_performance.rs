@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use eframe::egui;
+use festerm_markdown::LocalMarkdownSource;
 use festerm_ssh::{
     SftpDirectoryItem, SftpDirectorySnapshot, SftpEntryType, SftpLocation, SftpPath,
 };
@@ -8,7 +9,7 @@ use serde::Serialize;
 
 use crate::{
     documents::DocumentRegistry,
-    markdown_viewer::MarkdownViewerTab,
+    markdown_viewer::{MarkdownPreviewPane, MarkdownViewerTab},
     sftp_file_manager::SftpFileManagerTab,
     tabs::TabId,
     text_editor::{EditorMode, TextEditorTab},
@@ -202,6 +203,32 @@ fn profile_interactive_surfaces() {
     samples.push(measure("markdown-preview-find", matches, |ui| {
         assert!(viewer.show(ui, tab).is_none());
     }));
+
+    for name in [
+        "markdown-preview-headings",
+        "markdown-preview-prose",
+        "markdown-preview-code",
+        "markdown-preview-tables",
+    ] {
+        let text: String = (0..400)
+            .map(|index| match name {
+                "markdown-preview-headings" => format!("## Section {index}\n\n"),
+                "markdown-preview-prose" => {
+                    "A **synthetic** paragraph with `inline code` and ordinary text.\n\n".into()
+                }
+                "markdown-preview-code" => {
+                    format!("```rust\nfn example() {{ let value = {index}; }}\n```\n\n")
+                }
+                "markdown-preview-tables" => {
+                    format!("| Name | Value |\n| --- | --- |\n| Item | {index} |\n\n")
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+        let source = LocalMarkdownSource::new(fixtures.path().join(format!("{name}.md"))).unwrap();
+        let mut pane = MarkdownPreviewPane::new(source.into(), &text);
+        samples.push(measure(name, 400, |ui| pane.show(ui)));
+    }
 
     let long_line = "e\u{301} ".repeat(20_000);
     let long_path = fixtures.path().join("long-line.md");

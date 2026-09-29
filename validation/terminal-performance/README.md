@@ -147,6 +147,79 @@ digits, verified by difference bounds and side-by-side inspection. This is
 UI/model evidence, not GPU completion, native input latency or `CP-06`
 readability/accessibility qualification.
 
+### Plain Preview table-layout follow-up
+
+This separate comparison starts from `b3c4715`, which already contains the
+Find improvement above. Both executables have the same extended twelve-scene
+harness: the existing eight scenes, then 400 headings, prose blocks, code
+blocks or tables rendered through the production `MarkdownPreviewPane`.
+Editor/SFTP controls still run before Markdown, and the long-line query model
+runs last. Do not pool these samples with the preceding eight-scene series.
+
+The table renderer keeps the unwrapped galley used to measure each cell.
+When it fits the final column constraint, it is also the displayed galley;
+only cells requiring wrapping clone the layout job and call the text layout
+cache again. The fit decision uses the same integral wrap-width normalization
+as epaint. Column measurement, alignment, every selectable cell, source
+identity and Find styling remain unchanged. There is no cross-frame cache,
+font/theme invalidation change or document virtualization.
+
+On the same Windows x64, 16-logical-processor EPYC host, both ABBA and BAAB
+orders completed without overlapping builds or probes. The original A and
+candidate B ran in separate, explicitly waited-for processes. These are
+ranges of **four per-build UI-construction medians**, not confidence intervals:
+
+| Scene | Original ms | Candidate ms |
+| --- | ---: | ---: |
+| Editor, 2,000 Rust lines | 0.18-0.34 | 0.32-0.33 |
+| Editor Find, capped at 2,000 matches | 0.52-0.95 | 0.85-0.95 |
+| SFTP, 100 entries per pane | 0.72-0.77 | 0.71-0.74 |
+| SFTP, 5,000 entries per pane | 0.69-0.74 | 0.70-0.75 |
+| Plain Markdown Preview, 400 mixed sections | 14.10-15.65 | 12.48-13.75 |
+| Plain Markdown Source, 4,800 lines | 4.47-5.04 | 4.64-5.63 |
+| Source Find, 4,800 matches | 6.24-6.93 | 6.19-7.31 |
+| Preview Find, 4,800 matches | 15.62-16.00 | 14.51-15.23 |
+| Isolated Preview headings | 0.37-0.51 | 0.37-0.39 |
+| Isolated Preview prose | 1.79-2.73 | 1.77-1.99 |
+| Isolated Preview code | 3.79-4.26 | 3.91-4.47 |
+| Isolated Preview tables | 4.55-4.85 | 3.62-4.85 |
+
+Mixed Preview improved in both orders: means of the per-process medians were
+14.27 to 13.12 ms in ABBA and 14.91 to 12.67 ms in BAAB. Across all processes
+that is 14.59 to 12.89 ms, **11.6% lower**. Preview Find similarly improved in
+both orders, with an overall mean of 15.80 to 14.86 ms, **5.9% lower**. These
+are separate incremental observations, not percentages to add to or combine
+with the preceding Find experiment.
+
+The isolated tables improved in ABBA but were essentially unchanged in BAAB
+(4.7003 versus 4.7008 ms). Their ranges overlap; no repeatable isolated-table
+speedup is claimed. Unchanged editor, Source, headings, prose and code controls
+also varied, sometimes adversely; this experiment does not establish their
+speedup or a cause for that variability. Mixed Preview p95 ranges overlap too:
+17.35-21.10 ms originally and 15.21-20.82 ms with reuse. This is not a
+tail-latency, process-CPU, opening/parsing-time or GPU-presentation result.
+
+All twelve scenes retain their final shape/vertex and fixture-item counts in
+all eight processes. The separate Unicode query still retains all 20,000
+matches over 80,000 bytes. A complete-galley regression checks reuse and
+constrained-layout equivalence at fractional wrap boundaries and six scales
+from 0.75 to 3 pixels per point, including empty cells, Unicode, emphasis,
+inline code, links, strikethrough and Find. Only the unused wrap-limit metadata
+is normalized for that comparison. Separate production galleries match every
+pixel in 43 of 46 scenes; the other three differ only in fixture PID digits,
+verified in focused difference crops.
+
+Original executable SHA256:
+`4D467D3138CB0F7226602DF1FD3B84AC1D5F278F9B24C744A2BB0E4871A7B4F3`;
+candidate:
+`B91CE8822FB30D55D1F1921110C9A613AB5DDBD6A1BE37CEEB3E3392EA79102F`.
+Reconstruct the original by applying only the extended
+`surface_performance.rs` to `b3c4715`. Local evidence is under
+`target/perf-campaign/markdown-preview-table-{abba,baab}-*`, with validated raw
+summaries in `markdown-preview-table-summary.json` and separate
+`markdown-preview-table-gallery-*` captures. Native scrolling, accessibility,
+input latency and the Windows Terminal comparison remain outside this probe.
+
 ## Completed-render replay
 
 On Windows x64 with DX12 WARP:
