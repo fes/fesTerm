@@ -281,6 +281,27 @@ it does not qualify native scroll/input latency, GPU presentation, transfer
 throughput, screen-reader navigation or the FD-05/FD-06 native drag/reveal
 gestures.
 
+The same probe now retains preparation and all eight warmup-frame timings,
+plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
+query compilation during fenced-code loading, rather than steady rendering.
+Per-language query reuse, independently compiled span equivalence, document
+revision/bound isolation and fenced-block isolation extend automated evidence
+for EDIT-16 and MD-04. The recorded Markdown improvement follows Rust editor
+initialization; first-ever language compilation and native open latency remain
+unqualified. A control-first reverse-order attempt stopped on the editor's
+`ParseFailed` guard and is retained, not counted as a successful unhighlighted
+sample. See the probe record for both completed and aborted sequences.
+
+Full in-memory fenced-document loading is measured separately at 200, 2,000
+and 4,000 JSON entries, with every entry required to retain string and number
+highlighting. Forward line projection is checked against the former full scan
+for Unicode, multi-line spans, newline boundaries and real grammar output.
+The larger 8,000-entry stress series remains separate: it stopped on a
+highlighting guard, and a syntax-only diagnostic reproduced `ParseFailed`
+without invoking the Markdown projection. The existing parse budget remains;
+these results neither qualify that stress case nor native document-open
+latency.
+
 ### Terminal-content search
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

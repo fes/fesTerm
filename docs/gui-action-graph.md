@@ -548,6 +548,20 @@ exists.
 | `EDIT-15` | `Conflict → Compare` | Open Compare from the conflict banner, step through the changes, leave, and try it with an offline or deleted source. | The conflict banner stays pinned with all four actions; both panes are read-only and line-oriented with collapsed unchanged runs, leading `-`/`+` markers, a stated change count, and working Previous/Next; comparing writes nothing and clears no dirty state; a sibling view keeps editing meanwhile; leaving restores the view's caret and scroll; an unfetchable source disables Compare with a reason instead of an empty pane. | Leave Compare; the conflict and the buffer are unchanged. | P,H,V,N,U; design-approved |
 | `EDIT-16` | `Editor → SyntaxHighlighting` | Open a source file in a supported language, one in a language with no grammar, and one past the highlighting size bound; then toggle highlighting off. | Colour is presentation only: it never changes the document's bytes, revision, dirty state, or undo depth; the parse is cached per document revision and shared by every view of the file; only the visible range is queried; an unknown language, an exceeded bound, or a grammar failure falls back to plain text and says which, without a dialog; no application or document state is expressed through a syntax colour. | Turn Syntax highlighting off in the options menu. | P,H,V,N,U; design-approved |
 
+For `EDIT-16` and the fenced-code part of `MD-04`, repeated documents and
+blocks reuse only the immutable compiled query for their language. Parser,
+tree, text, revision, spans and query-cursor state remain independent across
+documents/blocks. The closed grammar set bounds process-lifetime query
+retention; first-language compilation and the existing honest size/parse
+fallbacks remain. Constructor reuse, full-span equivalence and independent
+document/block state have deterministic regressions; setup/first-frame
+measurements are opt-in, not a native latency or smoothness qualification.
+The `MD-04` code-line projection also advances through ordered spans rather
+than rescanning the complete fence for every line. Its roles and source bytes
+must equal the full-scan reference across Unicode, multi-line tokens, CRLF,
+empty lines and a final unterminated line; no highlight or parse bound is
+relaxed to obtain a performance result.
+
 ## Coverage map to the GUI design
 
 This index prevents a design section from becoming unreachable merely because
