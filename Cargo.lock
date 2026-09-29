@@ -2260,6 +2260,8 @@ dependencies = [
  "icu_properties",
  "swash",
  "ttf-parser",
+ "unicode-segmentation",
+ "url",
 ]
 
 [[package]]

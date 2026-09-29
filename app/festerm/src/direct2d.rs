@@ -416,6 +416,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     analysis_ms = render_timings.analysis.as_secs_f64() * 1000.0,
                     texture_upload_ms = render_timings.texture_upload.as_secs_f64() * 1000.0,
                     geometry_prepare_ms = render_timings.geometry_prepare.as_secs_f64() * 1000.0,
+                    geometry_prepare_calls = render_timings.geometry_prepare_calls,
                     native_draw_ms = render_timings.native_draw.as_secs_f64() * 1000.0,
                     composite_ms = composite_started
                         .map(|started| started.elapsed().as_secs_f64() * 1000.0)

@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Making context-menu targets readable without rewriting them
+
+A refinement milestone interrupted the performance campaign to fix path and
+URL previews with stretched spaces and awkward wrapping. The cause was
+egui's justified menu layout: ordinary labels inherit justification even when
+their input layout job does not request it. Prelaid-out, single-line galleys
+preserve natural spacing, while measured middle elision retains useful
+host/root and filename context inside a bounded menu. Full targets remain
+available on hover and to accessibility; controls are escaped only for display,
+and Open/Go/Copy keep their original values.
+
+A wide-character boundary regression exposed a second source of false spaces:
+path detection read the entire padded grid row rather than the terminal core's
+occupied extent. Reusing that authoritative extent removes synthetic wrap
+gaps while preserving printed spaces and also restores detection in short
+retained-history rows. Automated coverage distinguishes these cases across
+live/history/alternate buffers, Unicode graphemes and DPI scales. Native
+cross-platform menu placement, screen-reader delivery and human readability
+remain explicit TI-10/TI-14 evidence, not claims derived from headless layout.
+
 ## Reusing measured Markdown table cells
 
 Plain Preview still laid out every table cell twice: once to measure its
@@ -86,6 +106,52 @@ The native package lifecycle and foreground behavior remain explicitly tracked
 in CP-19 rather than inferred from a metadata file or a unit test. AppImages
 require desktop integration; mobile and Store-specific document permissions
 remain outside this direct-distribution desktop slice.
+
+## Narrowing native damage without changing glyph pixels
+
+The performance campaign returned to the default WARP renderer after measuring
+editor, Markdown and directory-browser work. A localized update still repainted
+whole horizontal strips. Comparing triangle prefixes and suffixes now bounds
+the changed old and new geometry, while native quad draws outside the resulting
+clip are skipped only after complete validation.
+
+Smaller rectangles alone were not correct: moving a resampled mask's raster
+origin or splitting it across strip clips changed low-order pixels. The final
+path replays original glyphs in their original coordinate system, copies only
+the damaged result, and bounds temporary padded raster storage by one full
+surface's pixel area. Exact native/full-frame coverage includes fractional DPI,
+erasure, translucent and feathered overlap, clipping, texture replacement,
+resize and older immutable images.
+
+Review then exposed a different cost that the pixel-area budget did not bound:
+each separated patch cloned and prepared the complete terminal mesh again.
+A deterministic four-patch reproduction counted five native preparations.
+The renderer now prepares once and reuses the original native draw groups
+through separate clips, without moving their raster origin or adding clearing
+geometry. Regressions for 4, 8 and 31 separated changes require one preparation,
+small retained updates, exact full-render pixels and unchanged older images.
+Production timing diagnostics also reduced localized preparations from two to
+one and median preparation time from 2.256 to 1.116ms. However, fresh matched
+native runs did not establish additional whole-application CPU savings:
+localized and streaming sample means increased, while full redraw decreased
+and unchanged composition controls varied. Those adverse results are recorded
+alongside the preparation improvement rather than hidden by it. Per-patch
+draw/submission work and final composition remain.
+
+The initial guarded native original/candidate/candidate/original sequence
+completed all four workloads. Localized mean CPU fell from 9.206% to 6.250%,
+**32.1% lower**, with the same producer bytes and cadence. Streaming and full redraw remain
+variable, without a claimed improvement. Completed-work profiles independently
+reduced localized whole-frame CPU by 30.7% and UI/native work without final
+composition by 67.9%; those are not physical input or presentation latency.
+
+The remaining gap is still substantial: the final matched localized pair was
+5.227% versus Windows Terminal's 0.165%. Full-window composition remains, the
+host-copy prototype stays default-off, and native workload cleanup still needed
+forced termination. The full ranges, rejected pixel experiments, memory
+snapshots, hashes and qualification boundaries are recorded in
+`validation/terminal-performance/README.md`; CP-18 and the remaining renderer
+investigation are not closed.
 
 ## Crossing the final-target boundary without replacing egui
 
