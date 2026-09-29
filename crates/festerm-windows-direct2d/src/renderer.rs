@@ -58,7 +58,13 @@ unsafe extern "C" {
         meshes: *const MeshInput,
         count: usize,
     ) -> i32;
-    fn festerm_d2d_draw(bridge: *mut c_void, output: *mut *mut c_void) -> i32;
+    fn festerm_d2d_draw(
+        bridge: *mut c_void,
+        width: u32,
+        height: u32,
+        clip: *const f32,
+        output: *mut *mut c_void,
+    ) -> i32;
 }
 
 /// An explicit native failure or unsupported frame; callers must retain ordinary painting.
@@ -121,6 +127,7 @@ pub struct RenderTimings {
     pub analysis: Duration,
     pub texture_upload: Duration,
     pub geometry_prepare: Duration,
+    pub geometry_prepare_calls: usize,
     pub native_draw: Duration,
     pub mesh_count: usize,
     pub vertex_count: usize,
@@ -247,18 +254,15 @@ impl Renderer {
             background,
             primitives,
             textures,
-            true,
-            None,
             timings.as_deref_mut(),
         )?
         else {
             return Ok(None);
         };
-        self.draw_prepared(bounds, pixels_per_point, timings)
+        self.draw_prepared(bounds, pixels_per_point, None, timings)
             .map(Some)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepare(
         &mut self,
         rect: Rect,
@@ -266,8 +270,6 @@ impl Renderer {
         background: Color32,
         primitives: &[ClippedPrimitive],
         textures: &[(TextureId, Arc<ColorImage>)],
-        retire_textures: bool,
-        raster_bounds: Option<Rect>,
         timings: Option<&mut RenderTimings>,
     ) -> Result<Option<Rect>, Error> {
         let mut timings = timings;
@@ -292,19 +294,9 @@ impl Renderer {
             );
             timings.texture_count = self.used_texture_ids.len();
         }
-        let Some(mut bounds) = analysis.bounds else {
+        let Some(bounds) = analysis.bounds else {
             return Ok(None);
         };
-        if let Some(raster_bounds) = raster_bounds {
-            if !raster_bounds.is_finite()
-                || raster_bounds.min.x < 0.0
-                || raster_bounds.min.y < 0.0
-                || !raster_bounds.contains_rect(bounds)
-            {
-                return Err(Error::unsupported("invalid damage raster bounds"));
-            }
-            bounds = raster_bounds;
-        }
         let width = bounds.width() as u32;
         let height = bounds.height() as u32;
         if let Some(timings) = timings.as_deref_mut() {
@@ -364,19 +356,17 @@ impl Renderer {
             uploaded_texture_count = uploaded_texture_count.saturating_add(1);
             self.textures.insert(id, image.clone());
         }
-        if retire_textures {
-            // Region draws share the already validated full frame's textures.
-            let code = unsafe {
-                festerm_d2d_prune(
-                    self.native.as_ptr(),
-                    self.used_texture_ids.as_ptr(),
-                    self.used_texture_ids.len(),
-                )
-            };
-            self.checked("texture retirement", code)?;
-            let used = &self.used_texture_ids;
-            self.textures.retain(|id, _| used.binary_search(id).is_ok());
-        }
+        // Prepared geometry and region draws share the validated frame's textures.
+        let code = unsafe {
+            festerm_d2d_prune(
+                self.native.as_ptr(),
+                self.used_texture_ids.as_ptr(),
+                self.used_texture_ids.len(),
+            )
+        };
+        self.checked("texture retirement", code)?;
+        let used = &self.used_texture_ids;
+        self.textures.retain(|id, _| used.binary_search(id).is_ok());
         if let (Some(timings), Some(started)) = (timings.as_deref_mut(), texture_upload_started) {
             timings.texture_upload = started.elapsed();
             timings.uploaded_texture_count = uploaded_texture_count;
@@ -426,6 +416,9 @@ impl Renderer {
         }
         // Inner Vec allocations and borrowed index slices stay alive through
         // preparation. The bridge copies/converts all geometry before returning.
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.geometry_prepare_calls += 1;
+        }
         let code = unsafe {
             festerm_d2d_prepare(
                 self.native.as_ptr(),
@@ -451,11 +444,25 @@ impl Renderer {
         &mut self,
         bounds: Rect,
         pixels_per_point: f32,
+        clip: Option<Rect>,
         timings: Option<&mut RenderTimings>,
     ) -> Result<Surface, Error> {
+        let clip = clip.unwrap_or(bounds);
+        if !clip.is_finite() || !clip.is_positive() || !bounds.contains_rect(clip) {
+            return Err(Error::unsupported("invalid prepared-frame draw clip"));
+        }
+        // Reuse the complete prepared frame at its original raster origin.
+        // Only the draw clip and padded target extent change between patches.
+        let bounds = Rect::from_min_max(bounds.min, clip.max);
         let origin = [bounds.min.x as u32, bounds.min.y as u32];
         let width = bounds.width() as u32;
         let height = bounds.height() as u32;
+        let clip = [
+            clip.min.x - bounds.min.x,
+            clip.min.y - bounds.min.y,
+            clip.max.x - bounds.min.x,
+            clip.max.y - bounds.min.y,
+        ];
         let descriptor = wgpu::TextureDescriptor {
             label: Some("festerm immutable Direct2D frame"),
             size: wgpu::Extent3d {
@@ -476,7 +483,15 @@ impl Renderer {
         // The SDK owns a fresh committed resource, clears/draws its full extent,
         // releases it to ALL_SHADER_RESOURCE, and flushes on this graphics queue.
         let native_draw_started = timings.as_ref().map(|_| Instant::now());
-        let code = unsafe { festerm_d2d_draw(self.native.as_ptr(), &mut pointer) };
+        let code = unsafe {
+            festerm_d2d_draw(
+                self.native.as_ptr(),
+                width,
+                height,
+                clip.as_ptr(),
+                &mut pointer,
+            )
+        };
         self.checked("native drawing", code)?;
         if let (Some(timings), Some(started)) = (timings, native_draw_started) {
             timings.native_draw = started.elapsed();
@@ -591,8 +606,6 @@ impl CachedRenderer {
             background,
             primitives,
             textures,
-            true,
-            None,
             timings.as_deref_mut(),
         )?
         else {
@@ -609,7 +622,7 @@ impl CachedRenderer {
             self.previous = None;
             return self
                 .renderer
-                .draw_prepared(bounds, pixels_per_point, timings)
+                .draw_prepared(bounds, pixels_per_point, None, timings)
                 .map(|surface| {
                     Some(CachedSurface {
                         updated_pixels: u64::from(surface.texture.width())
@@ -656,35 +669,31 @@ impl CachedRenderer {
         let patches: Vec<_> = changed
             .chunk_by(|left, right| right.0 == left.0 + 1)
             .map(|adjacent| {
-                adjacent
+                let damage = adjacent
                     .iter()
-                    .fold(Rect::NOTHING, |rect, (_, damage)| rect.union(*damage))
+                    .fold(Rect::NOTHING, |rect, (_, damage)| rect.union(*damage));
+                pixel_rect(damage, pixels_per_point).intersect(bounds)
             })
             .collect();
-        let patch_fits = primitives.len() < MAX_PRIMITIVES
-            && self.renderer.mesh_vertices.len() <= MAX_FRAME_VERTICES - 4
-            && self
-                .renderer
-                .mesh_inputs
-                .iter()
-                .map(|mesh| mesh.index_count)
-                .sum::<usize>()
-                <= MAX_FRAME_INDICES - 6
-            && patches
-                .iter()
-                .map(|rect| {
-                    let size = pixel_rect(*rect, pixels_per_point).max - bounds.min;
-                    size.x as u64 * size.y as u64
-                })
-                .sum::<u64>()
-                <= total_pixels;
+        let patch_fits = patches
+            .iter()
+            .map(|rect| {
+                let size = rect.max - bounds.min;
+                size.x as u64 * size.y as u64
+            })
+            .sum::<u64>()
+            <= total_pixels;
         // A full redraw is cheaper than copying a frame and replacing most of it.
         let (surface, updated_regions, updated_pixels) = match compatible
             .filter(|_| changed.len() * 2 < regions.len() && patch_fits)
         {
             None => (
-                self.renderer
-                    .draw_prepared(bounds, pixels_per_point, timings.as_deref_mut())?,
+                self.renderer.draw_prepared(
+                    bounds,
+                    pixels_per_point,
+                    None,
+                    timings.as_deref_mut(),
+                )?,
                 regions.len(),
                 total_pixels,
             ),
@@ -715,50 +724,17 @@ impl CachedRenderer {
                     texture.size(),
                 );
                 let mut updated_pixels = 0;
-                for rect in patches {
-                    let mut mesh = egui::Mesh::default();
-                    // Clearing the entire damaged region also erases removed glyphs.
-                    mesh.add_colored_rect(rect, background);
-                    let mut patch = Vec::with_capacity(primitives.len() + 1);
-                    patch.push(ClippedPrimitive {
-                        clip_rect: rect,
-                        primitive: Primitive::Mesh(mesh),
-                    });
-                    // Preserve original glyphs instead of splitting resampled
-                    // masks at internal strip boundaries.
-                    patch.extend_from_slice(primitives);
+                for damage in patches {
                     let mut region_timings = timings.as_ref().map(|_| RenderTimings::default());
-                    // Keep the full frame's raster origin so mask interpolation
-                    // does not change when the damaged rectangle moves.
-                    let patch_bounds = self
-                        .renderer
-                        .prepare(
-                            rect,
-                            pixels_per_point,
-                            background,
-                            &patch,
-                            textures,
-                            false,
-                            Some(Rect::from_min_max(
-                                bounds.min,
-                                pixel_rect(rect, pixels_per_point).max,
-                            )),
-                            region_timings.as_mut(),
-                        )?
-                        .expect("opaque damage-region background");
                     let surface = self.renderer.draw_prepared(
-                        patch_bounds,
+                        bounds,
                         pixels_per_point,
+                        Some(damage),
                         region_timings.as_mut(),
                     )?;
                     if let (Some(total), Some(region)) = (timings.as_deref_mut(), region_timings) {
-                        total.analysis += region.analysis;
-                        total.texture_upload += region.texture_upload;
-                        total.geometry_prepare += region.geometry_prepare;
                         total.native_draw += region.native_draw;
-                        total.uploaded_texture_count += region.uploaded_texture_count;
                     }
-                    let damage = pixel_rect(rect, pixels_per_point);
                     let extent = wgpu::Extent3d {
                         width: damage.width() as u32,
                         height: damage.height() as u32,
@@ -1492,7 +1468,100 @@ mod tests {
     }
 
     #[test]
-    fn retained_patch_budget_falls_back_to_a_valid_full_frame() {
+    fn scattered_retained_damage_prepares_full_geometry_only_once() {
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let textures = [(
+            TextureId::Managed(0),
+            Arc::new(ColorImage::new(
+                [8, 8],
+                (0..64)
+                    .map(|index| Color32::from_white_alpha((255 - index * 29 % 256) as u8))
+                    .collect(),
+            )),
+        )];
+        for (height, changed_regions, x) in [(1024, 4, 248.0), (4096, 8, 248.0), (4096, 31, 1.0)] {
+            let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(256.0, height as f32));
+            let frame = |changed| {
+                let mut mesh = egui::Mesh::default();
+                mesh.add_colored_rect(canvas, Color32::BLACK);
+                for region in 0..height / REGION_HEIGHT {
+                    mesh.add_rect_with_uv(
+                        Rect::from_min_size(
+                            egui::pos2(x, region as f32 * REGION_HEIGHT as f32 + 8.5),
+                            egui::vec2(8.0, 16.0),
+                        ),
+                        Rect::from_min_max(egui::pos2(0.125, 0.125), egui::pos2(0.875, 0.875)),
+                        if changed && region % 2 == 0 && region / 2 < changed_regions {
+                            Color32::BLUE
+                        } else {
+                            Color32::RED
+                        },
+                    );
+                }
+                vec![ClippedPrimitive {
+                    clip_rect: canvas,
+                    primitive: Primitive::Mesh(mesh),
+                }]
+            };
+            let pixels = |surface: &Surface| {
+                read_pixels(
+                    &state.device,
+                    &state.queue,
+                    &surface.texture,
+                    wgpu::Origin3d::ZERO,
+                    [surface.texture.width(), surface.texture.height()],
+                )
+            };
+            let mut cached =
+                CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
+            let before = cached
+                .render(canvas, 1.0, Color32::BLACK, &frame(false), &textures, None)
+                .unwrap()
+                .unwrap();
+            let original = pixels(&before.surface);
+            let mut timings = RenderTimings::default();
+            let after = cached
+                .render(
+                    canvas,
+                    1.0,
+                    Color32::BLACK,
+                    &frame(true),
+                    &textures,
+                    Some(&mut timings),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(after.updated_regions, changed_regions as usize);
+            assert!(after.updated_pixels > 0 && after.updated_pixels < before.updated_pixels / 16);
+            assert_eq!(
+                timings.geometry_prepare_calls, 1,
+                "height={height}, separated patches={changed_regions}, x={x}"
+            );
+            assert_eq!(
+                timings.vertex_count,
+                (1 + height / REGION_HEIGHT) as usize * 4
+            );
+            assert_eq!(
+                timings.index_count,
+                (1 + height / REGION_HEIGHT) as usize * 6
+            );
+            let mut reference = Renderer::new(state.device.clone(), state.queue.clone()).unwrap();
+            let expected = reference
+                .render(canvas, 1.0, Color32::BLACK, &frame(true), &textures, None)
+                .unwrap()
+                .unwrap();
+            assert!(pixels(&after.surface) == pixels(&expected));
+            assert!(pixels(&before.surface) == original);
+        }
+    }
+
+    #[test]
+    fn retained_geometry_and_raster_budgets_preserve_valid_frames() {
         let mut setup = default_wgpu_setup();
         let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
             unreachable!()
@@ -1527,12 +1596,21 @@ mod tests {
         for vertex in &mut mesh.vertices {
             vertex.color = Color32::BLUE;
         }
+        let mut timings = RenderTimings::default();
         let after = renderer
-            .render(canvas, 1.0, Color32::BLACK, &primitives, &textures, None)
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &primitives,
+                &textures,
+                Some(&mut timings),
+            )
             .unwrap()
             .unwrap();
-        assert_eq!(after.updated_pixels, before.updated_pixels);
-        assert_eq!(after.updated_regions, before.updated_regions);
+        assert!(after.updated_pixels > 0 && after.updated_pixels < before.updated_pixels);
+        assert_eq!(after.updated_regions, 1);
+        assert_eq!(timings.geometry_prepare_calls, 1);
         assert_eq!(
             pixel_at(
                 &state.device,

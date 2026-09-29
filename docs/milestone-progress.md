@@ -66,9 +66,24 @@ surface's pixel area. Exact native/full-frame coverage includes fractional DPI,
 erasure, translucent and feathered overlap, clipping, texture replacement,
 resize and older immutable images.
 
-A guarded native original/candidate/candidate/original sequence completed all
-four workloads. Localized mean CPU fell from 9.206% to 6.250%, **32.1% lower**,
-with the same producer bytes and cadence. Streaming and full redraw remain
+Review then exposed a different cost that the pixel-area budget did not bound:
+each separated patch cloned and prepared the complete terminal mesh again.
+A deterministic four-patch reproduction counted five native preparations.
+The renderer now prepares once and reuses the original native draw groups
+through separate clips, without moving their raster origin or adding clearing
+geometry. Regressions for 4, 8 and 31 separated changes require one preparation,
+small retained updates, exact full-render pixels and unchanged older images.
+Production timing diagnostics also reduced localized preparations from two to
+one and median preparation time from 2.256 to 1.116ms. However, fresh matched
+native runs did not establish additional whole-application CPU savings:
+localized and streaming sample means increased, while full redraw decreased
+and unchanged composition controls varied. Those adverse results are recorded
+alongside the preparation improvement rather than hidden by it. Per-patch
+draw/submission work and final composition remain.
+
+The initial guarded native original/candidate/candidate/original sequence
+completed all four workloads. Localized mean CPU fell from 9.206% to 6.250%,
+**32.1% lower**, with the same producer bytes and cadence. Streaming and full redraw remain
 variable, without a claimed improvement. Completed-work profiles independently
 reduced localized whole-frame CPU by 30.7% and UI/native work without final
 composition by 67.9%; those are not physical input or presentation latency.
