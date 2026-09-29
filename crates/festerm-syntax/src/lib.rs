@@ -12,10 +12,12 @@
 //!   and **says which**, because a silent difference between two files with
 //!   the same extension is a bug report waiting to happen.
 
-use std::ops::Range;
+use std::{ops::Range, sync::OnceLock};
 
 use tree_sitter::StreamingIterator;
-use tree_sitter::{InputEdit, Language as TsLanguage, Parser, Point, Query, QueryCursor, Tree};
+use tree_sitter::{
+    InputEdit, Language as TsLanguage, Parser, Point, Query, QueryCursor, QueryError, Tree,
+};
 
 /// Files above this many bytes open without highlighting.
 ///
@@ -162,6 +164,37 @@ impl Language {
             Self::TypeScript => tree_sitter_typescript::HIGHLIGHTS_QUERY,
         }
     }
+
+    fn compiled_highlights_query(self) -> Result<&'static Query, &'static QueryError> {
+        static RUST: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static C: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static CPP: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static PYTHON: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static TOML: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static JSON: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static YAML: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static BASH: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static MARKDOWN: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static JAVASCRIPT: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+        static TYPESCRIPT: OnceLock<Result<Query, QueryError>> = OnceLock::new();
+
+        let cache = match self {
+            Self::Rust => &RUST,
+            Self::C => &C,
+            Self::Cpp => &CPP,
+            Self::Python => &PYTHON,
+            Self::Toml => &TOML,
+            Self::Json => &JSON,
+            Self::Yaml => &YAML,
+            Self::Bash => &BASH,
+            Self::Markdown => &MARKDOWN,
+            Self::JavaScript => &JAVASCRIPT,
+            Self::TypeScript => &TYPESCRIPT,
+        };
+        cache
+            .get_or_init(|| Query::new(&self.grammar(), self.highlights_query()))
+            .as_ref()
+    }
 }
 
 /// What a span means, independent of the language that produced it.
@@ -267,7 +300,8 @@ impl SyntaxStatus {
 pub struct DocumentSyntax {
     language: Option<Language>,
     parser: Option<Parser>,
-    query: Option<Query>,
+    // Only immutable bundled grammar data is shared, never document text or parser state.
+    query: Option<&'static Query>,
     tree: Option<Tree>,
     /// The text the tree was built from, kept so the next revision can be
     /// described to tree-sitter as an edit rather than as a new file.
@@ -340,7 +374,7 @@ impl DocumentSyntax {
             self.status = SyntaxStatus::ParseFailed;
             return;
         };
-        let Ok(query) = Query::new(&grammar, language.highlights_query()) else {
+        let Ok(query) = language.compiled_highlights_query() else {
             self.status = SyntaxStatus::ParseFailed;
             return;
         };
@@ -441,7 +475,7 @@ impl DocumentSyntax {
     }
 
     fn query_range(&mut self, text: &str, range: &Range<usize>) -> Vec<Span> {
-        let (Some(tree), Some(query)) = (self.tree.as_ref(), self.query.as_ref()) else {
+        let (Some(tree), Some(query)) = (self.tree.as_ref(), self.query) else {
             return Vec::new();
         };
         let mut cursor = QueryCursor::new();
@@ -716,5 +750,146 @@ mod tests {
                 language.label()
             );
         }
+    }
+
+    #[test]
+    fn prepared_queries_are_reused_per_language_across_documents_and_threads() {
+        let mut previous_queries: Vec<&Query> = Vec::new();
+        for language in [
+            Language::Rust,
+            Language::C,
+            Language::Cpp,
+            Language::Python,
+            Language::Toml,
+            Language::Json,
+            Language::Yaml,
+            Language::Bash,
+            Language::Markdown,
+            Language::JavaScript,
+            Language::TypeScript,
+        ] {
+            let first = DocumentSyntax::for_language(language);
+            let query = first.query.expect("the bundled query compiles");
+            assert!(
+                previous_queries
+                    .iter()
+                    .all(|previous| !std::ptr::eq(*previous, query)),
+                "different languages must not share the same compiled query"
+            );
+            previous_queries.push(query);
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..4)
+                    .map(|_| {
+                        scope.spawn(move || {
+                            DocumentSyntax::for_language(language)
+                                .query
+                                .expect("the bundled query compiles")
+                        })
+                    })
+                    .collect();
+                for handle in handles {
+                    assert!(std::ptr::eq(query, handle.join().unwrap()));
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn shared_queries_match_independently_compiled_highlighting() {
+        for (language, text) in [
+            (
+                Language::Rust,
+                "fn greet() { let text = \"e\u{301}\u{1f680}\"; }\n",
+            ),
+            (Language::C, "int main(void) { return 7; }\n"),
+            (Language::Cpp, "class Value { public: int count = 7; };\n"),
+            (
+                Language::Python,
+                "def greet(name):\n    return f'hello {name}'\n",
+            ),
+            (Language::Toml, "name = \"e\u{301}\u{754c}\"\ncount = 7\n"),
+            (
+                Language::Json,
+                "{\"name\": \"e\u{301}\u{754c}\", \"count\": 7}\n",
+            ),
+            (
+                Language::Yaml,
+                "name: \"e\u{301}\u{754c}\"\nvalues:\n  - 7\n",
+            ),
+            (Language::Bash, "# example\nprintf '%s\\n' 'hello'\n"),
+            (Language::Markdown, "# Heading\n\n**bold** and `code`.\n"),
+            (
+                Language::JavaScript,
+                "function greet(name) { return `hello ${name}`; }\n",
+            ),
+            (
+                Language::TypeScript,
+                "interface Value { count: number }\nconst item: Value = { count: 7 };\n",
+            ),
+        ] {
+            let reference = Query::new(&language.grammar(), language.highlights_query()).unwrap();
+            let mut syntax = DocumentSyntax::for_language(language);
+            for range in [0..text.len(), 1..text.len() / 2] {
+                let range = clamp_to_char_boundaries(text, range);
+                let actual = syntax.spans(text, 0, range.clone()).to_vec();
+                assert!(syntax.status().is_highlighted());
+                let mut cursor = QueryCursor::new();
+                cursor.set_byte_range(range.clone());
+                let mut matches = cursor.matches(
+                    &reference,
+                    syntax.tree.as_ref().unwrap().root_node(),
+                    text.as_bytes(),
+                );
+                let mut expected = Vec::new();
+                while let Some(matched) = matches.next() {
+                    for capture in matched.captures() {
+                        let Some(role) =
+                            Role::from_capture(reference.capture_names()[capture.index as usize])
+                        else {
+                            continue;
+                        };
+                        let bytes = capture.node.byte_range();
+                        let start = bytes.start.max(range.start);
+                        let end = bytes.end.min(range.end);
+                        if start < end {
+                            expected.push(Span { start, end, role });
+                        }
+                    }
+                }
+                expected.sort_by_key(|span| (span.start, span.end));
+                assert_eq!(actual, flatten(expected), "{language:?}: {range:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn shared_queries_keep_document_revisions_and_bounds_independent() {
+        let first_text = "fn first() { let word = \"e\u{301}\"; }\n";
+        let second_text = "fn second() { let value = 23; /* another document */ }\n";
+        let mut first = DocumentSyntax::new("first.rs", first_text);
+        let mut second = DocumentSyntax::new("second.rs", second_text);
+        assert!(std::ptr::eq(first.query.unwrap(), second.query.unwrap()));
+        let first_spans = first.spans(first_text, 7, 0..first_text.len()).to_vec();
+        let second_spans = second.spans(second_text, 7, 0..second_text.len()).to_vec();
+        assert!(!first_spans.is_empty());
+        assert!(!second_spans.is_empty());
+        let edited = format!("{first_text}fn added() {{ let next = 8; }}\n");
+        assert!(!first.spans(&edited, 8, 0..edited.len()).is_empty());
+        assert!(first.is_current(8));
+        assert!(second.is_current(7));
+        assert_eq!(second.parsed_text, second_text);
+        assert_eq!(
+            second.spans(second_text, 7, 0..second_text.len()),
+            second_spans
+        );
+
+        let oversized = "// filler\n".repeat(MAX_HIGHLIGHT_LINES + 1);
+        assert!(first.spans(&oversized, 9, 0..100).is_empty());
+        assert_eq!(first.status(), SyntaxStatus::TooLarge);
+        assert_eq!(second.status(), SyntaxStatus::Highlighted(Language::Rust));
+        assert_eq!(
+            second.spans(second_text, 7, 0..second_text.len()),
+            second_spans
+        );
     }
 }

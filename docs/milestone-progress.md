@@ -3,6 +3,43 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing repeated query compilation from document loading
+
+Steady-state measurements hid a much larger Markdown stall: the first Preview
+frame for 400 Rust fences spent roughly ten seconds compiling the same bundled
+highlight query once per block. The legacy viewer paid the same cost while
+constructing its document. Recording preparation and warmup frames, rather
+than discarding them, exposed the shared cause.
+
+The syntax engine now lazily retains one immutable compiled query or compile
+error per supported language. Parsers, trees, source text, revisions, spans
+and cursors remain independent, with the same bounds and visible fallback.
+The tradeoff is bounded process-lifetime retention of the used languages'
+queries; first-language compilation still costs work.
+
+A matched control-first release ABBA comparison reduced first Preview
+construction from about 9.61 seconds to 75.9ms, and viewer preparation from
+9.56 seconds to 15.1ms, after the Rust editor had initialized the language.
+An earlier, separately recorded ABBA/BAAB series agreed on the setup win.
+The final reverse-order attempt stopped on an editor `ParseFailed` guard;
+controls also varied, including adverse editor/Source timings. Neither is
+hidden or used to claim a steady-state improvement. Span/state regressions
+and production-widget pixel comparisons preserve correctness evidence.
+These are synthetic setup measurements, not native open latency or Windows
+Terminal parity; the exact scope and artifacts are recorded in
+`validation/terminal-performance/README.md`.
+
+With query setup removed, a second loading cost became visible: the fenced-code
+model checked every span against every line. Advancing through the ordered
+spans preserves identical roles and source while removing that repeated work.
+Matched release ABBA and BAAB processes reduced full in-memory loading of a
+4,000-entry JSON fence from 46.39ms to 23.78ms on average (48.7%); 2,000 entries
+improved by 35.3%. These are additional savings over query sharing, not numbers
+pooled with the earlier setup experiment. The 8,000-entry stress case exposed
+the unchanged parse-budget fallback even without Markdown's line projection,
+so it remains unqualified rather than weakening the guard or raising the
+budget. Ordinary UI controls still vary, and no native latency claim follows.
+
 ## Making context-menu targets readable without rewriting them
 
 A refinement milestone interrupted the performance campaign to fix path and

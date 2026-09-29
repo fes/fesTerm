@@ -103,6 +103,13 @@ The first implementation supports CommonMark plus these bounded GFM features:
 - fenced code blocks with an optional language label and Copy action; and
 - deterministic, bundled syntax highlighting for a documented language set.
 
+Fenced highlighting uses the shared syntax engine, with process-wide
+immutable compiled queries but independent document/parser state (ADR 0035).
+The Markdown model walks ordered spans forward when building code lines,
+preserving newline-spanning roles, plain gaps and exact source bytes instead
+of scanning all spans again for every line. Parsing and the existing code-size
+and syntax-budget bounds remain unchanged.
+
 Table columns are measured from unwrapped cell content before sharing the
 reading width. A cell whose measured galley fits the final, integer-normalized
 wrap constraint reuses it; only a squeezed cell needs another layout. This is

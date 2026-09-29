@@ -1,10 +1,11 @@
 use std::{path::PathBuf, time::Instant};
 
 use eframe::egui;
-use festerm_markdown::LocalMarkdownSource;
+use festerm_markdown::{Block, LocalMarkdownSource, MarkdownCancellation, MarkdownLoader};
 use festerm_ssh::{
     SftpDirectoryItem, SftpDirectorySnapshot, SftpEntryType, SftpLocation, SftpPath,
 };
+use festerm_syntax::{DocumentSyntax, Language, Role};
 use serde::Serialize;
 
 use crate::{
@@ -22,6 +23,9 @@ const MEASURED_FRAMES: usize = 40;
 struct Sample {
     name: &'static str,
     items: usize,
+    preparation_ms: Option<f64>,
+    warmup_ui_ms: Vec<f64>,
+    warmup_tessellation_ms: Vec<f64>,
     ui_median_ms: f64,
     ui_p95_ms: f64,
     tessellation_median_ms: f64,
@@ -35,12 +39,26 @@ fn percentile(samples: &mut [f64], percent: usize) -> f64 {
     samples[(samples.len() - 1) * percent / 100]
 }
 
+fn measure_prepared(
+    name: &'static str,
+    items: usize,
+    preparation_started: Instant,
+    show: impl FnMut(&mut egui::Ui),
+) -> Sample {
+    let preparation_ms = preparation_started.elapsed().as_secs_f64() * 1000.0;
+    let mut sample = measure(name, items, show);
+    sample.preparation_ms = Some(preparation_ms);
+    sample
+}
+
 fn measure(name: &'static str, items: usize, mut show: impl FnMut(&mut egui::Ui)) -> Sample {
     let context = egui::Context::default();
     context.set_theme(egui::ThemePreference::Dark);
     context.set_visuals(festerm_ui_egui::theme::default_visuals());
     let mut ui_times = Vec::with_capacity(MEASURED_FRAMES);
     let mut tessellation_times = Vec::with_capacity(MEASURED_FRAMES);
+    let mut warmup_ui_ms = Vec::with_capacity(WARMUP_FRAMES);
+    let mut warmup_tessellation_ms = Vec::with_capacity(WARMUP_FRAMES);
     let mut shapes = 0;
     let mut vertices = 0;
     for frame in 0..WARMUP_FRAMES + MEASURED_FRAMES {
@@ -71,11 +89,17 @@ fn measure(name: &'static str, items: usize, mut show: impl FnMut(&mut egui::Ui)
         if frame >= WARMUP_FRAMES {
             ui_times.push(ui_ms);
             tessellation_times.push(tessellation_ms);
+        } else {
+            warmup_ui_ms.push(ui_ms);
+            warmup_tessellation_ms.push(tessellation_ms);
         }
     }
     Sample {
         name,
         items,
+        preparation_ms: None,
+        warmup_ui_ms,
+        warmup_tessellation_ms,
         ui_median_ms: percentile(&mut ui_times, 50),
         ui_p95_ms: percentile(&mut ui_times, 95),
         tessellation_median_ms: percentile(&mut tessellation_times, 50),
@@ -106,6 +130,75 @@ fn directory(location: SftpLocation, path: SftpPath, count: usize) -> SftpDirect
     }
 }
 
+fn measure_fenced_loading(path: PathBuf, entries: usize) -> serde_json::Value {
+    let rows: String = (0..entries)
+        .map(|index| {
+            let comma = if index + 1 < entries { "," } else { "" };
+            format!("  \"entry_{index}\": {index}{comma}\n")
+        })
+        .collect();
+    let code = format!("{{\n{rows}}}\n");
+    assert!(code.len() < festerm_markdown::MAX_CODE_BLOCK_BYTES);
+    let text = format!("```json\n{code}```\n");
+    let source = LocalMarkdownSource::new(path).unwrap();
+    let cancellation = MarkdownCancellation::new();
+    let loader = MarkdownLoader::default();
+    let mut times = Vec::with_capacity(MEASURED_FRAMES);
+    let mut warmup_ms = Vec::with_capacity(WARMUP_FRAMES);
+    let mut expected_pieces = None;
+    for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+        let started = Instant::now();
+        let document = loader
+            .load(
+                source.clone().into(),
+                text.len(),
+                text.as_bytes(),
+                &cancellation,
+            )
+            .unwrap();
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(document.source_text(), text);
+        let [Block::CodeBlock(block)] = document.blocks() else {
+            panic!("the loading fixture must remain one fenced block");
+        };
+        assert_eq!(block.code_text(), code);
+        let lines = block.highlighted_lines();
+        assert_eq!(lines.len(), entries + 2);
+        for (line_number, line) in lines[1..=entries].iter().enumerate() {
+            assert!(
+                line.spans()
+                    .iter()
+                    .any(|span| span.role() == Some(Role::StringLiteral))
+                    && line
+                        .spans()
+                        .iter()
+                        .any(|span| span.role() == Some(Role::Number)),
+                "JSON fence ({entries} entries), iteration {iteration}, entry {line_number}: \
+                 every entry must remain highlighted, not silently use a fallback"
+            );
+        }
+        let pieces: usize = lines.iter().map(|line| line.spans().len()).sum();
+        assert_eq!(*expected_pieces.get_or_insert(pieces), pieces);
+        std::hint::black_box(document);
+        if iteration >= WARMUP_FRAMES {
+            times.push(elapsed);
+        } else {
+            warmup_ms.push(elapsed);
+        }
+    }
+    serde_json::json!({
+        "name": format!("json-fence-{entries}-entries"),
+        "source_bytes": text.len(),
+        "code_lines": entries + 2,
+        "highlighted_pieces": expected_pieces.unwrap(),
+        "warmup_load_ms": warmup_ms,
+        "measured_loads": MEASURED_FRAMES,
+        "load_median_ms": percentile(&mut times, 50),
+        "load_p95_ms": percentile(&mut times, 95),
+        "scope": "full MarkdownLoader projection from synthetic in-memory bytes; no disk, UI or native window"
+    })
+}
+
 #[test]
 #[ignore = "optional release UI construction/tessellation probe; not GPU or native latency"]
 fn profile_interactive_surfaces() {
@@ -133,15 +226,32 @@ fn profile_interactive_surfaces() {
     let source_path = fixtures.path().join("fixture.rs");
     std::fs::write(&source_path, &source).unwrap();
     let documents = DocumentRegistry::shared();
+    let preparation_started = Instant::now();
     let document = documents.borrow_mut().open_local(&source_path).unwrap();
     let mut editor = TextEditorTab::new(document, &documents);
-    samples.push(measure("editor-syntax-2000-lines", 2000, |ui| {
-        assert!(editor.show(ui, tab, &documents).is_none());
-    }));
+    samples.push(measure_prepared(
+        "editor-syntax-2000-lines",
+        2000,
+        preparation_started,
+        |ui| {
+            assert!(editor.show(ui, tab, &documents).is_none());
+        },
+    ));
+    let syntax_status = documents.borrow().get(document).unwrap().syntax_status();
+    assert!(
+        syntax_status.is_highlighted(),
+        "the syntax fixture must not silently measure a fallback: {syntax_status:?}"
+    );
+    let preparation_started = Instant::now();
     editor.open_find_for_gallery("value", None);
-    samples.push(measure("editor-find-2000-capped-matches", 2000, |ui| {
-        assert!(editor.show(ui, tab, &documents).is_none());
-    }));
+    samples.push(measure_prepared(
+        "editor-find-2000-capped-matches",
+        2000,
+        preparation_started,
+        |ui| {
+            assert!(editor.show(ui, tab, &documents).is_none());
+        },
+    ));
     assert_eq!(editor.find_match_count_for_test(), 2000);
 
     // Keep controls before Markdown query work: its CPU duration must not
@@ -151,6 +261,7 @@ fn profile_interactive_surfaces() {
         ("sftp-5000-rows-per-pane", 5000),
     ] {
         let context = egui::Context::default();
+        let preparation_started = Instant::now();
         let mut browser = SftpFileManagerTab::for_gallery(
             "Performance fixture".into(),
             "test".into(),
@@ -163,9 +274,14 @@ fn profile_interactive_surfaces() {
             Default::default(),
             &context,
         );
-        samples.push(measure(name, count * 2, |ui| {
-            assert!(browser.show(ui, tab).is_none());
-        }));
+        samples.push(measure_prepared(
+            name,
+            count * 2,
+            preparation_started,
+            |ui| {
+                assert!(browser.show(ui, tab).is_none());
+            },
+        ));
     }
 
     let markdown: String = (0..400)
@@ -179,21 +295,30 @@ fn profile_interactive_surfaces() {
         .collect();
     let markdown_path = fixtures.path().join("fixture.md");
     std::fs::write(&markdown_path, &markdown).unwrap();
+    let preparation_started = Instant::now();
     let document = documents.borrow_mut().open_local(&markdown_path).unwrap();
     let mut preview = TextEditorTab::new(document, &documents);
     preview.set_mode_for_gallery(EditorMode::Preview);
-    samples.push(measure("markdown-preview-400-sections", 400, |ui| {
-        assert!(preview.show(ui, tab, &documents).is_none());
-    }));
+    samples.push(measure_prepared(
+        "markdown-preview-400-sections",
+        400,
+        preparation_started,
+        |ui| {
+            assert!(preview.show(ui, tab, &documents).is_none());
+        },
+    ));
+    let preparation_started = Instant::now();
     let mut viewer = MarkdownViewerTab::open_local(markdown_path);
     viewer.toggle_mode();
-    samples.push(measure(
+    samples.push(measure_prepared(
         "markdown-source-400-sections",
         markdown.lines().count(),
+        preparation_started,
         |ui| {
             assert!(viewer.show(ui, tab).is_none());
         },
     ));
+
     let matches = viewer.set_find_query_for_test("e");
     assert_eq!(matches, markdown.match_indices("e").count());
     samples.push(measure("markdown-source-find", matches, |ui| {
@@ -230,6 +355,29 @@ fn profile_interactive_surfaces() {
         samples.push(measure(name, 400, |ui| pane.show(ui)));
     }
 
+    let fenced_loading: Vec<_> = [200, 2000, 4000]
+        .map(|entries| measure_fenced_loading(fixtures.path().join("fence.md"), entries))
+        .into();
+
+    let mut syntax_times = Vec::with_capacity(MEASURED_FRAMES);
+    for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+        let started = Instant::now();
+        let syntax = DocumentSyntax::for_language(Language::Rust);
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        assert!(syntax.status().is_highlighted());
+        std::hint::black_box(syntax);
+        if iteration >= WARMUP_FRAMES {
+            syntax_times.push(elapsed);
+        }
+    }
+    let syntax_preparation = serde_json::json!({
+        "name": "rust-syntax-construction",
+        "instances": MEASURED_FRAMES,
+        "median_ms": percentile(&mut syntax_times, 50),
+        "p95_ms": percentile(&mut syntax_times, 95),
+        "scope": "fresh DocumentSyntax instances after widget scenes; parser/query setup, no source parsing"
+    });
+
     let long_line = "e\u{301} ".repeat(20_000);
     let long_path = fixtures.path().join("long-line.md");
     std::fs::write(&long_path, &long_line).unwrap();
@@ -262,7 +410,10 @@ fn profile_interactive_surfaces() {
         "warmup_frames": WARMUP_FRAMES,
         "measured_frames": MEASURED_FRAMES,
         "scope": "forced steady-state UI construction and tessellation; no GPU draw or presentation",
+        "preparation_scope": "fixture reads and widget construction after writing synthetic input; warmup frames recorded separately; no native window",
         "samples": samples,
+        "fenced_loading": fenced_loading,
+        "syntax_preparation": syntax_preparation,
         "find_model": find_model,
     });
     let json = serde_json::to_string_pretty(&report).unwrap();

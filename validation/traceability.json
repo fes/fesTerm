@@ -2090,7 +2090,8 @@
         "docs/markdown-viewer-design.md"
       ],
       "decisions": [
-        "ADR-0030"
+        "ADR-0030",
+        "ADR-0035"
       ],
       "automated_tests": [
         "external_documents_open_in_last_active_window_and_reuse_dirty_views",
@@ -2124,6 +2125,9 @@
         "source_syntax_handles_multibyte_text_at_the_former_cache_key_boundary",
         "source_syntax_cache_follows_successful_reload_not_matching_text_ends",
         "indexed_source_roles_match_full_scan_for_clipped_and_empty_ranges",
+        "fenced_highlighting_keeps_block_and_reload_state_separate",
+        "fenced_line_sweep_matches_full_scan_for_unicode_and_multiline_spans",
+        "fenced_highlighting_sweep_matches_full_scan_of_real_grammar_spans",
         "resource_approval_is_per_reference_and_clears",
         "markdown_source_errors_build_content_free_error_states",
         "markdown_load_errors_build_content_free_error_states",
@@ -2198,6 +2202,9 @@
         "an_edit_reparses_from_the_change_and_keeps_colouring",
         "an_edit_is_described_as_the_change_it_was",
         "every_grammar_in_the_set_loads_and_its_query_compiles",
+        "prepared_queries_are_reused_per_language_across_documents_and_threads",
+        "shared_queries_match_independently_compiled_highlighting",
+        "shared_queries_keep_document_revisions_and_bounds_independent",
         "highlighting_is_read_only_over_the_document_it_describes",
         "two_views_of_one_file_share_the_one_parse",
         "a_file_without_a_grammar_is_simply_not_coloured",
@@ -2208,6 +2215,7 @@
         "with_highlighting_off_every_run_is_ordinary_text",
         "a_fenced_block_is_highlighted_by_role_not_by_colour",
         "a_fence_naming_a_language_festerm_has_no_grammar_for_is_not_an_error",
+        "profile_interactive_surfaces",
         "syntax_highlighting_is_on_unless_the_file_says_otherwise",
         "editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width",
         "every_syntax_role_is_readable_on_the_editor_background"

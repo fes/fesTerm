@@ -17,7 +17,7 @@ use std::{
     },
 };
 
-use festerm_syntax::{DocumentSyntax, Language, Role};
+use festerm_syntax::{DocumentSyntax, Language, Role, Span};
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// Maximum Markdown source size accepted for one snapshot.
@@ -2454,16 +2454,27 @@ fn highlight_code(language: Option<&str>, code_text: &str) -> Vec<HighlightedCod
             syntax.spans(code_text, 0, 0..code_text.len()).to_vec()
         })
         .unwrap_or_default();
+    highlighted_code_lines(code_text, &spans)
+}
 
+fn highlighted_code_lines(code_text: &str, spans: &[Span]) -> Vec<HighlightedCodeLine> {
     let mut lines = Vec::new();
     let mut line_start = 0;
+    let mut first_span = 0;
     for line in code_text.split_inclusive('\n') {
         let line_end = line_start + line.len();
         let mut pieces: Vec<HighlightedSpan> = Vec::new();
         let mut cursor = line_start;
-        for span in spans
+        while spans
+            .get(first_span)
+            .is_some_and(|span| span.end <= line_start)
+        {
+            first_span += 1;
+        }
+        for span in spans[first_span..]
             .iter()
-            .filter(|span| span.start < line_end && span.end > line_start)
+            .take_while(|span| span.start < line_end)
+            .filter(|span| span.end > line_start)
         {
             let start = span.start.max(line_start);
             let end = span.end.min(line_end);
@@ -2647,6 +2658,214 @@ mod tests {
             .iter()
             .all(|line| line.spans().is_empty()));
         assert_eq!(block.code_text(), "+[-]\n");
+    }
+
+    #[test]
+    fn fenced_highlighting_keeps_block_and_reload_state_separate() {
+        let initial = local_document("```rust\n/* unfinished comment\n```\n");
+        let cases = [
+            (
+                "rust",
+                "fn fresh() { let text = \"e\u{301}\u{754c}\"; let value = 7; }\n",
+            ),
+            ("json", "{\"text\": \"e\u{301}\u{754c}\", \"value\": 7}\n"),
+        ];
+        let source: String = cases
+            .iter()
+            .map(|(language, text)| format!("```{language}\n{text}```\n\n"))
+            .collect();
+        let document = local_document(&source);
+        assert_eq!(document.blocks().len(), cases.len());
+        for (block, (language, text)) in document.blocks().iter().zip(cases) {
+            let Block::CodeBlock(block) = block else {
+                panic!("expected a code block");
+            };
+            assert_eq!(block.code_text(), text);
+            let alone = local_document(&format!("```{language}\n{text}```\n"));
+            let Block::CodeBlock(reference) = &alone.blocks()[0] else {
+                panic!("expected the independently loaded code block");
+            };
+            assert_eq!(block.highlighted_lines(), reference.highlighted_lines());
+            let roles: Vec<_> = block
+                .highlighted_lines()
+                .iter()
+                .flat_map(|line| line.spans().iter().filter_map(HighlightedSpan::role))
+                .collect();
+            assert!(
+                roles.contains(&Role::StringLiteral),
+                "{language}: {roles:?}"
+            );
+            if language == "rust" {
+                assert!(roles.contains(&Role::Keyword), "{language}: {roles:?}");
+            } else {
+                assert!(roles.contains(&Role::Number), "{language}: {roles:?}");
+            }
+        }
+        assert_eq!(
+            initial.source_text(),
+            "```rust\n/* unfinished comment\n```\n"
+        );
+    }
+
+    fn full_scan_highlighted_lines(text: &str, spans: &[Span]) -> Vec<HighlightedCodeLine> {
+        let mut result = Vec::new();
+        let mut offset = 0;
+        for line in text.split_inclusive('\n') {
+            let end = offset + line.len();
+            let mut pieces = Vec::new();
+            let mut cursor = offset;
+            for span in spans
+                .iter()
+                .filter(|span| span.start < end && span.end > offset)
+            {
+                let start = span.start.max(offset);
+                let span_end = span.end.min(end);
+                if start > cursor {
+                    pieces.push(HighlightedSpan {
+                        text: text[cursor..start].to_owned(),
+                        role: None,
+                    });
+                }
+                pieces.push(HighlightedSpan {
+                    text: text[start..span_end].to_owned(),
+                    role: Some(span.role),
+                });
+                cursor = span_end;
+            }
+            if cursor < end && !pieces.is_empty() {
+                pieces.push(HighlightedSpan {
+                    text: text[cursor..end].to_owned(),
+                    role: None,
+                });
+            }
+            result.push(HighlightedCodeLine {
+                text: line.to_owned(),
+                spans: pieces,
+            });
+            offset = end;
+        }
+        if text.is_empty() {
+            result.push(HighlightedCodeLine {
+                text: String::new(),
+                spans: Vec::new(),
+            });
+        }
+        result
+    }
+
+    #[test]
+    fn fenced_line_sweep_matches_full_scan_for_unicode_and_multiline_spans() {
+        for text in ["", "\n", "\r\n\r\n", "plain", "plain\n\nlast"] {
+            assert_eq!(
+                highlighted_code_lines(text, &[]),
+                full_scan_highlighted_lines(text, &[])
+            );
+        }
+
+        let text = "e\u{301}\u{754c}\r\nsecond\r\nlast";
+        let second = text.find("second").unwrap();
+        for spans in [
+            vec![Span {
+                start: 0,
+                end: text.len(),
+                role: Role::Comment,
+            }],
+            vec![
+                Span {
+                    start: 0,
+                    end: second,
+                    role: Role::StringLiteral,
+                },
+                Span {
+                    start: second,
+                    end: second + "second".len(),
+                    role: Role::Variable,
+                },
+                Span {
+                    start: text.len() - "last".len(),
+                    end: text.len(),
+                    role: Role::Keyword,
+                },
+            ],
+            vec![
+                Span {
+                    start: 0,
+                    end: text.len(),
+                    role: Role::Comment,
+                },
+                Span {
+                    start: second,
+                    end: second + "second".len(),
+                    role: Role::Variable,
+                },
+            ],
+        ] {
+            assert_eq!(
+                highlighted_code_lines(text, &spans),
+                full_scan_highlighted_lines(text, &spans),
+                "{spans:?}"
+            );
+        }
+
+        let mut text = String::new();
+        let mut spans = Vec::new();
+        for index in 0..512 {
+            let start = text.len();
+            text.push_str(&format!("let e\u{301}\u{754c}_{index} = 42;\n"));
+            spans.push(Span {
+                start,
+                end: start + 3,
+                role: Role::Keyword,
+            });
+            spans.push(Span {
+                start: text.len() - 4,
+                end: text.len() - 2,
+                role: Role::Number,
+            });
+        }
+        assert_eq!(
+            highlighted_code_lines(&text, &spans),
+            full_scan_highlighted_lines(&text, &spans)
+        );
+    }
+
+    #[test]
+    fn fenced_highlighting_sweep_matches_full_scan_of_real_grammar_spans() {
+        for (info, text) in [
+            (
+                "rust",
+                "/* first\nsecond */\nfn main() { let s = \"e\u{301}\u{754c}\"; }\n",
+            ),
+            (
+                "json",
+                "{\r\n  \"word\": \"e\u{301}\u{754c}\",\r\n  \"value\": 42\r\n}",
+            ),
+            ("toml", "text = \"\"\"first\nsecond\"\"\"\nvalue = 42\n"),
+            ("yaml", "text: |\n  first\n  second\nvalue: 42\n"),
+            ("bash", "printf '%s\\n' 'e\u{301}\u{754c}'\n# end\n"),
+            ("markdown", "# Title\n\n**bold** and `code`\n"),
+            ("unknown", "e\u{301}\u{754c}\n\nplain\n"),
+        ] {
+            let spans = fenced_language(info)
+                .map(|language| {
+                    let mut syntax = DocumentSyntax::for_language(language);
+                    let spans = syntax.spans(text, 0, 0..text.len()).to_vec();
+                    assert!(syntax.status().is_highlighted());
+                    assert!(!spans.is_empty());
+                    spans
+                })
+                .unwrap_or_default();
+            let actual = highlight_code(Some(info), text);
+            assert_eq!(actual, full_scan_highlighted_lines(text, &spans), "{info}");
+            assert_eq!(
+                actual
+                    .iter()
+                    .map(HighlightedCodeLine::text)
+                    .collect::<String>(),
+                text,
+                "highlighting must preserve every source byte"
+            );
+        }
     }
 
     #[test]
