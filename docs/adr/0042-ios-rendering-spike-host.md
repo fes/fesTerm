@@ -1,4 +1,4 @@
-# ADR 0040: Isolated iOS Rendering Spike Host
+# ADR 0042: Isolated iOS Rendering Spike Host
 
 - **Status:** Proposed — implementation for review; native feasibility not accepted
 - **Date:** 2026-09-26

@@ -1,7 +1,7 @@
 # Mobile Responsive Layout Design (Phone/Tablet)
 
 **Status:** Persistent terminal keyboard approved for iPhone and iPad on
-2026-09-26; initial implementation in ADR 0040, native validation pending.
+2026-09-26; initial implementation in ADR 0042, native validation pending.
 Companion to ADR 0031 and
 `docs/mobile-port-plan.md`. Extends `docs/sftp-ui-design.md`'s existing
 narrow-width precedent to phone/tablet form factors rather than introducing

@@ -2145,11 +2145,11 @@
         "MOB-*"
       ],
       "requirements": [
-        "docs/adr/0040-ios-rendering-spike-host.md"
+        "docs/adr/0042-ios-rendering-spike-host.md"
       ],
       "decisions": [
         "ADR-0031",
-        "ADR-0040"
+        "ADR-0042"
       ],
       "automated_tests": [
         "mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend",

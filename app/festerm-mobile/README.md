@@ -3,7 +3,7 @@
 Experimental Phase 1 host for the existing fesTerm Rust core and egui
 renderer. This is **not yet an SSH client**. It displays a bounded ANSI/Unicode
 fixture, routes input into a counting/discarding sink and exposes lifecycle
-counters. See [ADR 0040](../../docs/adr/0040-ios-rendering-spike-host.md).
+counters. See [ADR 0042](../../docs/adr/0042-ios-rendering-spike-host.md).
 
 ## Run on an iOS Simulator
 
@@ -132,7 +132,7 @@ app stdout/stderr and rejects a live process that never builds its first UI.
 The diagnostic run found a rejected GPU limit on both devices (16 requested
 inter-stage variables versus 15 supported). The mobile configuration now uses
 wgpu's downlevel limits and preserves adapter texture dimensions; native rerun
-and visual review are still required. See ADR 0040 and issue #261;
+and visual review are still required. See ADR 0042 and issue #261;
 rendering, keyboard and gesture acceptance remain open.
 
 A later local iPhone 17 / iOS 26.5 run using the Xcode 27 SDK paints the

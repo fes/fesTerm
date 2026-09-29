@@ -1,11 +1,11 @@
 # fesTerm Mobile Port Plan (iOS/Android)
 
 **Status:** iOS Phase 1 started at the owner's request on 2026-09-26;
-implementation for review under ADR 0040, native feasibility pending.
+implementation for review under ADR 0042, native feasibility pending.
 The owner also requested the persistent-keyboard/input slice for both iPhone
 and iPad as part of this initial host. Other Phase 2 work, Android and
 Phases 3–5 remain deferred. ADR 0031 supplies the planning
-boundaries; ADR 0040 proposes the concrete additive host/dependency decision.
+boundaries; ADR 0042 proposes the concrete additive host/dependency decision.
 
 This document is the companion delivery plan for ADR 0031. It sequences the
 work required to bring fesTerm to iOS and Android while reusing the existing

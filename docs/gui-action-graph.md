@@ -58,7 +58,7 @@ native qualification; ADR-0039 remains Proposed and issue #244 remains open.
 
 ### Isolated iOS feasibility host
 
-These edges belong only to `app/festerm-mobile` (ADR 0040), not the desktop
+These edges belong only to `app/festerm-mobile` (ADR 0042), not the desktop
 application or a supported mobile SSH workflow. Checkpoint: newly launched
 spike with the repository fixture; Reset fixture restores terminal content.
 The iOS workflow's isolated Simulator smoke automates install, launch survival,
