@@ -22,6 +22,25 @@ external owned-client captures. None of these automation seams is native
 qualification by itself; #282 still owns the incomplete equipment, resource,
 latency and maintainer-approval boundaries.
 
+The first execution exposed a separately threaded Windows foreground-activation
+case. The shared helper now temporarily joins the caller, foreground and owned
+target GUI queues, verifies actual foreground ownership and always detaches.
+That correction obtained controlled initial/maximized production captures
+without input injection, but minimized-window restoration still failed focus.
+Correcting restore-to-maximized and subsequent restore-to-normal expectations
+does not establish that the native focus defect is resolved.
+
+A fresh authorized performance series then stopped before launching a workload:
+the interactive session had disconnected. Desktop availability is now checked
+throughout warmup, every sampling interval and completion, not only at startup.
+The clean `5f2d601` source completed separate offscreen reversed-order comparisons
+and complementary release software-GPU/ConPTY/replay checks; its localized
+offscreen reduction was 61.47%, not a native shipping-default or latency result.
+The [qualification evidence](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+retains failed attempts and separate binary hashes. The CPU fixture's explicit
+Quit-confirmation path, restored native focus, resources/latency, broader
+hardware and maintainer decisions remain open, with both experiments default-off.
+
 ## Removing repeated query compilation from document loading
 
 Steady-state measurements hid a much larger Markdown stall: the first Preview

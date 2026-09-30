@@ -1022,6 +1022,37 @@ The aggregate optional runner exposes the balanced series only through
 Both experiments remain default-off and every compound #282 gate stays open
 until its full evidence and required maintainer decisions exist.
 
+#### 2026-09-30 x64 qualification evidence
+
+The clean final automation source `5f2d601e3dd8f8358a96be57f4637eef4d79a177`
+completed a separate eight-process offscreen ABBA/BAAB series and saved-evidence
+validation. Localized mean CPU was 68.945312 to 26.562500 ms/frame (-61.47%),
+with -61.32% / -61.61% changes in the two orders. Frozen first/repeated changes
+were -84.46% / -77.05%. The inactive no-composition control also moved -21.73%;
+it remains variable-control evidence, not an independent retention-path gain.
+These are host-copy-on retention comparisons, **not native C versus shipping A,
+displayed-frame delivery or latency**. Earlier-source series remain separate.
+
+Release software-GPU routing/pixel/lifetime checks, native ConPTY resize and
+bounded shutdown, controlled offscreen TUI/Direct2D replay and required local
+quality checks also completed. The Direct2D runner rebuilt the release test
+executable after the offscreen series; the evidence records both hashes and
+does not pool their measurements.
+
+External initial/maximized production captures established the DX12 CPU/WARP
+path at 192 DPI, but restore/foreground failed. A fresh user-authorized native
+A/B/C series then stopped at WTSDisconnected preflight before any application
+launch or CPU sample. The sleep/display inhibitor was released. The CPU fixture's
+new primary-Quit confirmation path remains natively unverified, and correcting
+restore-state assertions does not resolve the observed focus failure.
+
+The [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+contains provenance, ordered attempts, raw distributions, logs, external
+captures, cleanup records and a gate-by-gate report. All eight #282 gates
+remain open; mixed-DPI/additional-machine coverage, sustained peak/in-flight
+resources and an approved budget, independent latency, recovery and maintainer
+architecture/default/rollout decisions are not supplied by these results.
+
 ### Prior remaining-gap investigation and renderer-host boundary
 
 **Applicability: Windows x64 DX12 WARP / DevBox, not hardware-GPU or

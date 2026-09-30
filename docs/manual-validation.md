@@ -684,8 +684,9 @@ shutdown acceptance.
 **Default-off retained-prefix prototype (ADR-0041):** the owner separately
 authorized retaining unchanged preceding window/chrome pixels. Enable both
 `FESTERM_EXPERIMENTAL_HOST_COPY=1` and
-`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`; compare against host-copy alone,
-not against the older shader path. The cache owns one immutable image up to
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`; isolated prefix experiments compare
+against host-copy alone, while #282's native default-on qualification must also
+compare the shipping shader path. The cache owns one immutable image up to
 64 MiB and up to 1 MiB of exact signatures. Pixel regressions cover panel input
 changes, DPI, terminal movement, clear color, clipping, overlays, disabled
 painting, capture targets, full/partial texture changes, removal, renderer
@@ -744,6 +745,16 @@ successful shutdown. These are automation seams, not a declaration that CP-18
 or #282 has passed. Mixed-DPI hardware, other architectures/GPUs, genuine device
 loss, complete all-view interactions, independent latency, resource budgets and
 architectural/default-on approvals retain their native/manual boundaries.
+
+The 2026-09-30 final-source `5f2d601` qualification completed separate offscreen
+ABBA/BAAB, saved-evidence, release routing/lifetime, ConPTY resize/shutdown and
+controlled TUI/Direct2D replay checks. External initial/maximized WARP captures
+are partial evidence: restore/focus failed, and the subsequently authorized
+native A/B/C series stopped before launch on WTSDisconnected. No native CPU
+comparison or independent latency result exists. CPU-fixture Quit confirmation
+still needs native verification; the inhibitor was released. The
+[sanitized report and raw evidence](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+preserve these failures and leave every compound #282 gate open.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
