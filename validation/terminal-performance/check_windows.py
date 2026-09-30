@@ -73,7 +73,7 @@ def summarize(directory):
         require(result["ProducerSha256"] == manifest["ProducerSha256"], f"{name}: mixed producers")
         require(result["LogicalProcessors"] == manifest["LogicalProcessors"], f"{name}: changed CPU capacity")
         require(
-            result["Status"] == "valid" and not any(
+            result["Status"] == "valid" and result.get("DesktopActive") is True and not any(
                 result[key] for key in ("InputChanged", "ForegroundChanged", "GeometryChanged")
             ),
             f"{name}: native guard failed",
@@ -116,7 +116,7 @@ def summarize(directory):
         require(result["Intervals"], f"{name}: missing interval evidence")
         for interval in result["Intervals"]:
             require(
-                not interval["InputChanged"] and interval["Foreground"] == result["Window"]
+                interval.get("DesktopActive") is True and not interval["InputChanged"] and interval["Foreground"] == result["Window"]
                 and interval["Metrics"] == result["Metrics"],
                 f"{name}: interval guard failed",
             )

@@ -351,6 +351,7 @@ terminal_ligatures = false
             }
             New-Item -ItemType File -Path $start | Out-Null
             Start-Sleep -Seconds 5
+            [FesTermApplicationWindow]::RequireInteractiveDesktop()
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
             if ([FesTermApplicationWindow]::LastInputTick() -ne $inputBefore -or
                 [FesTermApplicationWindow]::GetForegroundWindow() -ne $window -or
@@ -379,6 +380,7 @@ terminal_ligatures = false
                 Start-Sleep -Milliseconds 1000
                 $process.Refresh()
                 if ($process.HasExited) { throw "$name exited during measurement." }
+                [FesTermApplicationWindow]::RequireInteractiveDesktop()
                 $elapsed = $clock.Elapsed.TotalSeconds
                 $cpu = $process.TotalProcessorTime.TotalSeconds
                 $currentMetrics = [TuiComparisonNative]::Metrics($window)
@@ -389,7 +391,7 @@ terminal_ligatures = false
                 $valid = -not ($inputChanged -or $foregroundChanged -or $geometryChanged)
                 $intervals += [pscustomobject]@{
                     Seconds=$elapsed;CpuPercent=100*($cpu-$lastCpu)/($elapsed-$lastTime)/[Environment]::ProcessorCount
-                    InputChanged=$inputChanged;Foreground=$foreground.ToInt64();Metrics=$currentMetrics
+                    DesktopActive=$true;InputChanged=$inputChanged;Foreground=$foreground.ToInt64();Metrics=$currentMetrics
                     InputTick=[FesTermApplicationWindow]::LastInputTick()
                     WorkingSetBytes=$process.WorkingSet64;PrivateBytes=$process.PrivateMemorySize64
                     PeakWorkingSetBytes=$process.PeakWorkingSet64;PeakPagedBytes=$process.PeakPagedMemorySize64
@@ -407,6 +409,7 @@ terminal_ligatures = false
             $rebuiltAfter = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_rebuilt_frames' } else { $null }
             $producerProcess.Refresh()
             $producerCpu = $producerProcess.TotalProcessorTime.TotalSeconds-$producerBefore
+            [FesTermApplicationWindow]::RequireInteractiveDesktop()
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
             $inputChanged = $inputChanged -or [FesTermApplicationWindow]::LastInputTick() -ne $inputBefore
             $foregroundChanged = $foregroundChanged -or [FesTermApplicationWindow]::GetForegroundWindow() -ne $window
@@ -416,6 +419,7 @@ terminal_ligatures = false
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
             while (-not (Test-Path -LiteralPath $report) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
             if (-not (Test-Path -LiteralPath $report)) { throw "$name producer did not complete." }
+            [FesTermApplicationWindow]::RequireInteractiveDesktop()
             $producer = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
             if ($producer.frames -ne $ProducerFrames -or $producer.geometry.columns -ne 120 -or $producer.geometry.rows -ne 40 -or
                 $producer.pid -ne $producerProcess.Id -or $producer.workload -ne $run.Workload -or
@@ -464,7 +468,7 @@ terminal_ligatures = false
                 }
             }
             $result = [pscustomobject]@{
-                Host=$run.Host;Workload=$run.Workload;Status=$(if($valid){'valid'}else{'invalid-input-or-window'})
+                Host=$run.Host;Workload=$run.Workload;DesktopActive=$true;Status=$(if($valid){'valid'}else{'invalid-input-or-window'})
                 Mode=$run.Mode;Sequence=$run.Sequence;SourceSha=$source;StartedUtc=$startedUtc
                 OverlayControl=[bool]$OverlayControl
                 ProcessId=$process.Id;Window=$window.ToInt64();Metrics=$metrics

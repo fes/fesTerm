@@ -128,6 +128,10 @@ joins caller, foreground and target GUI queues and always detaches; no synthetic
 key is sent to an unrelated foreground window. Failure to obtain actual
 foreground remains fatal. OS-input failures retain source/binary diagnostics and
 PID-verified cleanup rather than overwriting a prior attempt.
+Activation and native CPU intervals also require an active, unlocked input
+desktop throughout; a disconnected RDP session must not become passing native
+evidence. Minimizing a maximized window restores first to its maximized state,
+then a separate restore recovers the original normal geometry.
 
 The native CPU fixture keeps a live child, so one primary `WM_CLOSE` opens the
 normal aggregate Quit confirmation even when per-tab close confirmation is

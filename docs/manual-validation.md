@@ -734,6 +734,10 @@ Per-second process resources and external owned-client captures complement
 the existing application counters; neither proves total in-flight memory or
 displayed-frame cadence. The release-capable OS-input driver can independently
 exercise maximize/minimize/exact restore without rebuilding during a run.
+Restoring a minimized maximized window first recovers its maximized geometry,
+then a separate restore recovers the original normal geometry. Activation and
+every native CPU interval require a still-active, unlocked desktop; a
+disconnected RDP session remains unavailable rather than a background pass.
 CPU-window cleanup explicitly answers the ordinary primary Quit confirmation
 and verifies the captured child tree, rather than counting a forced kill as a
 successful shutdown. These are automation seams, not a declaration that CP-18

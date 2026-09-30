@@ -129,7 +129,8 @@ try {
         [void][FesTermOsInputNative]::ShowWindow($window, 3)
         Start-Sleep -Milliseconds 500
         if (-not [FesTermOsInputNative]::IsZoomed($window)) { throw 'Owned maximize did not take effect.' }
-        $lifecycle.Add([pscustomobject]@{State='maximized';Geometry=[FesTermApplicationWindow]::ClientGeometry($window, $process.Id)})
+        $maximizedGeometry = [FesTermApplicationWindow]::ClientGeometry($window, $process.Id)
+        $lifecycle.Add([pscustomobject]@{State='maximized';Geometry=$maximizedGeometry})
         if ($CaptureDirectory) {
             Save-FesTermWindowCapture -Window $window -ProcessId $process.Id -Path "$CaptureDirectory\maximized.png" |
                 ConvertTo-Json -Depth 4 | Set-Content "$CaptureDirectory\maximized.json"
@@ -139,8 +140,21 @@ try {
         if (-not [FesTermOsInputNative]::IsIconic($window)) { throw 'Owned minimize did not take effect.' }
         $lifecycle.Add([pscustomobject]@{State='minimized';IsIconic=$true})
         [void][FesTermOsInputNative]::ShowWindow($window, 9)
-        [FesTermApplicationWindow]::Activate($window, $process.Id)
         Start-Sleep -Milliseconds 500
+        [FesTermApplicationWindow]::Activate($window, $process.Id)
+        if (-not [FesTermOsInputNative]::IsZoomed($window) -or
+            ($maximizedGeometry -join ',') -ne
+                ([FesTermApplicationWindow]::ClientGeometry($window, $process.Id) -join ',')) {
+            throw 'Owned restore from minimized did not recover the prior maximized geometry.'
+        }
+        $lifecycle.Add([pscustomobject]@{State='restored-maximized';Geometry=$maximizedGeometry})
+        if ($CaptureDirectory) {
+            Save-FesTermWindowCapture -Window $window -ProcessId $process.Id -Path "$CaptureDirectory\restored-maximized.png" |
+                ConvertTo-Json -Depth 4 | Set-Content "$CaptureDirectory\restored-maximized.json"
+        }
+        [void][FesTermOsInputNative]::ShowWindow($window, 9)
+        Start-Sleep -Milliseconds 500
+        [FesTermApplicationWindow]::Activate($window, $process.Id)
         $restoredGeometry = [FesTermApplicationWindow]::ClientGeometry($window, $process.Id)
         if ([FesTermOsInputNative]::IsIconic($window) -or [FesTermOsInputNative]::IsZoomed($window) -or
             ($initialGeometry -join ',') -ne ($restoredGeometry -join ',')) {
@@ -219,7 +233,7 @@ try {
 } finally {
     $process.Refresh()
     if ($window -ne [IntPtr]::Zero) {
-        Close-FesTermOwnedApplication -Process $process -Window $window -ConfirmQuit -KnownDescendants $descendants |
+        Close-FesTermOwnedApplication -Process $process -Window $window -KnownDescendants $descendants |
             ConvertTo-Json -Depth 6 | Set-Content "$nativeResultPath.cleanup.json"
     } else {
         $forced = -not $process.HasExited

@@ -97,6 +97,7 @@ public static class FesTermApplicationWindow {
 
     public static void Activate(IntPtr window, int processId) {
         RequireResponsive(window, processId);
+        RequireInteractiveDesktop();
         if (GetForegroundWindow() == window) return;
         if (!SetForegroundWindow(window)) {
             if (!SetWindowPos(window, IntPtr.Zero, 0, 0, 0, 0, 0x43))

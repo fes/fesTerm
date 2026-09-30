@@ -21,7 +21,7 @@ class NativeComparisonEvidenceTests(unittest.TestCase):
             folder.mkdir()
             started = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=sequence)
             result = {
-                **declared[-1], "Status": "valid", "SourceSha": "a" * 40,
+                **declared[-1], "Status": "valid", "DesktopActive": True, "SourceSha": "a" * 40,
                 "ExecutableSha256": "b" * 64, "ProducerSha256": "c" * 64,
                 "StartedUtc": started.isoformat(), "LogicalProcessors": 16,
                 "InputChanged": False, "ForegroundChanged": False, "GeometryChanged": False,
@@ -38,7 +38,7 @@ class NativeComparisonEvidenceTests(unittest.TestCase):
                     "started_unix_ms": 0, "completed_ms": list(range(100, 20001, 100)),
                 },
                 "Intervals": [{
-                    "InputChanged": False, "Foreground": 123, "Metrics": [100, 100, 100, 100, 96],
+                    "DesktopActive": True, "InputChanged": False, "Foreground": 123, "Metrics": [100, 100, 100, 100, 96],
                     "CpuPercent": 1, "PrivateBytes": 1000, "WorkingSetBytes": 500, "Handles": 20, "Threads": 2,
                 }],
             }
@@ -87,6 +87,7 @@ class NativeComparisonEvidenceTests(unittest.TestCase):
             ("ExecutableSha256", "d" * 64), ("ProducerSha256", "d" * 64),
             ("LogicalProcessors", 8), ("InputChanged", True), ("ForegroundChanged", True),
             ("GeometryChanged", True), ("SampleSeconds", 9), ("HostCopyRequested", False),
+            ("DesktopActive", False),
             ("Metrics", [100, 100, 99, 100, 96]), ("Font", "other font"),
             ("HostCopyFramesPerSecond", 0), ("CpuPercent", float("nan")),
         )
@@ -101,6 +102,17 @@ class NativeComparisonEvidenceTests(unittest.TestCase):
         self.runs[2]["RetainedUiFramesPerSecond"] = 0
         self.save_runs()
         with self.assertRaisesRegex(ValueError, "retained path"):
+            checker.summarize(self.directory)
+
+    def test_disconnected_or_unrecorded_desktop_cannot_pass_interval_guards(self):
+        interval = self.runs[0]["Intervals"][0]
+        interval["DesktopActive"] = False
+        self.save_runs()
+        with self.assertRaisesRegex(ValueError, "interval guard"):
+            checker.summarize(self.directory)
+        interval.pop("DesktopActive")
+        self.save_runs()
+        with self.assertRaisesRegex(ValueError, "interval guard"):
             checker.summarize(self.directory)
 
     def test_incomplete_series_and_forced_cleanup_cannot_be_aggregated(self):

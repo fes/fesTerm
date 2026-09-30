@@ -976,7 +976,10 @@ Every run records source and executable/producer hashes, release configuration,
 CPU affinity/capacity, OS/architecture, matched font/grid/client pixels/DPI,
 ordered start/finish times, producer completion/bytes/timestamps, guards and
 per-second CPU/private-memory/working-set/handle/thread observations. Desktop
-captures use the external, foreground-owned client rectangle **after** sampling;
+availability is checked during warmup, every interval and at completion: a
+disconnected RDP session is invalid even if a window stays responsive and its
+foreground handle has not changed. Saved evidence must retain these checks.
+Captures use the external, foreground-owned client rectangle **after** sampling;
 they are not an application's screenshot request or proof of displayed-frame
 cadence. The portable validator rejects incomplete orders, source/binary/font/
 geometry/delivery changes, invalid guards and forced/incomplete cleanup. It
