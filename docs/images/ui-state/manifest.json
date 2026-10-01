@@ -10,7 +10,7 @@
       "width": 1000,
       "height": 52,
       "tier": "headless",
-      "sha256": "ee189a9221fae915e6685f02878a1286aff1ec5b284de5d5f555e577abcfcf8a"
+      "sha256": "7452372a74d0a0e0fe1cd5e9ec6d16442f95df1eae8f4c8e2fc879aac6be2088"
     },
     {
       "id": "chips-update-badge",
@@ -21,7 +21,7 @@
       "width": 1000,
       "height": 58,
       "tier": "headless",
-      "sha256": "b64cb8ac14b6fdbc7945e4aee2c76af31730960ac9616a833607fefaca59c465"
+      "sha256": "88eacd7952b7a0df489a3d624b6341771d274676280bf45ec805f695116e3ce8"
     },
     {
       "id": "chips-verbose",
@@ -32,7 +32,7 @@
       "width": 1000,
       "height": 58,
       "tier": "headless",
-      "sha256": "4b959ad73a5732612aed24e7d2700f9327d7b5668eee67d0a60eeac0e9cb5eba"
+      "sha256": "bfb4a6c5c41f6271c8c4133e5067fbfdfaac618154f5c6df75d2dd932128213c"
     },
     {
       "id": "serial-connect-form",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "84ae0bfe9656ed8e9c495482ee6a9d6f18b3850f0d4a788bfdbc04012ead062e"
+      "sha256": "de62a20ee346c16d5cf25fe62dc5f3ec27ec98aa534ec086186afa834805da08"
     },
     {
       "id": "text-editor-dirty-close",
@@ -131,7 +131,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "769e51bb3208a40a30751d2fe8843562a53a74e9b1713718d3b3a4585295a849"
+      "sha256": "7d2c24d3613507bf664172f6b70e32fd9f082865def89996801a182ebe92275f"
     },
     {
       "id": "text-editor-find",
@@ -186,7 +186,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "23c2e611394de7764fb367842f3afe258f5aaeb600dbb4082e6e50f35d3506d3"
+      "sha256": "c67ba1cca07e9f2182c85f356900b0f96916b5be37c2803dcedf0949b106aa83"
     },
     {
       "id": "text-editor-saved",
@@ -351,7 +351,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "ee0aa95b5c685fb24cf8b5fea8f87039d61747305e2eb0221e145dbd22cf5db8"
+      "sha256": "277a9e1148492a40e26427f84e10e3317b1ac9a6081ace22b6f46bd518b2321f"
     },
     {
       "id": "launcher-empty",
@@ -362,7 +362,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "cff01dc9c29fa859c418104ab89b33a69d69a41ff82d8788d4572c64caa2e4bd"
+      "sha256": "762f1cbdf09b6420aa7ca338e7247cd6a0833cf4d7c7fda937540d86e1a4c4ee"
     },
     {
       "id": "launcher-narrow",
@@ -384,7 +384,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "6daca02042179866656e563ffb1b04f1fc53ff04cdae0ef08316cb1418546171"
+      "sha256": "b45c375ee09a8fe2657a0f9a73d57e4efc4118380f5b9752c87e19d906e7d655"
     },
     {
       "id": "profiles-list",
@@ -437,9 +437,9 @@
       "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
       "image": "settings-interface-scrolling.png",
       "width": 874,
-      "height": 1131,
+      "height": 1250,
       "tier": "headless",
-      "sha256": "774e039f6bc4128b30ae7018da44eb9324c73fa350bf5759d6a7b8d578c638b6"
+      "sha256": "20f6704d9de007fa0fbd6a12fa7c1395c5f945d654fce00d2e52f4b174dfbdc9"
     },
     {
       "id": "settings-quick-switch",
@@ -484,6 +484,28 @@
       "height": 756,
       "tier": "headless",
       "sha256": "f4e4783acc0090be31270678878ba7408fac16521921d468be476a206bc42fa7"
+    },
+    {
+      "id": "terminal-copy-paste-menu",
+      "section": "terminal-sessions",
+      "title": "Copy and Paste in the terminal context menu",
+      "caption": "A selection remains visible while the terminal's context menu offers Copy and Paste alongside Find, without sending the secondary click to the remote program.",
+      "image": "terminal-copy-paste-menu.png",
+      "width": 940,
+      "height": 320,
+      "tier": "headless",
+      "sha256": "db1956b9147ded21e418f11bb3f779f904c72ba384fcc614afba7ed5cc10dd20"
+    },
+    {
+      "id": "terminal-path-menu",
+      "section": "terminal-sessions",
+      "title": "Actions for a detected terminal path",
+      "caption": "Secondary-clicking a filesystem path freezes the detected target in the menu, where it can be opened in the editor or copied exactly as a path.",
+      "image": "terminal-path-menu.png",
+      "width": 940,
+      "height": 320,
+      "tier": "headless",
+      "sha256": "e016ca10c6e1e5ca6767a8c90aeaa7a81559730c5ba09514eff2ce888603a74a"
     },
     {
       "id": "terminal-sftp-cli",

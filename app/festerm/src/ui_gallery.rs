@@ -53,7 +53,7 @@ use festerm_ssh::{
 };
 use festerm_ui_egui::{
     chrome::{self, ChipId, ChipLayout, ChipStatus, ChipViewModel},
-    EncodedInputSink, TerminalView,
+    EncodedInputSink, TerminalContextMenuAction, TerminalView, TerminalViewOptions,
 };
 
 use crate::{
@@ -265,6 +265,24 @@ fn scenarios() -> Vec<Scenario> {
             caption: "The terminal-driven `sftp` client, distinct from the graphical file \
                       manager: directory listing, a `get`, and its transfer-progress line.",
             capture: capture_terminal_sftp_cli,
+        },
+        Scenario {
+            id: "terminal-copy-paste-menu",
+            section: "terminal-sessions",
+            title: "Copy and Paste in the terminal context menu",
+            caption: "A selection remains visible while the terminal's context menu offers \
+                      Copy and Paste alongside Find, without sending the secondary click to \
+                      the remote program.",
+            capture: capture_terminal_copy_paste_menu,
+        },
+        Scenario {
+            id: "terminal-path-menu",
+            section: "terminal-sessions",
+            title: "Actions for a detected terminal path",
+            caption: "Secondary-clicking a filesystem path freezes the detected target in \
+                      the menu, where it can be opened in the editor or copied exactly as \
+                      a path.",
+            capture: capture_terminal_path_menu,
         },
         // -- sftp-workspace ---------------------------------------------------
         Scenario {
@@ -1239,6 +1257,13 @@ struct TerminalSessionState {
     sink: GallerySink,
 }
 
+struct TerminalMenuState {
+    view: TerminalView,
+    terminal: Terminal,
+    sink: GallerySink,
+    options: TerminalViewOptions,
+}
+
 /// A remote shell mid-use: a status check, a log tail, and the resting
 /// prompt. Every host, IP, and PID below is invented -- this is never bytes
 /// captured from a real shell.
@@ -1317,6 +1342,133 @@ fn capture_terminal_sftp_cli() -> image::RgbaImage {
     render_terminal_session(980.0, 312.0, 100, 13, SFTP_CLI_TRANSCRIPT)
 }
 
+fn terminal_cell_center(
+    harness: &Harness<'_, TerminalMenuState>,
+    column: usize,
+    row: usize,
+) -> egui::Pos2 {
+    let diagnostics = harness.state().view.diagnostics();
+    let grid = diagnostics.grid_rect.expect("terminal grid is rendered");
+    let dimensions = diagnostics
+        .calculated_dimensions
+        .expect("terminal dimensions are calculated");
+    let cell_width = grid.width() / dimensions.columns() as f32;
+    let cell_height = grid.height() / dimensions.rows() as f32;
+    egui::pos2(
+        grid.left() + (column as f32 + 0.5) * cell_width,
+        grid.top() + (row as f32 + 0.5) * cell_height,
+    )
+}
+
+fn drag_terminal_selection(
+    harness: &mut Harness<'_, TerminalMenuState>,
+    start: (usize, usize),
+    end: (usize, usize),
+) {
+    let start = terminal_cell_center(harness, start.0, start.1);
+    let end = terminal_cell_center(harness, end.0, end.1);
+    harness.event(egui::Event::PointerMoved(start));
+    harness.event(egui::Event::PointerButton {
+        pos: start,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.event(egui::Event::PointerMoved(end));
+    harness.event(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+}
+
+fn open_terminal_context_menu(
+    harness: &mut Harness<'_, TerminalMenuState>,
+    column: usize,
+    row: usize,
+) {
+    let position = terminal_cell_center(harness, column, row);
+    harness.event(egui::Event::PointerMoved(position));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    harness.run();
+}
+
+fn terminal_menu_harness(
+    transcript: &str,
+    options: TerminalViewOptions,
+) -> Harness<'static, TerminalMenuState> {
+    let mut terminal = Terminal::new(Dimensions::new(92, 12).expect("valid gallery terminal size"))
+        .expect("gallery terminal allocation");
+    terminal.ingest(transcript.as_bytes());
+    let state = TerminalMenuState {
+        view: TerminalView::default(),
+        terminal,
+        sink: GallerySink,
+        options,
+    };
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(940.0, 320.0))
+        .build_ui_state(
+            |ui, state: &mut TerminalMenuState| {
+                let options = state.options.clone();
+                state
+                    .view
+                    .show_with_options(ui, &mut state.terminal, &mut state.sink, options);
+            },
+            state,
+        );
+    harness.run();
+    harness.run();
+    harness
+}
+
+fn capture_terminal_copy_paste_menu() -> image::RgbaImage {
+    let mut harness = terminal_menu_harness(
+        "Deployment completed successfully.\r\n\
+         12 services healthy; 0 pending restarts.\r\n\
+         devuser@web-1:~$ ",
+        TerminalViewOptions::default(),
+    );
+    drag_terminal_selection(&mut harness, (0, 0), (19, 0));
+    open_terminal_context_menu(&mut harness, 19, 0);
+    assert!(harness.query_by_label("Copy").is_some());
+    assert!(harness.query_by_label("Paste").is_some());
+    finish(&mut harness)
+}
+
+fn capture_terminal_path_menu() -> image::RgbaImage {
+    const PATH: &str = "/srv/releases/NOTES.md";
+    let mut harness = terminal_menu_harness(
+        "devuser@web-1:~$ cat /srv/releases/NOTES.md\r\n\
+         # Release checklist\r\n\
+         devuser@web-1:~$ ",
+        TerminalViewOptions {
+            context_menu_action: Some(TerminalContextMenuAction {
+                label: "Open in editor".to_owned(),
+                preview: format!("devuser@web-1 · {PATH}"),
+                enabled: true,
+                disabled_reason: None,
+                copy: Some(("Copy path".to_owned(), PATH.to_owned())),
+            }),
+            ..TerminalViewOptions::default()
+        },
+    );
+    // The path begins at column 22; open over its NOTES.md component.
+    open_terminal_context_menu(&mut harness, 38, 0);
+    assert!(harness.query_by_label("Open in editor").is_some());
+    assert!(harness.query_by_label("Copy path").is_some());
+    finish(&mut harness)
+}
+
 // -- sftp-workspace -----------------------------------------------------------
 
 /// A fixed synthetic instant used for every "modified"/"loaded" timestamp
@@ -1328,6 +1480,32 @@ fn capture_terminal_sftp_cli() -> image::RgbaImage {
 /// used elsewhere in these fixtures.
 fn synthetic_timestamp() -> SystemTime {
     std::time::UNIX_EPOCH + Duration::from_secs(1_726_401_600)
+}
+
+fn gallery_fixture_directory(name: &str) -> PathBuf {
+    if cfg!(unix) {
+        PathBuf::from(format!("/tmp/festerm-ui-gallery-{name}"))
+    } else {
+        std::env::temp_dir().join(format!("festerm-ui-gallery-{name}"))
+    }
+}
+
+fn reset_gallery_fixture_directory(name: &str) -> PathBuf {
+    let directory = gallery_fixture_directory(name);
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    directory
+}
+
+fn set_synthetic_modified_time(path: &Path) {
+    fs::File::open(path)
+        .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(synthetic_timestamp())))
+        .unwrap_or_else(|error| {
+            panic!(
+                "setting deterministic gallery timestamp for {} must succeed: {error}",
+                path.display()
+            )
+        });
 }
 
 fn synthetic_directory_item(
@@ -1699,15 +1877,7 @@ fn capture_text_editor_compare() -> image::RgbaImage {
 /// The dirty-close prompt, arranged the way it actually arises: the whole
 /// application, one editor tab, real typing, and a real close request.
 fn capture_text_editor_dirty_close() -> image::RgbaImage {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    let directory = std::env::temp_dir().join(format!(
-        "festerm-ui-gallery-dirty-close-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    let directory = reset_gallery_fixture_directory("dirty-close");
     let path = directory.join("NOTES.md");
     fs::write(&path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
 
@@ -1744,15 +1914,7 @@ fn capture_text_editor_dirty_close() -> image::RgbaImage {
 }
 
 fn capture_text_editor_conflict_chip() -> image::RgbaImage {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    let directory = std::env::temp_dir().join(format!(
-        "festerm-ui-gallery-conflict-chip-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    let directory = reset_gallery_fixture_directory("conflict-chip");
     // Three files so the row shows all three document states at once, which is
     // the only way to review whether the shapes are told apart at the size
     // they are actually drawn (ADR 0034 §8).
@@ -1826,15 +1988,7 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
 /// The Save As sheet over a real editor, so the destination browser can be
 /// reviewed against the same chrome it actually sits on.
 fn capture_text_editor_save_as() -> image::RgbaImage {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    let directory = std::env::temp_dir().join(format!(
-        "festerm-ui-gallery-save-as-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    let directory = reset_gallery_fixture_directory("save-as");
     fs::create_dir_all(directory.join("docs")).expect("the gallery can write a subdirectory");
     fs::create_dir_all(directory.join("scripts")).expect("the gallery can write a subdirectory");
     let path = directory.join("NOTES.md");
@@ -1846,6 +2000,9 @@ fn capture_text_editor_save_as() -> image::RgbaImage {
         "[relay]\nlisten = \"0.0.0.0:8443\"\n",
     )
     .expect("the gallery can write its fixture");
+    for entry in ["docs", "scripts", "NOTES.md", "README.md", "relay.toml"] {
+        set_synthetic_modified_time(&directory.join(entry));
+    }
 
     let context = egui::Context::default();
     let mut app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());

@@ -97,7 +97,7 @@ mod macos {
         let pending = bridge.register_callbacks(OpenDocumentCallbacks::new(
             Arc::new(move |path| {
                 if path_capacity
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
                         value.checked_sub(1)
                     })
                     .is_ok()
