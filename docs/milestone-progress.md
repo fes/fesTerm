@@ -2846,9 +2846,15 @@ application and terminal popup, rather than merely checking a palette helper.
 The existing generator rebuilt all 48 images, their manifest, and the state
 document. Representative launcher, profile, inspector, terminal-menu, editor,
 and Save As images were visually inspected; fonts, layout and synthetic
-contents were retained. Editor/picker fixtures now stay inside the worktree
-instead of exposing personal temporary-directory paths. Native Windows capture
-also required opening directory timestamp handles with the proper access and
-backup flags, covered by a file/directory timestamp regression. This changes
-neither product styling nor renderer defaults, and does not establish native
-desktop, latency, or usability acceptance.
+contents were retained. Editor/picker physical fixtures now stay inside the
+worktree rather than the personal OS temporary directory. Review caught that
+this alone does not anonymize their displayed identities: a personalized
+checkout root can still expose a username and make images vary across
+worktrees. Publication therefore requires a controlled non-personal checkout
+and path/metadata review until test-only document/picker metadata fixtures
+separate canonical synthetic labels from physical I/O.
+
+Native Windows capture also required opening directory timestamp handles with
+the proper access and backup flags, covered by a file/directory timestamp
+regression. This changes neither product styling nor renderer defaults, and
+does not establish native desktop, latency, or usability acceptance.
