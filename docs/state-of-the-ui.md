@@ -125,12 +125,30 @@ deliberately the least decorated thing in it: no gutter, no persistent
 sidebar, no ornament competing with the program's own output. Chrome gets out
 of the way once a session is live.
 
-The two captures here show the same surface serving different kinds of work —
-an interactive remote shell, and the line-oriented `sftp` client. The second
-is worth including precisely because fesTerm also ships a graphical SFTP
+The captures here show the same surface serving different kinds of work — an
+interactive remote shell, the line-oriented `sftp` client, and the local
+context menus over selected text and a detected path. The `sftp` capture is
+worth including precisely because fesTerm also ships a graphical SFTP
 workspace: the command-line client remains available and unmodified, and
 choosing the GUI is a preference rather than a replacement. Users with muscle
 memory for `get` and `put` keep it.
+
+The context-menu pair makes two ownership boundaries visible. Copy and Paste
+are local terminal actions rather than bytes sent to the remote program. A
+detected path is frozen when the menu opens, then handed to application policy
+for **Open in editor** while **Copy path** preserves its exact spelling.
+
+### Copy and Paste in the terminal context menu
+
+A selection remains visible while the terminal's context menu offers Copy and Paste alongside Find, without sending the secondary click to the remote program.
+
+![Copy and Paste in the terminal context menu](images/ui-state/terminal-copy-paste-menu.png)
+
+### Actions for a detected terminal path
+
+Secondary-clicking a filesystem path freezes the detected target in the menu, where it can be opened in the editor or copied exactly as a path.
+
+![Actions for a detected terminal path](images/ui-state/terminal-path-menu.png)
 
 ### The sftp command-line interface
 
