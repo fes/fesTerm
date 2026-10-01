@@ -13,11 +13,21 @@ It is regenerated, not written by hand: the screenshots come from the real
 UI rendered against repository-owned fixture data, so the document cannot
 drift from the product without the drift showing up as a changed picture.
 
-Everything here is synthetic. Hosts are `example.com`/`example.net`
-subdomains, addresses come from the documentation-reserved ranges in
-RFC 5737, and users are named `devuser`, `builder` and `operator`. No real
-configuration, credential, host key, clipboard content or shell history is
-reachable from the capture path.
+Profile identities and document contents here are synthetic. Hosts are
+`example.com`/`example.net` subdomains, addresses come from the
+documentation-reserved ranges in
+RFC 5737, and users are named `devuser`, `builder` and `operator`. Captures use
+isolated user directories rather than personal configuration, credentials,
+host keys, clipboard content or shell history.
+
+Local editor and picker path bars are a remaining exception to synthetic
+identity: they display the physical fixture location under the checkout.
+The committed Windows batch was reviewed from a controlled, non-personal
+checkout root, but a checkout under a user's home can expose that user's name
+and captures vary across worktrees. The pipeline is not yet PII-free by
+construction. Public regeneration requires a non-personal checkout root and
+path/metadata review until canonical synthetic document/picker display
+identities are separated from isolated physical fixture I/O.
 
 Two things this document deliberately does *not* do. It does not enumerate
 every state of every control — it shows each surface doing representative
@@ -28,8 +38,9 @@ What it captures is how the product currently *presents* itself.
 Headless captures use the production blue-graphite dark visuals on the actual
 rendering context, including built-in controls and popup frames. They retain
 each scenario's fonts, viewport and crop; isolated widget pictures are not
-full-window/native-desktop evidence. Editor and picker paths refer only to
-synthetic files under the capture worktree's `target/ui-gallery-fixtures/`.
+full-window/native-desktop evidence. Editor and picker file contents are
+synthetic; their displayed absolute paths currently name the capture
+worktree's `target/ui-gallery-fixtures/`.
 
 ## Starting a session
 
