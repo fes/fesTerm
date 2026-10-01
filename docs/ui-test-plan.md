@@ -292,10 +292,21 @@ explicit `1` still reports ineligibility.
 The Windows WARP Launcher fill path reuses egui's rounded/feathered geometry
 with a textureless shader. Paired framebuffer tests require exact RGBA equality
 at 100%, 125% and 200% scale, with clipping and dithering on/off, and assert that
-the native draw actually executed. Opacity, stroke and sRGB cases retain the
+the native draw actually executed. Opacity, shadow and sRGB cases retain the
 ordinary path. Adapter-policy coverage excludes hardware and other backends.
 The ignored large-panel replay is a draw/readback diagnostic, not an idle CPU
 budget or presentation-rate substitute.
+
+Inspector and SFTP coverage compares complete ordinary/textureless widgets
+at 100%, 125% and 200%, including narrow geometry and fractional clips. Tests
+also retain Inspector header focus and consumed outside clicks, SFTP pane
+selection and filter focus, and explicit callback attribution. Shadow,
+translucency, hidden/opacity painters, layer transforms, nonzero root origins,
+secondary viewports and sRGB targets have paired fallback pixel checks.
+These are live framebuffer comparisons, not new stored snapshot scenarios.
+The optional `replay_warp_ui_surfaces_shared_panels` uses eframe's root entry
+point and balanced ordinary/textureless repeats; its measurement plan and
+pending qualification are in `validation/windows-warp/README.md`.
 
 Windows native probes must exclude visible event-broker/tool HWNDs rather
 than trusting `Process.MainWindowHandle`. The Win32 selector regression creates

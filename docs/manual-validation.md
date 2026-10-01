@@ -558,6 +558,18 @@ geometry in normal CI. Native Settings scrolling, profile interaction, window
 drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
 
+The bounded Inspector/SFTP pane-and-table coverage adds complete widget
+pixel comparisons and an opt-in completed-render replay. Windows correctness
+and all 20 paired framebuffer comparisons passed; matched draw/readback
+improved while UI construction increased slightly in absolute cost. Raw
+repeats, adverse control samples and limits are in
+`validation/windows-warp/README.md`. This changes no native/manual
+classification: TI-06 still owns native Inspector focus/selection behavior,
+FD-05/FD-06 still own OS drag/reveal, and CP-16's mixed-DPI, accelerated-device
+and usability evidence remains open. Transfer/collision painting and styling
+are not part of this change. The offscreen same-executable renderer
+differential is not shipping before/after or native presentation evidence.
+
 ### Experimental Direct2D qualification
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes

@@ -1159,7 +1159,13 @@
         "session_inspector_opens_without_resizing_and_escape_restores_terminal_mode",
         "sftp_action_does_not_expose_an_unavailable_reconnect",
         "disconnected_native_session_offers_resume_in_the_inspector",
-        "inspector_consumes_the_first_uncovered_terminal_click"
+        "inspector_consumes_the_first_uncovered_terminal_click",
+        "textureless_inspector_preserves_pixels_focus_and_click_catcher",
+        "panel_frames_retain_all_painter_and_frame_guards",
+        "panel_frame_without_renderer_preserves_layout_and_child_order",
+        "textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports",
+        "unexpected_panel_geometry_retains_the_original_mesh",
+        "replay_warp_ui_surfaces_shared_panels"
       ],
       "manual_scenarios": [
         "TI-06"
@@ -1567,6 +1573,10 @@
         "sort_and_filter_keep_folders_first",
         "visible_entry_snapshots_are_shared_and_invalidated_without_mutating_readers",
         "virtualized_pane_keeps_scrolling_selection_and_filtering_on_the_full_listing",
+        "textureless_sftp_panes_preserve_pixels_geometry_and_selection",
+        "panel_frames_retain_all_painter_and_frame_guards",
+        "textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports",
+        "replay_warp_ui_surfaces_shared_panels",
         "breadcrumb_segments_expose_clickable_ancestors",
         "arrow_selection_extends_contiguous_range",
         "pane_order_preference_swaps_visual_sides_only",
