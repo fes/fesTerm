@@ -25,6 +25,12 @@ work, plus the edge states that are actually interesting. And it does not
 assert correctness; the automated suites and the validation gates do that.
 What it captures is how the product currently *presents* itself.
 
+Headless captures use the production blue-graphite dark visuals on the actual
+rendering context, including built-in controls and popup frames. They retain
+each scenario's fonts, viewport and crop; isolated widget pictures are not
+full-window/native-desktop evidence. Editor and picker paths refer only to
+synthetic files under the capture worktree's `target/ui-gallery-fixtures/`.
+
 ## Starting a session
 
 The New Session tab is the application's front door, and it answers three

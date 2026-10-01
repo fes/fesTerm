@@ -73,6 +73,28 @@ user's configuration, credentials, host keys or filesystem. Every host is an
 `example.com`/`example.net` subdomain and every address comes from the
 documentation-reserved ranges in RFC 5737.
 
+Every gallery harness seeds its **actual** egui context with the production
+Dark preference and `festerm_ui_egui::theme::default_visuals()` before capture.
+The test application constructor deliberately omits production context setup;
+styling a separate fixture context does not style the harness. The portable
+`gallery_frames_use_production_theme_for_app_and_popup` test asserts emitted
+background and popup fills from real app/widget frames, without a new
+platform-specific snapshot baseline. Fonts, viewport sizes, fixtures, and
+cropping remain owned by the existing scenarios. Editor and picker files are
+created only under the worktree's ignored `target/ui-gallery-fixtures/` and
+removed after capture; no personal OS temporary-directory path is published.
+
+On Windows, invoke the same capture test directly from PowerShell with an
+isolated, worktree-owned `HOME` (and `USERPROFILE`, `APPDATA`, and
+`LOCALAPPDATA`) after pinning `CARGO_HOME` and `RUSTUP_HOME` to the installed
+toolchain homes:
+
+```text
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact
+python scripts/build_ui_state_doc.py
+python scripts/build_ui_state_doc.py --check
+```
+
 The gallery calls `Harness::render()` and never `Harness::snapshot`. That
 distinction is deliberate. The snapshot API is a regression gate that *fails*
 on any pixel difference, which is exactly backwards here: this is a generator
