@@ -2248,6 +2248,15 @@
         "mobile_pinch_takes_over_arrows_and_quarantines_remaining_finger",
         "mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected",
         "mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning",
+        "mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal",
+        "responsive_tiers_follow_measured_space_not_device_identity",
+        "compact_files_layout_keeps_both_panes_on_screen",
+        "compact_files_layout_keeps_collision_and_queue_actions_reachable",
+        "wide_files_layout_keeps_horizontal_panes_on_screen",
+        "transfer_direction_follows_the_selected_source_pane",
+        "collision_requires_an_explicit_decision_and_queue_is_bounded",
+        "transfer_progress_is_monotonic_and_completes",
+        "markdown_fixture_uses_shared_parser_and_has_navigable_contents",
         "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
         "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically"
       ],
@@ -2255,7 +2264,8 @@
         "MOB-01",
         "MOB-02",
         "MOB-03",
-        "MOB-04"
+        "MOB-04",
+        "MOB-05"
       ],
       "status": "partial",
       "prerequisites": [

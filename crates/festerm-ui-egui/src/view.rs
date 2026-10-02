@@ -6,7 +6,9 @@ use std::{
 };
 
 use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
-use festerm_core::{ContentPosition, Dimensions, InputEventOutcome, MouseTrackingMode, Terminal};
+use festerm_core::{
+    ContentPosition, Dimensions, FocusEvent, InputEventOutcome, MouseTrackingMode, Terminal,
+};
 use icu_properties::{props::BidiControl, CodePointSetData};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -450,6 +452,28 @@ impl TerminalView {
     /// becomes the active tab (`docs/gui-design.md`).
     pub fn request_focus_on_next_frame(&mut self) {
         self.has_requested_initial_focus = false;
+    }
+
+    /// Relinquishes transient keyboard and pointer ownership when the
+    /// composition root stops presenting this terminal.
+    ///
+    /// Terminal content, completed selection, scroll position and zoom are
+    /// preserved. In-progress IME composition and gestures must not survive a
+    /// tab/workspace switch and suppress keys when the terminal is shown again.
+    /// The returned focus event belongs on the terminal's ordered input path.
+    pub fn relinquish_transient_input(&mut self) -> Option<FocusEvent> {
+        if self.selection.is_active() {
+            self.selection.finish();
+        }
+        self.pointer = TerminalPointerState::default();
+        self.primary_link_gesture = None;
+        self.secondary_gesture = SecondaryGestureOwnership::default();
+        self.middle_click_paste_gesture = false;
+        self.scrollbar_dragging = false;
+        self.context_link = None;
+        self.context_target = None;
+        self.has_requested_initial_focus = false;
+        self.keyboard.focus_out_if_owned()
     }
 
     /// Takes every clipboard event deferred since the prior frame. Multiple

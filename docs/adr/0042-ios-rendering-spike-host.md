@@ -1,6 +1,6 @@
 # ADR 0042: Isolated iOS Rendering Spike Host
 
-- **Status:** Proposed — implementation for review; native feasibility not accepted
+- **Status:** Proposed — terminal and offline workflow preview implemented; native feasibility not accepted
 - **Date:** 2026-09-26
 - **Supersedes:** ADR 0031's planning-only scope for this owner-requested iOS experiment; persistent-input layout replaces the earlier focus-only design
 
@@ -15,6 +15,11 @@ that root on iOS would couple the first experiment to unrelated product work.
 The owner further requested a persistent vertical terminal/keyboard layout on
 both iPhone and iPad. Include this narrow input slice in the feasibility host
 rather than treating a transient desktop-like focus model as the target.
+
+The owner subsequently requested a testable facsimile of the mobile tab, SFTP
+and Markdown designs. That preview must exercise responsive composition without
+misrepresenting synthetic data as a live connection or widening the mobile
+dependency graph to the desktop composition root.
 
 ## Decision
 
@@ -85,6 +90,26 @@ input seam without accepting native feasibility or starting mobile sessions.
 Native selection handles, spacebar gestures and extended key configuration
 remain Phase 2.
 
+The host also owns three fixed workflow categories: Terminal, Files and README.
+They retain in-memory preview state while switching, but they are not yet the
+product tab lifecycle (no create, rename, reorder, close or restoration).
+Terminal remains the only category that requests persistent keyboard focus or
+owns terminal gestures.
+
+Files is an offline interaction model over repository-owned Local/Remote
+listings. It proves measured-space layout selection: horizontal panes at Wide,
+stacked Remote/Local panes and a horizontal transfer rail at Compact, and a
+focused-pane toggle at Minimal. Selection determines upload/download direction;
+bounded animated progress and explicit collision decisions are UI state only.
+There is no filesystem or SFTP request.
+
+README parses a repository-owned synthetic runbook through the shared bounded
+`festerm-markdown` model. It exposes Preview, Source and heading navigation,
+with a persistent Wide contents rail and a collapsible Compact/Minimal contents
+panel. Resources stay inert. Reusing the parser adds `festerm-markdown` and its
+`festerm-syntax` dependency to the audited mobile graph; it does not import the
+desktop app, source I/O or native dialogs.
+
 ## Alternatives considered
 
 - Feature-gate the entire desktop root: much wider work than needed for the
@@ -101,7 +126,8 @@ small experimental binary and portable tests. Normal workspace checks compile
 the host; the iOS workflow checks device code and links a Simulator app.
 Dependency versions remain locked; no existing dependencies are upgraded.
 
-SSH/SFTP, iOS Keychain, profiles, advanced gestures/F-keys, clipboard policy,
+Live SSH/SFTP, iOS Keychain, profiles, full tab lifecycle, advanced
+gestures/F-keys, clipboard policy,
 durable resume, Android and TestFlight remain later work. Accepting this ADR
 does not accept mobile product support. Architectural review and native
 feasibility evidence are required before moving beyond this experiment.
@@ -133,12 +159,27 @@ hardware-keyboard emulation must be disconnected for this software-keyboard
 case. This does not replace SDK-matched CI, iPad, physical-device, complex IME
 or native accessory/gesture qualification; the ADR remains Proposed.
 
+On 2026-10-02 the same local iPhone environment rendered the three workflow
+categories. Native review caught a Compact transfer rail consuming remaining
+height and pushing the lower pane off-screen; a bounded-rail fix and geometry
+regression now keep both panes visible. Native review also caught overlapping
+Markdown controls and a desktop-width reading column; the Compact toolbar now
+uses two rows and the document wraps to measured width. This is bounded iPhone
+visual evidence for `MOB-05`, not iPad, rotation, accessibility or physical
+device acceptance.
+
+An isolated iPad Pro 13-inch (M5) Simulator on the same 26.5 runtime also
+rendered the Wide terminal surface and measured keyboard region before the
+temporary device was removed. Files/README interaction, rotation, multitasking,
+accessibility and physical-device acceptance remain open on iPad.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** additive mobile composition root;
   shared core/renderer and single writer preserved; no desktop session backend
   or updater in the iOS normal/build graph; no retained user input.
-- **GUI/action edges affected:** `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04` (isolated spike);
+- **GUI/action edges affected:** `MOB-01`, `MOB-02`, `MOB-03`, `MOB-04`,
+  `MOB-05` (isolated preview);
   `ZOOM-02` shares the existing size bounds.
 - **Automated tests required:**
   `mobile_gpu_limits_accept_simulator_downlevel_capabilities`,
@@ -156,7 +197,16 @@ or native accessory/gesture qualification; the ADR remains Proposed.
   `mobile_pinch_takes_over_arrows_and_quarantines_remaining_finger`,
   `mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected`,
   `mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning`,
-  `terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples`;
+  `terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples`,
+  `mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal`,
+  `responsive_tiers_follow_measured_space_not_device_identity`,
+  `compact_files_layout_keeps_both_panes_on_screen`,
+  `compact_files_layout_keeps_collision_and_queue_actions_reachable`,
+  `wide_files_layout_keeps_horizontal_panes_on_screen`,
+  `transfer_direction_follows_the_selected_source_pane`,
+  `collision_requires_an_explicit_decision_and_queue_is_bounded`,
+  `transfer_progress_is_monotonic_and_completes`,
+  `markdown_fixture_uses_shared_parser_and_has_navigable_contents`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link;
   `scripts/tests/test_ios_simulator_smoke.py` for isolated device ownership,
   runtime selection, failure/cleanup behavior and live-process-without-UI rejection; `scripts/smoke-ios-simulator.py
@@ -164,6 +214,6 @@ or native accessory/gesture qualification; the ADR remains Proposed.
   and PNG capture.
   Only devices created by that invocation may be shut down/deleted. Artifacts
   identify the commit/runtime and never count screenshots as visual acceptance.
-- **Native/manual evidence required:** `MOB-01` through `MOB-04` in
+- **Native/manual evidence required:** `MOB-01` through `MOB-05` in
   `docs/manual-validation.md`, on Simulator and a physical iOS device.
 - **Coverage superseded:** None; desktop acceptance is unchanged.

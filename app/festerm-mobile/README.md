@@ -1,9 +1,11 @@
 # iOS rendering spike
 
-Experimental Phase 1 host for the existing fesTerm Rust core and egui
-renderer. This is **not yet an SSH client**. It displays a bounded ANSI/Unicode
-fixture, routes input into a counting/discarding sink and exposes lifecycle
-counters. See [ADR 0042](../../docs/adr/0042-ios-rendering-spike-host.md).
+Experimental host for the existing fesTerm Rust core and egui renderer. This
+is **not yet an SSH client**. It combines the original bounded terminal probe
+with synthetic Files/SFTP and Markdown workspaces so the responsive mobile
+interaction design can be tested before credentials, transport, persistence or
+real file access exist. See
+[ADR 0042](../../docs/adr/0042-ios-rendering-spike-host.md).
 
 ## Run on an iOS Simulator
 
@@ -82,6 +84,10 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
 
 ## Current behavior and remaining gate
 
+- A compact top strip switches among Terminal, Files and README workflow
+  previews. Each workspace keeps its in-memory state while another workspace
+  is active. These are fixed preview categories, not full create/rename/reorder/
+  close session tabs.
 - Shared terminal fixture with ANSI colors, combining/wide glyph coverage and
   emoji; scrollback limited to 256 KiB, resize handled by the existing view.
 - A docked Esc/Tab/Ctrl/Alt row and persistent native keyboard request
@@ -112,7 +118,17 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   first, then start the pinch. Reset fixture restores the default text size.
 - Standard renderer selection/scrolling is exposed for native testing. No
   double-tap Tab, native selection handles,
-  paste/link handling, SSH, SFTP, profiles, secrets or background sockets yet.
+  paste/link handling, SSH, profiles, secrets or background sockets yet.
+- Files uses repository-owned synthetic Local and Remote listings. Wide space
+  renders a horizontal split, Compact space stacks Remote above Local, and
+  Minimal space shows one focused pane. Selection controls upload/download
+  direction; fake transfers have bounded progress history and filename
+  collisions require Replace, Keep both or Skip. Nothing is read, written,
+  uploaded or downloaded.
+- README uses the shared bounded `festerm-markdown` parser over a synthetic
+  runbook. Preview and Source modes are available; Wide space keeps a contents
+  rail beside the document and narrower space opens Contents above it. Heading
+  activation selects and scrolls to the section. Links/resources stay inert.
 - No product-level performance or accessibility claim. Safe areas, rotation,
   touch behavior, software keyboard feasibility, foreground Metal recovery,
   memory pressure and process death need native evidence under `MOB-01`–`04`.
@@ -142,3 +158,9 @@ the software keyboard stays visible while idle, after native character,
 Return and Delete actions, and after background/foreground. This is bounded
 local evidence, not SDK-matched CI or iPad/physical-device qualification;
 native accessory-touch, complex IME and gesture acceptance remain open.
+
+The workflow extension has also rendered Compact Files and Markdown/Contents
+on that iPhone and the Wide terminal surface on an isolated iPad Pro 13-inch
+(M5) Simulator. Those local captures are bounded visual evidence, not
+qualification of iPad workflow interaction, rotation, multitasking,
+accessibility or a physical device.

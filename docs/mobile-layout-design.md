@@ -24,12 +24,25 @@ product policy the governance process asks changes to avoid.
 | Tier | Typical context | Terminal layout | SFTP layout |
 |---|---|---|---|
 | **Wide** | Most iPad orientations | Terminal above the same persistent input region | Today's horizontal Local/Remote split, unchanged |
-| **Compact** | Phone portrait, iPad narrow Split View | Terminal fills available space above a docked extra-keys row + system keyboard | Stacked vertical split: Local-primary pane on top, Remote-primary pane below |
+| **Compact** | Phone portrait, iPad narrow Split View | Terminal fills available space above a docked extra-keys row + system keyboard | Stacked vertical split: Remote pane on top, Local pane below |
 | **Minimal** | Phone landscape with keyboard docked, iPad Slide Over | Falls back to the existing focused-single-pane toggle | Same focused-pane toggle, applied to SFTP's two panes |
 
 Tier selection is a pure function of measured width and height at layout
 time, re-evaluated on every resize/rotation/multitasking transition — there
 is no persisted "device mode" setting to get out of sync with reality.
+
+The offline workflow preview uses initial evidence-backed thresholds: Minimal
+when available height is below 430 points; otherwise Wide when width is at
+least 700 points and height at least 500; Compact for the remaining space.
+These values correctly select Compact on the tested iPhone 17 portrait surface
+and keep both stacked Files panes visible. They remain provisional until iPad,
+rotation, Split View, Dynamic Type and physical-device evidence is recorded.
+
+The preview's top strip exposes three fixed categories: Terminal, Files and
+README. Switching preserves each category's in-memory state and terminal
+keyboard focus is requested only while Terminal is active. This validates the
+space allocation and focus handoff, not the future create/rename/reorder/close
+session-tab lifecycle.
 
 ## Phone portrait: terminal layout
 
@@ -104,13 +117,29 @@ SFTP; stored command history needs its own persistence/privacy design.
 
 ## Phone: SFTP layout
 
-- Stacked Local-top / Remote-bottom panes at the Compact tier, replacing the
-  desktop's left/right split.
+- Stacked Remote-top / Local-bottom panes at the Compact tier, replacing the
+  desktop's left/right split. Upload therefore moves upward and download moves
+  downward, matching the direction named by the action.
 - The transfer-direction rail (today a vertical control between the two
   desktop panes) rotates to a horizontal bar between the stacked panes,
-  showing "Upload to Remote ↓" / "Download to Local ↑" — same transfer
+  showing "Upload to Remote ↑" / "Download to Local ↓" — same transfer
   model and same underlying preference, oriented to match the stacked
   layout instead of a left/right one.
+
+The current offline preview implements all three axes over synthetic listings,
+including direction-aware controls, bounded fake progress and an explicit
+collision decision. It performs no local or remote I/O.
+
+## Phone: Markdown layout
+
+- Preview is the default and wraps to measured width.
+- Preview, Source and Contents remain visible controls rather than overflow
+  actions on phone.
+- Contents opens as a bounded panel above the document at Compact/Minimal and
+  closes after heading activation. Wide keeps a 210-point contents rail beside
+  the reading column.
+- The preview uses the shared bounded Markdown projection. Resources stay
+  inert; this slice does not claim editing, filesystem access or remote reload.
 
 ## Reframing `SftpPaneOrderPreference`
 
@@ -121,7 +150,8 @@ it renders on:
 
 - At the **Wide** tier, primary renders left, secondary renders right (today's
   behavior, unchanged).
-- At the **Compact** tier, primary renders top, secondary renders bottom.
+- At the **Compact** tier, semantic direction wins over pane-order preference:
+  Remote renders on top and Local below so upload is always upward.
 - At the **Minimal** tier, the preference determines which pane the
   focused-pane toggle defaults to first.
 
@@ -156,9 +186,8 @@ preference's rendering logic, not add a second preference.
 
 ## Open questions for implementation time
 
-- Exact breakpoint values (width/height thresholds separating Wide/Compact/
-  Minimal) should be derived from real device testing during Phase 1's
-  rendering spike, not fixed speculatively in this document.
+- Revisit the provisional 430/700/500-point thresholds after iPad, rotation,
+  Split View, Dynamic Type and physical-device evidence.
 - Whether the extra-keys row itself needs a Compact-tier-specific compact
   variant (e.g., fewer visible keys with a scroll affordance) versus reusing
   the same row at all tiers is deferred to Phase 2 implementation.

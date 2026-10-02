@@ -1,6 +1,7 @@
-//! Phase 1 iOS feasibility host. No transport, credentials, or persistence.
+//! iOS feasibility host. Product workflows remain offline facsimiles.
 
 mod terminal_gesture;
+mod workspaces;
 
 use eframe::egui;
 use festerm_core::{Dimensions, InputEvent, Key, Modifiers, Terminal};
@@ -124,6 +125,9 @@ pub struct MobileApp {
     alt: bool,
     toolbar_rect: Option<egui::Rect>,
     gestures: terminal_gesture::TerminalGesture,
+    workspace: workspaces::Workspace,
+    files: workspaces::FilesWorkspace,
+    markdown: workspaces::MarkdownWorkspace,
 }
 
 impl MobileApp {
@@ -141,14 +145,20 @@ impl MobileApp {
             alt: false,
             toolbar_rect: None,
             gestures: terminal_gesture::TerminalGesture::default(),
+            workspace: workspaces::Workspace::Terminal,
+            files: workspaces::FilesWorkspace::default(),
+            markdown: workspaces::MarkdownWorkspace::default(),
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        let occlusion = self
-            .keyboard
-            .as_ref()
-            .map_or(0.0, |keyboard| keyboard.occluded_height_fraction());
+        let occlusion = if self.workspace == workspaces::Workspace::Terminal {
+            self.keyboard
+                .as_ref()
+                .map_or(0.0, |keyboard| keyboard.occluded_height_fraction())
+        } else {
+            0.0
+        };
         self.show_with_occlusion(ui, occlusion);
     }
 
@@ -160,7 +170,12 @@ impl MobileApp {
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
         // Accessory taps must not blur the terminal and restart UIKit's keyboard.
         ui.ctx().options_mut(|options| {
-            options.input_options.surrender_focus_on = egui::SurrenderFocusOn::Never;
+            options.input_options.surrender_focus_on =
+                if self.workspace == workspaces::Workspace::Terminal {
+                    egui::SurrenderFocusOn::Never
+                } else {
+                    egui::SurrenderFocusOn::Clicks
+                };
         });
         let mut safe_rect = ui.ctx().content_rect().intersect(ui.max_rect());
         let viewport = ui.ctx().viewport_rect();
@@ -233,19 +248,63 @@ impl MobileApp {
                 .zoom_by_factor(font_size / self.view.font_size_points());
             self.observed_memory_warnings = lifecycle.memory_warnings;
         }
-        egui::Panel::top("spike-status").show(ui, |ui| {
-            ui.label("fesTerm · iOS feasibility spike");
-            ui.small("Offline fixture · input counted, never executed");
-            ui.small(format!(
-                "Resume {} · suspend {} · memory {} · input {} bytes",
-                lifecycle.resumes,
-                lifecycle.suspensions,
-                lifecycle.memory_warnings,
-                self.sink.diagnostics.byte_count,
-            ));
+        egui::Panel::top("mobile-workspace-tabs").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
+                ui.strong("fesTerm");
+                ui.small("iOS workflow preview · synthetic data");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.small(format!(
+                        "resume {} · memory {}",
+                        lifecycle.resumes, lifecycle.memory_warnings
+                    ));
+                });
+            });
+            ui.horizontal(|ui| {
+                for workspace in [
+                    workspaces::Workspace::Terminal,
+                    workspaces::Workspace::Files,
+                    workspaces::Workspace::Markdown,
+                ] {
+                    if ui
+                        .selectable_label(self.workspace == workspace, workspace.label())
+                        .clicked()
+                    {
+                        self.switch_workspace(workspace);
+                    }
+                }
+            });
+        });
+        match self.workspace {
+            workspaces::Workspace::Terminal => self.show_terminal(ui, lifecycle),
+            workspaces::Workspace::Files => self.files.show(ui),
+            workspaces::Workspace::Markdown => self.markdown.show(ui),
+        }
+    }
+
+    fn switch_workspace(&mut self, workspace: workspaces::Workspace) {
+        if self.workspace == workspace {
+            return;
+        }
+        self.gestures.cancel();
+        self.control = false;
+        self.alt = false;
+        if self.workspace == workspaces::Workspace::Terminal {
+            if let Some(focus) = self.view.relinquish_transient_input() {
+                route_input(&mut self.terminal, InputEvent::Focus(focus), &mut self.sink);
+            }
+        }
+        self.workspace = workspace;
+    }
+
+    fn show_terminal(&mut self, ui: &mut egui::Ui, lifecycle: Lifecycle) {
+        egui::Panel::top("terminal-fixture-status").show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.small(format!(
+                    "Offline terminal · input {} bytes · never executed",
+                    self.sink.diagnostics.byte_count,
+                ));
                 if ui
-                    .add(egui::Button::new("Reset fixture").sense(egui::Sense::CLICK))
+                    .add(egui::Button::new("Reset").sense(egui::Sense::CLICK))
                     .clicked()
                 {
                     self.gestures.cancel();
@@ -778,6 +837,76 @@ mod tests {
             matches!(&events[0], egui::Event::Ime(egui::ImeEvent::Commit(text)) if text.is_empty())
         );
         assert!(app.terminal.queued_input().is_empty());
+    }
+
+    #[test]
+    fn mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal() {
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new(lifecycle);
+        let ctx = egui::Context::default();
+        let render = |app: &mut MobileApp, events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(390.0, 844.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.show_with_occlusion(ui, 0.0),
+            )
+        };
+        render(&mut app, vec![]).drop_without_applying_deltas();
+        let output = render(&mut app, vec![]);
+        assert!(output.platform_output.ime.is_some());
+        output.drop_without_applying_deltas();
+        render(
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "composing".into(),
+                active_range_chars: None,
+            })],
+        )
+        .drop_without_applying_deltas();
+
+        app.control = true;
+        app.switch_workspace(workspaces::Workspace::Files);
+        assert!(!app.control);
+        let bytes_after_focus_out = app.sink.diagnostics.byte_count;
+        let output = render(&mut app, vec![]);
+        assert!(output.platform_output.ime.is_none());
+        assert!(!output.shapes.is_empty());
+        output.drop_without_applying_deltas();
+
+        app.switch_workspace(workspaces::Workspace::Markdown);
+        let output = render(&mut app, vec![]);
+        assert!(output.platform_output.ime.is_none());
+        assert!(!output.shapes.is_empty());
+        output.drop_without_applying_deltas();
+
+        app.switch_workspace(workspaces::Workspace::Terminal);
+        render(&mut app, vec![]).drop_without_applying_deltas();
+        let output = render(
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(output.platform_output.ime.is_some());
+        output.drop_without_applying_deltas();
+        assert_eq!(
+            app.sink.diagnostics.byte_count,
+            bytes_after_focus_out + 1,
+            "abandoning preedit must let terminal keys route after returning"
+        );
     }
 
     #[test]

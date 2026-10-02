@@ -6,6 +6,8 @@ on:
       - 'app/festerm-mobile/**'
       - 'crates/festerm-core/**'
       - 'crates/festerm-ios-window/**'
+      - 'crates/festerm-markdown/**'
+      - 'crates/festerm-syntax/**'
       - 'crates/festerm-ui-egui/**'
       - 'vendor/egui-winit/**'
       - 'assets/fonts/**'
