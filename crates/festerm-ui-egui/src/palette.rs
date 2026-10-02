@@ -15,8 +15,7 @@
 //! (`docs/application-command-model.md`).
 
 use egui::{
-    Align2, Context, Id, Key, Modifiers, ScrollArea, Sense, TextStyle, WidgetInfo, WidgetType,
-    Window,
+    Context, Id, Key, Modifiers, ScrollArea, Sense, TextStyle, WidgetInfo, WidgetType, Window,
 };
 
 /// One searchable entry: an application action or an open tab.
@@ -113,15 +112,29 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     let mut decision = None;
     let request_focus = state.needs_focus;
     state.needs_focus = false;
+    let root = ctx.content_rect();
+    let frame = egui::Frame::window(&ctx.style());
+    let margin = frame.total_margin().sum();
+    let top = if root.height() < 400.0 { 16.0 } else { 48.0 };
+    let size = egui::vec2(
+        (root.width() - 32.0 - margin.x).clamp(0.0, 420.0),
+        (root.height() - top - 16.0 - margin.y - 40.0).clamp(0.0, 320.0),
+    );
 
     let area_response = Window::new("Command Palette")
         .id(Id::new("festerm_command_palette"))
         .collapsible(false)
         .resizable(false)
-        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 48.0))
-        .fixed_size(egui::vec2(420.0, 320.0))
+        .frame(frame)
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top))
+        .min_size(egui::Vec2::ZERO)
+        .fixed_size(size)
         .show(ctx, |ui| {
-            let response = ui.text_edit_singleline(&mut state.query);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut state.query)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Search sessions and commands"),
+            );
             if request_focus {
                 response.request_focus();
             }
@@ -154,93 +167,121 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
             }
 
             ui.separator();
-            ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                // `with_cross_justify(true)` makes each row fill the full
-                // available width instead of shrinking to its own text, so
-                // the highlighted background spans the whole popup rather
-                // than just the label.
-                ui.with_layout(
-                    egui::Layout::top_down(egui::Align::Min).with_cross_justify(true),
-                    |ui| {
-                        for (index, item) in matches.iter().enumerate() {
-                            let highlighted = index == state.selected;
-                            let row_shortcut = if item.is_tab {
-                                item.shortcut_label.as_deref()
-                            } else {
-                                item.hint.as_deref()
-                            };
-                            let left_text = if item.is_tab {
-                                match &item.hint {
-                                    Some(hint) => format!("{}  \u{2014}  {hint}", item.label),
-                                    None => item.label.clone(),
+            ScrollArea::vertical()
+                .max_height(ui.available_height().min(220.0).max(0.0))
+                .show(ui, |ui| {
+                    // `with_cross_justify(true)` makes each row fill the full
+                    // available width instead of shrinking to its own text, so
+                    // the highlighted background spans the whole popup rather
+                    // than just the label.
+                    ui.with_layout(
+                        egui::Layout::top_down(egui::Align::Min).with_cross_justify(true),
+                        |ui| {
+                            for (index, item) in matches.iter().enumerate() {
+                                let highlighted = index == state.selected;
+                                let row_shortcut = if item.is_tab {
+                                    item.shortcut_label.as_deref()
+                                } else {
+                                    item.hint.as_deref()
+                                };
+                                let left_text = if item.is_tab {
+                                    match &item.hint {
+                                        Some(hint) => format!("{}  \u{2014}  {hint}", item.label),
+                                        None => item.label.clone(),
+                                    }
+                                } else {
+                                    item.label.clone()
+                                };
+                                let accessible_label = match row_shortcut {
+                                    Some(shortcut) => format!("{left_text}, {shortcut}"),
+                                    None => left_text.clone(),
+                                };
+                                let row_height = ui.spacing().interact_size.y.max(28.0);
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), row_height),
+                                    Sense::click(),
+                                );
+                                response.widget_info(|| {
+                                    let mut info = WidgetInfo::labeled(
+                                        WidgetType::SelectableLabel,
+                                        true,
+                                        accessible_label.clone(),
+                                    );
+                                    info.selected = Some(highlighted);
+                                    info
+                                });
+                                let selection = ui.visuals().selection;
+                                if highlighted {
+                                    ui.painter().rect_filled(rect, 3.0, selection.bg_fill);
+                                    ui.painter().rect_stroke(
+                                        rect,
+                                        3.0,
+                                        selection.stroke,
+                                        egui::StrokeKind::Inside,
+                                    );
+                                } else if response.hovered() {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        3.0,
+                                        ui.visuals().widgets.hovered.weak_bg_fill,
+                                    );
                                 }
-                            } else {
-                                item.label.clone()
-                            };
-                            let accessible_label = match row_shortcut {
-                                Some(shortcut) => format!("{left_text}, {shortcut}"),
-                                None => left_text.clone(),
-                            };
-                            let row_height = ui.spacing().interact_size.y;
-                            let (rect, response) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), row_height),
-                                Sense::click(),
-                            );
-                            response.widget_info(|| {
-                                let mut info = WidgetInfo::labeled(
-                                    WidgetType::SelectableLabel,
-                                    true,
-                                    accessible_label.clone(),
-                                );
-                                info.selected = Some(highlighted);
-                                info
-                            });
-                            let selection = ui.visuals().selection;
-                            if highlighted {
-                                ui.painter().rect_filled(rect, 3.0, selection.bg_fill);
-                                ui.painter().rect_stroke(
-                                    rect,
-                                    3.0,
-                                    selection.stroke,
-                                    egui::StrokeKind::Inside,
-                                );
-                            } else if response.hovered() {
-                                ui.painter().rect_filled(
-                                    rect,
-                                    3.0,
-                                    ui.visuals().widgets.hovered.weak_bg_fill,
-                                );
-                            }
 
-                            let font = TextStyle::Button.resolve(ui.style());
-                            let left_color = if highlighted {
-                                ui.visuals().strong_text_color()
-                            } else {
-                                ui.visuals().text_color()
-                            };
-                            ui.painter().text(
-                                rect.left_center() + egui::vec2(6.0, 0.0),
-                                Align2::LEFT_CENTER,
-                                left_text,
-                                font.clone(),
-                                left_color,
-                            );
-                            if let Some(shortcut) = row_shortcut {
-                                ui.painter().text(
-                                    rect.right_center() - egui::vec2(8.0, 0.0),
-                                    Align2::RIGHT_CENTER,
-                                    shortcut,
+                                let font = TextStyle::Button.resolve(ui.style());
+                                let left_color = if highlighted {
+                                    ui.visuals().strong_text_color()
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+                                let painter =
+                                    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+                                let shortcut = row_shortcut.map(|shortcut| {
+                                    let natural = painter.layout_no_wrap(
+                                        shortcut.to_owned(),
+                                        font.clone(),
+                                        ui.visuals().weak_text_color(),
+                                    );
+                                    elided_row_text(
+                                        &painter,
+                                        shortcut,
+                                        font.clone(),
+                                        ui.visuals().weak_text_color(),
+                                        natural.size().x.min(rect.width() * 0.35),
+                                    )
+                                });
+                                let shortcut_width = shortcut
+                                    .as_ref()
+                                    .map_or(0.0, |galley| galley.size().x + 12.0);
+                                let left = elided_row_text(
+                                    &painter,
+                                    &left_text,
                                     font,
-                                    ui.visuals().weak_text_color(),
+                                    left_color,
+                                    (rect.width() - 14.0 - shortcut_width).max(0.0),
                                 );
+                                painter.galley(
+                                    rect.left_center() + egui::vec2(6.0, -left.size().y / 2.0),
+                                    left,
+                                    left_color,
+                                );
+                                if let Some(shortcut) = shortcut {
+                                    painter.galley(
+                                        rect.right_center()
+                                            - egui::vec2(
+                                                8.0 + shortcut.size().x,
+                                                shortcut.size().y / 2.0,
+                                            ),
+                                        shortcut,
+                                        ui.visuals().weak_text_color(),
+                                    );
+                                }
+                                if response.clicked() {
+                                    decision = Some(Some(item.id));
+                                }
                             }
-                            if response.clicked() {
-                                decision = Some(Some(item.id));
-                            }
-                        }
-                    },
-                );
-            });
+                        },
+                    );
+                });
 
             if enter_pressed {
                 if let Some(item) = matches.get(state.selected) {
@@ -279,6 +320,19 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     }
 
     decision
+}
+
+fn elided_row_text(
+    painter: &egui::Painter,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, width);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    painter.layout_job(job)
 }
 
 #[cfg(test)]
@@ -440,6 +494,84 @@ mod tests {
         harness.run();
 
         assert_eq!(harness.state().decision, Some(None));
+    }
+
+    #[test]
+    fn palette_fits_the_full_root_and_elides_long_rows_without_losing_identity() {
+        use egui_kittest::kittest::Queryable as _;
+
+        for size in [
+            egui::vec2(752.0, 516.0),
+            egui::vec2(360.0, 516.0),
+            egui::vec2(360.0, 240.0),
+        ] {
+            let label = "staging-release-with-a-very-long-stable-session-identity";
+            let hint = r"C:\synthetic-fixtures\project-with-a-long-name\review\NOTES.md";
+            let mut palette = PaletteState::default();
+            palette.open();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(size)
+                .build_ui_state(
+                    |ui, state: &mut PaletteHarnessState| {
+                        if let Some(decision) = show(ui.ctx(), &mut state.palette, &state.items) {
+                            state.decision = Some(decision);
+                        }
+                    },
+                    PaletteHarnessState {
+                        palette,
+                        items: vec![PaletteItem {
+                            id: 42,
+                            label: label.to_owned(),
+                            hint: Some(hint.to_owned()),
+                            is_tab: true,
+                            shortcut_label: Some("Ctrl+Shift+9".to_owned()),
+                        }],
+                        decision: None,
+                    },
+                );
+            harness.ctx.set_theme(egui::ThemePreference::Dark);
+            harness.ctx.set_visuals(crate::theme::default_visuals());
+            harness
+                .ctx
+                .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+            harness.run();
+
+            let root = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let window = harness
+                .ctx
+                .memory(|memory| memory.area_rect(Id::new("festerm_command_palette")))
+                .unwrap();
+            assert!(root.contains_rect(window), "{size:?}: {window:?}");
+            let row = harness.get_by_label(&format!("{label}  \u{2014}  {hint}, Ctrl+Shift+9"));
+            assert!(root.contains_rect(row.rect()));
+            assert!(row.rect().height() >= 24.0);
+            let text_rects: Vec<_> = harness
+                .output()
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    let egui::Shape::Text(text) = &shape.shape else {
+                        return None;
+                    };
+                    (text.galley.job.text.contains(label) || text.galley.job.text == "Ctrl+Shift+9")
+                        .then(|| text.galley.rect.translate(text.pos.to_vec2()))
+                })
+                .collect();
+            assert_eq!(text_rects.len(), 2);
+            assert!(text_rects
+                .iter()
+                .all(|rect| row.rect().contains_rect(*rect)));
+            assert!(
+                text_rects[0].right() <= text_rects[1].left(),
+                "label and shortcut must not overlap"
+            );
+            assert!(harness
+                .get_by_role(egui::accesskit::Role::TextInput)
+                .is_focused());
+            row.click();
+            harness.run();
+            assert_eq!(harness.state().decision, Some(Some(42)));
+        }
     }
 
     #[test]

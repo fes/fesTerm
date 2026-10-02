@@ -3542,6 +3542,8 @@ impl FesTermApp {
     }
 
     fn show_about(&mut self, context: &egui::Context, escape: bool) {
+        use festerm_ui_egui::controls::{action_button, action_button_sized, ActionButtonRole};
+
         if !self.overlays.about_open {
             return;
         }
@@ -3565,13 +3567,26 @@ impl FesTermApp {
         let installation_kind = self.updates.installation_kind();
         let automatic_update_checks =
             self.state.automatic_update_checks() && installation_kind.can_install();
-        let width = (context.content_rect().width() - 32.0).clamp(280.0, 420.0);
+        let frame = egui::Frame::popup(&context.style()).inner_margin(egui::Margin::same(14));
+        let size = festerm_ui_egui::controls::modal_content_size(
+            context.content_rect().size(),
+            &frame,
+            egui::vec2(420.0, 600.0),
+        );
         egui::Modal::new(egui::Id::new("fesTerm about dialog"))
+            .frame(frame)
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
-                ui.set_width(width);
+                ui.set_width(size.x);
+                ui.set_max_height(size.y);
+                ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("About fesTerm");
                 ui.add_space(6.0);
+                let footer_height = 56.0 + 3.0 * ui.spacing().item_spacing.y;
+                egui::ScrollArea::vertical()
+                    .id_salt("about_dialog_content")
+                    .max_height((ui.available_height() - footer_height).max(0.0))
+                    .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(about_icon) = &self.about_icon {
                         ui.add(
@@ -3619,7 +3634,7 @@ impl FesTermApp {
                         ui.label(*message);
                     }
                     UpdateStatus::Idle => {
-                        if ui.button("Check for Updates").clicked() {
+                        if action_button(ui, ActionButtonRole::Secondary, "Check for Updates").clicked() {
                             update_action = Some(UpdateAction::Check);
                         }
                     }
@@ -3631,7 +3646,7 @@ impl FesTermApp {
                     }
                     UpdateStatus::Current => {
                         ui.label("fesTerm is up to date.");
-                        if ui.button("Check Again").clicked() {
+                        if action_button(ui, ActionButtonRole::Secondary, "Check Again").clicked() {
                             update_action = Some(UpdateAction::Check);
                         }
                     }
@@ -3648,7 +3663,7 @@ impl FesTermApp {
                             }
                         }
                         if installation_kind.can_install() {
-                            if ui.button("Download Update").clicked() {
+                            if action_button(ui, ActionButtonRole::Accent, "Download Update").clicked() {
                                 update_action = Some(UpdateAction::Download);
                             }
                         } else {
@@ -3675,7 +3690,7 @@ impl FesTermApp {
                             "fesTerm {} is downloaded and verified.",
                             summary.version
                         ));
-                        if ui.button("Install and Restart").clicked() {
+                        if action_button(ui, ActionButtonRole::Accent, "Install and Restart").clicked() {
                             update_action = Some(UpdateAction::Install);
                         }
                     }
@@ -3696,7 +3711,7 @@ impl FesTermApp {
                         retry_check,
                     } => {
                         ui.colored_label(theme::STATUS_ERROR, *message);
-                        if *retry_check && ui.button("Try Again").clicked() {
+                        if *retry_check && action_button(ui, ActionButtonRole::Secondary, "Try Again").clicked() {
                             update_action = Some(UpdateAction::Check);
                         }
                     }
@@ -3739,19 +3754,39 @@ impl FesTermApp {
                             );
                         });
                 }
-                ui.horizontal(|ui| {
-                    if ui.button("Copy Version Information").clicked() {
-                        context.copy_text(Self::version_information());
+                    });
+                ui.add_space(ui.spacing().item_spacing.y);
+                let copy_size = egui::vec2(ui.available_width(), 28.0);
+                if action_button_sized(
+                    ui,
+                    copy_size,
+                    ActionButtonRole::Secondary,
+                    "Copy Version Information",
+                ).clicked() {
+                    context.copy_text(Self::version_information());
+                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 28.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                    if action_button_sized(
+                        ui,
+                        egui::vec2(80.0, 28.0),
+                        ActionButtonRole::Accent,
+                        "Close",
+                    ).clicked() {
+                        close = true;
                     }
                     if self.overlays.about_licenses_open {
-                        if ui.button("Hide Licenses").clicked() {
+                        if action_button(
+                            ui,
+                            ActionButtonRole::Secondary,
+                            "Hide Licenses",
+                        ).clicked() {
                             self.overlays.about_licenses_open = false;
                         }
-                    } else if ui.button("Licenses").clicked() {
+                    } else if action_button(ui, ActionButtonRole::Secondary, "Licenses").clicked() {
                         self.overlays.about_licenses_open = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
                     }
                 });
             });
@@ -3990,21 +4025,29 @@ impl FesTermApp {
             return;
         };
         picker.poll();
-        let width = (content_rect.width() - 32.0).clamp(420.0, 700.0);
-        let height = (content_rect.height() - 24.0).clamp(360.0, 600.0);
         let mut outcome = None;
-        egui::Modal::new(egui::Id::new("text_editor_save_as")).show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_width(width);
-                    ui.set_max_width(width);
-                    ui.set_max_height(height);
-                    ui.heading("Save As");
-                    ui.add_space(6.0);
-                    outcome = Some(picker.ui(ui));
-                });
-        });
+        let frame = egui::Frame::popup(&ctx.style()).inner_margin(egui::Margin::same(14));
+        let size = festerm_ui_egui::controls::modal_content_size(
+            content_rect.size(),
+            &frame,
+            egui::vec2(700.0, 600.0),
+        );
+        egui::Modal::new(egui::Id::new("text_editor_save_as"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(size.x);
+                ui.set_max_height(size.y);
+                ui.heading("Save As");
+                ui.add_space(6.0);
+                let body_height = ui.available_height().max(0.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("save_as_sheet_content")
+                    .max_height(body_height)
+                    .show(ui, |ui| {
+                        ui.set_height(body_height.max(360.0));
+                        outcome = Some(picker.ui(ui));
+                    });
+            });
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path }) => {
                 self.close_save_as_picker(ctx);
@@ -4035,21 +4078,27 @@ impl FesTermApp {
             return;
         };
         picker.poll();
-        let width = (content_rect.width() - 32.0).clamp(420.0, 640.0);
-        let height = (content_rect.height() - 24.0).clamp(360.0, 560.0);
         let mut outcome = None;
-        egui::Modal::new(egui::Id::new("markdown_file_picker")).show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_width(width);
-                    ui.set_max_width(width);
-                    ui.set_max_height(height);
-                    ui.heading("Open File");
-                    ui.add_space(6.0);
-                    outcome = Some(picker.ui(ui));
-                });
-        });
+        let frame = egui::Frame::popup(&ctx.style()).inner_margin(egui::Margin::same(14));
+        let size = festerm_ui_egui::controls::modal_content_size(
+            content_rect.size(),
+            &frame,
+            egui::vec2(640.0, 560.0),
+        );
+        egui::Modal::new(egui::Id::new("markdown_file_picker"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(size.x);
+                ui.set_max_height(size.y);
+                ui.heading("Open File");
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("open_file_sheet_content")
+                    .max_height(ui.available_height().max(0.0))
+                    .show(ui, |ui| {
+                        outcome = Some(picker.ui(ui));
+                    });
+            });
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
                 self.remember_markdown_file_picker_directory();
@@ -7794,6 +7843,353 @@ mod tests {
         assert_eq!(confirmation_width(360.0, 440.0), 328.0);
         assert_eq!(confirmation_width(360.0, 360.0), 328.0);
         assert_eq!(confirmation_width(900.0, 440.0), 440.0);
+    }
+
+    fn dialog_style_sizes() -> [egui::Vec2; 3] {
+        [
+            egui::vec2(752.0, 516.0),
+            egui::vec2(360.0, 516.0),
+            egui::vec2(360.0, 240.0),
+        ]
+    }
+
+    fn dialog_style_harness(app: FesTermApp, size: egui::Vec2) -> Harness<'static, FesTermApp> {
+        let mut harness = Harness::builder()
+            .with_size(size)
+            .with_max_steps(16)
+            .build_ui_state(
+                |ui, app: &mut FesTermApp| {
+                    let rect = ui.ctx().content_rect();
+                    let mut root = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt("dialog_style_full_root")
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    root.set_clip_rect(rect);
+                    app.ui_content(&mut root);
+                },
+                app,
+            );
+        harness.ctx.set_theme(egui::ThemePreference::Dark);
+        harness.ctx.set_visuals(theme::default_visuals());
+        harness
+            .ctx
+            .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+        harness.run_steps(4);
+        harness
+    }
+
+    fn assert_style_modal_inside_root(harness: &Harness<'_, FesTermApp>, id: &str) {
+        let root = harness.ctx.content_rect();
+        let modal = harness
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::new(id)))
+            .expect("the modal is present");
+        assert!(
+            root.contains_rect(modal),
+            "{id}: {modal:?} outside {root:?}"
+        );
+    }
+
+    fn assert_style_action_inside_root(harness: &Harness<'_, FesTermApp>, label: &str) {
+        let action = harness.get_by_label(label).rect();
+        assert!(
+            harness.ctx.content_rect().contains_rect(action),
+            "{label}: {action:?}"
+        );
+        assert!(action.height() >= 24.0 && action.width() >= 24.0);
+    }
+
+    #[test]
+    fn about_actions_stay_inside_the_full_root_with_licenses_and_update_disclosures() {
+        for size in dialog_style_sizes() {
+            for packaged in [false, true] {
+                let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+                app.overlays.about_open = true;
+                app.overlays.about_licenses_open = true;
+                if packaged {
+                    app.updates = UpdateController::ready_to_install_for_test();
+                }
+                let mut harness = dialog_style_harness(app, size);
+                assert_style_modal_inside_root(&harness, "fesTerm about dialog");
+                for label in ["Copy Version Information", "Hide Licenses", "Close"] {
+                    assert_style_action_inside_root(&harness, label);
+                }
+                harness.get_by_label(AI_AUTHORSHIP_SUMMARY);
+                harness.get_by_label(AI_AUTHORSHIP_DETAIL);
+                harness.get_by_label_contains("Crash reports and logs are not uploaded.");
+                if packaged {
+                    harness.get_by_label_contains(
+                        "No profile, session, terminal, device, or configuration data is sent.",
+                    );
+                    harness.get_by_label("Install and Restart");
+                } else {
+                    assert!(harness.query_by_label("Check for Updates").is_none());
+                }
+                harness.get_by_label("Close").click();
+                harness.step();
+                assert!(!harness.state().overlays.about_open);
+                assert!(!harness.state().overlays.about_licenses_open);
+            }
+        }
+    }
+
+    #[test]
+    fn safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets() {
+        for size in dialog_style_sizes() {
+            for purpose in ["close", "paste", "update", "reset"] {
+                let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                let context = egui::Context::default();
+                app.state.dispatch(
+                    AppCommand::RenameTab(
+                        tab,
+                        "synthetic-staging-with-a-long-stable-identity".to_owned(),
+                    ),
+                    &context,
+                );
+                let (modal, confirm) = match purpose {
+                    "close" => {
+                        set_confirm_session_close(&mut app, &context, true);
+                        app.request_close_tab(tab, &context);
+                        ("close_session_confirmation", "Close Session")
+                    }
+                    "paste" => {
+                        let text = "printf 'owned Unicode λ fixture'\n".repeat(200);
+                        app.handle_paste_request(tab, text, None, &context);
+                        ("paste_confirmation", "Paste")
+                    }
+                    "update" => {
+                        app.updates = UpdateController::ready_to_install_for_test();
+                        app.request_update_install();
+                        ("quit_confirmation", "Install and Restart")
+                    }
+                    "reset" => {
+                        app.state.dispatch(AppCommand::ToggleChipLayout, &context);
+                        app.request_reset_interface_settings(&context);
+                        ("reset_interface_settings_confirmation", "Reset")
+                    }
+                    _ => unreachable!(),
+                };
+                let mut harness = dialog_style_harness(app, size);
+                assert_style_modal_inside_root(&harness, modal);
+                assert_style_action_inside_root(&harness, "Cancel");
+                assert_style_action_inside_root(&harness, confirm);
+                assert!(harness.get_by_label("Cancel").is_focused());
+                let before = transport.sent();
+                let selection = harness
+                    .state()
+                    .state
+                    .session_tab(tab)
+                    .unwrap()
+                    .view
+                    .selection()
+                    .clone();
+
+                let outside = egui::pos2(2.0, 2.0);
+                harness.event(egui::Event::PointerMoved(outside));
+                harness.event(egui::Event::PointerButton {
+                    pos: outside,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.event(egui::Event::PointerButton {
+                    pos: outside,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+                assert!(
+                    harness.state().overlays.blocks_terminal_input(),
+                    "outside clicks do not dismiss a safety decision"
+                );
+                harness.key_press(egui::Key::Enter);
+                harness.step();
+                assert!(harness.state().state.session_tab(tab).is_some());
+                assert!(!harness.state().quit_confirmed);
+                assert!(!harness.state().update_restart_authorized);
+                assert_eq!(transport.sent(), before);
+                assert_eq!(
+                    harness
+                        .state()
+                        .state
+                        .session_tab(tab)
+                        .unwrap()
+                        .view
+                        .selection(),
+                    &selection
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_confirmation_layout_preserves_escape_and_stale_generation_safety() {
+        for paste in [false, true] {
+            for stale in [false, true] {
+                let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                let context = egui::Context::default();
+                if paste {
+                    app.handle_paste_request(
+                        tab,
+                        "owned first\nowned second\n".repeat(200),
+                        None,
+                        &context,
+                    );
+                } else {
+                    set_confirm_session_close(&mut app, &context, true);
+                    app.request_close_tab(tab, &context);
+                }
+                let mut harness = dialog_style_harness(app, egui::vec2(360.0, 240.0));
+                let before = transport.sent();
+                if stale {
+                    harness
+                        .state_mut()
+                        .state
+                        .session_tab_mut(tab)
+                        .unwrap()
+                        .controller
+                        .advance_lifecycle_generation();
+                } else {
+                    harness.key_press(egui::Key::Escape);
+                }
+                harness.step();
+                assert!(harness.state().overlays.pending_close.is_none());
+                assert!(harness.state().overlays.pending_paste.is_none());
+                assert_eq!(harness.state().state.active(), tab);
+                assert_eq!(transport.sent(), before);
+                harness.event(egui::Event::Text("z".to_owned()));
+                harness.run_steps(2);
+                assert_eq!(
+                    transport.sent().concat(),
+                    b"z",
+                    "viable terminal focus must return without an extra click"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dirty_document_confirmation_wraps_actions_without_changing_the_save_default() {
+        for size in dialog_style_sizes() {
+            let (mut app, terminal, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+            let context = egui::Context::default();
+            app.state.session_tab_mut(terminal).unwrap().terminal.ingest(b"owned history snapshot\r\n");
+            app.state.dispatch(AppCommand::OpenTerminalHistoryInEditor, &context);
+            let editor = app.state.active();
+            let document = app.state.active_document().unwrap();
+            app.request_close_tab(editor, &context);
+            let mut harness = dialog_style_harness(app, size);
+            assert_style_modal_inside_root(&harness, "document_close_confirmation");
+            assert_style_action_inside_root(&harness, "Cancel");
+            assert_style_action_inside_root(&harness, "Discard changes");
+            let save = harness.query_all_by_label("Save").find(|save| save.is_focused()).expect("Save remains the default");
+            assert!(harness.ctx.content_rect().contains_rect(save.rect()));
+            assert!(save.rect().height() >= 24.0);
+            harness.key_press(egui::Key::Escape);
+            harness.step();
+            assert!(harness.state().overlays.pending_document_close.is_none());
+            assert_eq!(harness.state().state.active(), editor);
+            assert!(harness.state().state.documents().borrow().get(document).unwrap().text().is_dirty());
+            assert!(transport.sent().is_empty());
+        }
+    }
+
+    struct DialogStyleFixture(PathBuf);
+
+    impl DialogStyleFixture {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let directory = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join("ui-style-fixtures")
+                .join(format!(
+                    "style-{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ))
+                .join("synthetic-project-with-a-long-directory-name");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("NOTES.md"), "# Owned fixture\n").unwrap();
+            Self(directory)
+        }
+    }
+
+    impl Drop for DialogStyleFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(self.0.parent().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting() {
+        let fixture = DialogStyleFixture::new();
+        for size in dialog_style_sizes() {
+            for show_details in [false, true] {
+                for save_as in [false, true] {
+                    for missing in [false, true] {
+                        let (mut app, tab, transport) =
+                            FesTermApp::for_test_with_fake_ssh_session([]);
+                        let directory = if missing {
+                            fixture
+                                .0
+                                .join("missing-owned-folder-with-an-actionable-error")
+                        } else {
+                            fixture.0.clone()
+                        };
+                        let context = egui::Context::default();
+                        if show_details {
+                            app.state
+                                .dispatch(AppCommand::ToggleShowSessionDetails, &context);
+                        }
+                        let modal = if save_as {
+                            app.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+                                directory,
+                                "NOTES.md".to_owned(),
+                                context,
+                            ));
+                            "text_editor_save_as"
+                        } else {
+                            app.overlays.markdown_file_picker =
+                                Some(MarkdownFilePicker::new(directory, context));
+                            "markdown_file_picker"
+                        };
+                        let mut harness = dialog_style_harness(app, size);
+                        let expected = if missing {
+                            "Could not load the folder."
+                        } else {
+                            "NOTES.md"
+                        };
+                        for _ in 0..200 {
+                            harness.step();
+                            if harness.query_by_label(expected).is_some() {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        harness.get_by_label(expected);
+                        assert_style_modal_inside_root(&harness, modal);
+                        harness.get_by_label("Cancel").scroll_to_me();
+                        harness.run_steps(12);
+                        assert_style_action_inside_root(&harness, "Cancel");
+                        harness.get_by_label("Cancel").click();
+                        harness.step();
+                        assert!(harness.state().overlays.save_as_picker.is_none());
+                        assert!(harness.state().overlays.markdown_file_picker.is_none());
+                        assert_eq!(harness.state().state.active(), tab);
+                        assert!(transport.sent().is_empty());
+                        assert_eq!(
+                            fs::read_to_string(fixture.0.join("NOTES.md")).unwrap(),
+                            "# Owned fixture\n"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

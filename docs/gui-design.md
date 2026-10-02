@@ -689,6 +689,12 @@ and session diagnostics. Licenses shows the repository license and bundled
 dependency/asset notices, including the exact Inter font license once the font
 is shipped.
 
+Current implementation keeps the complete About disclosures in a bounded
+scrolling body and leaves Copy Version Information, Licenses, and Close outside
+that scroll. Actions reuse the existing semantic button roles and have at least
+28 px height; narrow layouts do not shorten authorship, diagnostic sensitivity,
+update eligibility, or transmitted-data disclosures.
+
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases
 `latest/download/festerm-update.json` endpoint only after the user presses the
@@ -2430,6 +2436,11 @@ moves selection, Enter activates, and Escape closes and restores previous
 focus. Query text clears on close and is never logged or persisted. Results
 scroll while the search field and group context remain visible.
 
+Current implementation bounds the palette against the full root viewport,
+including frame margins and short-window title/search space. Long row text
+and shortcuts elide in separate columns rather than painting over each other;
+the complete stable identity and secondary text remain the accessible label.
+
 With an empty query, the palette presents a **Sessions** group in chip order,
 with the active surface visibly identified, followed by an applicable
 **Commands** group. Session matching and ranking prefer stable identity over
@@ -2980,6 +2991,15 @@ palette—not an overflow menu—is the session switcher when many chips are
 offscreen.
 
 The terminal viewport must never become fragmented or uncovered because chrome, diagnostics, or footer geometry was calculated after terminal dimensions.
+
+Current implementation gives Open File and Save As one popup frame and
+calculates their content size after subtracting that frame and a 16 px root
+gutter. At the supported `360 × 240` root, the sheet content scrolls rather than
+forcing a 420 px width or 360 px height. Save As retains its existing file-name,
+overwrite/blocker notice, and action footer inside the scrollable sheet.
+Safety dialogs keep their full disclosures in a bounded body, with wrapped
+28 px actions outside it; existing safe/default focus and cancellation policy
+remain authoritative.
 
 ## Future Populated Launcher Example
 

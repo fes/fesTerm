@@ -114,6 +114,18 @@ possible.
 | AS-08 | Request application/window quit with multiple live sessions (close button, native Quit menu, and Cmd+Q — fesTerm's single window means all three arrive as the same close request); aggregate consequence is accurate, Cancel returns exact window state without acting, and deliberate confirmation exits the process exactly once. Repeat with zero live sessions and confirm no dialog appears. | Native functional | Yes: automate the counts/cancel/confirm oracle; final native window-teardown timing remains human review |
 | AS-09 | With multiple local/SSH sessions and long/changing titles, toggle **Show session details in chips** at ordinary and narrow widths, with the status bar on and off. Verify one coherent resize per transition; `34→28` px chip and `42→36` px chrome geometry; stable chip identity/type/state/Close targets; only the active detail relocates to the footer; title-first/factual-fallback precedence; ellipsis priority; empty Launcher/Settings footer; and palette/hover/accessibility/Inspector access when both displays are off. Repeat with wrapped rows and on macOS traffic-light chrome. | Native functional + visual + usability + accessibility | Automate preference/state, grid-resize count, geometry, active-value, and narrow screenshots; retain native hit-target, title-churn readability, macOS optical alignment, and screen-reader review |
 
+The dialog-style regressions cover full-root `752 × 516`, `360 × 516`, and
+`360 × 240` layouts with the production Dark/default visuals: About with license
+and update disclosures; long-target close, bounded paste, update-consent, and
+reset decisions; Open File/Save As with project-owned long paths and missing
+folders in both chrome densities; and palette/overflow row bounds. They assert
+minimum action targets, Cancel/default focus, non-destructive cancellation,
+Escape/generation invalidation, and terminal focus restoration. These extend
+AS-07, CP-05/06/09, and TI-15 automated geometry/semantic coverage, not native
+platform or usability acceptance. Native DPI/edge placement, short-sheet
+scrolling feel, screen-reader traversal, and visual comparison remain in NP-02
+and the corresponding existing scenarios.
+
 ### Terminal interaction, history, and overlays
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

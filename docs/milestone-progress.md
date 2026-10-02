@@ -3,6 +3,27 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Fitting dialogs to the supported root instead of a preferred width
+
+Faithful production-theme captures separated actual layout defects from a
+misleading gallery palette. Open File and Save As still imposed a 420 px
+minimum inside nested popup frames, and the palette assumed a 420 px window
+even though the application supports a 360 px root.
+
+The bounded style slice measures the full frame before choosing content size,
+uses one picker frame, and allows short sheets to scroll. About and legacy
+safety actions reuse the existing semantic roles with explicit minimum targets;
+disclosures scroll without being shortened, and palette labels cannot paint
+over their shortcut column. Chrome overflow adopts the same 30 px row policy
+as the existing context menus. Confirmation target/generation checks,
+safe/default focus, cancellation, and semantic command dispatch stay in their
+original owners.
+
+Co-located full-root regressions use synthetic fake transports and
+worktree-owned picker fixtures, without new platform snapshot baselines.
+Headless geometry and production-widget captures remain distinct from native
+DPI, accessibility, and usability acceptance.
+
 ## Removing repeated query compilation from document loading
 
 Steady-state measurements hid a much larger Markdown stall: the first Preview
