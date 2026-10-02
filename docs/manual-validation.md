@@ -77,6 +77,41 @@ remain active rolling qualification but do not independently keep M6 open.
 | Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
 
+## iOS Phase 1 feasibility (ADR 0042)
+
+The isolated spike is implemented for review. The following evidence is
+**manual pending**, not passed by portable tests or a linked Simulator app.
+Record OS/SDK, device, orientation, scale and commit with each result; fixture
+content is repository-owned. Physical-device runs require a provisioned build.
+The persistent-keyboard, arrow and pinch input probes plus offline Files and
+Markdown workflow previews are included in this host. Live mobile product work
+remains blocked on this gate and a hosting go/no-go decision.
+
+| ID | Environment / scenario | Acceptance / evidence |
+| --- | --- | --- |
+| MOB-01 | iPhone and iPad Simulator plus physical iOS device; cold launch, portrait/landscape, safe areas, touch selection/scrolling and software-keyboard feasibility | ANSI/Unicode/emoji fixture paints and resizes; no clipped/inaccessible controls or stale grid; record touch/keyboard gaps explicitly and assess whether public hosting APIs suffice. Visual/usability evidence required. |
+| MOB-02 | iPhone/iPad portrait, landscape, Split View; native keyboard, accessory row, IME and hardware keyboard | With simulated hardware keyboard disconnected for software-keyboard evidence, keyboard remains visible without repeated hide/show animation during idle frames, toolbar taps, scrolling and terminal keys; final platform output must not repeatedly interrupt IME composition; terminal stays above keyboard using measured geometry; Ctrl/Alt apply once; long-press/drag shows a temporary direction helper with three repeat speeds, neutral pauses, no permanent arrow row; release, second touch, focus loss, rotation, keyboard resize and backgrounding stop repeats immediately; early drags retain ordinary behavior and arrow gestures never send duplicate mouse reports; verify helper visibility and gesture thresholds on real fingers; hardware keyboard reclaims space while retaining the row; counters match encoded key events without duplicate routing; terminal fixture does not echo input; reset clears counters; capture only fixture and content-free diagnostics. |
+| MOB-03 | Background/foreground repeated ten times; Simulator memory warning; real-device suspension; terminate and relaunch | No background draw/crash/spin, foreground surface repaints, counters advance once per transition, view-cache reset retains the grid/history and chosen text size, process death starts the fixture rather than claiming restoration. Profile memory/CPU and record unsupported callbacks. |
+| MOB-04 | iPhone/iPad portrait, landscape and Split View; pinch from rest and from a held arrow gesture; pinch at minimum/maximum text size | Only terminal text scales within 8–32 points; native keyboard/accessory controls remain stable; grid resizes coherently without losing the viewed content. Check precision/jitter with real fingers and immediate reversal at limits. Arrow helper/repeats stop when the second finger takes over; no mouse reports or text are emitted. Either finger lifting, a third contact, blur, rotation/keyboard geometry change and backgrounding cancel; remaining fingers cannot restart input until all lift. An already-started ordinary drag retains ownership; toolbar-origin touches do not pinch. Memory warning preserves text size; Reset fixture restores default. Portable arbitration/layout/bounds tests pass; native feel, visual stability and history anchoring remain manual pending. |
+| MOB-05 | iPhone/iPad portrait, landscape and narrow Split View; switch Terminal/Files/README repeatedly; exercise both transfer directions, README collision choices, progress, Preview/Source/Contents and each heading | Keyboard dismisses outside Terminal and returns without a restart loop; terminal gestures cannot affect Files/README. No category loses in-memory state. Wide Files panes are horizontal; Compact panes are both visible with Remote on top and Local below, so upload moves up and download moves down; Minimal has a reachable pane toggle and transfer queue. Collision actions and progress are bounded and never claim real I/O. Markdown controls never collide, prose wraps, contents is reachable and heading activation changes the selected/visible section. Every screen says synthetic/offline. Record clipping, Dynamic Type and VoiceOver gaps; this does not accept live SSH/SFTP, credentials, file access, full tab lifecycle or restoration. |
+
+Automated policy/input/headless-grid tests are in `festerm-mobile`; iOS CI
+checks device compilation and Simulator linking, while the build script checks
+normal/build graph exclusions. `scripts/smoke-ios-simulator.py --run` adds
+isolated iPhone/iPad install, launch-survival, first UI callback, terminate/relaunch and screenshot
+capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
+cover ownership, failure reporting and cleanup; actual execution is an iOS CI
+gate. The manifest and PNGs are review evidence, not automatic rendering,
+keyboard or lifecycle acceptance. Physical-device and most interaction
+evidence above remains pending. A local iPhone 17/iOS 26.5/Xcode 27 run
+visually covered Terminal, Compact stacked Files, Markdown wrapping and
+Contents/heading activation; it does not qualify iPad, rotation, Dynamic Type,
+VoiceOver or a physical device. The `c7ecb14` run diagnosed a renderer initialization
+limit mismatch on both Simulators (16 requested inter-stage variables, 15
+supported). The mobile downlevel-limit fix requires native rerun and image
+review; issue #261 tracks this MOB-01 startup blocker. SSH recovery and Keychain are **deferred** behind
+the Phase 1 decision, not missing evidence for an implemented connection.
+
 ## Deferred desktop Store qualification
 
 The [desktop Store distribution plan](app-store-distribution-plan.md) defines

@@ -5739,6 +5739,7 @@ impl FesTermApp {
                                 && self.rename_restore_tab.is_none()
                                 && !session.search.is_open(),
                             keyboard_input_enabled: session.accepts_typed_input(),
+                            persistent_keyboard_focus: false,
                             defer_paste_to_application: true,
                             scroll_speed_multiplier,
                             context_menu_action: session.terminal_context_menu_action(),
