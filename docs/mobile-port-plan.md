@@ -1,8 +1,11 @@
 # fesTerm Mobile Port Plan (iOS/Android)
 
-**Status:** Exploratory design, not scheduled. See ADR 0031 for the
-architectural boundaries this plan must honor; do not begin implementation
-without a follow-up ADR covering the specific crate/dependency changes.
+**Status:** iOS Phase 1 started at the owner's request on 2026-09-26;
+implementation for review under ADR 0042, native feasibility pending.
+The owner also requested the persistent-keyboard/input slice for both iPhone
+and iPad as part of this initial host. Other Phase 2 work, Android and
+Phases 3–5 remain deferred. ADR 0031 supplies the planning
+boundaries; ADR 0042 proposes the concrete additive host/dependency decision.
 
 This document is the companion delivery plan for ADR 0031. It sequences the
 work required to bring fesTerm to iOS and Android while reusing the existing
@@ -23,28 +26,12 @@ and renderer crates, not a second implementation of terminal emulation.
 
 ## Termius UX research summary
 
-Termius (a widely used mobile SSH client) establishes the mobile input/UX
-patterns worth emulating functionally, without adopting its cloud-sync
-product model:
-
-- An extra-keys toolbar (Esc/Tab/Ctrl/Alt/arrows/F1–F12), customizable and
-  scrollable, compensating for the lack of a physical keyboard.
-- Sticky/latching modifier keys (tap Ctrl, then tap a letter, rather than
-  requiring simultaneous touch of two keys).
-- Gesture-based arrow-key emulation: hold the spacebar and drag to move the
-  cursor, with acceleration tiers; long-press on the terminal viewport as an
-  alternative gesture.
-- Double-tap for Tab-completion shortcuts.
-- Standard OS text-selection gestures (long-press, drag handles) for
-  copy/paste, rather than a terminal-specific selection model.
-- Pinch-to-zoom for font size.
-- A snippets/command-history side panel.
-- Hardware/Bluetooth keyboard support that suppresses the on-screen
-  extra-keys row when a physical keyboard is attached.
-- Cross-device cloud profile sync as Termius's commercial anchor feature —
-  explicitly **not** applicable to fesTerm; see ADR 0031's rejection of
-  mandatory cloud account sync in favor of the planned encrypted
-  export/import mechanism.
+The owner selected persistent keyboard layout and terminal long-press/drag
+with a temporary arrow helper on iPhone and iPad. The current source review,
+implemented gesture behavior, and prioritized follow-ups are maintained in
+[the mobile layout design](mobile-layout-design.md#touch-navigation-and-termius-conventions).
+Phase 1 includes that narrow input slice; other conventions remain Phase 2
+or their named later milestone.
 
 ## Phase 0 — Governance (this document + ADR 0031)
 
@@ -53,6 +40,12 @@ mobile-targeting code exists. Complete once ADR 0031 and this plan are
 accepted as the reference design. No implementation in this phase.
 
 ## Phase 1 — Rendering feasibility spike
+
+The first iOS host is `app/festerm-mobile`; build/run instructions and current
+limits are in its README. It uses the pinned eframe/winit public host API,
+the shared renderer/core, and no session backend. The iOS CI workflow builds
+a Simulator bundle and checks device compilation; native acceptance remains
+`MOB-01`–`04` in `docs/manual-validation.md`.
 
 Goal: prove `egui` can host on iOS and Android with acceptable touch input
 and lifecycle behavior before committing to further phases.
@@ -77,11 +70,11 @@ Goal: build the mobile-specific input affordances on top of
 `festerm-core`'s existing GUI-independent keyboard/mouse/paste encoding —
 no changes to that crate's encoding logic should be required.
 
-- Extra-keys toolbar (Esc/Tab/Ctrl/Alt/arrows/F-keys), customizable and
+- Extra-keys toolbar (Esc/Tab/Ctrl/Alt; optional extended navigation/F-keys), customizable and
   scrollable, feeding the same key-encoding path desktop keyboard input uses.
 - Sticky/latching modifier keys.
-- Gesture-based arrow-key emulation (hold-and-drag with acceleration tiers,
-  long-press alternative), implemented as a mobile-only input adapter that
+- Gesture-based arrow-key emulation (terminal long-press/drag with three
+  repeat speeds and a temporary helper; spacebar alternative subject to UIKit feasibility), implemented as a mobile-only input adapter that
   translates gestures into the existing key-encoding calls.
 - Selection/copy gestures: standard OS text-selection (long-press, drag
   handles) mapped onto `festerm-ui-egui`'s existing selection model; see the

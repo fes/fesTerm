@@ -6,7 +6,9 @@ use std::{
 };
 
 use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
-use festerm_core::{ContentPosition, Dimensions, InputEventOutcome, MouseTrackingMode, Terminal};
+use festerm_core::{
+    ContentPosition, Dimensions, FocusEvent, InputEventOutcome, MouseTrackingMode, Terminal,
+};
 use icu_properties::{props::BidiControl, CodePointSetData};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -55,6 +57,9 @@ pub struct TerminalViewOptions {
     /// remain available so a read-only/dead session's history stays
     /// inspectable.
     pub keyboard_input_enabled: bool,
+    /// Keep an active terminal focused without restarting IME composition
+    /// when it already owns focus. Opt-in for persistent keyboard surfaces.
+    pub persistent_keyboard_focus: bool,
     /// Clipboard text is returned to the application policy layer instead of
     /// being encoded immediately. This lets the composition root apply paste
     /// confirmation without exposing session identity to this crate. Local
@@ -81,6 +86,7 @@ impl Default for TerminalViewOptions {
             paste_available: true,
             terminal_input_enabled: true,
             keyboard_input_enabled: true,
+            persistent_keyboard_focus: false,
             defer_paste_to_application: false,
             scroll_speed_multiplier: 1.0,
             context_menu_action: None,
@@ -362,6 +368,15 @@ impl TerminalView {
         self.set_font_size_points(self.fonts.size_points - TERMINAL_ZOOM_STEP)
     }
 
+    /// Scales this session's terminal text, using the same bounds as keyboard
+    /// zoom. Invalid gesture samples leave the presentation unchanged.
+    pub fn zoom_by_factor(&mut self, factor: f32) -> bool {
+        if !factor.is_finite() || factor <= 0.0 {
+            return false;
+        }
+        self.set_font_size_points(self.fonts.size_points * factor)
+    }
+
     /// Restores only this session's terminal presentation size.
     pub fn reset_zoom(&mut self) -> bool {
         self.set_font_size_points(DEFAULT_TERMINAL_FONT_SIZE)
@@ -446,6 +461,28 @@ impl TerminalView {
     /// becomes the active tab (`docs/gui-design.md`).
     pub fn request_focus_on_next_frame(&mut self) {
         self.has_requested_initial_focus = false;
+    }
+
+    /// Relinquishes transient keyboard and pointer ownership when the
+    /// composition root stops presenting this terminal.
+    ///
+    /// Terminal content, completed selection, scroll position and zoom are
+    /// preserved. In-progress IME composition and gestures must not survive a
+    /// tab/workspace switch and suppress keys when the terminal is shown again.
+    /// The returned focus event belongs on the terminal's ordered input path.
+    pub fn relinquish_transient_input(&mut self) -> Option<FocusEvent> {
+        if self.selection.is_active() {
+            self.selection.finish();
+        }
+        self.pointer = TerminalPointerState::default();
+        self.primary_link_gesture = None;
+        self.secondary_gesture = SecondaryGestureOwnership::default();
+        self.middle_click_paste_gesture = false;
+        self.scrollbar_dragging = false;
+        self.context_link = None;
+        self.context_target = None;
+        self.has_requested_initial_focus = false;
+        self.keyboard.focus_out_if_owned()
     }
 
     /// Takes every clipboard event deferred since the prior frame. Multiple
@@ -702,9 +739,14 @@ impl TerminalView {
             viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
         self.diagnostics.grid_rect = Some(vp_layout.grid);
         if options.terminal_input_enabled
-            && (response.clicked() || !self.has_requested_initial_focus)
+            && (response.clicked()
+                || !self.has_requested_initial_focus
+                || options.persistent_keyboard_focus)
         {
-            response.request_focus();
+            // egui interrupts IME even when requesting the current focus.
+            if !options.persistent_keyboard_focus || !response.has_focus() {
+                response.request_focus();
+            }
             self.has_requested_initial_focus = true;
         }
         ui.memory_mut(|memory| {
@@ -1284,6 +1326,7 @@ impl TerminalView {
                 pointer: &mut self.pointer,
                 viewport_offset_rows: self.history.offset_rows,
                 scroll_speed_multiplier: options.scroll_speed_multiplier,
+                persistent_keyboard_focus: options.persistent_keyboard_focus,
             },
             sink,
             InputSuppression {
@@ -2203,6 +2246,25 @@ mod tests {
         assert!(first.reset_zoom());
         assert_eq!(first.font_size_points(), 14.0);
         assert!(!first.reset_zoom());
+    }
+
+    #[test]
+    fn terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples() {
+        let mut view = TerminalView::default();
+        assert!(view.zoom_by_factor(1.5));
+        assert_eq!(view.font_size_points(), 21.0);
+        assert_eq!(TerminalView::default().font_size_points(), 14.0);
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            assert!(!view.zoom_by_factor(invalid));
+            assert_eq!(view.font_size_points(), 21.0);
+        }
+        assert!(view.zoom_by_factor(f32::MAX));
+        assert_eq!(view.font_size_points(), 32.0);
+        assert!(view.zoom_by_factor(0.5));
+        assert_eq!(view.font_size_points(), 16.0);
+        assert!(view.zoom_by_factor(f32::MIN_POSITIVE));
+        assert_eq!(view.font_size_points(), 8.0);
+        assert!(view.reset_zoom());
     }
 
     #[test]
@@ -3174,6 +3236,7 @@ mod tests {
                             paste_available: false,
                             terminal_input_enabled: true,
                             keyboard_input_enabled: true,
+                            persistent_keyboard_focus: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
                             context_menu_action: None,
@@ -3215,6 +3278,7 @@ mod tests {
                             paste_available: false,
                             terminal_input_enabled: true,
                             keyboard_input_enabled: false,
+                            persistent_keyboard_focus: false,
                             defer_paste_to_application: false,
                             scroll_speed_multiplier: 1.0,
                             context_menu_action: None,
