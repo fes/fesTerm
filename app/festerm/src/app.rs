@@ -3567,7 +3567,8 @@ impl FesTermApp {
         let installation_kind = self.updates.installation_kind();
         let automatic_update_checks =
             self.state.automatic_update_checks() && installation_kind.can_install();
-        let frame = egui::Frame::popup(&context.style()).inner_margin(egui::Margin::same(14));
+        let frame =
+            egui::Frame::popup(&context.global_style()).inner_margin(egui::Margin::same(14));
         let size = festerm_ui_egui::controls::modal_content_size(
             context.content_rect().size(),
             &frame,
@@ -4026,7 +4027,7 @@ impl FesTermApp {
         };
         picker.poll();
         let mut outcome = None;
-        let frame = egui::Frame::popup(&ctx.style()).inner_margin(egui::Margin::same(14));
+        let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(14));
         let size = festerm_ui_egui::controls::modal_content_size(
             content_rect.size(),
             &frame,
@@ -4037,6 +4038,7 @@ impl FesTermApp {
             .show(ctx, |ui| {
                 ui.set_width(size.x);
                 ui.set_max_height(size.y);
+                ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Save As");
                 ui.add_space(6.0);
                 let body_height = ui.available_height().max(0.0);
@@ -4079,7 +4081,7 @@ impl FesTermApp {
         };
         picker.poll();
         let mut outcome = None;
-        let frame = egui::Frame::popup(&ctx.style()).inner_margin(egui::Margin::same(14));
+        let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(14));
         let size = festerm_ui_egui::controls::modal_content_size(
             content_rect.size(),
             &frame,
@@ -4090,6 +4092,7 @@ impl FesTermApp {
             .show(ctx, |ui| {
                 ui.set_width(size.x);
                 ui.set_max_height(size.y);
+                ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Open File");
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical()
@@ -8039,12 +8042,19 @@ mod tests {
     }
 
     fn assert_style_action_inside_root(harness: &Harness<'_, FesTermApp>, label: &str) {
-        let action = harness.get_by_label(label).rect();
+        let action = harness
+            .query_all_by_label(label)
+            .last()
+            .expect("the modal action is present")
+            .rect();
         assert!(
             harness.ctx.content_rect().contains_rect(action),
             "{label}: {action:?}"
         );
-        assert!(action.height() >= 24.0 && action.width() >= 24.0);
+        assert!(
+            action.height() >= 24.0 && action.width() >= 24.0,
+            "{label}: {action:?}"
+        );
     }
 
     #[test]
@@ -8073,7 +8083,7 @@ mod tests {
                 } else {
                     assert!(harness.query_by_label("Check for Updates").is_none());
                 }
-                harness.get_by_label("Close").click();
+                harness.query_all_by_label("Close").last().unwrap().click();
                 harness.step();
                 assert!(!harness.state().overlays.about_open);
                 assert!(!harness.state().overlays.about_licenses_open);
@@ -8222,8 +8232,13 @@ mod tests {
         for size in dialog_style_sizes() {
             let (mut app, terminal, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
             let context = egui::Context::default();
-            app.state.session_tab_mut(terminal).unwrap().terminal.ingest(b"owned history snapshot\r\n");
-            app.state.dispatch(AppCommand::OpenTerminalHistoryInEditor, &context);
+            app.state
+                .session_tab_mut(terminal)
+                .unwrap()
+                .terminal
+                .ingest(b"owned history snapshot\r\n");
+            app.state
+                .dispatch(AppCommand::OpenTerminalHistoryInEditor, &context);
             let editor = app.state.active();
             let document = app.state.active_document().unwrap();
             app.request_close_tab(editor, &context);
@@ -8231,14 +8246,25 @@ mod tests {
             assert_style_modal_inside_root(&harness, "document_close_confirmation");
             assert_style_action_inside_root(&harness, "Cancel");
             assert_style_action_inside_root(&harness, "Discard changes");
-            let save = harness.query_all_by_label("Save").find(|save| save.is_focused()).expect("Save remains the default");
+            let save = harness
+                .query_all_by_label("Save")
+                .find(|save| save.is_focused())
+                .expect("Save remains the default");
             assert!(harness.ctx.content_rect().contains_rect(save.rect()));
             assert!(save.rect().height() >= 24.0);
             harness.key_press(egui::Key::Escape);
             harness.step();
             assert!(harness.state().overlays.pending_document_close.is_none());
             assert_eq!(harness.state().state.active(), editor);
-            assert!(harness.state().state.documents().borrow().get(document).unwrap().text().is_dirty());
+            assert!(harness
+                .state()
+                .state
+                .documents()
+                .borrow()
+                .get(document)
+                .unwrap()
+                .text()
+                .is_dirty());
             assert!(transport.sent().is_empty());
         }
     }

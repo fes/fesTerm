@@ -113,7 +113,7 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     let request_focus = state.needs_focus;
     state.needs_focus = false;
     let root = ctx.content_rect();
-    let frame = egui::Frame::window(&ctx.style());
+    let frame = egui::Frame::window(&ctx.global_style());
     let margin = frame.total_margin().sum();
     let top = if root.height() < 400.0 { 16.0 } else { 48.0 };
     let size = egui::vec2(
@@ -542,7 +542,8 @@ mod tests {
                 .memory(|memory| memory.area_rect(Id::new("festerm_command_palette")))
                 .unwrap();
             assert!(root.contains_rect(window), "{size:?}: {window:?}");
-            let row = harness.get_by_label(&format!("{label}  \u{2014}  {hint}, Ctrl+Shift+9"));
+            let identity = format!("{label}  \u{2014}  {hint}, Ctrl+Shift+9");
+            let row = harness.get_by_label(&identity);
             assert!(root.contains_rect(row.rect()));
             assert!(row.rect().height() >= 24.0);
             let text_rects: Vec<_> = harness
