@@ -126,6 +126,14 @@ platform or usability acceptance. Native DPI/edge placement, short-sheet
 scrolling feel, screen-reader traversal, and visual comparison remain in NP-02
 and the corresponding existing scenarios.
 
+The retained matching 23-state run `style-pair-20261001-1700` is not a completed
+style acceptance: actual candidate `daf9796` drawing shows short Save As table
+content outside its sheet and narrow deep Open File breadcrumbs occupying the
+initial ready/error viewport. Rectangle containment and safe wheel-reachable
+Cancel tests pass but do not prove these painting/presentation properties.
+Keep those deterministic visual blockers separate from the native follow-up
+above; no capability/status is promoted by successful capture completion.
+
 ### Terminal interaction, history, and overlays
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

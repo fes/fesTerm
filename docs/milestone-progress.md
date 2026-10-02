@@ -33,6 +33,16 @@ worktree-owned picker fixtures, without new platform snapshot baselines.
 Headless geometry and production-widget captures remain distinct from native
 DPI, accessibility, and usability acceptance.
 
+The first retained 23-state matching pair (`style-pair-20261001-1700`,
+production-f0 baseline and candidate `daf9796`) also demonstrated the limit of
+rectangle-only tests. Observed popup areas now fit the root, but the short Save
+As capture paints table content below the bounded sheet, and deep Open File
+breadcrumbs consume the initial narrow ready/error viewport. These are
+automated visual acceptance blockers, not native-only follow-up or a completed
+style convergence claim. The completed pair remains immutable; its successful
+capture entry performed the inventoried input cleanup, so another iteration
+needs a fresh uniformly matched pair rather than a relabeled candidate.
+
 ## Expanding evidence without pretending every surface is measured
 
 The non-terminal performance audit also found a coverage gap: the original

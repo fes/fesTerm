@@ -3001,6 +3001,12 @@ Safety dialogs keep their full disclosures in a bounded body, with wrapped
 28 px actions outside it; existing safe/default focus and cancellation policy
 remain authoritative.
 
+The first matched headless review still blocks acceptance of this implementation:
+short Save As child content can paint outside its bounded sheet, and the deep
+Open File breadcrumb occupies the initial narrow ready/error viewport.
+Passing rectangle/interaction tests do not replace clipped-paint and usable
+initial-presentation evidence.
+
 ## Future Populated Launcher Example
 
 ![Future populated Launcher target](images/gui-mockups/launcher-populated.png)

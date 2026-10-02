@@ -304,9 +304,17 @@ Default fixture paths are rooted in the compiled worktree, so matching scene
 names alone cannot qualify a cross-worktree comparison. An opt-in owned
 physical-root/run/phase mode can bind sequential baseline/candidate captures
 to the same real I/O paths, retaining actual tasks and document freshness.
-Its ownership, input, phase and targeted-cleanup guards await validation;
-matched visual claims remain unqualified. Captions record actual paths and
-mode, not anonymized metadata or sanitized pixels. See the
+Its ownership/input/phase/targeted-cleanup tests and the exact 23-state
+`style-pair-20261001-1700` sequential capture completed with production-f0
+widgets before and candidate `daf9796` after, using the same real Q-drive paths,
+input contents/mtimes, CPU/DX12 adapter and 1.0 pixels-per-point. This qualifies
+that retained input identity and drawing provenance, not complete style
+acceptance: actual short Save As drawing escapes the sheet, while deep narrow
+Open File breadcrumbs occupy the initial ready/error viewport. Missing or
+clipped actions are still not passes. The completed phase is immutable and its
+inventoried inputs were cleaned only by successful completion; further source
+iterations require a fresh uniformly matched pair. Captions record actual
+paths and mode, not anonymized metadata or sanitized pixels. See the
 [owned comparison contract](../validation/windows-warp/README.md).
 
 Directory examples use owned synthetic files and the actual background listing
@@ -322,5 +330,8 @@ retains all 33 audited families and 163 unique GUI references. It explicitly
 leaves remaining variants and native prerequisites unqualified. First UI
 calls, preparation/worker wait, warmup and steady forced frames are distinct
 from real user input, idle scheduling, cold process startup and presentation.
-The new catalog is initially scaffolding pending its exclusive validation run;
-captions and image manifests become evidence only after successful generation.
+The bounded 52-scene performance batch and the full 125-scene gallery remain
+unexecuted here; the named 23-state pair does not qualify sibling states,
+performance, hardware, native UI or usability. Its retained captions and
+manifests are drawing evidence, with the visual blockers above, rather than a
+blanket catalog acceptance.
