@@ -19,7 +19,10 @@ query used a lowercase **palette**, while the production title was **Command
 Palette**. Correcting that query and coupling it to the real title with a
 portable regression fixes the measurement seam without changing application
 behavior, shortcut delivery or guards. The completed balanced series and failed
-control are physically sealed separately from any replacement control. Native
+control are physically sealed separately from any replacement control. The
+fresh corrected control completed A but stopped in B on a changed input tick;
+foreground and geometry stayed stable, both owned trees exited normally, and
+the incomplete series was rejected without a retry. Native
 fallback, broader hardware, resources, latency and default-on decisions are
 not inferred from the single-host savings; details remain in the
 [performance record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence).

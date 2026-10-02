@@ -792,7 +792,10 @@ app/child identities were independently absent. The palette control stopped
 before sampling because its case-sensitive UIA query used **Command palette**
 instead of the actual **Command Palette** title; an untimed owned-window tree
 and actual capture proved the mismatch. The corrected query has a portable
-regression, but its replacement control remains pending. See the
+regression. Its fresh replacement completed A but stopped in B on new input
+with foreground/geometry unchanged; the incomplete 2/12 control was rejected
+and remains pending, with both process trees normally exited and independently
+absent. See the
 [single-host record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence)
 for raw-series boundaries and adverse results. CP-18/#282 remain open for the
 palette control, broader equipment, resources, latency and maintainer decisions.

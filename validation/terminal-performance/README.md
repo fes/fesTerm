@@ -1119,8 +1119,16 @@ actual capture and owned UIA tree: its exact name was **Command Palette**, while
 the probe queried **Command palette**. The case-sensitive query is corrected
 and a portable regression couples it to the production window title. The
 shortcut, wait, foreground requirement, timing guards and cleanup are unchanged.
-The failed control remains preserved. Its replacement 12-case control is still
-pending; the completed balanced series is not rerun or pooled with older
+The failed control remains preserved. The clean corrected `6c04768` source
+restaged the byte-identical application and passed required local quality checks,
+including the new regression. Its fresh 12-case control opened the palette and
+completed shipping A, then stopped during B at 5.2634799 seconds: the last-input
+tick changed from `258393796` to `258409531`, while foreground HWND `8718364`,
+full geometry and the active desktop remained unchanged. The input source is
+unknown. Both app/child trees exited normally and all six old identities were
+independently absent; the saved checker rejected the incomplete 2/12 series.
+Actual untimed and completed-A palette captures were reviewed. No C control or
+retry followed. The completed balanced series is not rerun or pooled with older
 partial attempts. Full #282 qualification and default promotion remain open.
 
 The earlier [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
