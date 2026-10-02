@@ -618,7 +618,7 @@ fn shared_performance_fixture_protocol() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Barrier;
 
     #[test]
     fn shared_corpus_matches_unchanged_clean_nav_reference_bytes() {
@@ -658,19 +658,27 @@ mod tests {
         }
     }
 
-    fn scope(label: &str) -> (PathBuf, String) {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let run = format!(
-            "guard-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        (workspace.join("target").join(NAMESPACE).join(&run), run)
+    struct Scope {
+        workspace: owned::TestWorkspace,
+        root: PathBuf,
+        run: String,
+    }
+
+    impl Scope {
+        fn identity(&self) -> (PathBuf, String) {
+            (self.root.clone(), self.run.clone())
+        }
+    }
+
+    fn scope(label: &str) -> Scope {
+        let workspace = owned::TestWorkspace::new(label);
+        let run = format!("guard-{label}");
+        let root = workspace.path().join("target").join(NAMESPACE).join(&run);
+        Scope {
+            workspace,
+            root,
+            run,
+        }
     }
 
     fn complete(root: &Path, run: &str, step: &str) -> serde_json::Value {
@@ -726,7 +734,8 @@ mod tests {
 
     #[test]
     fn shared_actual_paths_all12_and_metadata_match_across_uses_without_rewrites() {
-        let (root, run) = scope("parity");
+        let fixture = scope("parity");
+        let (root, run) = fixture.identity();
         prepare(&root, &run, &["A1".into(), "B1".into()]).unwrap();
         let before = inventory(&root.join("inputs")).unwrap();
         let a = complete(&root, &run, "A1");
@@ -744,7 +753,8 @@ mod tests {
 
     #[test]
     fn shared_plan_reuse_active_ownership_and_incomplete_schema_are_rejected() {
-        let (root, run) = scope("claims");
+        let fixture = scope("claims");
+        let (root, run) = fixture.identity();
         prepare(&root, &run, &["A1".into(), "B1".into()]).unwrap();
         assert!(prepare(&root, &run, &["A1".into()]).is_err());
         assert!(PerformanceFixtures::begin(root.clone(), run.clone(), "other".into()).is_err());
@@ -775,7 +785,8 @@ mod tests {
 
     #[test]
     fn shared_content_mtime_and_unknown_entries_are_errors_not_freshened() {
-        let (root, run) = scope("content");
+        let fixture = scope("content");
+        let (root, run) = fixture.identity();
         prepare(&root, &run, &["A1".into()]).unwrap();
         let path = root.join("inputs").join("fixture.rs");
         let original = fs::read(&path).unwrap();
@@ -785,7 +796,8 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"changed");
         assert_ne!(original, fs::read(&path).unwrap());
 
-        let (root, run) = scope("mtime");
+        let fixture = scope("mtime");
+        let (root, run) = fixture.identity();
         prepare(&root, &run, &["A1".into()]).unwrap();
         let path = root.join("inputs").join("fixture.md");
         let modified = fs::metadata(&path).unwrap().modified().unwrap();
@@ -800,7 +812,8 @@ mod tests {
         assert!(validate(&root, &run).is_err());
         assert!(cleanup(&root, &run).is_err());
 
-        let (root, run) = scope("unknown");
+        let fixture = scope("unknown");
+        let (root, run) = fixture.identity();
         prepare(&root, &run, &["A1".into()]).unwrap();
         fs::write(root.join("inputs").join("unowned.txt"), b"retain").unwrap();
         assert!(validate(&root, &run).is_err());
@@ -810,7 +823,8 @@ mod tests {
 
     #[test]
     fn shared_root_policy_rejects_unsafe_unowned_and_alias_scopes() {
-        let (root, run) = scope("policy");
+        let fixture = scope("policy");
+        let (root, run) = fixture.identity();
         for unsafe_root in [
             PathBuf::from("relative").join(&run),
             root.parent().unwrap().join("..").join(&run),
@@ -836,7 +850,9 @@ mod tests {
         fs::remove_dir(&root).unwrap();
         #[cfg(windows)]
         {
-            let (alias, alias_run) = scope("junction");
+            let fixture = scope("junction");
+            let (alias, alias_run) = fixture.identity();
+            fs::create_dir_all(alias.parent().unwrap()).unwrap();
             let target = alias
                 .parent()
                 .unwrap()
@@ -857,5 +873,109 @@ mod tests {
             fs::remove_dir(&alias).unwrap();
             fs::remove_dir(&target).unwrap();
         }
+    }
+
+    fn complete_cold_scope(fixture: &Scope) -> serde_json::Value {
+        let (root, run) = fixture.identity();
+        let control = root.parent().unwrap();
+        assert!(!control.exists());
+        assert!(!fixture.workspace.path().join("target").exists());
+        prepare(&root, &run, &["A1".into(), "B1".into()]).unwrap();
+        let owner = owned::read_json(&control.join(".owner.json")).unwrap();
+        assert_eq!(
+            owner,
+            serde_json::json!({
+                "schema": "festerm-performance-control-v1",
+                "workspace": fs::canonicalize(fixture.workspace.path()).unwrap(),
+            })
+        );
+        let ready = validate(&root, &run).unwrap();
+        assert_eq!(
+            owned::read_json(&control.join(format!(".claimed-run-{run}.json"))).unwrap(),
+            ready["owner"]
+        );
+        assert!(prepare(&root, &run, &["A1".into()]).is_err());
+        let before = inventory(&root.join("inputs")).unwrap();
+        let a = complete(&root, &run, "A1");
+        assert!(PerformanceFixtures::begin(root.clone(), run.clone(), "A1".into()).is_err());
+        assert!(cleanup(&root, &run).is_err());
+        let b = complete(&root, &run, "B1");
+        assert_eq!(a["fixture_identity"], b["fixture_identity"]);
+        assert_eq!(a["observed_identities"], b["observed_identities"]);
+        assert_eq!(a["observed_identities"].as_array().unwrap().len(), 12);
+        assert_eq!(before, inventory(&root.join("inputs")).unwrap());
+        cleanup(&root, &run).unwrap();
+        assert!(!root.join("inputs").exists());
+        assert!(root.join("cleanup.complete.json").exists());
+        assert!(prepare(&root, &run, &["A1".into()]).is_err());
+        assert!(PerformanceFixtures::begin(root.clone(), run, "A1".into()).is_err());
+        assert_eq!(
+            owned::read_json(&control.join(".owner.json")).unwrap(),
+            owner
+        );
+        owner
+    }
+
+    #[test]
+    fn shared_cold_workspace_isolated_from_ownerless_namespace_and_owned_cleanup() {
+        let poisoned = scope("poisoned");
+        let (root, run) = poisoned.identity();
+        let control = root.parent().unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let witness = root.join("unowned.txt");
+        fs::write(&witness, b"retain ownerless namespace").unwrap();
+        assert!(!control.join(".owner.json").exists());
+        assert!(prepare(&root, &run, &["A1".into()]).is_err());
+        assert!(validate(&root, &run).is_err());
+        assert!(cleanup(&root, &run).is_err());
+        let independent = scope("cold");
+        assert_ne!(independent.root.parent(), poisoned.root.parent());
+        assert_ne!(independent.workspace.path(), poisoned.workspace.path());
+        complete_cold_scope(&independent);
+        assert_eq!(fs::read(&witness).unwrap(), b"retain ownerless namespace");
+        assert!(!control.join(".owner.json").exists());
+        assert!(!root.join("ready.json").exists());
+        assert!(prepare(&root, &run, &["A1".into()]).is_err());
+        let poisoned_case = poisoned.workspace.case_path().to_owned();
+        let independent_case = independent.workspace.case_path().to_owned();
+        poisoned.workspace.close();
+        assert!(!poisoned_case.exists());
+        assert!(independent_case.exists());
+        assert!(independent.root.join("cleanup.complete.json").exists());
+        independent.workspace.close();
+        assert!(!independent_case.exists());
+    }
+
+    #[test]
+    fn shared_parallel_workspaces_have_independent_ownership_and_complete_claims() {
+        let a = scope("parallel");
+        let b = scope("parallel");
+        assert_eq!(a.run, b.run);
+        assert_ne!(a.root.parent(), b.root.parent());
+        assert_ne!(a.workspace.path(), b.workspace.path());
+        let barrier = Barrier::new(2);
+        let owners = std::thread::scope(|threads| {
+            let first = threads.spawn(|| {
+                barrier.wait();
+                complete_cold_scope(&a)
+            });
+            let second = threads.spawn(|| {
+                barrier.wait();
+                complete_cold_scope(&b)
+            });
+            [first.join().unwrap(), second.join().unwrap()]
+        });
+        assert_ne!(owners[0], owners[1]);
+        let a_case = a.workspace.case_path().to_owned();
+        let b_case = b.workspace.case_path().to_owned();
+        a.workspace.close();
+        assert!(!a_case.exists());
+        assert!(b_case.exists());
+        assert_eq!(
+            owned::read_json(&b.root.parent().unwrap().join(".owner.json")).unwrap(),
+            owners[1]
+        );
+        b.workspace.close();
+        assert!(!b_case.exists());
     }
 }

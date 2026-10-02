@@ -2969,3 +2969,23 @@ This repair changes only the post-measurement harness identity. Earlier
 compiled helper hashes, fixture proofs, executables and reports remain
 immutable, not retroactively assigned to the correction. It neither changes
 production Markdown rendering nor adds another performance trial.
+
+## Isolating the performance guards' ownership bootstrap
+
+The subsequent Windows job failed three positive fixture guards at their first
+prepare call with a missing-file error, while the home-policy and caption
+oracles passed. Source inspection found that unique run names still shared one
+workspace-wide control directory: the unowned negative case could create that
+parent without its owner record, and parallel bootstrap or cached state could
+expose it to the positive cases. The logs do not prove the exact missing path
+or which producer won.
+
+Each guard now holds its own freshly allocated real Git/Cargo workspace below
+the repository's controlled target evidence directory. RAII owns only that
+allocation; the template-free Git setup and existing no-alias/ownership checks
+are shared with the home-policy tests. New cold, ownerless-neighbor and finite
+parallel regressions exercise preparation, all twelve input identities, claims
+and guarded cleanup without earlier serial priming. The optional protocol still
+refuses an existing unowned parent: no adoption, retry, environment override or
+operator-namespace cleanup was added. This is another post-measurement helper
+identity, not a renderer change, a new timing trial or relabeled old evidence.
