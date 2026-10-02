@@ -1017,6 +1017,12 @@ This keeps the original 20-second in-app deadline and exact PTY acknowledgment.
 It additionally checks maximize/minimize/exact restore and captures the owned
 initial/restored/maximized window; keyboard-routing mode also captures its
 palette. It is not a mixed-DPI transition, all-view interaction or latency gate.
+This OS-input fixture uses its ordinary mouse-input path to focus the restored
+terminal: physical client coordinates, a bounded nine-point search for an
+unoccluded owned root, a second ownership check before the click, and an actual
+foreground assertion. It refuses a fully occluded client. The separate CPU
+comparison still uses the unchanged no-input activation helper and strict
+interval guards; mouse input is not used to rescue an invalid timing interval.
 The aggregate optional runner exposes the balanced series only through
 `FESTERM_RUN_COPY_QUALIFICATION=1` and `FESTERM_COPY_QUALIFICATION_OUT`.
 Both experiments remain default-off and every compound #282 gate stays open

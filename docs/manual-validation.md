@@ -756,6 +756,18 @@ still needs native verification; the inhibitor was released. The
 [sanitized report and raw evidence](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
 preserve these failures and leave every compound #282 gate open.
 
+On 2026-10-02, connected Windows DevBox functional input runs passed the
+maximize/minimize/exact-restore sequence in shipping A (`0`,`0`) and requested
+combined C (`1`,`1`), with real PTY acknowledgment, four resize generations,
+eight reviewed owned-client captures and normal descendant-tree exit.
+The OS-input fixture now uses its ordinary mouse-input path at a bounded,
+physical-DPI, process/root-verified visible terminal point after restoration;
+fully occluded points are refused. This addresses the background driver's
+foreground assumption without changing the application's focus behavior or the
+shared no-input CPU helper. Evidence is limited to that connected host at 200%
+scale: mixed-DPI transitions, cache eligibility/native CPU comparison, the
+CPU-fixture Quit path and the broader CP-18/#282 matrix remain unqualified.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | CP-18 | On supported Windows x64 WARP, compare eligible root-terminal rendering with `FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) versus the supported Direct2D path (unset by default, or explicit `1` for compatibility). Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths remain ordinary painting, no blank/stale frame appears, `0` disables the path, `1` cannot force unsupported conditions, and hardware rendering is unchanged. | Automated framebuffer + native performance + manual interaction; experimental | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and explicit palette-budget fallback. `validation/direct2d/run.ps1` provides the isolated replay and is available through the optional runner with `FESTERM_RUN_DIRECT2D_PROBE=1`. Compare `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer` with `FESTERM_EXPERIMENTAL_DIRECT2D=0` for the ordinary baseline and, on a known eligible WARP host, the supported unset default (or explicit `1`) for the candidate, adding `-RequireDirect2D` to validate automatic/default selection and to reject `0` or invalid values. The aggregate optional Windows runner keeps that strict dense/native-required check explicitly behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or ARM64 machines still run their ordinary optional suite. The probe requires actual native frames and preserves existing CPU/FPS budgets. Single-host sparse/dense application measurements and the keep-#239/#240 review are in the probe README; intermittent idle failures are tracked by #242. Owner approval makes this bounded WARP path default-on, but issue #244 still owns mixed-DPI, multi-window, device-loss, latency, memory and representative-hardware qualification, and ADR-0039 remains Proposed. |

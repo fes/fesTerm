@@ -17,6 +17,9 @@ class ApplicationWindowTests(unittest.TestCase):
         environment["FESTERM_WINDOW_HELPER"] = str(
             Path(__file__).resolve().parents[1] / "windows-application-window.ps1"
         )
+        environment["FESTERM_OS_INPUT_DRIVER"] = str(
+            Path(__file__).resolve().parents[1] / "run-windows-os-input-smoke.ps1"
+        )
         result = subprocess.run(
             [shell, "-NoProfile", "-NonInteractive", "-Command", script],
             env=environment,
@@ -33,6 +36,31 @@ class ApplicationWindowTests(unittest.TestCase):
 
     def test_child_tree_rejects_children_of_a_previous_parent_pid(self):
         self.assertIn("owned-tree regression passed", self.run_probe(TREE_SCRIPT))
+
+    def test_os_input_visible_point_selection_and_negative_origin(self):
+        self.assertIn("visible-point regression passed", self.run_probe(POINT_SCRIPT))
+
+    def test_os_input_occluded_points_are_bounded_and_fail_explicitly(self):
+        self.assertIn("occluded-point regression passed", self.run_probe(OCCLUDED_SCRIPT))
+
+    def test_os_input_click_refuses_an_unowned_window_before_input(self):
+        self.assertIn("unowned-click regression passed", self.run_probe(UNOWNED_CLICK_SCRIPT))
+
+    def test_os_input_preserves_physical_point_and_foreground_guards(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "run-windows-os-input-smoke.ps1"
+        ).read_text(encoding="utf-8")
+        positioning = source.index("if (!SetCursorPos(point[0], point[1]))")
+        recheck = source.index("if (!IsOwnedHit(window, processId, point[0], point[1]))")
+        clicking = source.index("mouse_event(0x0002")
+        self.assertLess(positioning, recheck)
+        self.assertLess(recheck, clicking)
+        self.assertIn("SetThreadDpiAwarenessContext(new IntPtr(-4))", source)
+        self.assertIn("SetThreadDpiAwarenessContext(previous)", source)
+        self.assertIn("$geometry[3] * 96 / $geometry[4] -lt 200", source)
+        self.assertIn("RequireInteractiveDesktop()", source)
+        self.assertIn("The owned client click did not establish foreground focus.", source)
+        self.assertIn("$repositoryRoot = Split-Path -Parent $PSScriptRoot", source)
 
     @unittest.skipUnless(
         os.environ.get("FESTERM_RUN_OPTIONAL_VALIDATION") == "1",
@@ -163,6 +191,80 @@ try {
         if (-not $owned.HasExited) { Stop-Process -Id $owned.Id; [void]$owned.WaitForExit(5000) }
     }
 }
+"""
+
+SMOKE_CLASS = r"""
+$ErrorActionPreference = 'Stop'
+$source = Get-Content -LiteralPath $env:FESTERM_OS_INPUT_DRIVER -Raw
+$match = [regex]::Match($source, "(?s)Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@")
+if (-not $match.Success) { throw 'Missing OS-input native class.' }
+$nativeDefinition = $match.Groups[1].Value
+function Assert([bool]$condition, [string]$message) {
+    if (-not $condition) { throw $message }
+}
+"""
+
+POINT_SCRIPT = SMOKE_CLASS + r"""
+Add-Type -TypeDefinition ($nativeDefinition + @'
+public static class PointSelectionProbe {
+    public static int[] First() {
+        return FesTermOsInputNative.FindOwnedClientClickPoint(200,200,1720,1080,(x,y)=>true);
+    }
+    public static int[] Negative() {
+        return FesTermOsInputNative.FindOwnedClientClickPoint(-2000,-1000,1000,800,(x,y)=>x==-1100 && y==-400);
+    }
+    public static int[] OccludedCenter() {
+        return FesTermOsInputNative.FindOwnedClientClickPoint(0,0,4480,2424,(x,y)=>x<740);
+    }
+}
+'@)
+Assert (([PointSelectionProbe]::First() -join ',') -eq '372,470,1') 'First candidate geometry changed'
+Assert (([PointSelectionProbe]::Negative() -join ',') -eq '-1100,-400,9') 'Negative-origin or nine-point order changed'
+Assert (([PointSelectionProbe]::OccludedCenter() -join ',') -eq '448,606,1') 'Did not choose visible owned area outside center occlusion'
+Assert ([FesTermOsInputNative]::MatchesOwnedHit([IntPtr]42,31,[IntPtr]42,31)) 'Owned root rejected'
+Assert (-not [FesTermOsInputNative]::MatchesOwnedHit([IntPtr]42,31,[IntPtr]42,32)) 'Wrong PID accepted'
+Assert (-not [FesTermOsInputNative]::MatchesOwnedHit([IntPtr]42,31,[IntPtr]43,31)) 'Wrong root accepted'
+Assert (-not [FesTermOsInputNative]::MatchesOwnedHit([IntPtr]::Zero,31,[IntPtr]::Zero,31)) 'Empty root accepted'
+'visible-point regression passed'
+"""
+
+OCCLUDED_SCRIPT = SMOKE_CLASS + r"""
+Add-Type -TypeDefinition ($nativeDefinition + @'
+public static class OccludedSelectionProbe {
+    public static int Count;
+    public static void None() {
+        FesTermOsInputNative.FindOwnedClientClickPoint(0,0,1000,800,(x,y)=>{Count++;return false;});
+    }
+    public static void Small() {
+        FesTermOsInputNative.FindOwnedClientClickPoint(0,0,79,200,(x,y)=>true);
+    }
+    public static void Null() {
+        FesTermOsInputNative.FindOwnedClientClickPoint(0,0,1000,800,null);
+    }
+    public static void Overflow() {
+        FesTermOsInputNative.FindOwnedClientClickPoint(int.MaxValue,0,1000,800,(x,y)=>true);
+    }
+}
+'@)
+$rejected = $false
+try { [OccludedSelectionProbe]::None() } catch { $rejected = $_.Exception.Message -match 'No visible owned' }
+Assert $rejected 'Occlusion did not fail explicitly'
+Assert ([OccludedSelectionProbe]::Count -eq 9) 'Search was not exactly nine points'
+foreach ($method in @('Small','Null','Overflow')) {
+    $rejected = $false
+    try { [OccludedSelectionProbe]::$method() } catch { $rejected = $true }
+    Assert $rejected "Invalid geometry/predicate accepted: $method"
+}
+'occluded-point regression passed'
+"""
+
+UNOWNED_CLICK_SCRIPT = SMOKE_CLASS + r"""
+Add-Type -TypeDefinition $nativeDefinition
+$rejected = $false
+try { [FesTermOsInputNative]::ClickOwnedClient([IntPtr]::Zero,$PID,0,0,1000,800) }
+catch { $rejected = $_.Exception.Message -match 'not the owned application window' }
+Assert $rejected 'Invalid native window reached click input'
+'unowned-click regression passed'
 """
 
 ACTIVATION_SCRIPT = r"""

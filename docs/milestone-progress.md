@@ -3,6 +3,27 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Focusing the restored OS-input fixture without stealing another window
+
+A connected DevBox reproduced the native restore blocker even with both WARP
+experiments disabled. An untimed observer found a visible, enabled, responsive
+restored window with local keyboard focus, while the console retained global
+foreground ownership. Waiting did not change that state. An owned-client click
+probe correctly refused an obscured center, and the UIA window root did not
+support keyboard focus; neither failed attempt became passing evidence.
+
+The OS-input smoke now uses its already-planned mouse-input path at a verified
+visible terminal point, with bounded selection, physical DPI coordinates and
+process/root checks before input. It still requires real foreground, exact
+restore geometry, the PTY acknowledgment and normal whole-tree exit. The private
+shipping-mode proof passed all four resize generations without modifying the
+application. The permanent runner then passed the same functional lifecycle in
+shipping A (`0`,`0`) and requested combined C (`1`,`1`), with eight actual
+owned-client captures reviewed and normal child-tree exit in both cases.
+These untimed input runs do not establish native CPU savings or cache eligibility.
+The shared no-input activation helper, native CPU interval guards,
+experiment defaults and remaining #282 acceptance gates are unchanged.
+
 ## Turning native performance attempts into auditable qualification
 
 The retained-prefix experiment's offscreen savings did not answer the

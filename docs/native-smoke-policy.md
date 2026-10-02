@@ -133,6 +133,16 @@ desktop throughout; a disconnected RDP session must not become passing native
 evidence. Minimizing a maximized window restores first to its maximized state,
 then a separate restore recovers the original normal geometry.
 
+The OS-input smoke already generates mouse and keyboard input. After restoration
+it focuses its terminal through a real click at one of nine bounded client-area
+points, checking the process and root HWND under that physical pixel both before
+and after moving the pointer. A completely occluded client fails without a click.
+This avoids assuming that a background driver can steal foreground from the
+console, and never clicks through another window. Actual foreground ownership
+remains required before capture or keyboard delivery. This preparation is not
+used by the quiet CPU driver, whose no-input activation and interval guards stay
+unchanged; no Windows foreground policy or production rendering setting changes.
+
 The native CPU fixture keeps a live child, so one primary `WM_CLOSE` opens the
 normal aggregate Quit confirmation even when per-tab close confirmation is
 disabled. Its driver must explicitly invoke the unique test-owned **Quit

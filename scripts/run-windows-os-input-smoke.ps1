@@ -16,9 +16,20 @@ if ($env:OS -ne 'Windows_NT') {
 
 Add-Type -TypeDefinition @'
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 
 public static class FesTermOsInputNative {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point { public int X, Y; }
+    [DllImport("user32.dll", SetLastError=true)]
+    private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
@@ -38,11 +49,60 @@ public static class FesTermOsInputNative {
 
     [DllImport("user32.dll")]
     public static extern bool IsZoomed(IntPtr hWnd);
+
+    public static int[] FindOwnedClientClickPoint(int left, int top, int width, int height,
+        Func<int, int, bool> isOwnedHit) {
+        if (width < 80 || height < 200)
+            throw new ArgumentException("The owned terminal client is too small for safe input.");
+        if (isOwnedHit == null) throw new ArgumentNullException("isOwnedHit");
+        int checkedPoints = 0;
+        foreach (int row in new[] { 25, 50, 75 }) {
+            foreach (int column in new[] { 10, 50, 90 }) {
+                checkedPoints++;
+                int x = checked(left + (int)((long)width * column / 100));
+                int y = checked(top + (int)((long)height * row / 100));
+                if (isOwnedHit(x, y)) return new[] { x, y, checkedPoints };
+            }
+        }
+        throw new InvalidOperationException("No visible owned terminal client point was available.");
+    }
+
+    public static bool MatchesOwnedHit(IntPtr window, int processId, IntPtr root, uint owner) {
+        return window != IntPtr.Zero && processId > 0 && owner == processId && root == window;
+    }
+
+    private static bool IsOwnedHit(IntPtr window, int processId, int x, int y) {
+        var hit = WindowFromPoint(new Point { X = x, Y = y });
+        uint owner;
+        return GetWindowThreadProcessId(hit, out owner) != 0 &&
+            MatchesOwnedHit(window, processId, GetAncestor(hit, 2), owner);
+    }
+
+    public static void ClickOwnedClient(IntPtr window, int processId, int left, int top,
+        int width, int height) {
+        uint owner;
+        if (processId <= 0 || GetWindowThreadProcessId(window, out owner) == 0 || owner != processId)
+            throw new ArgumentException("The client click target is not the owned application window.");
+        var previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        if (previous == IntPtr.Zero) throw new Win32Exception();
+        try {
+            var point = FindOwnedClientClickPoint(left, top, width, height,
+                (x, y) => IsOwnedHit(window, processId, x, y));
+            if (!SetCursorPos(point[0], point[1]))
+                throw new InvalidOperationException("Owned client cursor positioning failed.");
+            if (!IsOwnedHit(window, processId, point[0], point[1]))
+                throw new InvalidOperationException("The owned client click target changed.");
+            Console.WriteLine("owned-focus-click candidates_checked=" + point[2] +
+                " physical_x=" + point[0] + " physical_y=" + point[1]);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+        } finally {
+            if (SetThreadDpiAwarenessContext(previous) == IntPtr.Zero) throw new Win32Exception();
+        }
+    }
 }
 '@
 
-$mouseLeftDown = 0x0002
-$mouseLeftUp = 0x0004
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . "$PSScriptRoot\windows-application-window.ps1"
 [FesTermApplicationWindow]::RequireInteractiveDesktop()
@@ -50,6 +110,26 @@ if (-not [System.IO.Path]::IsPathRooted($ResultPath)) {
     $ResultPath = Join-Path $repositoryRoot $ResultPath
 }
 $nativeResultPath = [System.IO.Path]::GetFullPath($ResultPath)
+
+function Focus-SmokeWindowWithOwnedClick {
+    [FesTermApplicationWindow]::RequireInteractiveDesktop()
+    [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+    if ([FesTermOsInputNative]::IsIconic($window)) { throw 'The owned input window is minimized.' }
+    $geometry = [FesTermApplicationWindow]::ClientGeometry($window, $process.Id)
+    if ($geometry[2] * 96 / $geometry[4] -lt 80 -or
+        $geometry[3] * 96 / $geometry[4] -lt 200) {
+        throw 'The owned terminal client is too small for safe input at its current DPI.'
+    }
+    [FesTermOsInputNative]::ClickOwnedClient($window, $process.Id,
+        $geometry[0], $geometry[1], $geometry[2], $geometry[3])
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ([FesTermApplicationWindow]::GetForegroundWindow() -ne $window -and
+           $clock.ElapsedMilliseconds -lt 2000) { Start-Sleep -Milliseconds 50 }
+    [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
+    if ([FesTermApplicationWindow]::GetForegroundWindow() -ne $window) {
+        throw 'The owned client click did not establish foreground focus.'
+    }
+}
 
 function Send-SmokeKeys([string] $Keys) {
     [FesTermApplicationWindow]::RequireResponsive($window, $process.Id)
@@ -141,7 +221,7 @@ try {
         $lifecycle.Add([pscustomobject]@{State='minimized';IsIconic=$true})
         [void][FesTermOsInputNative]::ShowWindow($window, 9)
         Start-Sleep -Milliseconds 500
-        [FesTermApplicationWindow]::Activate($window, $process.Id)
+        Focus-SmokeWindowWithOwnedClick
         if (-not [FesTermOsInputNative]::IsZoomed($window) -or
             ($maximizedGeometry -join ',') -ne
                 ([FesTermApplicationWindow]::ClientGeometry($window, $process.Id) -join ',')) {
@@ -154,7 +234,7 @@ try {
         }
         [void][FesTermOsInputNative]::ShowWindow($window, 9)
         Start-Sleep -Milliseconds 500
-        [FesTermApplicationWindow]::Activate($window, $process.Id)
+        Focus-SmokeWindowWithOwnedClick
         $restoredGeometry = [FesTermApplicationWindow]::ClientGeometry($window, $process.Id)
         if ([FesTermOsInputNative]::IsIconic($window) -or [FesTermOsInputNative]::IsZoomed($window) -or
             ($initialGeometry -join ',') -ne ($restoredGeometry -join ',')) {
@@ -166,9 +246,7 @@ try {
                 ConvertTo-Json -Depth 4 | Set-Content "$CaptureDirectory\restored.json"
         }
     }
-    [void] [FesTermOsInputNative]::SetCursorPos(530, 370)
-    [FesTermOsInputNative]::mouse_event($mouseLeftDown, 0, 0, 0, [UIntPtr]::Zero)
-    [FesTermOsInputNative]::mouse_event($mouseLeftUp, 0, 0, 0, [UIntPtr]::Zero)
+    Focus-SmokeWindowWithOwnedClick
     Start-Sleep -Milliseconds 100
 
     $shell = New-Object -ComObject WScript.Shell
