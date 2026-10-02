@@ -613,6 +613,16 @@ has an explicit ID on the filename's modal layer. A fresh uniformly matched
 pair must still qualify subsequent drawing; the
 completed `daf9796` pair is neither relabeled nor promoted.
 
+The fresh `style-pair-20261002-r2` pair then qualified corrected `426c458`'s
+bounded geometry/action slice through exact physical file SHA/mtime/kind parity
+and inspection of all 23 AFTER images at 752×516, 360×516 and five 360×240
+states. Observed off-root sheets/actions became zero; initial principal fields
+and actions remain visible, with compact body rows/navigation/disclosures
+scrollable. About-short's update action, null overflow areas and collapsed
+palette/update-announcement states are not promoted. Native/usability,
+performance and anonymous-origin claims remain excluded, and the original
+48 PNGs/failed first pair are unchanged.
+
 Directory examples use owned synthetic files and the actual background listing
 tasks. A ready entry or the actual task error must be verified at a usable root
 before capture; the style examples then resize without navigation or reload.

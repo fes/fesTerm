@@ -3024,6 +3024,18 @@ Save As row/action pointer clicks. Save uses an explicit stable response ID
 on the filename's modal layer, not a background button label match. Fresh
 matched drawing must still pass before visual acceptance.
 
+The fresh `style-pair-20261002-r2` comparison subsequently rendered the corrected
+`426c458` source and the retained production-f0 runner at identical physical
+inputs/settings. All 23 AFTER images were inspected: observed off-root sheets
+fell from eight to zero, and observed off-root action scenes from seven to zero.
+Save As filename/notice/Save/Cancel and Open File path/filter/Cancel are initially
+visible without scrolling the whole sheet. At 360×240, the Open File body starts
+with the table header/item count; rows, Save As navigation and long About/safety
+disclosures use their bounded body scroll regions. This is a geometry/action
+slice, not a native/usability acceptance or a claim that every body item is
+initially visible. Raw missing/null/duplicate-label observations remain
+unqualified; see the evidence boundaries in `docs/manual-validation.md`.
+
 ## Future Populated Launcher Example
 
 ![Future populated Launcher target](images/gui-mockups/launcher-populated.png)

@@ -146,6 +146,20 @@ hidden row/action pointer tests also pass, with an explicit Save response ID
 on the filename's modal layer. Fixes still require a fresh uniformly matched
 drawing pair; the completed old run remains failed visual evidence.
 
+The authorized fresh `style-pair-20261002-r2` pair is now retained separately:
+production-f0 BEFORE executable `510af3f…`, corrected `426c458` AFTER executable
+`5dc2f785…`, exactly 23 scenes, 242 real file SHA/mtime/kind matches, Microsoft
+Basic Render Driver CPU/DX12 and PPP 1.0. All 23 AFTER images were inspected;
+initial principal fields/actions and clipped paint converge, while compact
+body navigation/rows/disclosures scroll. Successful candidate completion
+performed only inventoried input cleanup, so neither completed pair may be
+reused. Original 48 gallery assets and failed first-pair evidence are unchanged.
+About-short's update action is outside its initial body viewport, overflow
+popup areas remain unobserved, and collapsed-palette/update-announcement states
+remain unqualified. Duplicate global Save labels are not ownership evidence;
+the direct response/default-focus tests supply that proof. Native platform,
+hardware and usability scenarios above remain pending.
+
 ### Terminal interaction, history, and overlays
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

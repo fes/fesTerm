@@ -62,6 +62,18 @@ selection, filename or navigation; the explicit Save response shares the
 filename's modal layer. Fresh drawing must still qualify the source fixes.
 The completed `daf9796` comparison is not retroactively qualified.
 
+The fresh second pair, `style-pair-20261002-r2`, retained the same f0 executable
+and rendered corrected source `426c458` against newly owned, identically
+matched physical inputs. All 23 AFTER pictures were inspected, including the
+short roots: filename/overwrite/actions no longer disappear in Save As, deep
+Open File paths no longer displace its initial fields/Cancel, and nested rows
+do not paint over the application. Eight observed off-root sheets and seven
+off-root action scenes became zero, without treating null or background-label
+matches as passes. Compact body rows/navigation/disclosures still scroll;
+native/usability acceptance is unchanged. The two completed pairs stay
+immutable, the original 48 gallery images remain intact, and no timing or
+anonymous-origin claim is made.
+
 ## Expanding evidence without pretending every surface is measured
 
 The non-terminal performance audit also found a coverage gap: the original
