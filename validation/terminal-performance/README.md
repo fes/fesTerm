@@ -1128,8 +1128,39 @@ full geometry and the active desktop remained unchanged. The input source is
 unknown. Both app/child trees exited normally and all six old identities were
 independently absent; the saved checker rejected the incomplete 2/12 series.
 Actual untimed and completed-A palette captures were reviewed. No C control or
-retry followed. The completed balanced series is not rerun or pooled with older
-partial attempts. Full #282 qualification and default promotion remain open.
+retry followed within that attempt. The completed balanced series is not rerun
+or pooled with older partial attempts. Full #282 qualification and default
+promotion remain open.
+
+A separately user-authorized fresh control on clean
+`fd9dd14b4dd6f68b0bedbbdda1e421b3641a3b40` completed all 12 localized palette
+cases in the same `ABC CBA CBA ABC` order from 22:20:07 to 22:27:14 UTC.
+This is a documentation-only successor of the corrected probe source, with
+the unchanged application and producer binaries. Driver and saved-validator
+exits were zero; an independent saved validation produced the identical summary.
+Every desktop/input/foreground/geometry guard passed. The ineligible overlay
+recorded zero host-copy frames for B/C and zero retained reuse/rebuild frames
+for C, demonstrating the intended ordinary-composition fallback on this host.
+
+Median CPU with the palette open was A **77.0561%**, B **76.7437%** and C
+**77.0154%**: this control does not show a useful optimization gain and retains
+the high ordinary-composition cost. GUI counters ranged from 5.0213 to 6.4026
+frames/s, not displayed-frame cadence. The 12 actual captures were reviewed
+through six full-resolution unique images with exact SHA256 duplicate links.
+They show the palette over controlled terminal content; some contain visible
+frame 197/199 rather than 200, so producer completion is not a settled-final-
+presentation guarantee. No latency or displayed-delivery claim follows.
+
+All 12 applications and their captured descendant trees exited normally; all
+36 old identities were independently absent. The 186-member physical local
+closure `native282-palette-control-accepted-20261002-2230` has manifest SHA256
+`90A311799BC4E07204875AA86071A56454D3185B74D8DE32778C9A14F1A9D130`.
+The prior 818-member accepted balanced closure and 113-member corrected-probe/
+input-stop closure were physically reverified unchanged. These two complete,
+separately source-pinned series now supply the single-host guarded comparison
+and palette-ineligibility control; no incomplete samples were pooled and the
+60-case series was not rerun. Broader #282 equipment, recovery, resource,
+latency, architecture, default-selection and rollout gates remain open.
 
 The earlier [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
 contains provenance, ordered attempts, raw distributions, logs, external

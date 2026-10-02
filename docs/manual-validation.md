@@ -794,11 +794,19 @@ instead of the actual **Command Palette** title; an untimed owned-window tree
 and actual capture proved the mismatch. The corrected query has a portable
 regression. Its fresh replacement completed A but stopped in B on new input
 with foreground/geometry unchanged; the incomplete 2/12 control was rejected
-and remains pending, with both process trees normally exited and independently
-absent. See the
+and preserved, with both process trees normally exited and independently
+absent. A later separately authorized fresh `fd9dd14` / unchanged application
+control completed all 12 palette cases with strict guards and both saved
+validations passing. All 12 owned trees exited normally and 36 old identities
+were independently absent. Twelve captures were reviewed through six
+full-resolution unique images and exact duplicate hashes. B/C host-copy frames
+and C retained reuse/rebuild frames stayed zero while the palette was open,
+qualifying that single-host ineligibility fallback. The high ordinary-
+composition CPU cost is retained; producer completion/captures do not establish
+settled presentation or displayed-frame cadence. See the
 [single-host record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence)
-for raw-series boundaries and adverse results. CP-18/#282 remain open for the
-palette control, broader equipment, resources, latency and maintainer decisions.
+for raw-series boundaries and adverse results. CP-18/#282 remain open for
+broader equipment, recovery, resources, latency and maintainer decisions.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

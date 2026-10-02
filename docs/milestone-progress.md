@@ -22,9 +22,20 @@ behavior, shortcut delivery or guards. The completed balanced series and failed
 control are physically sealed separately from any replacement control. The
 fresh corrected control completed A but stopped in B on a changed input tick;
 foreground and geometry stayed stable, both owned trees exited normally, and
-the incomplete series was rejected without a retry. Native
-fallback, broader hardware, resources, latency and default-on decisions are
-not inferred from the single-host savings; details remain in the
+the incomplete series was rejected without a retry within that attempt.
+
+A separately authorized fresh control then completed all 12 palette cases
+with unchanged application bytes and strict guards. Host-copy and retained
+prefix counters stayed inactive under the overlay, both independent saved
+validations agreed, all owned trees exited normally, and actual capture review
+covered every image through exact duplicate hashes. Ordinary composition still
+used about 77% system-normalized process CPU in every mode; the control shows
+correct fallback, not an overlay performance win. Some captures lagged the
+producer's last frame, so displayed delivery and latency are not inferred.
+The completed comparison and control remain separately source-pinned, with
+earlier failures preserved and no rerun of the accepted 60 cases. Broader
+hardware, recovery, resources, latency and default-on decisions remain open;
+details remain in the
 [performance record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence).
 
 ## Keeping accessibility actions with foreground confirmations
