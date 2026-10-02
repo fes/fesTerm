@@ -96,6 +96,26 @@ events arriving during a frame; no output/frame-rate budget is introduced.
 
 ## How to use the graph
 
+### Isolated iOS feasibility host
+
+These edges belong only to `app/festerm-mobile` (ADR 0042), not the desktop
+application or a supported mobile SSH workflow. Checkpoint: newly launched
+preview with repository-owned fixtures; Reset restores terminal content.
+The iOS workflow's isolated Simulator smoke automates install, launch survival,
+first UI callback, terminate/relaunch and PNG capture for `MOB-01`/`MOB-03`.
+A live process without the UI callback fails; app stderr is retained. Screenshots still
+require visual review; it does not qualify gestures or background/resume.
+The mobile device descriptor requests downlevel GPU limits to accommodate the
+observed Simulator Metal limit; issue #261 remains the native startup gate.
+
+| ID | From → To | Action / guard | Oracle | Return | Layer |
+| --- | --- | --- | --- | --- | --- |
+| `MOB-01` | Cold → fixture | Launch, rotate/resize, select and scroll | Shared ANSI/Unicode grid paints within available area; bounded history remains readable | Reset fixture or relaunch | H, V, N, U |
+| `MOB-02` | Fixture → input probe | Use docked Esc/Tab/Ctrl/Alt, long-press/drag arrows, native IME or hardware keyboard | Persistent keyboard request on iPhone/iPad without repeated IME interruption on idle frames, accessory taps or terminal keys; grid above measured keyboard; one-shot modifiers; temporary direction helper with neutral zone and three repeat speeds; release/cancellation stops repeats without mouse-report leakage; encoded byte count changes with no duplicate text, execution or retained text | Reset fixture | P, H, N |
+| `MOB-03` | Active → suspended → active | Background/foreground, memory warning, terminate/relaunch | No suspended redraw; resume repaints; memory warning preserves grid and text size; process death restarts fixture honestly | Relaunch | P, N |
+| `MOB-04` | Fixture → pinching → fixture | Pinch two terminal contacts; take over an arrow hold; reverse at limits; lift/cancel/rotate | Terminal-only zoom uses shared bounds; one coalesced scale per frame; keyboard/chrome unchanged; no arrow or mouse-report leakage; remaining contacts stay captured; an existing ordinary drag retains ownership | Lift all fingers; Reset fixture | P, H, N, U |
+| `MOB-05` | Terminal ↔ Files ↔ README | Switch fixed preview categories; select both Files panes, transfer/collide; toggle Markdown Preview/Source/Contents and activate a heading; resize across tiers | Only Terminal requests persistent keyboard/gesture ownership; state survives switching; Files uses Wide horizontal, Compact Remote-top/Local-bottom and Minimal focused-pane layouts with upload moving up, download moving down and bounded synthetic transfer state; Markdown wraps and exposes navigable contents; every workflow remains prominently offline and synthetic | Select Terminal or relaunch | P, H, V, U |
+
 Each test run starts at a named checkpoint, follows one or more edges, asserts
 the edge oracle, and returns through the named recovery edge. Never depend on
 the state left by an unrelated test. A driver may skip an edge only when its

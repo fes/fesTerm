@@ -1,0 +1,59 @@
+name: iOS rendering spike
+
+on:
+  pull_request:
+    paths:
+      - 'app/festerm-mobile/**'
+      - 'crates/festerm-core/**'
+      - 'crates/festerm-ios-window/**'
+      - 'crates/festerm-markdown/**'
+      - 'crates/festerm-syntax/**'
+      - 'crates/festerm-ui-egui/**'
+      - 'vendor/egui-winit/**'
+      - 'assets/fonts/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/build-ios-spike.py'
+      - 'scripts/smoke-ios-simulator.py'
+      - 'scripts/tests/test_ios_simulator_smoke.py'
+      - '.github/workflows/ios-spike.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator-build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-spike
+      - run: cargo test --locked -p festerm-mobile --lib
+      - run: python3 scripts/build-ios-spike.py --check-dependencies
+      - run: cargo check --locked -p festerm-mobile --target aarch64-apple-ios
+      - run: python3 scripts/build-ios-spike.py
+      - name: Launch and relaunch on isolated iPhone and iPad Simulators
+        timeout-minutes: 12
+        run: python3 scripts/smoke-ios-simulator.py --run
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: festerm-ios-simulator-spike
+          path: target/ios-spike/fesTermSpike-simulator.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: festerm-ios-simulator-evidence
+          path: target/ios-smoke/
+          if-no-files-found: warn
