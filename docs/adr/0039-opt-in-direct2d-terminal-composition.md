@@ -6,6 +6,9 @@
 - **Owner-approved amendment:** 2026-09-26 bounded default selection on the
   supported Windows x64 WARP path; CP-18 and issue #244 qualification remain
   open.
+- **Owner-approved amendment:** 2026-10-02 distinguish unsupported-frame
+  refusal from native failure; preserve same-frame fallback and resume native
+  painting when supported content returns. CP-18 qualification remains open.
 
 ## Context
 
@@ -113,11 +116,19 @@ does not change egui-wgpu composition or DXGI presentation. Full-window
 composition still happens for a GUI repaint. It is not a frame-rate cap,
 output coalescing policy, or native presentation-latency guarantee.
 
-Native errors are explicit HRESULT-bearing errors. The app logs the failure,
-removes the optional hook for the remainder of the process, and retains the
-current frame's unchanged egui shapes. No blank or stale-image success fallback
-is allowed. Loss of the entire wgpu device still requires the host renderer's
-device-loss handling; native-window recovery remains qualification work.
+Unsupported-frame refusals are explicitly classified separately from native
+failures, not inferred from HRESULTs or diagnostic text. The app logs entry
+into ordinary-frame fallback, invalidates its retained native result, and
+keeps the current frame's unchanged egui shapes. The painter remains installed
+so a later supported frame can resume native painting, with an explicit
+recovery diagnostic. Persistent refusal does not emit a warning every frame.
+
+Device, allocation, synchronization, submission and other native failures
+remain explicit HRESULT-bearing errors. They log and remove the optional hook
+for the remainder of the process, retaining the current frame's original
+shapes. No blank or stale-image success fallback is allowed. Loss of the entire
+wgpu device still requires the host renderer's device-loss handling;
+native-window/device recovery remains qualification work.
 
 ## Alternatives considered
 
@@ -187,6 +198,8 @@ because the supported WARP path now defaults on.
   `direct2d_invalid_overrides_do_not_enable_the_default`,
   `integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`,
   `unsupported_native_palette_keeps_the_current_frame_pixels`,
+  `unsupported_native_palette_returns_to_native_painting`,
+  `unsupported_frames_are_distinct_from_native_failures`,
   `declined_native_paint_keeps_original_shapes`,
   `native_paint_replaces_only_its_scope_and_preserves_order`, and
   `translucent_and_invisible_painters_never_enter_native_capture`.

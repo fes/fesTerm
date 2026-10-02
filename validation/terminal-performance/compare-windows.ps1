@@ -345,7 +345,7 @@ terminal_ligatures = false
                 if (-not (Select-String -LiteralPath "$directory\stdout.log","$directory\stderr.log" -Pattern 'device_type=Cpu' -Quiet)) {
                     throw "$name did not select a CPU renderer."
                 }
-                if (Select-String -LiteralPath "$directory\stdout.log","$directory\stderr.log" -Pattern 'disabling experimental Direct2D|Direct2D initialization failed|Direct2D state poisoned' -Quiet) {
+                if (Select-String -LiteralPath "$directory\stdout.log","$directory\stderr.log" -Pattern 'unsupported Direct2D frame|disabling experimental Direct2D|Direct2D initialization failed|Direct2D state poisoned' -Quiet) {
                     throw "$name fell back from Direct2D."
                 }
                 if ($run.Workload -ne 'quiet' -and $nativeAfter -le $nativeBefore) { throw "$name built no native terminal frames." }

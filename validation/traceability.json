@@ -950,6 +950,8 @@
         "direct2d_invalid_overrides_do_not_enable_the_default",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
+        "unsupported_native_palette_returns_to_native_painting",
+        "unsupported_frames_are_distinct_from_native_failures",
         "replay_terminal_tui_workloads",
         "localized_tui_updates_leave_other_rows_unchanged",
         "tui_workloads_preserve_final_state_when_bytes_are_fragmented",
