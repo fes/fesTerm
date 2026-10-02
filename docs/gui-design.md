@@ -2472,6 +2472,14 @@ The palette does not search terminal history. Its trigger uses
 `CommandPalette`; the ordinary `Search` icon is reserved for terminal-content
 search.
 
+**Redraw Terminal** is available for an active terminal, including retained
+disconnected history. It has no keyboard binding and does not reserve common
+TUI keys such as Ctrl+L or Ctrl+R. It rebuilds the visible presentation and
+forces retained native regions to repaint even when their contents are
+unchanged. It sends no terminal input, resize, or recovery control request,
+and preserves content, modes, selection, scroll position and zoom.
+**Reset Terminal** is different: it resets terminal state, not just painting.
+
 ### Terminal-content search
 
 ![Terminal-content search target](images/gui-mockups/terminal-search.png)
