@@ -147,7 +147,7 @@ clipboard data, shell profile, credentials, host, path, or terminal history.
 | `K8 SshAuth` | Fixture host accepted for this attempt; password authentication surface focused and empty. | Clear password, cancel attempt, return to destination then `K1`. |
 | `K9 LiveSsh` | Connected disposable SSH fixture with known non-secret inspector facts. | Disconnect preserving history, then close to `K1`. |
 | `K10 RestoreMixed` | Workspace recipe with one successful local definition, one SSH auth-required definition, and one invalid/missing definition. | Close restored surfaces and remove disposable workspace; return `K1`. |
-| `K11 Narrow` | Any applicable checkpoint at `360 × 516` logical px and recorded scale. | Restore `752 × 516` baseline. |
+| `K11 Narrow` | Any applicable checkpoint at `360 × 516` logical px and recorded scale; dialog/palette geometry also exercises the supported `360 × 240` short root with complete disclosures and reachable actions. | Restore `752 × 516` baseline. |
 | `K12 Modal` | A specified close/paste/trust/destructive dialog open with Cancel focused. | Take its safe Cancel/Escape edge, verify zero unintended bytes/effects. |
 | `K13 Serial` | Serial fixture: Linux `crates/festerm-serial/tests/socat_loopback.rs` virtual loopback, or a representative hardware adapter on macOS/Windows per `docs/native-smoke-policy.md`. | Close/release port, remove loopback or disconnect the hardware fixture, return `K1`. |
 | `K14 ChangedHostKey` | Disposable SSH fixture whose persisted trust record names a different fingerprint than the one currently presented. | Cancel; restore fixture trust store to its prior single-record state; return to destination or `K1`. |

@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use festerm_config::InterfaceSettings;
+use festerm_ui_egui::controls::{action_button, modal_content_size, ActionButtonRole};
 use festerm_ui_egui::theme;
 
 use crate::overlay_state::{
@@ -21,6 +22,36 @@ use super::{bounded_paste_preview, confirmation_width, paste_line_count, FesTerm
 /// The height of a dialog's row of buttons. Stated rather than measured so a
 /// centred layout has something to centre against.
 const DIALOG_BUTTON_HEIGHT: f32 = 28.0;
+
+fn prepare_confirmation(ui: &mut egui::Ui, context: &egui::Context, preferred_width: f32) {
+    let size = modal_content_size(
+        context.content_rect().size(),
+        &egui::Frame::popup(ui.style()),
+        egui::vec2(preferred_width, f32::INFINITY),
+    );
+    ui.set_width(size.x);
+    ui.set_max_height(size.y);
+    ui.spacing_mut().interact_size.y = DIALOG_BUTTON_HEIGHT;
+}
+
+fn confirmation_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::ScrollArea::vertical()
+        .max_height((ui.available_height() - 2.0 * DIALOG_BUTTON_HEIGHT - 16.0).max(0.0))
+        .show(ui, add);
+}
+
+fn dialog_action(ui: &mut egui::Ui, role: ActionButtonRole, label: &str) -> egui::Response {
+    let response = action_button(ui, role, label);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect.expand(2.0),
+            6.0,
+            egui::Stroke::new(2.0, theme::BORDER_ACTIVE),
+            egui::StrokeKind::Outside,
+        );
+    }
+    response
+}
 
 impl FesTermApp {
     /// Applies the one close policy shared by chrome, shortcuts, the command
@@ -195,24 +226,22 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("close_session_confirmation"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
-                ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
-                ui.heading(format!("Close \u{201c}{}\u{201d}?", pending.identity));
-                ui.add_space(6.0);
-                ui.label(pending.consequence.message());
+                prepare_confirmation(ui, context, 360.0);
+                confirmation_body(ui, |ui| {
+                    ui.heading(format!("Close \u{201c}{}\u{201d}?", pending.identity));
+                    ui.add_space(6.0);
+                    ui.label(pending.consequence.message());
+                });
                 ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let cancel_button = ui.button("Cancel");
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
                     if !pending.cancel_focus_requested {
                         cancel_button.request_focus();
                     }
                     if cancel_button.clicked() {
                         cancel = true;
                     }
-                    if ui
-                        .add(egui::Button::new(
-                            egui::RichText::new("Close Session").color(theme::STATUS_ERROR),
-                        ))
-                        .clicked()
+                    if dialog_action(ui, ActionButtonRole::DangerOutline, "Close Session").clicked()
                     {
                         confirm = true;
                     }
@@ -301,21 +330,25 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("document_close_confirmation"))
             .backdrop_color(egui::Color32::from_black_alpha(160))
             .show(context, |ui| {
-                ui.set_width(confirmation_width(context.content_rect().width(), 560.0));
-                ui.add_space(4.0);
-                ui.heading(format!("Save changes to {}?", pending.title));
-                ui.add_space(10.0);
-                ui.separator();
+                prepare_confirmation(ui, context, 560.0);
+                confirmation_body(ui, |ui| {
+                    ui.add_space(4.0);
+                    ui.heading(format!("Save changes to {}?", pending.title));
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(12.0);
+                    ui.label(
+                        "This is the last view of this document. Unsaved changes will be lost.",
+                    );
+                    ui.add_space(14.0);
+                    ui.label(
+                        egui::RichText::new(&pending.origin)
+                            .monospace()
+                            .size(12.0)
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                });
                 ui.add_space(12.0);
-                ui.label("This is the last view of this document. Unsaved changes will be lost.");
-                ui.add_space(14.0);
-                ui.label(
-                    egui::RichText::new(&pending.origin)
-                        .monospace()
-                        .size(12.0)
-                        .color(theme::TEXT_SECONDARY),
-                );
-                ui.add_space(24.0);
                 // The row is given its height rather than asked for one. A
                 // vertically centred right-to-left layout inside a dialog
                 // that has no height of its own has nothing to centre
@@ -324,7 +357,7 @@ impl FesTermApp {
                 // of the screen and only the buttons are left.
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), DIALOG_BUTTON_HEIGHT),
-                    egui::Layout::right_to_left(egui::Align::Center),
+                    egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                     |ui| {
                         let save_button = ui.add(
                             egui::Button::new(
@@ -539,7 +572,7 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("quit_confirmation"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
-                ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
+                prepare_confirmation(ui, context, 360.0);
                 let (heading, consequence, confirm_label) = match pending.purpose {
                     QuitConfirmationPurpose::Quit => (
                         "Quit fesTerm?",
@@ -557,25 +590,22 @@ impl FesTermApp {
                         "Install and Restart",
                     ),
                 };
-                ui.heading(heading);
-                ui.add_space(6.0);
-                ui.label(pending.summary_message());
-                ui.label(consequence);
+                confirmation_body(ui, |ui| {
+                    ui.heading(heading);
+                    ui.add_space(6.0);
+                    ui.label(pending.summary_message());
+                    ui.label(consequence);
+                });
                 ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let cancel_button = ui.button("Cancel");
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
                     if !pending.cancel_focus_requested {
                         cancel_button.request_focus();
                     }
                     if cancel_button.clicked() {
                         cancel = true;
                     }
-                    if ui
-                        .add(egui::Button::new(
-                            egui::RichText::new(confirm_label).color(theme::STATUS_ERROR),
-                        ))
-                        .clicked()
-                    {
+                    if dialog_action(ui, ActionButtonRole::DangerOutline, confirm_label).clicked() {
                         confirm = true;
                     }
                 });
@@ -657,40 +687,42 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("file_drop_confirmation"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
-                ui.set_width(confirmation_width(context.content_rect().width(), 440.0));
-                ui.heading(format!(
-                    "Insert {} {noun} into \u{201c}{}\u{201d}?",
-                    pending.path_count, pending.identity
-                ));
-                ui.label(
+                prepare_confirmation(ui, context, 440.0);
+                confirmation_body(ui, |ui| {
+                    ui.heading(format!(
+                        "Insert {} {noun} into \u{201c}{}\u{201d}?",
+                        pending.path_count, pending.identity
+                    ));
+                    ui.label(
                     "The exact path text below will be inserted as typed input; no Enter is sent \
                      and no file contents are read.",
                 );
-                ui.add_space(6.0);
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(180.0)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(preview).monospace())
-                                    .selectable(true)
-                                    .wrap(),
-                            );
-                        });
+                    ui.add_space(6.0);
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(180.0)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(preview).monospace())
+                                        .selectable(true)
+                                        .wrap(),
+                                );
+                            });
+                    });
+                    if omitted_characters > 0 {
+                        ui.label(format!("Preview omits {omitted_characters} characters."));
+                    }
                 });
-                if omitted_characters > 0 {
-                    ui.label(format!("Preview omits {omitted_characters} characters."));
-                }
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let cancel_button = ui.button("Cancel");
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
                     if !pending.cancel_focus_requested {
                         cancel_button.request_focus();
                     }
                     if cancel_button.clicked() {
                         cancel = true;
                     }
-                    if ui.button("Insert Path").clicked() {
+                    if dialog_action(ui, ActionButtonRole::Accent, "Insert Path").clicked() {
                         insert = true;
                     }
                 });
@@ -759,7 +791,8 @@ impl FesTermApp {
                 if opening_frame {
                     ui.disable();
                 }
-                ui.set_width(confirmation_width(context.content_rect().width(), 440.0));
+                prepare_confirmation(ui, context, 440.0);
+                confirmation_body(ui, |ui| {
                 let unit = if line_count == 1 { "line" } else { "lines" };
                 ui.heading(format!(
                     "Paste {line_count} {unit} into \u{201c}{}\u{201d}?",
@@ -792,16 +825,17 @@ impl FesTermApp {
                         "Preview omits {omitted_lines} lines and {omitted_characters} characters."
                     ));
                 }
+                });
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let cancel_button = ui.button("Cancel");
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
                     if !pending.cancel_focus_requested && !opening_frame {
                         cancel_button.request_focus();
                     }
                     if cancel_button.clicked() {
                         cancel = true;
                     }
-                    if ui.button("Paste").clicked() {
+                    if dialog_action(ui, ActionButtonRole::Accent, "Paste").clicked() {
                         paste = true;
                     }
                 });
@@ -838,23 +872,25 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("reset_interface_settings_confirmation"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
-                ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
-                ui.heading("Reset interface settings?");
-                ui.add_space(6.0);
-                ui.label(
+                prepare_confirmation(ui, context, 360.0);
+                confirmation_body(ui, |ui| {
+                    ui.heading("Reset interface settings?");
+                    ui.add_space(6.0);
+                    ui.label(
                     "Interface layout, workspace behavior, and terminal typography will return \
                      to their defaults.",
                 );
+                });
                 ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let cancel_button = ui.button("Cancel");
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
                     if !pending.cancel_focus_requested {
                         cancel_button.request_focus();
                     }
                     if cancel_button.clicked() {
                         cancel = true;
                     }
-                    if ui.button("Reset").clicked() {
+                    if dialog_action(ui, ActionButtonRole::DangerOutline, "Reset").clicked() {
                         confirm = true;
                     }
                 });

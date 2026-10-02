@@ -149,6 +149,52 @@ possible.
 | AS-08 | Request application/window quit with multiple live sessions (close button, native Quit menu, and Cmd+Q — fesTerm's single window means all three arrive as the same close request); aggregate consequence is accurate, Cancel returns exact window state without acting, and deliberate confirmation exits the process exactly once. Repeat with zero live sessions and confirm no dialog appears. | Native functional | Yes: automate the counts/cancel/confirm oracle; final native window-teardown timing remains human review |
 | AS-09 | With multiple local/SSH sessions and long/changing titles, toggle **Show session details in chips** at ordinary and narrow widths, with the status bar on and off. Verify one coherent resize per transition; `34→28` px chip and `42→36` px chrome geometry; stable chip identity/type/state/Close targets; only the active detail relocates to the footer; title-first/factual-fallback precedence; ellipsis priority; empty Launcher/Settings footer; and palette/hover/accessibility/Inspector access when both displays are off. Repeat with wrapped rows and on macOS traffic-light chrome. | Native functional + visual + usability + accessibility | Automate preference/state, grid-resize count, geometry, active-value, and narrow screenshots; retain native hit-target, title-churn readability, macOS optical alignment, and screen-reader review |
 
+The dialog-style regressions cover full-root `752 × 516`, `360 × 516`, and
+`360 × 240` layouts with the production Dark/default visuals: About with license
+and update disclosures; long-target close, bounded paste, update-consent, and
+reset decisions; Open File/Save As with project-owned long paths and missing
+folders in both chrome densities; and palette/overflow row bounds. They assert
+minimum action targets, Cancel/default focus, non-destructive cancellation,
+Escape/generation invalidation, and terminal focus restoration. These extend
+AS-07, CP-05/06/09, and TI-15 automated geometry/semantic coverage, not native
+platform or usability acceptance. Native DPI/edge placement, short-sheet
+scrolling feel, screen-reader traversal, and visual comparison remain in NP-02
+and the corresponding existing scenarios.
+
+The retained matching 23-state run `style-pair-20261001-1700` is not a completed
+style acceptance: actual candidate `daf9796` drawing shows short Save As table
+content outside its sheet and narrow deep Open File breadcrumbs occupying the
+initial ready/error viewport. Rectangle containment and safe wheel-reachable
+Cancel tests pass but do not prove these painting/presentation properties.
+Keep those deterministic visual blockers separate from the native follow-up
+above; no capability/status is promoted by successful capture completion.
+
+Follow-up deterministic tests reproduce the nested-panel paint escape, enforce
+inherited paint/pointer clipping and initially visible modal-owned Save As
+filename/Save/Cancel at all three roots with both chrome densities, and verify
+deep-path/filter placement plus exact ancestor navigation after horizontal
+scrolling. The stricter Open File short-root initial-control test now passes
+after reserving its footer and budgeting its error/list viewport; initial
+path/filter pointer focus and error paint are checked at all three sizes/both
+densities. Cancel restores terminal input without an extra click. Save As
+hidden row/action pointer tests also pass, with an explicit Save response ID
+on the filename's modal layer. Fixes still require a fresh uniformly matched
+drawing pair; the completed old run remains failed visual evidence.
+
+The authorized fresh `style-pair-20261002-r2` pair is now retained separately:
+production-f0 BEFORE executable `510af3f…`, corrected `426c458` AFTER executable
+`5dc2f785…`, exactly 23 scenes, 242 real file SHA/mtime/kind matches, Microsoft
+Basic Render Driver CPU/DX12 and PPP 1.0. All 23 AFTER images were inspected;
+initial principal fields/actions and clipped paint converge, while compact
+body navigation/rows/disclosures scroll. Successful candidate completion
+performed only inventoried input cleanup, so neither completed pair may be
+reused. Original 48 gallery assets and failed first-pair evidence are unchanged.
+About-short's update action is outside its initial body viewport, overflow
+popup areas remain unobserved, and collapsed-palette/update-announcement states
+remain unqualified. Duplicate global Save labels are not ownership evidence;
+the direct response/default-focus tests supply that proof. Native platform,
+hardware and usability scenarios above remain pending.
+
 ### Terminal interaction, history, and overlays
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
@@ -593,6 +639,16 @@ baseline. `textureless_bordered_panels_match_pixels_across_dpi` covers border
 geometry in normal CI. Native Settings scrolling, profile interaction, window
 drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
+
+The bounded non-terminal expansion adds production-widget menu/About/safety/
+picker fixtures to those same opt-in probes and gallery, not to the native CPU
+oracle. Its [reconciled matrix](../validation/windows-warp/surface-matrix.json)
+retains 33 families, all audited state groups and named native prerequisites.
+The initial scaffolding awaits exclusive validation; no new headless evidence
+has been accepted. Even completed offscreen reports cannot qualify About/menu
+idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
+mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
+unchanged; no new latency budgets are implied.
 
 ### Experimental Direct2D qualification
 
