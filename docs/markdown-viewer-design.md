@@ -110,6 +110,25 @@ preserving newline-spanning roles, plain gaps and exact source bytes instead
 of scanning all spans again for every line. Parsing and the existing code-size
 and syntax-budget bounds remain unchanged.
 
+The identical inactive **Copy** caption is prepared lazily at the first code
+header's actual painter and reused only within a fresh `MarkdownRenderState`
+invocation. A single entry checks painter-context identity, viewport/pass,
+pixels per point, explicit font and colour; a mismatch prepares normally.
+Egui activates font definitions, text options and atlas resets at begin-pass,
+so no prepared entry survives into another renderer invocation. Width is not a
+caption dependency (`layout_no_wrap`); the button's current allocation, ID,
+accessibility information, clip, hover, focus, tooltip and click remain live.
+Every fence retains its own raw Copy payload and selectable highlighted body.
+This removes repeated caption string preparation and memoized egui cache
+calls, not whole text layouts or code/table widgets. Ordinary/prepared CPU
+oracles cover the complete clipped shapes, response geometry, accessibility,
+selection, navigation and raw Copy payloads across dependency changes.
+The matched synthetic measurement and its adverse controls are recorded in
+[`milestone-progress.md`](milestone-progress.md#preparing-a-repeated-code-header-caption-without-retaining-document-layout).
+A one-versus-400 preparation count alone does not establish a speedup, and
+neither that experiment nor these regressions qualify native clipboard,
+screen-reader usability or input-to-display latency.
+
 Table columns are measured from unwrapped cell content before sharing the
 reading width. A cell whose measured galley fits the final, integer-normalized
 wrap constraint reuses it; only a squeezed cell needs another layout. This is

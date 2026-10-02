@@ -541,6 +541,17 @@ independent constrained layout at fractional widths and 0.75-3 pixels per
 point, allowing only the unused wrap-limit metadata to differ. They require
 measured-galley reuse for fitting cells and preserve wrapping, styles, Unicode,
 Find formatting and intrinsic size without removing any labels.
+The frame-local code-header caption oracle for `MD-04` and the shared Preview
+path in `EDIT-09` compares ordinary and prepared rendering of the actual
+outline-disabled 400-section fixture: complete clipped shapes, accessibility
+nodes/IDs/bounds, live Copy responses, cold/warm and dependency changes, text
+selection, source scrolling to the tail and exact per-fence Copy payloads.
+It requires one caption preparation rather than 400 only while the actual
+painter dependencies match; every widget and code body still runs. These
+regressions passed the combined Windows workspace qualification. They prove
+CPU correctness, not timing benefit, native clipboard delivery or usability;
+the separate synthetic measurement and its adverse controls do not replace
+native evidence.
 
 Code-byte navigation regressions for `MD-04` and `EDIT-09` render all 400
 fences, prove the tail is initially outside the viewport, then require its
