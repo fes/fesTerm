@@ -136,6 +136,18 @@ impl LocalDirectoryLoader {
             .as_ref()
             .map(|request| request.path.clone())
     }
+
+    #[cfg(test)]
+    fn run_pending_for_test(&self) {
+        let task = self
+            .shared
+            .pending
+            .lock()
+            .expect("local directory loader lock is not poisoned")
+            .take()
+            .expect("a local directory task must be pending");
+        (task.run)(&task.path);
+    }
 }
 
 impl Drop for LocalDirectoryLoader {
@@ -5809,9 +5821,17 @@ pub(crate) struct MarkdownFilePicker {
 impl MarkdownFilePicker {
     /// Opens the picker rooted at `start_dir`.
     pub(crate) fn new(start_dir: PathBuf, repaint: egui::Context) -> Self {
-        let (event_sender, event_receiver) = mpsc::channel();
         let local_loader =
             LocalDirectoryLoader::new("festerm-gui-markdown-picker-local".to_owned());
+        Self::with_local_loader(start_dir, repaint, local_loader)
+    }
+
+    fn with_local_loader(
+        start_dir: PathBuf,
+        repaint: egui::Context,
+        local_loader: LocalDirectoryLoader,
+    ) -> Self {
+        let (event_sender, event_receiver) = mpsc::channel();
         let mut picker = Self {
             pane: SftpPaneState::new(SftpPath::local(start_dir)),
             event_sender,
@@ -7325,6 +7345,31 @@ mod tests {
         panic!("markdown file picker did not finish loading in time");
     }
 
+    fn paused_picker(start_dir: PathBuf) -> MarkdownFilePicker {
+        MarkdownFilePicker::with_local_loader(
+            start_dir,
+            egui::Context::default(),
+            LocalDirectoryLoader::paused_for_test(),
+        )
+    }
+
+    // Path resolution can enqueue one directory listing. Run both tasks through
+    // the real event channel without depending on background-thread scheduling.
+    fn finish_paused_picker_load(picker: &mut MarkdownFilePicker) {
+        for _ in 0..2 {
+            picker.poll();
+            if !picker.pane.loading {
+                return;
+            }
+            picker.local_loader.run_pending_for_test();
+        }
+        picker.poll();
+        assert!(
+            !picker.pane.loading,
+            "path resolution and its directory listing must finish the load"
+        );
+    }
+
     #[test]
     fn virtualized_open_picker_reaches_the_final_row_and_activates_its_selection() {
         let directory = tempfile::tempdir().unwrap();
@@ -7624,40 +7669,55 @@ mod tests {
 
     #[test]
     fn markdown_file_picker_typed_paths_open_files_navigate_folders_and_preserve_errors() {
-        let dir = std::env::temp_dir().join(format!("festerm-picker-paths-{}", std::process::id()));
+        let fixture = tempfile::tempdir().unwrap();
+        let dir = fixture.path();
         fs::create_dir_all(dir.join("child")).unwrap();
         let dir = fs::canonicalize(dir).unwrap();
         fs::write(dir.join("child/two words.txt"), b"hello").unwrap();
-        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
-        wait_for_picker_load(&mut picker);
+        let mut picker = paused_picker(dir.clone());
+        finish_paused_picker_load(&mut picker);
         picker.entered_path = "child".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        assert!(picker.resolving_path);
+        assert!(picker.pane.loading);
+        picker.local_loader.run_pending_for_test();
+        assert_eq!(picker.current_directory(), Some(dir.clone()));
+        picker.poll();
+        assert!(!picker.resolving_path);
+        assert!(
+            picker.pane.loading,
+            "resolving a directory must still wait for its listing"
+        );
+        assert_eq!(
+            picker.local_loader.pending_path_for_test(),
+            Some(SftpPath::local(dir.join("child")))
+        );
+        finish_paused_picker_load(&mut picker);
         assert_eq!(picker.current_directory(), Some(dir.join("child")));
         picker.entered_path = "\"two words.txt\"".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(
             picker.pending_file.take(),
             Some(dir.join("child/two words.txt"))
         );
         picker.entered_path = dir.join("child/two words.txt").display().to_string();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(
             picker.pending_file.take(),
             Some(dir.join("child/two words.txt"))
         );
         picker.entered_path = "missing.txt".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(picker.entered_path, "missing.txt");
         assert!(picker.pane.error.is_some());
         assert!(picker.pane.details.is_some());
         assert!(picker.pending_file.is_none());
         picker.entered_path = "../child/..".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(picker.current_directory(), Some(dir.clone()));
         assert!(picker
             .current_directory()
@@ -7668,14 +7728,13 @@ mod tests {
                 std::path::Component::CurDir | std::path::Component::ParentDir
             )));
         drop(picker);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn markdown_file_picker_stale_path_results_cannot_open_after_edit_or_navigation() {
-        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
-        wait_for_picker_load(&mut picker);
-        picker.local_loader = LocalDirectoryLoader::paused_for_test();
+        let fixture = tempfile::tempdir().unwrap();
+        let mut picker = paused_picker(fixture.path().to_path_buf());
+        finish_paused_picker_load(&mut picker);
         picker.entered_path = "old.txt".to_owned();
         picker.submit_path();
         let stale = picker.pane.pending_request_id;
@@ -7685,7 +7744,7 @@ mod tests {
             .event_sender
             .send(MarkdownPickerEvent::PathResolved {
                 request_id: stale,
-                result: Ok((std::env::temp_dir().join("old.txt"), false)),
+                result: Ok((fixture.path().join("old.txt"), false)),
             })
             .unwrap();
         picker.poll();
@@ -7697,7 +7756,7 @@ mod tests {
             .event_sender
             .send(MarkdownPickerEvent::PathResolved {
                 request_id: stale,
-                result: Ok((std::env::temp_dir().join("new.txt"), false)),
+                result: Ok((fixture.path().join("new.txt"), false)),
             })
             .unwrap();
         picker.poll();

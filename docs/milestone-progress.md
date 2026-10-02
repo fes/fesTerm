@@ -2816,3 +2816,19 @@ for an active run. A duplicated-descriptor regression reproduces the failure
 without relying on scheduling. Diagnostic lock guards now explicitly unlock
 when their last real owner finishes; log writers still retain lifetime
 ownership, and catalog/probe locks use the same release rule.
+
+## Deterministic Open File path validation
+
+The Windows main CI run after the UI-gallery refresh failed in two unrelated
+Open File path tests: their two-second polling helper expired before background
+directory work completed. The same tests and loader were unchanged from the
+previous green run; the stale-result test also enumerated the runner's shared
+temporary directory rather than a repository-owned fixture.
+
+Path-opening and stale-result tests now use isolated directories and explicitly
+advance the existing bounded loader's queued tasks through the real event
+channel. They still perform actual filesystem resolution and listing, and
+assert that resolving a directory keeps the picker loading until its listing
+arrives. The ordinary picker-loading tests retain real background-thread
+coverage. No timeout was extended, failure was retried, gallery was regenerated,
+or runtime picker behavior changed.
