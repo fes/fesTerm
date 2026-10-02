@@ -4021,7 +4021,7 @@ impl FesTermApp {
             .is_some_and(|open| open.text().is_dirty())
     }
 
-    fn show_save_as_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+    fn show_save_as_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
         let Some(picker) = self.overlays.save_as_picker.as_mut() else {
             return;
         };
@@ -4029,7 +4029,7 @@ impl FesTermApp {
         let mut outcome = None;
         let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(14));
         let size = festerm_ui_egui::controls::modal_content_size(
-            content_rect.size(),
+            ctx.content_rect().size(),
             &frame,
             egui::vec2(700.0, 600.0),
         );
@@ -4037,18 +4037,11 @@ impl FesTermApp {
             .frame(frame)
             .show(ctx, |ui| {
                 ui.set_width(size.x);
-                ui.set_max_height(size.y);
+                ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Save As");
                 ui.add_space(6.0);
-                let body_height = ui.available_height().max(0.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("save_as_sheet_content")
-                    .max_height(body_height)
-                    .show(ui, |ui| {
-                        ui.set_height(body_height.max(360.0));
-                        outcome = Some(picker.ui(ui));
-                    });
+                outcome = Some(picker.ui(ui));
             });
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path }) => {
@@ -4075,7 +4068,7 @@ impl FesTermApp {
         }
     }
 
-    fn show_markdown_file_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+    fn show_markdown_file_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
         let Some(picker) = self.overlays.markdown_file_picker.as_mut() else {
             return;
         };
@@ -4083,7 +4076,7 @@ impl FesTermApp {
         let mut outcome = None;
         let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(14));
         let size = festerm_ui_egui::controls::modal_content_size(
-            content_rect.size(),
+            ctx.content_rect().size(),
             &frame,
             egui::vec2(640.0, 560.0),
         );
@@ -4091,16 +4084,11 @@ impl FesTermApp {
             .frame(frame)
             .show(ctx, |ui| {
                 ui.set_width(size.x);
-                ui.set_max_height(size.y);
+                ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Open File");
                 ui.add_space(6.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("open_file_sheet_content")
-                    .max_height(ui.available_height().max(0.0))
-                    .show(ui, |ui| {
-                        outcome = Some(picker.ui(ui));
-                    });
+                outcome = Some(picker.ui(ui));
             });
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
@@ -8082,6 +8070,36 @@ mod tests {
         );
     }
 
+    fn assert_style_modal_action(harness: &Harness<'_, FesTermApp>, modal: &str, label: &str) {
+        assert_style_action_inside_root(harness, label);
+        let area = harness
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::new(modal)))
+            .unwrap();
+        let text_rect = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                (text.galley.job.text == label)
+                    .then_some(text.galley.rect.translate(text.pos.to_vec2()))
+            })
+            .next_back()
+            .unwrap();
+        let action = harness
+            .query_all_by_label(label)
+            .find(|node| node.rect().contains(text_rect.center()) && node.rect().height() >= 24.0)
+            .expect("the painted action belongs to its accessible modal control");
+        assert!(
+            area.contains_rect(action.rect()),
+            "{label}: {:?}",
+            action.rect()
+        );
+    }
+
     #[test]
     fn about_actions_stay_inside_the_full_root_with_licenses_and_update_disclosures() {
         for size in dialog_style_sizes() {
@@ -8323,6 +8341,171 @@ mod tests {
     }
 
     #[test]
+    fn save_as_nested_panels_preserve_the_short_sheet_paint_clip() {
+        let fixture = DialogStyleFixture::new();
+        let source = fixture.0.join("SOURCE.md");
+        fs::write(&source, "# Synthetic source\n").unwrap();
+        for size in dialog_style_sizes() {
+            for show_details in [false, true] {
+                let (mut app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                let context = egui::Context::default();
+                if show_details {
+                    app.state
+                        .dispatch(AppCommand::ToggleShowSessionDetails, &context);
+                }
+                app.open_save_as_for_gallery(
+                    source.clone(),
+                    fixture.0.clone(),
+                    "NOTES.md".to_owned(),
+                    &context,
+                );
+                let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
+                for _ in 0..200 {
+                    harness.step();
+                    if harness.query_by_label("NOTES.md").is_some() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                harness.get_by_label("NOTES.md");
+                harness.set_size(size);
+                harness.run_steps(3);
+                let area = harness
+                    .ctx
+                    .memory(|memory| memory.area_rect(egui::Id::new("text_editor_save_as")))
+                    .unwrap();
+                let name = harness.get_by_role_and_label(accesskit::Role::TextInput, "File name");
+                assert!(
+                    area.contains_rect(name.rect()),
+                    "{size:?}: {:?}",
+                    name.rect()
+                );
+                assert_style_modal_action(&harness, "text_editor_save_as", "Save");
+                assert_style_modal_action(&harness, "text_editor_save_as", "Cancel");
+                let mut table_text_seen = false;
+                for shape in &harness.output().shapes {
+                    let egui::Shape::Text(text) = &shape.shape else {
+                        continue;
+                    };
+                    if !["Name", "Size", "Modified", "NOTES.md"]
+                        .contains(&text.galley.job.text.as_str())
+                    {
+                        continue;
+                    }
+                    table_text_seen = true;
+                    let visible = shape
+                        .clip_rect
+                        .intersect(harness.ctx.content_rect())
+                        .intersect(text.galley.rect.translate(text.pos.to_vec2()));
+                    assert!(
+                        !visible.is_positive() || area.contains_rect(visible),
+                        "{size:?}, details={show_details}: {} paints {visible:?} outside {area:?}",
+                        text.galley.job.text
+                    );
+                }
+                assert!(table_text_seen);
+                assert!(transport.sent().is_empty());
+                assert_eq!(fs::read_to_string(&source).unwrap(), "# Synthetic source\n");
+                assert_eq!(
+                    fs::read_to_string(fixture.0.join("NOTES.md")).unwrap(),
+                    "# Owned fixture\n"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deep_open_picker_keeps_initial_path_and_filter_visible_without_losing_ancestors() {
+        let fixture = DialogStyleFixture::new();
+        let directory = fixture
+            .0
+            .join("documentation")
+            .join("architecture")
+            .join("decisions")
+            .join("release-review");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("NOTES.md"), "# Owned deep fixture\n").unwrap();
+        for missing in [false, true] {
+            let target = if missing {
+                directory.join("missing-owned-folder")
+            } else {
+                directory.clone()
+            };
+            let ancestors = crate::sftp_file_manager::breadcrumb_segments(
+                &festerm_ssh::SftpPath::local(&target),
+            );
+            let (mut app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+            app.overlays.markdown_file_picker =
+                Some(MarkdownFilePicker::new(target, egui::Context::default()));
+            let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
+            let expected = if missing {
+                "Could not load the folder."
+            } else {
+                "NOTES.md"
+            };
+            for _ in 0..200 {
+                harness.step();
+                if harness.query_by_label(expected).is_some() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            harness.get_by_label(expected);
+            harness.set_size(egui::vec2(360.0, 516.0));
+            harness.run_steps(3);
+            let path =
+                harness.get_by_role_and_label(accesskit::Role::TextInput, "File or folder path");
+            assert!(harness.ctx.content_rect().contains_rect(path.rect()));
+            let area = harness
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("markdown_file_picker")))
+                .unwrap();
+            assert!(path.rect().top() <= area.top() + 128.0,
+                "deep breadcrumbs must not push the initial path field below the toolbar: {:?} in {area:?}",
+                path.rect());
+            assert_eq!(
+                harness
+                    .query_all_by_role(accesskit::Role::TextInput)
+                    .count(),
+                2
+            );
+            harness.get_by_label(&ancestors.last().unwrap().label);
+            harness
+                .get_by_label(&ancestors.last().unwrap().label)
+                .hover();
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(if missing { 260.0 } else { 120.0 }, 0.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(30);
+            let ancestor = harness.get_by_label("architecture");
+            assert!(harness
+                .ctx
+                .content_rect()
+                .contains(ancestor.rect().center()));
+            ancestor.click();
+            harness.step();
+            assert_eq!(
+                harness
+                    .state()
+                    .overlays
+                    .markdown_file_picker
+                    .as_ref()
+                    .unwrap()
+                    .current_directory(),
+                Some(directory.parent().unwrap().parent().unwrap().to_path_buf())
+            );
+            assert!(transport.sent().is_empty());
+            assert_eq!(
+                fs::read_to_string(directory.join("NOTES.md")).unwrap(),
+                "# Owned deep fixture\n"
+            );
+        }
+    }
+
+    #[test]
     fn file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting() {
         let fixture = DialogStyleFixture::new();
         for size in dialog_style_sizes() {
@@ -8370,23 +8553,7 @@ mod tests {
                         }
                         harness.get_by_label(expected);
                         assert_style_modal_inside_root(&harness, modal);
-                        harness.get_by_label("Cancel").scroll_to_me();
-                        harness.run_steps(30);
-                        // Exercise the sheet's real wheel path before clicking
-                        // a footer that may start outside its viewport.
-                        let area = harness
-                            .ctx
-                            .memory(|memory| memory.area_rect(egui::Id::new(modal)))
-                            .unwrap();
-                        harness.hover_at(egui::pos2(area.center().x, area.top() + 60.0));
-                        harness.event(egui::Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(0.0, -1000.0),
-                            phase: egui::TouchPhase::Move,
-                            modifiers: egui::Modifiers::NONE,
-                        });
-                        harness.run_steps(30);
-                        assert_style_action_inside_root(&harness, "Cancel");
+                        assert_style_modal_action(&harness, modal, "Cancel");
                         let cancel_rect = harness.get_by_label("Cancel").rect();
                         harness.get_by_label("Cancel").click();
                         harness.step();

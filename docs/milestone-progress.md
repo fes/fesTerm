@@ -43,6 +43,20 @@ style convergence claim. The completed pair remains immutable; its successful
 capture entry performed the inventoried input cleanup, so another iteration
 needs a fresh uniformly matched pair rather than a relabeled candidate.
 
+The follow-up stays in the owned picker seams: Save As pins its filename,
+complete overwrite notice and actions, gives navigation/rows the remaining
+viewport, and intersects nested-panel clips before registering child widgets.
+An initial paint-only correction was superseded because drawing containment
+alone cannot establish pointer safety. Tests now prove initial modal-owned
+Save/Cancel and filename at all three roots/both densities, and clipped pointer
+clicks cannot trigger either action. The local Open File
+toolbar keeps every ancestor and exact navigation target in one horizontally
+scrollable row rather than wrapping the whole path down the sheet; ready/error
+tests verify the fields and actual ancestor navigation. A stricter initial
+short-root test still exposes unreserved listing/footer space, so the slice
+remains unqualified pending that fix and the authorized fresh matched pair.
+The completed `daf9796` comparison is not retroactively qualified.
+
 ## Expanding evidence without pretending every surface is measured
 
 The non-terminal performance audit also found a coverage gap: the original

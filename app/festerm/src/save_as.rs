@@ -203,17 +203,7 @@ impl SaveAsPicker {
     pub(crate) fn ui(&mut self, ui: &mut Ui) -> SaveAsOutcome {
         let mut outcome = SaveAsOutcome::Pending;
         let width = ui.available_width();
-
-        self.show_destination_switch(ui, width);
-        ui.add_space(8.0);
-        self.show_toolbar(ui, width);
-        ui.add_space(6.0);
-
-        if let Some(summary) = self.pane.error.clone() {
-            ui.colored_label(theme::STATUS_ERROR, summary);
-            ui.add_space(6.0);
-        }
-
+        let inherited_clip = ui.clip_rect();
         let entries = self.pane.visible_entries();
 
         // The listing is the elastic element: the file-name field, notice and
@@ -225,15 +215,32 @@ impl SaveAsPicker {
             .show_separator_line(false)
             .frame(egui::Frame::new())
             .show(ui, |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(inherited_clip));
                 ui.add_space(8.0);
                 outcome = self.show_footer(ui, &entries);
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ui, |ui| {
-                self.show_table_header(ui, width);
-                let entries = self.pane.visible_entries();
-                self.show_rows(ui, width, &entries);
+                ui.set_clip_rect(ui.clip_rect().intersect(inherited_clip));
+                ScrollArea::vertical()
+                    .id_salt("save_as_navigation")
+                    .auto_shrink([false, false])
+                    .show_viewport(ui, |ui, viewport| {
+                        self.show_destination_switch(ui, width);
+                        ui.add_space(8.0);
+                        self.show_toolbar(ui, width);
+                        ui.add_space(6.0);
+                        if let Some(summary) = self.pane.error.clone() {
+                            ui.colored_label(theme::STATUS_ERROR, summary);
+                            ui.add_space(6.0);
+                        }
+                        self.show_table_header(ui, width);
+                        let rows_height =
+                            (viewport.height() - ui.min_rect().height()).max(SFTP_TABLE_ROW_HEIGHT);
+                        let entries = self.pane.visible_entries();
+                        self.show_rows(ui, width, rows_height, &entries);
+                    });
             });
 
         if ui.input(|input| input.key_pressed(Key::Escape)) {
@@ -334,12 +341,13 @@ impl SaveAsPicker {
         }
     }
 
-    fn show_rows(&mut self, ui: &mut Ui, width: f32, entries: &[SftpDirectoryItem]) {
+    fn show_rows(&mut self, ui: &mut Ui, width: f32, height: f32, entries: &[SftpDirectoryItem]) {
         let columns = save_as_columns(width);
         let mut navigate_into = None;
         let mut chosen_name = None;
         let scroll_output = ScrollArea::vertical()
             .id_salt("save_as_picker_rows")
+            .max_height(height)
             .auto_shrink([false, false])
             .vertical_scroll_offset(self.pane.scroll_offset)
             .show_rows(ui, SFTP_TABLE_ROW_HEIGHT, entries.len(), |ui, range| {
@@ -857,6 +865,78 @@ mod tests {
         assert!(matches!(
             harness.state().1.as_ref().expect("an outcome"),
             SaveAsOutcome::Cancelled
+        ));
+    }
+
+    #[test]
+    fn save_as_nested_panel_controls_respect_inherited_pointer_clipping() {
+        let directory = TemporaryDirectory::new("inherited-pointer-clip");
+        directory.file("NOTES.md", "# Owned unchanged fixture\n");
+        let picker = SaveAsPicker::new(
+            directory.path.clone(),
+            "NOTES.md".to_owned(),
+            egui::Context::default(),
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 516.0))
+            .build_ui_state(
+                |ui, state: &mut (SaveAsPicker, Option<SaveAsOutcome>, bool)| {
+                    state.0.poll();
+                    if state.2 {
+                        ui.set_clip_rect(egui::Rect::from_min_max(
+                            egui::Pos2::ZERO,
+                            egui::pos2(752.0, 250.0),
+                        ));
+                    }
+                    let outcome = state.0.ui(ui);
+                    if !matches!(outcome, SaveAsOutcome::Pending) {
+                        state.1 = Some(outcome);
+                    }
+                },
+                (picker, None, false),
+            );
+        harness.ctx.set_theme(egui::ThemePreference::Dark);
+        harness.ctx.set_visuals(theme::default_visuals());
+        for _ in 0..200 {
+            harness.step();
+            if !harness.state().0.pane.loading {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!harness.state().0.pane.loading);
+        harness.run_steps(3);
+        let positions = [
+            harness.get_by_label("Save").rect().center(),
+            harness.get_by_label("Cancel").rect().center(),
+        ];
+        assert!(positions.iter().all(|position| position.y > 250.0));
+        harness.state_mut().2 = true;
+        harness.run_steps(3);
+        for position in positions {
+            harness.event(egui::Event::PointerMoved(position));
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+            }
+            assert!(harness.state().1.is_none(), "hidden action at {position:?}");
+        }
+        assert_eq!(
+            fs::read_to_string(directory.path.join("NOTES.md")).unwrap(),
+            "# Owned unchanged fixture\n"
+        );
+        harness.state_mut().2 = false;
+        harness.run_steps(3);
+        harness.get_by_label("Save").click();
+        harness.run_steps(2);
+        assert!(matches!(
+            harness.state().1.as_ref(),
+            Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("NOTES.md")
         ));
     }
 

@@ -6075,40 +6075,53 @@ impl MarkdownFilePicker {
             }
             ui.add_space(SFTP_TOOLBAR_NAV_GAP);
             let mut breadcrumb_target = None;
-            ui.horizontal_wrapped(|ui| {
-                for (index, segment) in breadcrumb_segments(&self.pane.current_path)
-                    .into_iter()
-                    .enumerate()
-                {
-                    if index > 0 && segment.label != "/" {
-                        ui.label(
-                            RichText::new("/")
+            let breadcrumb_width = ui.available_width();
+            egui::ScrollArea::horizontal()
+                .id_salt((
+                    "markdown_picker_breadcrumbs",
+                    path_key(&self.pane.current_path),
+                ))
+                .max_width(breadcrumb_width)
+                .max_height(32.0)
+                .auto_shrink([false, true])
+                .stick_to_right(true)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (index, segment) in breadcrumb_segments(&self.pane.current_path)
+                            .into_iter()
+                            .enumerate()
+                        {
+                            if index > 0 && segment.label != "/" {
+                                ui.label(
+                                    RichText::new("/")
+                                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            }
+                            let text = RichText::new(segment.label.clone())
                                 .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
-                    let text = RichText::new(segment.label.clone())
-                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                        .color(if segment.current {
-                            theme::TEXT_PRIMARY
-                        } else {
-                            theme::TEXT_SECONDARY
-                        });
-                    if segment.current {
-                        ui.label(text);
-                    } else if ui
-                        .add(
-                            egui::Button::new(text)
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::NONE)
-                                .min_size(egui::vec2(0.0, 18.0)),
-                        )
-                        .clicked()
-                    {
-                        breadcrumb_target = Some(segment.path);
-                    }
-                }
-            });
+                                .color(if segment.current {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_SECONDARY
+                                });
+                            if segment.current {
+                                ui.label(text).on_hover_text(segment.path.display());
+                            } else if ui
+                                .add(
+                                    egui::Button::new(text)
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::NONE)
+                                        .min_size(egui::vec2(0.0, 24.0)),
+                                )
+                                .on_hover_text(segment.path.display())
+                                .clicked()
+                            {
+                                breadcrumb_target = Some(segment.path);
+                            }
+                        }
+                    });
+                });
             if let Some(path) = breadcrumb_target {
                 self.navigate_to_breadcrumb(path);
             }

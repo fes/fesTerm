@@ -134,6 +134,15 @@ Cancel tests pass but do not prove these painting/presentation properties.
 Keep those deterministic visual blockers separate from the native follow-up
 above; no capability/status is promoted by successful capture completion.
 
+Follow-up deterministic tests reproduce the nested-panel paint escape, enforce
+inherited paint/pointer clipping and initially visible modal-owned Save As
+filename/Save/Cancel at all three roots with both chrome densities, and verify
+deep-path/filter placement plus exact ancestor navigation after horizontal
+scrolling. The stricter Open File short-root initial-control test still fails
+on listing/footer allocation; scrolling to find Cancel is not a pass. Fixes
+also require a fresh uniformly
+matched drawing pair; the completed old run remains failed visual evidence.
+
 ### Terminal interaction, history, and overlays
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

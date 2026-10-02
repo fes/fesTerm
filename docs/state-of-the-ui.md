@@ -600,6 +600,16 @@ iterations require a fresh uniformly matched pair. Captions record actual
 paths and mode, not anonymized metadata or sanitized pixels. See the
 [owned comparison contract](../validation/windows-warp/README.md).
 
+Source follow-up pins Save As filename/notice/actions and enforces inherited
+nested-panel clipping before child paint and pointer registration; the
+paint-only workaround was superseded. Initial modal-owned Save As fields/actions
+pass at all three roots/both densities. It bounds Open File breadcrumbs to a horizontally
+scrollable row retaining all exact ancestor targets and full hover identities.
+New tests prove clipped pointer refusal and safe navigation; the stricter
+initial Open File short-root listing/footer oracle still fails. That blocker
+and a fresh uniformly matched pair must qualify subsequent drawing; the
+completed `daf9796` pair is neither relabeled nor promoted.
+
 Directory examples use owned synthetic files and the actual background listing
 tasks. A ready entry or the actual task error must be verified at a usable root
 before capture; the style examples then resize without navigation or reload.

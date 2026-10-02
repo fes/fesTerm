@@ -3007,6 +3007,19 @@ Open File breadcrumb occupies the initial narrow ready/error viewport.
 Passing rectangle/interaction tests do not replace clipped-paint and usable
 initial-presentation evidence.
 
+The follow-up Save As layout pins the filename, overwrite notice and actions
+before allocating the remaining viewport to scrollable navigation and rows.
+Nested panels intersect their clip with the inherited viewport before creating
+widgets, preserving both paint and pointer clipping rather than masking drawing
+after interaction. Picker sizing uses the full client root, not the editor or
+terminal's smaller content area. Open File keeps all breadcrumb ancestors in a
+height-bounded horizontal scroll region; a new path starts at its current
+directory, and full paths remain available on hover with exact navigation
+targets. Save As tests prove initial modal-owned fields/actions at all three
+roots and both densities plus refusal of clipped pointer actions. Open File's
+strict initial short-root oracle still exposes unreserved listing/footer space;
+that blocker and fresh matched drawing must pass before visual acceptance.
+
 ## Future Populated Launcher Example
 
 ![Future populated Launcher target](images/gui-mockups/launcher-populated.png)
