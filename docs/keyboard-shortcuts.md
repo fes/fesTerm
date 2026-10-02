@@ -21,6 +21,12 @@ state; opening the menu never sends half a click to the terminal.
 These fixed mouse conventions are also explained in Settings under
 **Terminal mouse**, separately from configurable keyboard bindings.
 
+Use the command palette's **Redraw Terminal** for a full local repaint,
+including unchanged native-renderer regions. It has no shortcut and does not
+claim Ctrl+L, Ctrl+R, or other TUI keys. Unlike **Reset Terminal**, it does not
+change terminal content, cursor, attributes, modes or history, or send any
+input/resize/recovery request to the session.
+
 Inside the **Open File** picker, **Ctrl+L** (**Command+L** on macOS) focuses the
 **File or folder path** field. Paste an absolute path, a path relative to the
 picker's current folder, or `~/...`, and press Enter or **Open path**. A directory

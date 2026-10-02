@@ -554,6 +554,7 @@ pub(crate) struct GridPaint<'a> {
     pub(crate) fonts: &'a FontSettings,
     pub(crate) shape_cell_runs: bool,
     pub(crate) focused: bool,
+    pub(crate) full_redraw: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -738,7 +739,8 @@ fn paint_grid_with_clip_override(
     let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
     let clip_policy = GridGlyphClipPolicy::new(&painter, clip_override);
     crate::background::paint_background(&painter, paint.layout.rect);
-    let native = crate::native_painter::Batch::begin(&painter, painter.clip_rect());
+    let native =
+        crate::native_painter::Batch::begin(&painter, painter.clip_rect(), paint.full_redraw);
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {
             continue;
@@ -1838,6 +1840,7 @@ mod tests {
                         selection: &Selection::default(),
                         fonts: &FontSettings::default(),
                         focused: true,
+                        full_redraw: false,
                         shape_cell_runs,
                     },
                     &mut glyphs,
@@ -2036,6 +2039,7 @@ mod tests {
                     fonts: &fonts,
                     shape_cell_runs: scenario.shape_cell_runs,
                     focused: false,
+                    full_redraw: false,
                 },
                 &mut glyphs,
                 clip_override,

@@ -102,6 +102,12 @@ temporary target's extent. Unchanged frames reuse the same immutable image
 after complete validation/preparation. Only the latest frame is retained by
 this cache; published callbacks retain their independent normal GPU lifetimes.
 
+An explicit local **Redraw Terminal** presentation hint invalidates that
+last-frame reuse candidate before drawing, including unchanged regions. The
+hint is scoped to one presented terminal and one paint; it contains no core
+state, input, resize or backend control. Older published surfaces stay
+immutable, and ordinary reuse resumes afterwards.
+
 This optimization preserves the existing native/UI ownership boundary and
 does not change egui-wgpu composition or DXGI presentation. Full-window
 composition still happens for a GUI repaint. It is not a frame-rate cap,
@@ -164,11 +170,12 @@ because the supported WARP path now defaults on.
 - **Invariants introduced or changed:** New isolated native graphics boundary;
   immutable published surfaces; explicit shared-resource state/lifetime
   transitions; preserved terminal ownership and command/input policy.
-- **GUI/action edges affected:** `TERM-01`, with existing `TERM-*` input and
+- **GUI/action edges affected:** `TERM-01`, `PAL-06`, with existing `TERM-*` input and
   selection semantics retained.
 - **Automated tests required:** `native_bounds_crop_sparse_paints_and_validate_indices`,
   `shared_surfaces_preserve_pixels_and_previous_frame_ownership`,
   `retained_frames_update_only_changed_regions_and_preserve_older_pixels`,
+  `native_full_redraw_replaces_identical_terminal_pixels_once`,
   `scattered_retained_damage_prepares_full_geometry_only_once`,
   `retained_geometry_and_raster_budgets_preserve_valid_frames`,
   `raster_grid_normalization_is_independent_of_damage_origin`,
@@ -183,7 +190,7 @@ because the supported WARP path now defaults on.
   `declined_native_paint_keeps_original_shapes`,
   `native_paint_replaces_only_its_scope_and_preserves_order`, and
   `translucent_and_invisible_painters_never_enter_native_capture`.
-- **Native/manual evidence required:** `CP-18`, alongside the retained `CP-16`
+- **Native/manual evidence required:** `CP-18`, `TI-16`, alongside the retained `CP-16`
   and `CP-17` budgets. Issue #244 retains the remaining mixed-DPI,
   multi-window, device-loss, latency, memory, and representative-hardware
   qualification work; hardware and window-system evidence is not inferred from
