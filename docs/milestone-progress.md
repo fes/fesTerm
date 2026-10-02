@@ -2914,3 +2914,20 @@ and guarded cleanup without earlier serial priming. The optional protocol still
 refuses an existing unowned parent: no adoption, retry, environment override or
 operator-namespace cleanup was added. This is another post-measurement helper
 identity, not a renderer change, a new timing trial or relabeled old evidence.
+
+## Owning the Markdown-open regression fixtures
+
+The next Windows failure was a stale-target Markdown-open test, while all
+performance-fixture guards and caption oracles passed. Its three route tests
+named scratch directories from a process ID and wall-clock timestamp, allowed
+an existing directory to be reused, and independently removed that path. The
+source exposed unsafe fixture ownership, but the logs do not prove an actual
+timestamp collision, deletion or file-open refusal in that run.
+
+The helper now retains an atomically allocated `TempDir` through each test and
+checks explicit cleanup; unwinding retains RAII cleanup. Each local-open route
+reports the document layer's actual refusal detail before its original tab and
+title assertions. A deterministic sibling-fixture regression reads both sets
+of files and checks that closing one leaves the other's contents usable. This
+changes test setup only, not production routing, measured renderer bytes,
+performance evidence, milestone status or native acceptance.

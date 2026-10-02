@@ -6140,21 +6140,53 @@ mod tests {
 
     /// A scratch directory with two Markdown files in it, for the routes that
     /// open a local document.
-    fn two_markdown_files() -> (PathBuf, PathBuf, PathBuf) {
-        let directory = std::env::temp_dir().join(format!(
-            "festerm-open-markdown-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
-        let first = directory.join("first.md");
-        let second = directory.join("second.md");
+    fn two_markdown_files() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let directory = tempfile::Builder::new()
+            .prefix("festerm-open-markdown-")
+            .tempdir()
+            .unwrap();
+        let first = directory.path().join("first.md");
+        let second = directory.path().join("second.md");
         std::fs::write(&first, "# First\n").unwrap();
         std::fs::write(&second, "# Second\n").unwrap();
         (directory, first, second)
+    }
+
+    #[test]
+    fn markdown_file_fixtures_have_independent_owned_cleanup() {
+        let (directory, first, second) = two_markdown_files();
+        let (other_directory, other_first, other_second) = two_markdown_files();
+        let directory_path = std::fs::canonicalize(directory.path()).unwrap();
+        let other_directory_path = std::fs::canonicalize(other_directory.path()).unwrap();
+        assert_ne!(directory_path, other_directory_path);
+        for path in [&directory_path, &other_directory_path] {
+            assert!(path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("festerm-open-markdown-"));
+        }
+        for (path, expected) in [
+            (&first, "# First\n"),
+            (&second, "# Second\n"),
+            (&other_first, "# First\n"),
+            (&other_second, "# Second\n"),
+        ] {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
+        }
+
+        directory.close().expect("Markdown fixture cleanup failed");
+        assert!(!directory_path.exists());
+        assert!(other_directory_path.is_dir());
+        assert_eq!(std::fs::read_to_string(&other_first).unwrap(), "# First\n");
+        assert_eq!(
+            std::fs::read_to_string(&other_second).unwrap(),
+            "# Second\n"
+        );
+        other_directory
+            .close()
+            .expect("Markdown fixture cleanup failed");
+        assert!(!other_directory_path.exists());
     }
 
     #[test]
@@ -6180,6 +6212,9 @@ mod tests {
             },
             &context,
         );
+        if let Some((path, failure)) = state.take_open_refusal() {
+            panic!("could not open {}: {}", path.display(), failure.detail());
+        }
 
         // The reader asked for the surface in front of them to change, so the
         // viewer goes and the editor takes its place rather than both being
@@ -6196,7 +6231,7 @@ mod tests {
             panic!("expected the retargeted tab to be the editor");
         };
         assert_eq!(editor.title(), "second.md");
-        let _ = std::fs::remove_dir_all(&directory);
+        directory.close().expect("Markdown fixture cleanup failed");
     }
 
     #[test]
@@ -6211,6 +6246,9 @@ mod tests {
             },
             &context,
         );
+        if let Some((path, failure)) = state.take_open_refusal() {
+            panic!("could not open {}: {}", path.display(), failure.detail());
+        }
         let first_tab = state.active();
         let tabs_after_first_open = state.tabs().len();
 
@@ -6221,10 +6259,13 @@ mod tests {
             },
             &context,
         );
+        if let Some((path, failure)) = state.take_open_refusal() {
+            panic!("could not open {}: {}", path.display(), failure.detail());
+        }
 
         assert_eq!(state.tabs().len(), tabs_after_first_open + 1);
         assert_ne!(state.active(), first_tab);
-        let _ = std::fs::remove_dir_all(&directory);
+        directory.close().expect("Markdown fixture cleanup failed");
     }
 
     /// A stale replacement target (its tab was closed while the picker was
@@ -6241,6 +6282,9 @@ mod tests {
             },
             &context,
         );
+        if let Some((path, failure)) = state.take_open_refusal() {
+            panic!("could not open {}: {}", path.display(), failure.detail());
+        }
         let stale = state.active();
         state.dispatch(AppCommand::CloseTab(stale), &context);
         let tabs_before = state.tabs().len();
@@ -6252,13 +6296,16 @@ mod tests {
             },
             &context,
         );
+        if let Some((path, failure)) = state.take_open_refusal() {
+            panic!("could not open {}: {}", path.display(), failure.detail());
+        }
 
         assert_eq!(state.tabs().len(), tabs_before + 1);
         let TabContent::TextEditor(editor) = &state.active_tab_mut().content else {
             panic!("expected a new editor tab");
         };
         assert_eq!(editor.title(), "second.md");
-        let _ = std::fs::remove_dir_all(&directory);
+        directory.close().expect("Markdown fixture cleanup failed");
     }
 
     #[test]
