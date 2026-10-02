@@ -1,0 +1,10 @@
+{
+  "candidate_diff": "candidate.diff",
+  "candidate_diff_sha256": "f2c3d0efa819b79a8dc55b8a44ae04198e24a4f54ee13aa4d77fa53ff165e8f0",
+  "measurement_kind": "same-executable ordinary-versus-textureless differential; not shipping before/after",
+  "source_revision": "64a45c94846309d7bb657c3751327c31ed31c31b",
+  "source_status": "## perf/ui-shared-panel-coverage\n M app/festerm/src/inspector.rs\n M app/festerm/src/sftp_file_manager.rs\n M app/festerm/src/software_background.rs\n M docs/gui-action-graph.md\n M docs/manual-validation.md\n M docs/milestone-progress.md\n M docs/ui-test-plan.md\n M validation/traceability.json\n M validation/windows-warp/README.md",
+  "test_executable": "Q:\\src\\OSS\\fesTerm\\target\\release\\deps\\festerm-b8199d56c92492ed.exe",
+  "test_executable_sha256": "ffbb27276352123cc82204282c87b8348e189df6be19708089002bbee48a9214",
+  "theme": "production Dark"
+}

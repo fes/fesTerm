@@ -530,6 +530,31 @@ native idle and sparse-output budgets. The evidence and opt-in large-panel
 replay are in `validation/windows-warp/README.md`; older failures and
 input-contaminated runs are retained rather than retrospectively rewritten.
 
+## Qualifying shared-panel coverage rather than spreading it
+
+The nonterminal UI inventory found still-ordinary opaque Inspector and SFTP
+frames, but paint eligibility was not proof that they were expensive. A bounded
+candidate wires only the Inspector overlay and SFTP pane/table backgrounds
+through the existing guarded textureless painter. Smaller chrome frames,
+transfer/collision cards and modal wrappers remain controls; listing and
+transfer models are untouched.
+
+Complete-widget pixel, focus, selection and click-catcher tests passed before
+an exclusive-slot release replay compared ordinary and textureless drawing in
+one executable. All twenty framebuffer pairs matched. On the measured DX12
+CPU adapter, collapsed/expanded Inspector draw/readback medians fell about
+64%/49%, and unchanged 100/5000-row SFTP medians fell about 73%. Callback setup
+also increased UI construction by 0.06–0.25 ms: the result justifies this
+bounded group on this adapter, not a blanket shader substitution.
+
+The raw paired order, lower initial baseline samples, slightly adverse control
+repeats and exact source/executable hashes are retained in
+`validation/windows-warp/README.md`. These are completed-render/readback
+differentials, not shipping before/after or native presentation latency; no
+effects, model work, experimental defaults or repaint cadence were sacrificed
+to improve a number. Smaller transfer/collision sites remain deferred rather
+than borrowing this group's qualification.
+
 ## Measuring the application window, not its event broker
 
 The #242 investigation exposed a flaw in the Windows native evidence harness.
