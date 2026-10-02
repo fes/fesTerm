@@ -261,3 +261,55 @@ The review question here is less about the individual fields than about the
 round trip — whether what a user builds in a connection form can be saved
 without re-entering it, and whether a saved profile makes clear what it will
 do before it is launched.
+
+<!-- section: surface-probes title: Menus, safety and file-dialog states -->
+
+The bounded non-terminal probe catalog complements the original 48 gallery
+scenarios with production About/licenses/updater states, expanded chrome and
+chip menus, terminal selection/link/path/history menus, representative close
+and paste safeguards, and Open File/Save As sheets. Each has a normal root
+and a `360 × 516` narrow counterpart. These are full-root themed captures, not
+hand-drawn modal substitutes or native-window acceptance.
+
+Two additional gallery-only command-palette views support the coordinated
+style review, using the real application-owned commands and initial search
+focus. They do not add palette timing claims to the bounded performance batch.
+
+Another 23 gallery-only examples support before/after geometry review at
+`752 × 516`, `360 × 516` and selected `360 × 240` roots. They combine
+licenses with a synthetic ready updater, long palette identity/path/shortcut,
+deep ready/error picker paths, `NOTES.md` overwrite, long live-close identity,
+the maximum bounded paste preview, dirty-close actions and applicable overflow
+controls. Optional manifest geometry records root bounds, actions and focus;
+missing/clipped controls remain observations, not successful acceptance.
+Pre-style and candidate captures must retain identical physical fixture identities.
+Owned checkout paths are real display identities and require publication review;
+they are not automatically canonical or free of checkout usernames.
+The existing capture test can select only these 23 examples with
+`FESTERM_UI_GALLERY_SCENES=style-review`, or exact comma-delimited scene IDs,
+into a fresh evidence directory. Curated before/after geometry iteration
+does not require full-gallery generation.
+Default fixture paths are rooted in the compiled worktree, so matching scene
+names alone cannot qualify a cross-worktree comparison. An opt-in owned
+physical-root/run/phase mode can bind sequential baseline/candidate captures
+to the same real I/O paths, retaining actual tasks and document freshness.
+Its ownership, input, phase and targeted-cleanup guards await validation;
+matched visual claims remain unqualified. Captions record actual paths and
+mode, not anonymized metadata or sanitized pixels. See the
+[owned comparison contract](../validation/windows-warp/README.md).
+
+Directory examples use owned synthetic files and the actual background listing
+tasks. A ready entry or the actual task error must be verified at a usable root
+before capture; the style examples then resize without navigation or reload.
+Loading is not silently accepted as a small/large/error example. Updater
+examples use existing in-process test controllers and never check a live
+endpoint or install a package. A fake session records input rather than
+starting a shell or reaching a host.
+
+The reusable [surface matrix](../validation/windows-warp/surface-matrix.json)
+retains all 33 audited families and 163 unique GUI references. It explicitly
+leaves remaining variants and native prerequisites unqualified. First UI
+calls, preparation/worker wait, warmup and steady forced frames are distinct
+from real user input, idle scheduling, cold process startup and presentation.
+The new catalog is initially scaffolding pending its exclusive validation run;
+captions and image manifests become evidence only after successful generation.

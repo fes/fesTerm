@@ -6198,6 +6198,152 @@ impl FesTermApp {
         self.state.dispatch(command, context);
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_about_for_gallery(
+        &mut self,
+        licenses: bool,
+        updates: UpdateController,
+        context: &egui::Context,
+    ) {
+        self.updates = updates;
+        self.dispatch_chrome_actions(vec![ChromeAction::OpenAbout], context);
+        self.overlays.about_licenses_open = licenses;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_about_icon_for_gallery(&mut self, context: &egui::Context) {
+        self.about_icon = Some(load_application_icon(context));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_palette_for_gallery(&mut self, context: &egui::Context) {
+        self.dispatch_chrome_actions(vec![ChromeAction::TogglePalette], context);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_file_picker_for_gallery(
+        &mut self,
+        directory: std::path::PathBuf,
+        context: &egui::Context,
+    ) {
+        // A missing fixture directory intentionally exercises the real worker's
+        // error path, rather than falling back to the user's home directory.
+        self.overlays.markdown_file_picker =
+            Some(MarkdownFilePicker::new(directory, context.clone()));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_save_as_for_gallery(
+        &mut self,
+        source: std::path::PathBuf,
+        directory: std::path::PathBuf,
+        name: String,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::OpenTextEditor { path: source }, context);
+        assert!(self.state.active_document().is_some());
+        self.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+            directory,
+            name,
+            context.clone(),
+        ));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn request_paste_for_gallery(&mut self, text: String, context: &egui::Context) {
+        self.handle_paste_request(self.state.active(), text, None, context);
+        assert!(self.overlays.pending_paste.is_some());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn paste_preview_for_gallery(&self) -> (String, usize, usize) {
+        bounded_paste_preview(
+            &self
+                .overlays
+                .pending_paste
+                .as_ref()
+                .expect("gallery paste confirmation")
+                .text,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_document_dirty_for_gallery(&self) -> bool {
+        self.active_editor_still_dirty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_terminal_title_for_gallery(&mut self, title: &str) {
+        let tab = self.state.active();
+        self.state
+            .session_tab_mut(tab)
+            .expect("gallery session")
+            .terminal
+            .ingest(format!("\x1b]0;{title}\x07").as_bytes());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn palette_identity_for_gallery(&self) -> String {
+        let TabContent::Session(session) = &self.state.active_tab().content else {
+            panic!("gallery palette session");
+        };
+        let item = self
+            .palette_items()
+            .into_iter()
+            .find(|item| item.is_tab && item.label == session.label)
+            .expect("real palette session item");
+        format!(
+            "{}  —  {}, {}",
+            item.label,
+            item.hint.expect("synthetic secondary metadata"),
+            item.shortcut_label.expect("configured quick-tab shortcut"),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dirty_document_close_for_gallery(
+        &mut self,
+        path: std::path::PathBuf,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::OpenTextEditor { path }, context);
+        let documents = self.state.documents().clone();
+        let TabContent::TextEditor(editor) = &mut self.state.active_tab_mut().content else {
+            panic!("gallery document must open in the real editor");
+        };
+        editor.set_mode_for_gallery(crate::text_editor::EditorMode::Edit);
+        editor.type_for_gallery(&documents, "\nSynthetic unsaved change.\n");
+        self.request_active_tab_close_for_gallery(context);
+        assert!(self.overlays.pending_document_close.is_some());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn configure_session_for_gallery(
+        &mut self,
+        read_only: bool,
+        context: &egui::Context,
+    ) {
+        let tab = self.state.active();
+        let session = self.state.session_tab_mut(tab).expect("fixture session");
+        session.label = "Synthetic SSH".into();
+        session
+            .terminal
+            .ingest(b"Synthetic session history.\r\nfixture$ ");
+        if read_only {
+            session
+                .controller
+                .set_lifecycle_for_test(festerm_session::SessionLifecycle::Exited(
+                    festerm_session::SessionExit::with_exit_code(0),
+                ));
+        }
+        if !self.state.interface_settings().confirm_session_close() {
+            self.state
+                .dispatch(AppCommand::ToggleConfirmSessionClose, context);
+        }
+    }
+
     pub(crate) fn request_active_tab_close_for_gallery(&mut self, context: &egui::Context) {
         let active = self.state.active();
         self.request_close_tab(active, context);

@@ -570,6 +570,16 @@ geometry in normal CI. Native Settings scrolling, profile interaction, window
 drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
 
+The bounded non-terminal expansion adds production-widget menu/About/safety/
+picker fixtures to those same opt-in probes and gallery, not to the native CPU
+oracle. Its [reconciled matrix](../validation/windows-warp/surface-matrix.json)
+retains 33 families, all audited state groups and named native prerequisites.
+The initial scaffolding awaits exclusive validation; no new headless evidence
+has been accepted. Even completed offscreen reports cannot qualify About/menu
+idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
+mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
+unchanged; no new latency budgets are implied.
+
 ### Experimental Direct2D qualification
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes

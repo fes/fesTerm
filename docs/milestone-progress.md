@@ -24,6 +24,39 @@ worktree-owned picker fixtures, without new platform snapshot baselines.
 Headless geometry and production-widget captures remain distinct from native
 DPI, accessibility, and usability acceptance.
 
+## Expanding evidence without pretending every surface is measured
+
+The non-terminal performance audit also found a coverage gap: the original
+four WARP and twelve document/list scenes did not measure expanded menus,
+About, safety dialogs or file-picker states. A bounded shared fixture catalog
+now arranges 26 real production-widget states at normal and narrow widths,
+while preserving those controls. Actual directory workers must reach a ready
+entry or error before a picker can be sampled; fake transport recorders and
+existing updater test controllers avoid personal resources and live operations.
+
+The reconciled 33-family/163-GUI-reference matrix names every remaining state
+group and native prerequisite. Expanded reports separate preparation, first
+UI/tessellation, readiness, warmup and steady distributions; WARP completion
+includes drawing/synchronization/readback, not physical presentation. This
+first scaffolding batch awaits the exclusive validation slot and claims no new
+timings or native passes. See `validation/windows-warp/README.md`.
+
+Coordinated geometry review also needs combinations absent from those timing
+scenes: licenses beside a ready updater, long identities, deep paths, overwrite
+notices and the maximum paste disclosure. Gallery-only fixtures exercise these
+through actual commands/tasks and resize an already-verified application to
+normal, narrow and short roots. Optional manifest observations preserve clipping
+and action/focus bounds rather than calling a screenshot a pass. Both before/after
+generation and publication-safe physical display identities remain pending.
+
+Moving binaries between worktrees exposed another comparison boundary: real
+origins and picker breadcrumbs can change even when widget code does not.
+A test-only opt-in owned physical-root/run contract now scaffolds sequential
+baseline/candidate captures at the same actual scene paths. Fresh ownership,
+matching input/phase proofs and tracked cleanup are required; workers and real
+document generation remain intact. This is not canonical display metadata
+or anonymization, and its validation/matched visual claims remain pending.
+
 ## Removing repeated query compilation from document loading
 
 Steady-state measurements hid a much larger Markdown stall: the first Preview

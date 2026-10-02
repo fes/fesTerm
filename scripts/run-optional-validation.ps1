@@ -292,7 +292,7 @@ if ($env:OS -eq 'Windows_NT') {
     if ($env:FESTERM_RUN_WARP_UI_PROBE -eq '1') {
         try {
             Invoke-NativeCommand {
-                cargo test --release -p festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1
+                cargo test --release -p festerm --bin festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'WARP UI surface replay failed.' }
             Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=pass"
@@ -361,7 +361,7 @@ if ($env:OS -eq 'Windows_NT') {
 if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
     try {
         Invoke-NativeCommand {
-            cargo test --release -p festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
+            cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
         }
         if ($LASTEXITCODE -ne 0) { throw 'Interactive surface profile failed.' }
         Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass"

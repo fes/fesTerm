@@ -23,9 +23,17 @@ const MEASURED_FRAMES: usize = 40;
 struct Sample {
     name: &'static str,
     items: usize,
+    viewport_points: [f32; 2],
     preparation_ms: Option<f64>,
+    readiness_ms: Option<f64>,
+    preparation_ui_ms: Vec<f64>,
+    first_ui_ms: f64,
+    first_tessellation_ms: f64,
+    fixture_state_verified: bool,
     warmup_ui_ms: Vec<f64>,
     warmup_tessellation_ms: Vec<f64>,
+    steady_ui_ms: Vec<f64>,
+    steady_tessellation_ms: Vec<f64>,
     ui_median_ms: f64,
     ui_p95_ms: f64,
     tessellation_median_ms: f64,
@@ -61,7 +69,9 @@ fn measure(name: &'static str, items: usize, mut show: impl FnMut(&mut egui::Ui)
     let mut warmup_tessellation_ms = Vec::with_capacity(WARMUP_FRAMES);
     let mut shapes = 0;
     let mut vertices = 0;
-    for frame in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+    let mut first_ui_ms = 0.0;
+    let mut first_tessellation_ms = 0.0;
+    for frame in 0..1 + WARMUP_FRAMES + MEASURED_FRAMES {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -86,7 +96,10 @@ fn measure(name: &'static str, items: usize, mut show: impl FnMut(&mut egui::Ui)
             })
             .sum();
         std::hint::black_box(primitives);
-        if frame >= WARMUP_FRAMES {
+        if frame == 0 {
+            first_ui_ms = ui_ms;
+            first_tessellation_ms = tessellation_ms;
+        } else if frame > WARMUP_FRAMES {
             ui_times.push(ui_ms);
             tessellation_times.push(tessellation_ms);
         } else {
@@ -97,15 +110,122 @@ fn measure(name: &'static str, items: usize, mut show: impl FnMut(&mut egui::Ui)
     Sample {
         name,
         items,
+        viewport_points: [1180.0, 760.0],
         preparation_ms: None,
+        readiness_ms: None,
+        preparation_ui_ms: Vec::new(),
+        first_ui_ms,
+        first_tessellation_ms,
+        fixture_state_verified: false,
         warmup_ui_ms,
         warmup_tessellation_ms,
+        steady_ui_ms: ui_times.clone(),
+        steady_tessellation_ms: tessellation_times.clone(),
         ui_median_ms: percentile(&mut ui_times, 50),
         ui_p95_ms: percentile(&mut ui_times, 95),
         tessellation_median_ms: percentile(&mut tessellation_times, 50),
         tessellation_p95_ms: percentile(&mut tessellation_times, 95),
         last_shape_count: shapes,
         last_vertex_count: vertices,
+    }
+}
+
+pub(crate) fn timing_distribution(samples: &[f64]) -> serde_json::Value {
+    assert!(!samples.is_empty());
+    let mut sorted = samples.to_vec();
+    let median = percentile(&mut sorted, 50);
+    let p95 = percentile(&mut sorted, 95);
+    serde_json::json!({
+        "samples_ms": samples,
+        "median_ms": median,
+        "p95_ms": p95,
+        "min_ms": sorted[0],
+        "max_ms": sorted[sorted.len() - 1],
+        "percentile_rule": "sorted[(len - 1) * percentile / 100]",
+    })
+}
+
+fn measure_surface(scene: crate::ui_gallery::SurfaceScene, directory: &std::path::Path) -> Sample {
+    let mut probe = crate::ui_gallery::SurfaceProbe::new(scene, directory, 1.0);
+    let started = Instant::now();
+    let primitives = probe.context.tessellate(
+        probe.first_output.shapes.clone(),
+        probe.first_output.pixels_per_point,
+    );
+    let first_tessellation_ms = started.elapsed().as_secs_f64() * 1000.0;
+    std::hint::black_box(primitives);
+    probe.prepare(scene.kind, |delta| delta.clear());
+    let mut warmup_ui_ms = Vec::new();
+    let mut warmup_tessellation_ms = Vec::new();
+    let mut steady_ui_ms = Vec::new();
+    let mut steady_tessellation_ms = Vec::new();
+    let mut last_shape_count = 0;
+    let mut last_vertex_count = 0;
+    for frame in 0..WARMUP_FRAMES + MEASURED_FRAMES {
+        let mut output = probe.frame();
+        let ui_ms = probe.last_ui_ms;
+        output.textures_delta.clear();
+        last_shape_count = output.shapes.len();
+        let started = Instant::now();
+        let primitives = probe
+            .context
+            .tessellate(output.shapes, output.pixels_per_point);
+        let tessellation_ms = started.elapsed().as_secs_f64() * 1000.0;
+        last_vertex_count = primitives
+            .iter()
+            .map(|primitive| match &primitive.primitive {
+                egui::epaint::Primitive::Mesh(mesh) => mesh.vertices.len(),
+                egui::epaint::Primitive::Callback(_) => 0,
+            })
+            .sum();
+        std::hint::black_box(primitives);
+        if frame < WARMUP_FRAMES {
+            warmup_ui_ms.push(ui_ms);
+            warmup_tessellation_ms.push(tessellation_ms);
+        } else {
+            steady_ui_ms.push(ui_ms);
+            steady_tessellation_ms.push(tessellation_ms);
+        }
+        probe.assert_state(scene.kind);
+    }
+    Sample {
+        name: scene.id,
+        items: scene.items(),
+        viewport_points: [scene.size().x, scene.size().y],
+        preparation_ms: Some(probe.preparation_ms),
+        readiness_ms: Some(probe.readiness_ms),
+        preparation_ui_ms: probe.preparation_ui_ms,
+        first_ui_ms: probe.first_ui_ms,
+        first_tessellation_ms,
+        fixture_state_verified: true,
+        warmup_ui_ms,
+        warmup_tessellation_ms,
+        ui_median_ms: percentile(&mut steady_ui_ms.clone(), 50),
+        ui_p95_ms: percentile(&mut steady_ui_ms.clone(), 95),
+        tessellation_median_ms: percentile(&mut steady_tessellation_ms.clone(), 50),
+        tessellation_p95_ms: percentile(&mut steady_tessellation_ms.clone(), 95),
+        steady_ui_ms,
+        steady_tessellation_ms,
+        last_shape_count,
+        last_vertex_count,
+    }
+}
+
+#[test]
+fn surface_timing_distributions_preserve_order_and_tail_without_budgets() {
+    let samples = [9.0, 1.0, 2.0, 4.0, 30.0];
+    let report = timing_distribution(&samples);
+    assert_eq!(report["samples_ms"], serde_json::json!(samples));
+    assert_eq!(report["median_ms"], 4.0);
+    assert_eq!(report["p95_ms"], 9.0);
+    assert_eq!(report["max_ms"], 30.0);
+}
+
+struct OwnedFixtures(PathBuf);
+
+impl OwnedFixtures {
+    fn path(&self) -> &std::path::Path {
+        &self.0
     }
 }
 
@@ -214,7 +334,8 @@ fn profile_interactive_surfaces() {
         "use a fresh performance evidence directory"
     );
     std::fs::create_dir_all(&output).unwrap();
-    let fixtures = tempfile::tempdir().unwrap();
+    let fixtures = OwnedFixtures(output.join("fixtures"));
+    std::fs::create_dir(&fixtures.0).unwrap();
     let mut samples = Vec::new();
     let tab = TabId::next_for_test();
 
@@ -401,16 +522,37 @@ fn profile_interactive_surfaces() {
         "scope": "Find query and source-position construction; no UI or parsing"
     });
 
+    // Append the new matrix after all original controls/model probes so they
+    // retain their workload order and are not preconditioned by picker I/O.
+    for scene in crate::ui_gallery::bounded_surface_scenes() {
+        let scene_output = output.join(scene.id);
+        std::fs::create_dir(&scene_output).unwrap();
+        std::fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
+        let sample = measure_surface(scene, &scene_output.join("fixtures"));
+        std::fs::write(
+            scene_output.join("profile.json"),
+            serde_json::to_string_pretty(&sample).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(scene_output.join("status.json"), r#"{"status":"complete"}"#).unwrap();
+        samples.push(sample);
+    }
+
     let report = serde_json::json!({
-        "schema": "festerm-interactive-surface-profile-v1",
+        "schema": "festerm-interactive-surface-profile-v2",
         "package_version": env!("CARGO_PKG_VERSION"),
         "release": !cfg!(debug_assertions),
         "viewport_points": [1180, 760],
         "pixels_per_point": 1,
         "warmup_frames": WARMUP_FRAMES,
         "measured_frames": MEASURED_FRAMES,
-        "scope": "forced steady-state UI construction and tessellation; no GPU draw or presentation",
-        "preparation_scope": "fixture reads and widget construction after writing synthetic input; warmup frames recorded separately; no native window",
+        "scope": "forced first UI call, warmup and steady UI construction/tessellation; no GPU draw, native scheduling, input-to-display or presentation",
+        "preparation_scope": "original controls retain model preparation after synthetic input writes; added matrix scenes include owned fixture creation/model setup; readiness separately includes interaction frames and real picker worker wait",
+        "first_ui_scope": "one fresh-context UI call per scene, possibly loading/font-atlas setup; not cold-process start or first-ready latency; shared process caches can already be warm",
+        "expanded_accessibility_scope": "expanded scenes enable AccessKit for semantic fixture guards; query-tree updates are excluded from UI timings; original controls retain their original context policy",
+        "cold_process_start_ms": serde_json::Value::Null,
+        "cold_process_start_status": "not measured by an already-running test binary; requires separately staged native process-start evidence",
+        "provenance": crate::ui_gallery::surface_probe_provenance(),
         "samples": samples,
         "fenced_loading": fenced_loading,
         "syntax_preparation": syntax_preparation,

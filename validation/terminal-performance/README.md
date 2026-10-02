@@ -6,6 +6,17 @@ It does not change production rendering or impose a frame-rate cap.
 
 ## Editor, Markdown and SFTP UI construction
 
+The historical measurements below use the original controls and their stated
+metric boundary. The opt-in probe's v2 expansion retains all twelve scenes and
+adds 52 normal/narrow production-widget variants after the original controls
+and model probes. First UI/tessellation, preparation/readiness, eight warmup and
+40 ordered steady-frame samples are separate. New picker scenes assert actual
+task-ready/error state before steady timing. No new timings have yet been
+validated for that bounded expansion; see the
+[surface matrix and execution boundary](../windows-warp/README.md#bounded-non-terminal-surface-matrix).
+Do not pool v1 and v2 first-frame/warmup buckets or equate forced constructions
+with native latency. Cold-process start remains explicitly unmeasured.
+
 The cross-platform `profile_interactive_surfaces` probe isolates non-terminal
 UI construction from tessellation. Run it in release mode with a fresh,
 absolute output directory:
@@ -13,7 +24,7 @@ absolute output directory:
 ```powershell
 $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
 $env:FESTERM_SURFACE_PROFILE_OUT = 'C:\evidence\interactive-surfaces'
-cargo test --release -p festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
+cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
 ```
 
 Set `FESTERM_RUN_SURFACE_PROFILE=1` as well to include it in either aggregate

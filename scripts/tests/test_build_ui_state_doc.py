@@ -7,6 +7,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -304,6 +305,133 @@ class BuildUiStateDocTest(unittest.TestCase):
         )
 
         self.assertEqual(status, 1)
+
+
+class SurfaceCoverageReportTest(unittest.TestCase):
+    def test_reconciled_matrix_explicitly_keeps_every_family_and_state_pending(self) -> None:
+        report = builder.surface_matrix_report()
+        self.assertEqual(len(report["families"]), 33)
+        gui = {edge for family in report["families"] for edge in family["gui"]}
+        self.assertEqual(len(gui), 163)
+        self.assertEqual(len(report["original_controls"]["warp"]), 4)
+        self.assertEqual(len(report["original_controls"]["construction"]), 12)
+        self.assertEqual(report["original_controls"]["gallery_baseline"]["scenes"], 48)
+        for family in report["families"]:
+            for state in family["audited_state_groups"] + family["profile_dimensions"]:
+                self.assertIn(state["status"], ("currently_unmeasured", "native_only"))
+                self.assertTrue(state["prerequisites"])
+            for fixture in family["fixture_states"]:
+                self.assertEqual(len(fixture["variants"]), 2)
+                for variant in fixture["variants"]:
+                    self.assertEqual(variant["construction"], "currently_unmeasured")
+                    self.assertEqual(variant["completed_draw_sync_readback"], "currently_unmeasured")
+                    self.assertEqual(variant["native_acceptance"], "pending")
+
+    def test_scaffold_catalog_is_unique_and_native_states_have_no_headless_fixtures(self) -> None:
+        report = builder.surface_matrix_report()
+        identifiers = []
+        for family in report["families"]:
+            if family["id"].startswith("UI-NATIVE-"):
+                self.assertFalse(family["fixture_states"])
+                self.assertTrue(all(
+                    state["status"] == "native_only"
+                    for state in family["audited_state_groups"]
+                ))
+            for fixture in family["fixture_states"]:
+                identifiers.extend(variant["scene"] for variant in fixture["variants"])
+        self.assertEqual(len(identifiers), 52)
+        self.assertEqual(len(set(identifiers)), 52)
+        palette = next(family for family in report["families"] if family["id"] == "UI-PALETTE")
+        self.assertEqual(
+            palette["gallery_only_states"][0]["scenes"],
+            ["palette-command-menu", "palette-command-menu-narrow"],
+        )
+        self.assertEqual(palette["gallery_only_states"][0]["performance_status"], "currently_unmeasured")
+
+    def test_style_review_catalog_remains_gallery_only_and_unqualified(self) -> None:
+        report = builder.surface_matrix_report()
+        identity = report["gallery_fixture_identity"]
+        self.assertIn("cross-worktree visual matching remains unqualified", identity["default"])
+        self.assertIn("source-only", identity["execution_status"])
+        self.assertIn("UNFIXED", identity["canonical_display_metadata"])
+        self.assertIn("not synthetic display metadata", identity["caption"])
+        states = [
+            state
+            for family in report["families"]
+            for state in family["gallery_only_states"]
+        ]
+        identifiers = [scene for state in states for scene in state["scenes"]]
+        self.assertEqual(len(identifiers), 25)
+        self.assertEqual(len(set(identifiers)), 25)
+        self.assertEqual(sum(scene.endswith("-short") for scene in identifiers), 5)
+        for state in states:
+            self.assertEqual(state["execution_status"], "not-run-awaiting-exclusive-validation-slot")
+            self.assertEqual(state["performance_status"], "currently_unmeasured")
+            self.assertEqual(state["native_acceptance"], "pending")
+            self.assertIn("exclusive-validation-slot", state["prerequisites"])
+        save_as = next(
+            state for state in states if "style-save-as-notes-overwrite-short" in state["scenes"]
+        )
+        self.assertIn("actual task-loaded NOTES.md", save_as["state"])
+        self.assertIn("physical-display-identity-publication-review", save_as["prerequisites"])
+
+    def test_exact_completed_reports_never_qualify_native_or_sibling_states(self) -> None:
+        root = REPOSITORY_ROOT / "target" / "report-test-virtual-inputs"
+        profile_path = root / "profile.json"
+        warp_directory = root / "warp"
+        virtual = {
+            profile_path: {
+                "schema": "festerm-interactive-surface-profile-v2",
+                "provenance": {"fixture": "synthetic unit-test report, not real measurement"},
+                "samples": [{
+                    "name": "about-unavailable",
+                    "last_shape_count": 1,
+                    "last_vertex_count": 4,
+                    "fixture_state_verified": True,
+                }],
+            },
+            warp_directory / "about-unavailable" / "status.json": {"status": "complete"},
+            warp_directory / "about-unavailable" / "report.json": {
+                "schema": "festerm-warp-ui-replay-v2",
+                "scene": "about-unavailable",
+                "fixture_state_verified": True,
+                "steady_completed_draw_readback": {"samples_ms": [1.0]},
+                "provenance": {"fixture": "synthetic unit-test report, not real measurement"},
+            },
+        }
+        read_text = Path.read_text
+        exists = Path.exists
+
+        def virtual_read(path, **kwargs):
+            return json.dumps(virtual[path]) if path in virtual else read_text(path, **kwargs)
+
+        with patch.object(Path, "read_text", virtual_read), patch.object(
+            Path, "exists", lambda path: path in virtual or exists(path)
+        ):
+            report = builder.surface_matrix_report(
+                profile_path=profile_path, warp_directory=warp_directory
+            )
+        about = next(family for family in report["families"] if family["id"] == "UI-ABOUT")
+        normal, narrow = about["fixture_states"][0]["variants"]
+        self.assertEqual(normal["construction"], "covered")
+        self.assertEqual(normal["completed_draw_sync_readback"], "covered")
+        self.assertEqual(normal["native_acceptance"], "pending")
+        self.assertEqual(narrow["construction"], "currently_unmeasured")
+        self.assertTrue(all(
+            state["status"] == "currently_unmeasured"
+            for state in about["audited_state_groups"]
+        ))
+        self.assertTrue(all(
+            state["status"] == "native_only"
+            for family in report["families"] if family["id"].startswith("UI-NATIVE-")
+            for state in family["audited_state_groups"]
+        ))
+
+        virtual[warp_directory / "about-unavailable" / "status.json"]["status"] = "running"
+        with patch.object(Path, "read_text", virtual_read), patch.object(
+            Path, "exists", lambda path: path in virtual or exists(path)
+        ), self.assertRaises(builder.BuildError):
+            builder.surface_matrix_report(profile_path=profile_path, warp_directory=warp_directory)
 
 
 if __name__ == "__main__":
