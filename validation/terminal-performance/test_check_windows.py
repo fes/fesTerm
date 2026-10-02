@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -137,6 +140,92 @@ class NativeComparisonEvidenceTests(unittest.TestCase):
         self.write(folder / "failure.json", {"Status": "failed"})
         with self.assertRaisesRegex(ValueError, "cannot be pooled"):
             checker.summarize(self.directory)
+
+    def test_recorded_warmup_guard_requires_unchanged_actual_observations(self):
+        folder = self.directory / "01-A-festerm-localized"
+        guard = {
+            "SchemaVersion": 1, "InputTickBefore": 100, "InputTickObserved": 100,
+            "ExpectedWindow": 123, "ObservedWindow": 123,
+            "ExpectedMetrics": self.runs[0]["Metrics"], "ObservedMetrics": self.runs[0]["Metrics"],
+            "InputChanged": False, "ForegroundChanged": False, "GeometryChanged": False,
+        }
+        self.write(folder / "warmup-guard.json", guard)
+        checker.summarize(self.directory)
+        for mutation in (
+            {"InputChanged": True}, {"ForegroundChanged": True}, {"GeometryChanged": True},
+            {"InputTickObserved": 101}, {"ObservedWindow": 456},
+            {"ObservedMetrics": [100, 100, 99, 100, 96]}, {"InputTickBefore": -1},
+            {"InputTickObserved": True}, {"SchemaVersion": 2},
+        ):
+            with self.subTest(mutation=mutation):
+                self.write(folder / "warmup-guard.json", {**guard, **mutation})
+                with self.assertRaisesRegex(ValueError, "warmup guard"):
+                    checker.summarize(self.directory)
+
+
+@unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required for pure native-guard predicate")
+class NativeWarmupPredicateTests(unittest.TestCase):
+    def test_unchanged_mouse_tick_foreground_and_geometry_are_independent(self):
+        script = r"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $env:FESTERM_COMPARISON_DRIVER, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Comparison driver does not parse.' }
+$functions = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Get-NativeWarmupGuard'
+}, $true))
+if ($functions.Count -ne 1) { throw 'Expected one pure warmup guard function.' }
+. ([scriptblock]::Create($functions[0].Extent.Text))
+$inputCase = $env:FESTERM_WARMUP_CASE | ConvertFrom-Json
+Get-NativeWarmupGuard -InputBefore $inputCase.before -InputObserved $inputCase.observed `
+    -ExpectedWindow 123 -ObservedWindow $inputCase.window `
+    -ExpectedMetrics @(100,100,100,100,96) -ObservedMetrics $inputCase.metrics |
+    ConvertTo-Json -Depth 4
+"""
+        cases = (
+            (100, 100, 123, [100, 100, 100, 100, 96], (False, False, False)),
+            (100, 101, 123, [100, 100, 100, 100, 96], (True, False, False)),
+            (100, 100, 456, [100, 100, 100, 100, 96], (False, True, False)),
+            (100, 100, 123, [100, 100, 99, 100, 96], (False, False, True)),
+            (0xFFFFFFFF, 0, 456, [100, 100, 99, 100, 96], (True, True, True)),
+        )
+        for before, observed, window, metrics, expected in cases:
+            with self.subTest(expected=expected):
+                environment = os.environ.copy()
+                environment["FESTERM_COMPARISON_DRIVER"] = str(Path(__file__).with_name("compare-windows.ps1"))
+                environment["FESTERM_WARMUP_CASE"] = json.dumps({
+                    "before": before, "observed": observed, "window": window, "metrics": metrics,
+                })
+                result = subprocess.run(
+                    [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
+                    env=environment, capture_output=True, text=True, timeout=30, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                guard = json.loads(result.stdout)
+                self.assertEqual(
+                    tuple(guard[key] for key in ("InputChanged", "ForegroundChanged", "GeometryChanged")),
+                    expected,
+                )
+                self.assertEqual(guard["InputTickBefore"], before)
+                self.assertEqual(guard["InputTickObserved"], observed)
+                self.assertEqual(guard["ObservedWindow"], window)
+                self.assertEqual(guard["ObservedMetrics"], metrics)
+
+    def test_guard_evidence_and_rejection_precede_every_sample(self):
+        source = Path(__file__).with_name("compare-windows.ps1").read_text(encoding="utf-8")
+        observation = source.index("$warmupGuard = Get-NativeWarmupGuard")
+        evidence = source.index('Set-Content -LiteralPath "$directory\\warmup-guard.json"')
+        rejection = source.index("if ($warmupGuard.InputChanged -or $warmupGuard.ForegroundChanged")
+        sampling = source.index("$beforeFrames =")
+        self.assertLess(observation, evidence)
+        self.assertLess(evidence, rejection)
+        self.assertLess(rejection, sampling)
+        self.assertIn("$warmupGuard.GeometryChanged", source[rejection:sampling])
+        self.assertIn("stopped before sampling without retry", source[rejection:sampling])
 
 
 if __name__ == "__main__":

@@ -160,6 +160,30 @@ function Terminal-Font([IntPtr] $Window) {
     return 'JetBrains Mono NL'
 }
 
+function Get-NativeWarmupGuard {
+    param(
+        [Parameter(Mandatory)][uint32] $InputBefore,
+        [Parameter(Mandatory)][uint32] $InputObserved,
+        [Parameter(Mandatory)][long] $ExpectedWindow,
+        [Parameter(Mandatory)][long] $ObservedWindow,
+        [Parameter(Mandatory)][int[]] $ExpectedMetrics,
+        [Parameter(Mandatory)][int[]] $ObservedMetrics
+    )
+    [pscustomobject]@{
+        SchemaVersion = 1
+        Utc = [DateTime]::UtcNow.ToString('o')
+        InputTickBefore = $InputBefore
+        InputTickObserved = $InputObserved
+        ExpectedWindow = $ExpectedWindow
+        ObservedWindow = $ObservedWindow
+        ExpectedMetrics = $ExpectedMetrics
+        ObservedMetrics = $ObservedMetrics
+        InputChanged = $InputObserved -ne $InputBefore
+        ForegroundChanged = $ObservedWindow -ne $ExpectedWindow
+        GeometryChanged = ($ExpectedMetrics -join ',') -ne ($ObservedMetrics -join ',')
+    }
+}
+
 $oldConfig = $env:FESTERM_CONFIG_PATH
 $oldLog = $env:RUST_LOG
 $oldHostCopy = $env:FESTERM_EXPERIMENTAL_HOST_COPY
@@ -353,10 +377,15 @@ terminal_ligatures = false
             Start-Sleep -Seconds 5
             [FesTermApplicationWindow]::RequireInteractiveDesktop()
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
-            if ([FesTermApplicationWindow]::LastInputTick() -ne $inputBefore -or
-                [FesTermApplicationWindow]::GetForegroundWindow() -ne $window -or
-                ($metrics -join ',') -ne ([TuiComparisonNative]::Metrics($window) -join ',')) {
-                throw "$name warmup input/window guard failed; stopped before sampling without retry."
+            $warmupGuard = Get-NativeWarmupGuard -InputBefore $inputBefore `
+                -InputObserved ([FesTermApplicationWindow]::LastInputTick()) `
+                -ExpectedWindow $window.ToInt64() `
+                -ObservedWindow ([FesTermApplicationWindow]::GetForegroundWindow().ToInt64()) `
+                -ExpectedMetrics $metrics -ObservedMetrics ([TuiComparisonNative]::Metrics($window))
+            $warmupGuard | ConvertTo-Json -Depth 4 |
+                Set-Content -LiteralPath "$directory\warmup-guard.json"
+            if ($warmupGuard.InputChanged -or $warmupGuard.ForegroundChanged -or $warmupGuard.GeometryChanged) {
+                throw "$name warmup input/window guard failed (input=$($warmupGuard.InputChanged), foreground=$($warmupGuard.ForegroundChanged), geometry=$($warmupGuard.GeometryChanged)); stopped before sampling without retry."
             }
             $beforeFrames = if ($isFesTerm) { Frame-Count $directory } else { $null }
             $nativeBefore = if ($isFesTerm) { Frame-Count $directory 'direct2d_frame_number' } else { $null }

@@ -993,6 +993,13 @@ background controls render, allowing the foreground confirmation to receive
 UIA invocation without enabling terminal-local controls. A returned invocation
 or focus change alone is not acceptance: the application must actually exit
 normally within the unchanged deadline, with its owned descendants absent.
+Before sampling, `warmup-guard.json` records all three strict predicates and
+their expected/observed values: last-input tick (including mouse movement),
+foreground HWND and complete window/DPI/monitor metrics. The failure message
+identifies each changed predicate; evidence is written before rejection.
+This adds observability, not retries or guard tolerance. The saved validator
+checks new records against actual results while retaining compatibility with
+older evidence that predates them.
 Previously sending only `WM_CLOSE` left this ordinary confirmation pending and
 the harness force-killed the application. The driver now invokes the unique
 **Quit fesTerm** accessibility button belonging to its test window, records

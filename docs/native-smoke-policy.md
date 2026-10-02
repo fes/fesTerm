@@ -165,6 +165,13 @@ and no follow-up close or forced kill. Both actual client captures were reviewed
 and all three PIDs independently absent. This does not establish a balanced CPU
 comparison or the full AS-08 native-platform/transport matrix.
 
+Native warmup saves `warmup-guard.json` before deciding whether to sample, with
+before/observed input ticks, expected/observed foreground HWND and full geometry
+metrics, plus separate mismatch flags. Mouse movement alone counts as input;
+no click is necessary to invalidate the observation. Any mismatch still stops
+before sampling without retry. Older combined-guard failures lacking this
+record cannot identify their exact trigger retrospectively.
+
 ## Flaky failure policy
 
 **No silent retries.**

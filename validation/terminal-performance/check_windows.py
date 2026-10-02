@@ -69,6 +69,19 @@ def summarize(directory):
         )
         previous_finish = finished
         require(result["SourceSha"] == source, f"{name}: mixed sources")
+        warmup_path = label / "warmup-guard.json"
+        if warmup_path.exists():
+            warmup = read_json(warmup_path)
+            require(warmup["SchemaVersion"] == 1, f"{name}: unsupported warmup guard")
+            require(
+                all(warmup[key] is False for key in ("InputChanged", "ForegroundChanged", "GeometryChanged"))
+                and all(type(warmup[key]) is int and 0 <= warmup[key] <= 0xFFFFFFFF
+                        for key in ("InputTickBefore", "InputTickObserved"))
+                and warmup["InputTickBefore"] == warmup["InputTickObserved"]
+                and warmup["ExpectedWindow"] == warmup["ObservedWindow"] == result["Window"]
+                and warmup["ExpectedMetrics"] == warmup["ObservedMetrics"] == result["Metrics"],
+                f"{name}: warmup guard failed or disagrees with its observations",
+            )
         require(result["ExecutableSha256"] == manifest["FesTermSha256"], f"{name}: mixed app binaries")
         require(result["ProducerSha256"] == manifest["ProducerSha256"], f"{name}: mixed producers")
         require(result["LogicalProcessors"] == manifest["LogicalProcessors"], f"{name}: changed CPU capacity")
