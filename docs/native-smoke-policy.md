@@ -172,6 +172,14 @@ no click is necessary to invalidate the observation. Any mismatch still stops
 before sampling without retry. Older combined-guard failures lacking this
 record cannot identify their exact trigger retrospectively.
 
+The controlled palette probe queries the exact production window accessibility
+name, **Command Palette**, not the differently capitalized action label.
+An untimed owned-window observer proved that a mismatched case-sensitive UIA
+query can reject an actually open palette. A portable regression keeps the
+query and production title aligned. The original shortcut, one-second wait,
+foreground checks and all later timing/cleanup guards remain unchanged; a
+failed control is preserved and never reclassified as a passing sample.
+
 ## Flaky failure policy
 
 **No silent retries.**

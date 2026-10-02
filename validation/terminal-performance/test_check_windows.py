@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -161,6 +162,19 @@ class NativeComparisonEvidenceTests(unittest.TestCase):
                 self.write(folder / "warmup-guard.json", {**guard, **mutation})
                 with self.assertRaisesRegex(ValueError, "warmup guard"):
                     checker.summarize(self.directory)
+
+
+class NativePaletteProbeTests(unittest.TestCase):
+    def test_overlay_query_matches_the_actual_palette_window_name(self):
+        directory = Path(__file__).resolve().parent
+        driver = (directory / "compare-windows.ps1").read_text(encoding="utf-8")
+        palette = (directory.parents[1] / "crates" / "festerm-ui-egui" / "src" / "palette.rs").read_text(
+            encoding="utf-8"
+        )
+        window_names = re.findall(r'Window::new\("([^"]+)"\)', palette)
+        queried_names = re.findall(r"NameProperty,\s*'([^']+)'", driver)
+        self.assertEqual(window_names, ["Command Palette"])
+        self.assertEqual(queried_names, window_names)
 
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required for pure native-guard predicate")

@@ -363,7 +363,7 @@ terminal_ligatures = false
                 $element = [Windows.Automation.AutomationElement]::FromHandle($window)
                 $palette = $element.FindAll([Windows.Automation.TreeScope]::Descendants,
                     [Windows.Automation.PropertyCondition]::new(
-                        [Windows.Automation.AutomationElement]::NameProperty, 'Command palette'))
+                        [Windows.Automation.AutomationElement]::NameProperty, 'Command Palette'))
                 if ($palette.Count -eq 0) { throw 'The controlled command palette did not open.' }
             }
             $inputBefore = [FesTermApplicationWindow]::LastInputTick()

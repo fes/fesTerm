@@ -783,6 +783,20 @@ and confirmation captures were reviewed, and the app and two captured descendant
 PIDs were independently absent. This qualifies that local-process Quit route,
 not the full AS-08 platform/transport matrix or a balanced native CPU comparison.
 
+The later clean `483ae06` / unchanged `AF411D78...` release completed all 60
+balanced native A/B/C cases on that connected 192-DPI Windows x64 WARP host.
+Both saved-checker invocations passed; 60 captures were covered by 14 reviewed
+full-resolution unique images with exact SHA256 duplicate links. All 61 apps,
+including the first failed palette control, exited normally and all 183 old
+app/child identities were independently absent. The palette control stopped
+before sampling because its case-sensitive UIA query used **Command palette**
+instead of the actual **Command Palette** title; an untimed owned-window tree
+and actual capture proved the mismatch. The corrected query has a portable
+regression, but its replacement control remains pending. See the
+[single-host record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence)
+for raw-series boundaries and adverse results. CP-18/#282 remain open for the
+palette control, broader equipment, resources, latency and maintainer decisions.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | CP-18 | On supported Windows x64 WARP, compare eligible root-terminal rendering with `FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) versus the supported Direct2D path (unset by default, or explicit `1` for compatibility). Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths remain ordinary painting, no blank/stale frame appears, `0` disables the path, `1` cannot force unsupported conditions, and hardware rendering is unchanged. | Automated framebuffer + native performance + manual interaction; experimental | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and explicit palette-budget fallback. `validation/direct2d/run.ps1` provides the isolated replay and is available through the optional runner with `FESTERM_RUN_DIRECT2D_PROBE=1`. Compare `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer` with `FESTERM_EXPERIMENTAL_DIRECT2D=0` for the ordinary baseline and, on a known eligible WARP host, the supported unset default (or explicit `1`) for the candidate, adding `-RequireDirect2D` to validate automatic/default selection and to reject `0` or invalid values. The aggregate optional Windows runner keeps that strict dense/native-required check explicitly behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or ARM64 machines still run their ordinary optional suite. The probe requires actual native frames and preserves existing CPU/FPS budgets. Single-host sparse/dense application measurements and the keep-#239/#240 review are in the probe README; intermittent idle failures are tracked by #242. Owner approval makes this bounded WARP path default-on, but issue #244 still owns mixed-DPI, multi-window, device-loss, latency, memory and representative-hardware qualification, and ADR-0039 remains Proposed. |

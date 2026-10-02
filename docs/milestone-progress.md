@@ -3,6 +3,27 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Completing the guarded native comparison without hiding its control failure
+
+Keeping the remote desktop connected and quiet allowed the source-pinned
+Windows WARP prototype to complete all 60 balanced shipping/host-copy/combined
+cases. Independent saved validation agreed, full-resolution capture review
+covered every image through exact duplicate hashes, and every owned process
+tree exited normally. Active-workload CPU improved on this host, but combined
+retention was worse than host-copy alone for changing chrome and quiet results
+remained near counter granularity; both adverse cases stay in the evidence.
+
+The separate palette control then failed before sampling. An untimed observer
+showed the original shortcut had opened the palette: the harness's exact UIA
+query used a lowercase **palette**, while the production title was **Command
+Palette**. Correcting that query and coupling it to the real title with a
+portable regression fixes the measurement seam without changing application
+behavior, shortcut delivery or guards. The completed balanced series and failed
+control are physically sealed separately from any replacement control. Native
+fallback, broader hardware, resources, latency and default-on decisions are
+not inferred from the single-host savings; details remain in the
+[performance record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence).
+
 ## Keeping accessibility actions with foreground confirmations
 
 The first connected native CPU case passed its interval guards but could not

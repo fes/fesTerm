@@ -1078,7 +1078,52 @@ PIDs. Its two actual captures were reviewed. This local-process functional proof
 does not replace a fresh, complete native A/B/C series, palette control or the
 broader #282 qualification matrix.
 
-The [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+#### 2026-10-02 connected single-host balanced evidence
+
+The clean `483ae068f29628be438d7fa498cf66f1eb053fa2` source and unchanged
+`AF411D78EFFE4F160681AD73FE2E960E06C5E9090364C9B18E56D6AF2C501B0E`
+release completed all 60 native cases in `ABC CBA CBA ABC` order from
+21:25:05 to 21:57:23 UTC. Each workload has four samples per mode. The saved
+validator passed, and an independent invocation produced the identical summary.
+Every warmup and sample retained the strict desktop/input/foreground/geometry
+guards, bundled font, 120x40 PTY, 200 producer ticks and actual requested path
+counters. This is the same connected Windows x64 DX12 CPU/WARP host at 192 DPI,
+not representative hardware or cross-platform evidence.
+
+| Workload | Shipping A median CPU | Host-copy B median CPU | Combined C median CPU |
+| --- | ---: | ---: | ---: |
+| Quiet | 0.0288% | 0.0479% | 0.0383% |
+| Localized | 6.5613% | 3.5942% | 1.9703% |
+| Streaming | 9.2215% | 6.3333% | 2.9692% |
+| Full redraw | 11.7737% | 9.1409% | 7.4261% |
+| Changing chrome | 7.8083% | 4.4752% | 4.8742% |
+
+CPU is process time normalized over the host's 16 logical processors. Quiet
+results are near counter granularity and do not establish an idle win.
+Combined C was worse than B for changing chrome; this adverse control is
+retained. Producer completion and application counters are not displayed-frame
+cadence or photon latency.
+
+All 60 final captures were checked through 14 reviewed full-resolution unique
+images with exact complete-file SHA256 duplicate links; no blocking blank,
+stale, corrupt or clipped content was observed. All 61 applications, including
+the first failed palette control, quit normally; 183 app/child identities were
+independently absent. The 818-member physical local closure
+`native282-screen-awake-balanced-and-palette-stop-20261002-2205` has manifest
+SHA256 `28B57C7FDEAA286CEDF1AE99A65DCCE25CD9EEB4D84B603796FA4DDF4F146AD9`.
+It is local, not included in the earlier published bundle.
+
+The separate palette series stopped at its first A case before warmup or CPU
+sampling. An untimed original-shortcut observer showed the palette open in the
+actual capture and owned UIA tree: its exact name was **Command Palette**, while
+the probe queried **Command palette**. The case-sensitive query is corrected
+and a portable regression couples it to the production window title. The
+shortcut, wait, foreground requirement, timing guards and cleanup are unchanged.
+The failed control remains preserved. Its replacement 12-case control is still
+pending; the completed balanced series is not rerun or pooled with older
+partial attempts. Full #282 qualification and default promotion remain open.
+
+The earlier [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
 contains provenance, ordered attempts, raw distributions, logs, external
 captures, cleanup records and a gate-by-gate report. All eight #282 gates
 remain open; mixed-DPI/additional-machine coverage, sustained peak/in-flight
