@@ -138,10 +138,13 @@ Follow-up deterministic tests reproduce the nested-panel paint escape, enforce
 inherited paint/pointer clipping and initially visible modal-owned Save As
 filename/Save/Cancel at all three roots with both chrome densities, and verify
 deep-path/filter placement plus exact ancestor navigation after horizontal
-scrolling. The stricter Open File short-root initial-control test still fails
-on listing/footer allocation; scrolling to find Cancel is not a pass. Fixes
-also require a fresh uniformly
-matched drawing pair; the completed old run remains failed visual evidence.
+scrolling. The stricter Open File short-root initial-control test now passes
+after reserving its footer and budgeting its error/list viewport; initial
+path/filter pointer focus and error paint are checked at all three sizes/both
+densities. Cancel restores terminal input without an extra click. Save As
+hidden row/action pointer tests also pass, with an explicit Save response ID
+on the filename's modal layer. Fixes still require a fresh uniformly matched
+drawing pair; the completed old run remains failed visual evidence.
 
 ### Terminal interaction, history, and overlays
 

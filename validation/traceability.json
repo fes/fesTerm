@@ -1374,6 +1374,7 @@
         "save_as_breadcrumb_respects_remaining_toolbar_width_and_exact_navigation_identity",
         "save_as_nested_panels_preserve_the_short_sheet_paint_clip",
         "save_as_nested_panel_controls_respect_inherited_pointer_clipping",
+        "save_as_clipped_rows_cannot_select_or_navigate_outside_the_viewport",
         "dirty_document_confirmation_wraps_actions_without_changing_the_save_default",
         "virtualized_save_as_picker_reaches_and_selects_the_final_row",
         "save_as_matching_an_existing_directory_disables_save_and_says_why",

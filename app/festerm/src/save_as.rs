@@ -670,8 +670,8 @@ fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> egui::Response {
     };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, colour);
     let width = (SAVE_BUTTON_PADDING_X * 2.0 + galley.size().x).max(SAVE_BUTTON_HEIGHT);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, SAVE_BUTTON_HEIGHT), Sense::click());
+    let (_, rect) = ui.allocate_space(egui::vec2(width, SAVE_BUTTON_HEIGHT));
+    let response = ui.interact(rect, egui::Id::new("save_as_save"), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
 
     let mut fill = theme::ACCENT_ACTION;
@@ -913,6 +913,12 @@ mod tests {
         assert!(positions.iter().all(|position| position.y > 250.0));
         harness.state_mut().2 = true;
         harness.run_steps(3);
+        assert!(!harness
+            .ctx
+            .read_response(egui::Id::new("save_as_save"))
+            .unwrap()
+            .interact_rect
+            .is_positive());
         for position in positions {
             harness.event(egui::Event::PointerMoved(position));
             for pressed in [true, false] {
@@ -938,6 +944,104 @@ mod tests {
             harness.state().1.as_ref(),
             Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("NOTES.md")
         ));
+    }
+
+    #[test]
+    fn save_as_clipped_rows_cannot_select_or_navigate_outside_the_viewport() {
+        for folder in [false, true] {
+            let directory = TemporaryDirectory::new("inherited-row-clip");
+            for index in 0..6 {
+                directory.directory(&format!("ancestor-{index:02}"));
+            }
+            directory.directory("target-folder");
+            directory.file("target-file.md", "# Owned row fixture\n");
+            let target = if folder {
+                "target-folder"
+            } else {
+                "target-file.md"
+            };
+            let picker = SaveAsPicker::new(
+                directory.path.clone(),
+                "frozen-name.md".to_owned(),
+                egui::Context::default(),
+            );
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(752.0, 516.0))
+                .build_ui_state(
+                    |ui, state: &mut (SaveAsPicker, bool)| {
+                        state.0.poll();
+                        if state.1 {
+                            ui.set_clip_rect(egui::Rect::from_min_max(
+                                egui::Pos2::ZERO,
+                                egui::pos2(752.0, 250.0),
+                            ));
+                        }
+                        assert!(matches!(state.0.ui(ui), SaveAsOutcome::Pending));
+                    },
+                    (picker, false),
+                );
+            harness.ctx.set_theme(egui::ThemePreference::Dark);
+            harness.ctx.set_visuals(theme::default_visuals());
+            for _ in 0..200 {
+                harness.step();
+                if !harness.state().0.pane.loading {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert!(!harness.state().0.pane.loading);
+            harness.run_steps(3);
+            let position = harness.get_by_label(target).rect().center();
+            assert!(position.y > 250.0 && position.y < 450.0, "{position:?}");
+            harness.state_mut().1 = true;
+            harness.run_steps(3);
+            for _ in 0..2 {
+                harness.event(egui::Event::PointerMoved(position));
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+            }
+            assert_eq!(
+                harness.state().0.current_directory(),
+                Some(directory.path.clone())
+            );
+            assert!(harness.state().0.pane.selected_paths.is_empty());
+            assert_eq!(harness.state().0.file_name, "frozen-name.md");
+            assert_eq!(
+                fs::read_to_string(directory.path.join("target-file.md")).unwrap(),
+                "# Owned row fixture\n"
+            );
+            harness.state_mut().1 = false;
+            harness.run_steps(3);
+            harness.input_mut().time = Some(harness.ctx.input(|input| input.time) + 1.0);
+            harness.step();
+            for _ in 0..if folder { 2 } else { 1 } {
+                harness.event(egui::Event::PointerMoved(position));
+                for pressed in [true, false] {
+                    harness.event(egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                    harness.step();
+                }
+            }
+            if folder {
+                assert_eq!(
+                    harness.state().0.current_directory(),
+                    Some(directory.path.join(target))
+                );
+            } else {
+                assert_eq!(harness.state().0.file_name, target);
+            }
+        }
     }
 
     #[test]

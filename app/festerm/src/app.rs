@@ -4074,7 +4074,13 @@ impl FesTermApp {
         };
         picker.poll();
         let mut outcome = None;
-        let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(14));
+        let margin = if ctx.content_rect().height() < 360.0 {
+            8
+        } else {
+            14
+        };
+        let frame =
+            egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(margin));
         let size = festerm_ui_egui::controls::modal_content_size(
             ctx.content_rect().size(),
             &frame,
@@ -8098,6 +8104,21 @@ mod tests {
             "{label}: {:?}",
             action.rect()
         );
+        if label == "Save" && modal == "text_editor_save_as" {
+            let response = harness
+                .ctx
+                .read_response(egui::Id::new("save_as_save"))
+                .expect("the Save As widget response is present");
+            let filename = harness
+                .ctx
+                .read_response(egui::Id::new("save_as_file_name"))
+                .unwrap();
+            assert_eq!(response.layer_id, filename.layer_id);
+            assert_eq!(response.rect, action.rect());
+            assert!(area.contains_rect(response.interact_rect));
+            assert!(response.interact_rect.width() >= 24.0);
+            assert!(response.interact_rect.height() >= 24.0);
+        }
     }
 
     #[test]
@@ -8425,83 +8446,146 @@ mod tests {
             .join("release-review");
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join("NOTES.md"), "# Owned deep fixture\n").unwrap();
-        for missing in [false, true] {
-            let target = if missing {
-                directory.join("missing-owned-folder")
-            } else {
-                directory.clone()
-            };
-            let ancestors = crate::sftp_file_manager::breadcrumb_segments(
-                &festerm_ssh::SftpPath::local(&target),
-            );
-            let (mut app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
-            app.overlays.markdown_file_picker =
-                Some(MarkdownFilePicker::new(target, egui::Context::default()));
-            let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
-            let expected = if missing {
-                "Could not load the folder."
-            } else {
-                "NOTES.md"
-            };
-            for _ in 0..200 {
-                harness.step();
-                if harness.query_by_label(expected).is_some() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(2));
-            }
-            harness.get_by_label(expected);
-            harness.set_size(egui::vec2(360.0, 516.0));
-            harness.run_steps(3);
-            let path =
-                harness.get_by_role_and_label(accesskit::Role::TextInput, "File or folder path");
-            assert!(harness.ctx.content_rect().contains_rect(path.rect()));
-            let area = harness
-                .ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("markdown_file_picker")))
-                .unwrap();
-            assert!(path.rect().top() <= area.top() + 128.0,
+        for size in dialog_style_sizes() {
+            for show_details in [false, true] {
+                for missing in [false, true] {
+                    let target = if missing {
+                        directory.join("missing-owned-folder")
+                    } else {
+                        directory.clone()
+                    };
+                    let ancestors = crate::sftp_file_manager::breadcrumb_segments(
+                        &festerm_ssh::SftpPath::local(&target),
+                    );
+                    let (mut app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                    if show_details {
+                        app.state.dispatch(
+                            AppCommand::ToggleShowSessionDetails,
+                            &egui::Context::default(),
+                        );
+                    }
+                    app.overlays.markdown_file_picker =
+                        Some(MarkdownFilePicker::new(target, egui::Context::default()));
+                    let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
+                    let expected = if missing {
+                        "Could not load the folder."
+                    } else {
+                        "NOTES.md"
+                    };
+                    for _ in 0..200 {
+                        harness.step();
+                        if harness.query_by_label(expected).is_some() {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    harness.get_by_label(expected);
+                    harness.set_size(size);
+                    harness.run_steps(3);
+                    let path = harness
+                        .get_by_role_and_label(accesskit::Role::TextInput, "File or folder path");
+                    assert!(harness.ctx.content_rect().contains_rect(path.rect()));
+                    let area = harness
+                        .ctx
+                        .memory(|memory| memory.area_rect(egui::Id::new("markdown_file_picker")))
+                        .unwrap();
+                    assert!(path.rect().top() <= area.top() + 128.0,
                 "deep breadcrumbs must not push the initial path field below the toolbar: {:?} in {area:?}",
                 path.rect());
-            assert_eq!(
-                harness
-                    .query_all_by_role(accesskit::Role::TextInput)
-                    .count(),
-                2
-            );
-            harness.get_by_label(&ancestors.last().unwrap().label);
-            harness
-                .get_by_label(&ancestors.last().unwrap().label)
-                .hover();
-            harness.event(egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(if missing { 260.0 } else { 120.0 }, 0.0),
-                phase: egui::TouchPhase::Move,
-                modifiers: egui::Modifiers::NONE,
-            });
-            harness.run_steps(30);
-            let ancestor = harness.get_by_label("architecture");
-            assert!(harness
-                .ctx
-                .content_rect()
-                .contains(ancestor.rect().center()));
-            ancestor.click();
-            harness.step();
-            assert_eq!(
-                harness
-                    .state()
-                    .overlays
-                    .markdown_file_picker
-                    .as_ref()
-                    .unwrap()
-                    .current_directory(),
-                Some(directory.parent().unwrap().parent().unwrap().to_path_buf())
-            );
-            assert!(transport.sent().is_empty());
-            assert_eq!(
-                fs::read_to_string(directory.join("NOTES.md")).unwrap(),
-                "# Owned deep fixture\n"
-            );
+                    assert_eq!(
+                        harness
+                            .query_all_by_role(accesskit::Role::TextInput)
+                            .count(),
+                        2
+                    );
+                    let fields = harness
+                        .query_all_by_role(accesskit::Role::TextInput)
+                        .map(|field| field.rect())
+                        .collect::<Vec<_>>();
+                    for field in fields {
+                        assert!(area.contains_rect(field), "{size:?}: {:?}", field);
+                        {
+                            let position = field.center();
+                            harness.event(egui::Event::PointerMoved(position));
+                            for pressed in [true, false] {
+                                harness.event(egui::Event::PointerButton {
+                                    pos: position,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                });
+                            }
+                            harness.run_steps(2);
+                            assert!(
+                                harness
+                                    .query_all_by_role(accesskit::Role::TextInput)
+                                    .find(|node| node.rect() == field)
+                                    .unwrap()
+                                    .is_focused(),
+                                "{size:?}: the existing input does not accept pointer focus at {position:?}"
+                            );
+                        }
+                    }
+                    assert_style_modal_inside_root(&harness, "markdown_file_picker");
+                    assert_style_modal_action(&harness, "markdown_file_picker", "Cancel");
+                    if missing {
+                        let (clip, text_rect) = harness
+                            .output()
+                            .shapes
+                            .iter()
+                            .find_map(|shape| {
+                                let egui::Shape::Text(text) = &shape.shape else {
+                                    return None;
+                                };
+                                (text.galley.job.text == expected).then_some((
+                                    shape.clip_rect,
+                                    text.galley.rect.translate(text.pos.to_vec2()),
+                                ))
+                            })
+                            .expect("the initial folder error is painted");
+                        assert!(
+                            clip.contains_rect(text_rect),
+                            "{size:?}: error clipped by {clip:?}"
+                        );
+                        assert!(area.contains_rect(text_rect));
+                    }
+                    if size == egui::vec2(360.0, 516.0) {
+                        harness.get_by_label(&ancestors.last().unwrap().label);
+                        harness
+                            .get_by_label(&ancestors.last().unwrap().label)
+                            .hover();
+                        harness.event(egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(if missing { 260.0 } else { 120.0 }, 0.0),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                        harness.run_steps(30);
+                        let ancestor = harness.get_by_label("architecture");
+                        assert!(harness
+                            .ctx
+                            .content_rect()
+                            .contains(ancestor.rect().center()));
+                        ancestor.click();
+                        harness.step();
+                        assert_eq!(
+                            harness
+                                .state()
+                                .overlays
+                                .markdown_file_picker
+                                .as_ref()
+                                .unwrap()
+                                .current_directory(),
+                            Some(directory.parent().unwrap().parent().unwrap().to_path_buf())
+                        );
+                    }
+                    assert!(transport.sent().is_empty());
+                    assert_eq!(
+                        fs::read_to_string(directory.join("NOTES.md")).unwrap(),
+                        "# Owned deep fixture\n"
+                    );
+                }
+            }
         }
     }
 
@@ -8573,6 +8657,9 @@ mod tests {
                             fs::read_to_string(fixture.0.join("NOTES.md")).unwrap(),
                             "# Owned fixture\n"
                         );
+                        harness.event(egui::Event::Text("z".to_owned()));
+                        harness.run_steps(2);
+                        assert_eq!(transport.sent().concat(), b"z");
                     }
                 }
             }

@@ -3015,10 +3015,14 @@ after interaction. Picker sizing uses the full client root, not the editor or
 terminal's smaller content area. Open File keeps all breadcrumb ancestors in a
 height-bounded horizontal scroll region; a new path starts at its current
 directory, and full paths remain available on hover with exact navigation
-targets. Save As tests prove initial modal-owned fields/actions at all three
-roots and both densities plus refusal of clipped pointer actions. Open File's
-strict initial short-root oracle still exposes unreserved listing/footer space;
-that blocker and fresh matched drawing must pass before visual acceptance.
+targets. Open File pins Cancel before allocating its remaining space to the
+path/filter controls and bounded error/list body; short roots use compact
+insets/gaps without changing typography or reducing disclosures. Tests prove
+initial modal-owned fields/actions at all three roots and both densities,
+initial error visibility, restored terminal input focus and refusal of clipped
+Save As row/action pointer clicks. Save uses an explicit stable response ID
+on the filename's modal layer, not a background button label match. Fresh
+matched drawing must still pass before visual acceptance.
 
 ## Future Populated Launcher Example
 

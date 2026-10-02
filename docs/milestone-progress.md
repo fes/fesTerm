@@ -53,8 +53,13 @@ clicks cannot trigger either action. The local Open File
 toolbar keeps every ancestor and exact navigation target in one horizontally
 scrollable row rather than wrapping the whole path down the sheet; ready/error
 tests verify the fields and actual ancestor navigation. A stricter initial
-short-root test still exposes unreserved listing/footer space, so the slice
-remains unqualified pending that fix and the authorized fresh matched pair.
+short-root test then exposed unreserved listing/footer space; the authorized
+local layout fix pins Cancel and gives complete errors/rows a bounded
+remaining viewport. Initial path/filter pointer focus, error paint and
+modal-owned actions now pass at all three roots/both densities, and cancellation
+restores viable terminal input. Hidden Save As row clicks cannot change
+selection, filename or navigation; the explicit Save response shares the
+filename's modal layer. Fresh drawing must still qualify the source fixes.
 The completed `daf9796` comparison is not retroactively qualified.
 
 ## Expanding evidence without pretending every surface is measured

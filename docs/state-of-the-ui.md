@@ -605,9 +605,12 @@ nested-panel clipping before child paint and pointer registration; the
 paint-only workaround was superseded. Initial modal-owned Save As fields/actions
 pass at all three roots/both densities. It bounds Open File breadcrumbs to a horizontally
 scrollable row retaining all exact ancestor targets and full hover identities.
-New tests prove clipped pointer refusal and safe navigation; the stricter
-initial Open File short-root listing/footer oracle still fails. That blocker
-and a fresh uniformly matched pair must qualify subsequent drawing; the
+New tests prove clipped row/action pointer refusal and safe navigation.
+Open File now reserves Cancel and the error/list viewport; initial path/filter
+pointer focus, error paint and modal-owned actions pass at all three roots/both
+densities, with terminal focus restored after cancellation. The Save response
+has an explicit ID on the filename's modal layer. A fresh uniformly matched
+pair must still qualify subsequent drawing; the
 completed `daf9796` pair is neither relabeled nor promoted.
 
 Directory examples use owned synthetic files and the actual background listing
