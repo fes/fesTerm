@@ -2433,6 +2433,7 @@ impl FesTermApp {
         const TOGGLE_MARKDOWN_OUTLINE: u64 = 21;
         const OPEN_SFTP_FILE_MANAGER: u64 = 22;
         const SAVE_TERMINAL_HISTORY_AS: u64 = 24;
+        const REDRAW_TERMINAL: u64 = 25;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -2550,6 +2551,15 @@ impl FesTermApp {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
                     hint: binding_label(A::ResetTerminal),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: REDRAW_TERMINAL,
+                    label: "Redraw Terminal".to_owned(),
+                    hint: Some(
+                        "Repaint every visible region locally without sending input".to_owned(),
+                    ),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2734,6 +2744,11 @@ impl FesTermApp {
             24 => self
                 .state
                 .dispatch(AppCommand::SaveTerminalHistoryAs, context),
+            25 => {
+                self.state
+                    .dispatch(AppCommand::RedrawTerminal(self.state.active()), context);
+                self.restore_active_terminal_focus();
+            }
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -10268,6 +10283,106 @@ mod tests {
         keyboard_clipboard_reply(&context, token, "controlled-palette");
         harness.run();
         assert_eq!(transport.sent().concat(), b"controlled-palette");
+    }
+
+    #[test]
+    fn redraw_terminal_palette_command_is_local_unbound_and_preserves_tui_keys() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let item = harness
+            .state()
+            .palette_items()
+            .into_iter()
+            .find(|item| item.label == "Redraw Terminal")
+            .expect("terminal palette offers redraw");
+        assert_eq!(item.shortcut_label, None);
+        let active = harness.state().state.active();
+        {
+            let session = harness.state_mut().state.session_tab_mut(active).unwrap();
+            session.terminal.ingest(b"\x1b[?1049h\x1b[1;31mTUI content");
+        }
+        harness.run();
+        let before = harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .terminal
+            .clone();
+        let resizes = harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .controller
+            .resize_probe()
+            .generations();
+        let selection = harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .view
+            .selection()
+            .clone();
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::P,
+        );
+        harness.run();
+        harness.event(egui::Event::Text("Redraw Terminal".to_owned()));
+        harness.run();
+        harness.get_by_label_contains("Redraw Terminal").click();
+        harness.run();
+        assert!(!harness.state().palette.is_open());
+        let session = harness.state_mut().state.session_tab_mut(active).unwrap();
+        assert_eq!(session.terminal, before);
+        assert_eq!(session.view.selection(), &selection);
+        assert_eq!(session.controller.resize_probe().generations(), resizes);
+        assert!(transport.sent().is_empty(), "redraw sends no TUI input");
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::R);
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"\x0c\x12");
+
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .controller
+            .set_lifecycle_for_test(festerm_session::SessionLifecycle::Exited(
+                festerm_session::SessionExit::with_exit_code(0),
+            ));
+        assert!(harness
+            .state()
+            .palette_items()
+            .iter()
+            .any(|item| item.label == "Redraw Terminal"));
+        harness
+            .state_mut()
+            .dispatch_palette_selection(item.id, &context);
+        harness.run();
+        assert_eq!(
+            harness
+                .state_mut()
+                .state
+                .session_tab_mut(active)
+                .unwrap()
+                .terminal,
+            before
+        );
+
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenLauncher, &context);
+        assert!(!harness
+            .state()
+            .palette_items()
+            .iter()
+            .any(|item| item.label == "Redraw Terminal"));
     }
 
     #[test]

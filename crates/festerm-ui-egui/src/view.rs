@@ -153,6 +153,7 @@ pub struct TerminalView {
     force_cell_run_shaping: bool,
     pub(crate) cache: TerminalRenderCache,
     pub(crate) glyphs: GlyphCache,
+    full_redraw_requested: bool,
     pub(crate) selection: Selection,
     pub(crate) resize: ResizeTracker,
     pub(crate) diagnostics: FrameDiagnostics,
@@ -416,6 +417,14 @@ impl TerminalView {
 
     pub fn clear_selection(&mut self) {
         self.selection.clear();
+    }
+
+    /// Rebuilds this view's presentation and redraws every visible region on
+    /// its next frame, without changing terminal state or sending input.
+    pub fn request_full_redraw(&mut self) {
+        self.cache = TerminalRenderCache::default();
+        self.glyphs.clear();
+        self.full_redraw_requested = true;
     }
 
     pub const fn history_offset_rows(&self) -> usize {
@@ -1293,6 +1302,12 @@ impl TerminalView {
         let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
         let update = self.cache.update(snapshot, &dirty_rows);
         self.diagnostics.dirty_rows = update.updated_rows.len();
+        let full_redraw = self.full_redraw_requested
+            && ui.painter().is_visible()
+            && vp_layout.viewport.intersect(ui.clip_rect()).is_positive();
+        if full_redraw {
+            self.full_redraw_requested = false;
+        }
         let (paint_stats, input_to_paint_submission) =
             measure_input_to_paint_submission(reports.input_observed, || {
                 paint_grid(
@@ -1306,6 +1321,7 @@ impl TerminalView {
                         shape_cell_runs: self.force_cell_run_shaping
                             || self.fonts.font_set().ligatures(),
                         focused: response.has_focus(),
+                        full_redraw,
                     },
                     &mut self.glyphs,
                 )
@@ -2077,6 +2093,94 @@ mod tests {
     #[test]
     fn dragging_a_tab_chip_over_the_terminal_selects_nothing() {
         assert!(!selection_after_drag_across_terminal(true));
+    }
+
+    #[test]
+    fn full_redraw_request_is_view_local() {
+        let terminal = terminal(8, 4);
+        let mut first = TerminalView::default();
+        let mut second = TerminalView::default();
+        first
+            .cache
+            .update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        second
+            .cache
+            .update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        let other_cache = second.cache.clone();
+        first.request_full_redraw();
+        assert_eq!(first.cache.dimensions(), None);
+        assert!(first.full_redraw_requested);
+        assert_eq!(second.cache, other_cache);
+        assert!(!second.full_redraw_requested);
+    }
+
+    #[test]
+    fn full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state() {
+        let mut state = HeadlessViewState::new();
+        for row in 0..60 {
+            state.terminal.ingest(format!("row {row}\r\n").as_bytes());
+        }
+        state.terminal.ingest(b"\x1b[1;31munchanged");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        harness.state_mut().view.history.offset_rows = 3;
+        harness.run();
+        {
+            let state = harness.state_mut();
+            state
+                .view
+                .selection
+                .begin(CellPosition { column: 0, row: 0 });
+            state
+                .view
+                .selection
+                .extend(CellPosition { column: 3, row: 0 });
+            state.view.selection.finish();
+        }
+        harness.run();
+        assert_eq!(harness.state().view.diagnostics.dirty_rows, 0);
+        let before = harness.state().terminal.clone();
+        let selection = harness.state().view.selection.clone();
+        let font_size = harness.state().view.font_size_points();
+        let native_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = native_requests.clone();
+        crate::install_root_terminal_painter(&harness.ctx, move |_, frame| {
+            observed.lock().unwrap().push(frame.full_redraw);
+            None
+        });
+        harness.state_mut().view.request_full_redraw();
+        assert_eq!(harness.state().view.cache.dimensions(), None);
+        assert_eq!(harness.state().terminal, before);
+        harness.step();
+        assert_eq!(
+            harness.state().view.diagnostics.dirty_rows,
+            before.dimensions().rows(),
+            "unchanged visible rows must all be rebuilt"
+        );
+        assert_eq!(harness.state().terminal, before);
+        assert_eq!(harness.state().view.selection, selection);
+        assert_eq!(harness.state().view.history_offset_rows(), 3);
+        assert_eq!(harness.state().view.font_size_points(), font_size);
+        assert!(harness.state().sink.0.is_empty());
+        harness.step();
+        assert_eq!(harness.state().view.diagnostics.dirty_rows, 0);
+        assert_eq!(
+            native_requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|&&full| full)
+                .count(),
+            1,
+            "native retained-region invalidation must be one-shot"
+        );
     }
 
     #[test]
