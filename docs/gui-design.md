@@ -3036,6 +3036,10 @@ slice, not a native/usability acceptance or a claim that every body item is
 initially visible. Raw missing/null/duplicate-label observations remain
 unqualified; see the evidence boundaries in `docs/manual-validation.md`.
 
+Byte-identical [focused BEFORE/AFTER review images](images/dialog-style-review/style-pair-20261002-r2/)
+retain their exact [source/physical-input provenance](images/dialog-style-review/style-pair-20261002-r2/provenance.json);
+they are separate from the original gallery and are not platform snapshots.
+
 ## Future Populated Launcher Example
 
 ![Future populated Launcher target](images/gui-mockups/launcher-populated.png)
