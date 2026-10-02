@@ -3,6 +3,30 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Letting code navigation leave its horizontal child
+
+A 400-fence offscreen-tail interaction oracle exposed a navigation defect
+independent of the proposed render-local Copy-caption preparation. The code
+renderer consumed the source-byte request inside a horizontal scroller. That
+scroller consumed both target axes but applied only its horizontal axis, so
+Find and the shared editor Preview could acknowledge the target without
+bringing its code row into the vertical viewport.
+
+The renderer now forwards the existing row rectangle after that child closes,
+with the parent's viewport X extent so it requests no outer horizontal
+movement. The original child target and first matching row choice stay intact;
+no widgets, syntax highlighting, selection, source mapping or raw Copy payloads
+are skipped or replaced. Separate CPU regressions cover the initially
+offscreen 400th fence, viewer Find, shared Preview, wrapped-code geometry,
+selection, pointer Copy and keyboard activation. Native clipboard delivery,
+screen-reader traversal and usability remain manual evidence. Tables have no
+own byte-target handling, a separate unimplemented gap left outside this fix.
+
+This is a navigation prerequisite, not a performance result. Any subsequent
+Copy-caption comparison must include the identical navigation change on both
+its baseline and candidate; saved memoized caption lookups are not proof of
+saved text layouts or improved latency.
+
 ## Fitting dialogs to the supported root instead of a preferred width
 
 Faithful production-theme captures separated actual layout defects from a
@@ -106,6 +130,7 @@ baseline/candidate captures at the same actual scene paths. Fresh ownership,
 matching input/phase proofs and tracked cleanup are required; workers and real
 document generation remain intact. This is not canonical display metadata
 or anonymization, and its validation/matched visual claims remain pending.
+
 ## Separating an outline allocation fix from the residual Preview cost
 
 The mixed Markdown Preview investigation found a genuine unnecessary copy:
