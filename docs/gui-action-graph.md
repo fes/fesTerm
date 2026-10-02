@@ -26,12 +26,21 @@ Activation clears either presentation. Native CPU and visual evidence is
 tracked by `CP-16`.
 
 For Launcher, connection forms, Settings cards, Profiles panels, the chrome
-band and the status-bar frame, Windows
+band, status-bar frame, Inspector overlay (`INSP-01..04`), and SFTP pane/table
+frames (`SFTPG-01`, `SFTPG-04`, `SFTPG-06`), Windows
 DX12 CPU adapters may use the textureless fill pipeline while retaining egui's
 layout, rounded geometry, borders and clipping. Hardware and unsupported
 surfaces retain standard painting.
 Pixel-equivalence and adapter-policy tests accompany CP-16's native evidence;
 no discovery, unread-state or command-routing semantics change.
+Inspector's transparent outside-click catcher remains ordinary and consumes
+the first uncovered click. SFTP headers, filters, rail, rows, transfer drawer,
+collision cards, and modal backdrop/shadow remain ordinary controls in this
+bounded coverage change. Exact full-widget framebuffer comparisons and
+balanced same-executable Windows WARP draw/readback measurements justify these
+routes; UI construction has a small measured absolute overhead. This is not
+shipping before/after or native presentation-latency evidence, and eligibility
+alone does not justify further sites. See `validation/windows-warp/README.md`.
 
 For `PROF-01` and `PROF-06`, the default local persistence provider is detected
 once when the composition root creates a window, not by scanning `PATH` on
