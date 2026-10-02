@@ -691,6 +691,7 @@ impl MarkdownViewerTab {
                                 });
                             } else {
                                 let mut render_state = MarkdownRenderState {
+                                    code_copy_caption: CodeCopyCaptionPreparation::default(),
                                     mode: self.mode,
                                     outline_open: self.outline_open,
                                     outline_selected: &mut self.outline_selected,
@@ -1366,6 +1367,7 @@ impl MarkdownViewerTab {
 }
 
 struct MarkdownRenderState<'a> {
+    code_copy_caption: CodeCopyCaptionPreparation,
     mode: MarkdownViewerMode,
     outline_open: bool,
     outline_selected: &'a mut Option<usize>,
@@ -1382,6 +1384,130 @@ struct MarkdownRenderState<'a> {
     /// know which section the reader is looking at can ask the rendering
     /// rather than guess from a scroll offset.
     heading_tops: &'a mut Vec<(usize, f32)>,
+}
+
+#[derive(Default)]
+struct CodeCopyCaptionPreparation {
+    prepared: Option<PreparedCodeCopyCaption>,
+    #[cfg(test)]
+    probe: Option<CodeCopyProbe>,
+}
+
+struct PreparedCodeCopyCaption {
+    key: CodeCopyCaptionKey,
+    galley: Arc<egui::Galley>,
+}
+
+#[derive(PartialEq)]
+struct CodeCopyCaptionKey {
+    context: egui::Context,
+    viewport: egui::ViewportId,
+    pass: u64,
+    pixels_per_point: f32,
+    font: FontId,
+    color: Color32,
+}
+
+impl CodeCopyCaptionPreparation {
+    fn galley(&mut self, ui: &egui::Ui, font: FontId, color: Color32) -> Arc<egui::Galley> {
+        // Match the actual factory's painter, not the parent UI. Font definitions,
+        // text options and atlas resets activate at begin-pass in egui. This
+        // single entry belongs only to the freshly constructed renderer.
+        let context = ui.painter().ctx();
+        let (viewport, pixels_per_point) =
+            context.input(|input| (input.raw.viewport_id, input.pixels_per_point));
+        let key = CodeCopyCaptionKey {
+            context: context.clone(),
+            viewport,
+            pass: context.cumulative_pass_nr_for(viewport),
+            pixels_per_point,
+            font,
+            color,
+        };
+        if let Some(prepared) = &self.prepared {
+            if prepared.key == key {
+                return prepared.galley.clone();
+            }
+        }
+        let galley = ui
+            .painter()
+            .layout_no_wrap("Copy".to_owned(), key.font.clone(), key.color);
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.preparations += 1;
+        }
+        self.prepared = Some(PreparedCodeCopyCaption {
+            key,
+            galley: galley.clone(),
+        });
+        galley
+    }
+
+    fn button(&mut self, ui: &mut egui::Ui) -> egui::Response {
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            if probe.ordinary {
+                probe.preparations += 1;
+                return toolbar_button_response(
+                    ui,
+                    Some(Icon::Copy),
+                    "Copy",
+                    "Copy the code block",
+                    false,
+                );
+            }
+        }
+        let galley = self.galley(
+            ui,
+            FontId::proportional(TOOLBAR_TEXT_SIZE),
+            theme::TEXT_SECONDARY,
+        );
+        toolbar_button_with_galley(
+            ui,
+            Some(Icon::Copy),
+            None,
+            "Copy the code block",
+            false,
+            galley,
+        )
+    }
+
+    #[cfg(test)]
+    fn record(&mut self, block: &CodeBlock, response: &egui::Response) {
+        if let Some(probe) = &mut self.probe {
+            probe.buttons.push(CodeCopyObservation {
+                source: block.span().byte_range(),
+                id: response.id,
+                rect: response.rect,
+                interact_rect: response.interact_rect,
+                enabled: response.enabled(),
+                hovered: response.hovered(),
+                focused: response.has_focus(),
+                clicked: response.clicked(),
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct CodeCopyProbe {
+    ordinary: bool,
+    preparations: usize,
+    buttons: Vec<CodeCopyObservation>,
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq)]
+struct CodeCopyObservation {
+    source: std::ops::Range<usize>,
+    id: egui::Id,
+    rect: egui::Rect,
+    interact_rect: egui::Rect,
+    enabled: bool,
+    hovered: bool,
+    focused: bool,
+    clicked: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2037,13 +2163,10 @@ impl MarkdownRenderState<'_> {
                         .color(theme::TEXT_SECONDARY),
                 );
                 head.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    if toolbar_button(
-                        ui,
-                        Some(Icon::Copy),
-                        "Copy",
-                        "Copy the code block",
-                        false,
-                    ) {
+                    let response = self.code_copy_caption.button(ui);
+                    #[cfg(test)]
+                    self.code_copy_caption.record(block, &response);
+                    if response.clicked() {
                         ui.ctx().copy_text(block.code_text().to_owned());
                     }
                 });
@@ -3219,6 +3342,8 @@ pub(crate) const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
 /// renderer as the Markdown tab, rather than growing a second, quietly
 /// divergent Markdown implementation.
 pub(crate) struct MarkdownPreviewPane {
+    #[cfg(test)]
+    code_copy_probe: Option<CodeCopyProbe>,
     source: MarkdownSource,
     document: Option<MarkdownDocument>,
     error: Option<String>,
@@ -3252,6 +3377,8 @@ pub(crate) struct MarkdownPreviewPane {
 impl MarkdownPreviewPane {
     pub(crate) fn new(source: MarkdownSource, text: &str) -> Self {
         let mut pane = Self {
+            #[cfg(test)]
+            code_copy_probe: None,
             source,
             document: None,
             error: None,
@@ -3336,6 +3463,11 @@ impl MarkdownPreviewPane {
     }
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui) {
+        #[cfg(test)]
+        if let Some(probe) = &mut self.code_copy_probe {
+            probe.preparations = 0;
+            probe.buttons.clear();
+        }
         if let Some(error) = &self.error {
             ui.vertical(|ui| {
                 ui.add_space(READING_COLUMN_TOP_PADDING);
@@ -3357,6 +3489,7 @@ impl MarkdownPreviewPane {
         };
         let mut heading_tops = Vec::new();
         let mut state = MarkdownRenderState {
+            code_copy_caption: CodeCopyCaptionPreparation::default(),
             mode: MarkdownViewerMode::Preview,
             outline_open: false,
             outline_selected: &mut self.outline_selected,
@@ -3371,6 +3504,10 @@ impl MarkdownPreviewPane {
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
             heading_tops: &mut heading_tops,
         };
+        #[cfg(test)]
+        {
+            state.code_copy_caption.probe = self.code_copy_probe.take();
+        }
         let viewport_height = ui.available_height().max(120.0);
         let viewport_top = ui.cursor().top();
         egui::ScrollArea::vertical()
@@ -3402,6 +3539,10 @@ impl MarkdownPreviewPane {
                     );
                 });
             });
+        #[cfg(test)]
+        {
+            self.code_copy_probe = state.code_copy_caption.probe.take();
+        }
         // Which section the reader is actually looking at, taken from where
         // the headings landed rather than from a scroll offset that means
         // nothing without the rendered heights.
@@ -3668,6 +3809,24 @@ pub(crate) fn toolbar_button_with_trailing(
             theme::TEXT_SECONDARY
         },
     );
+    toolbar_button_with_galley(
+        ui,
+        icon_name,
+        trailing_icon,
+        accessible_label,
+        active,
+        galley,
+    )
+}
+
+fn toolbar_button_with_galley(
+    ui: &mut egui::Ui,
+    icon_name: Option<Icon>,
+    trailing_icon: Option<Icon>,
+    accessible_label: &str,
+    active: bool,
+    galley: Arc<egui::Galley>,
+) -> egui::Response {
     let icon_width = icon_name
         .map(|_| TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP)
         .unwrap_or(0.0);
@@ -3970,6 +4129,7 @@ mod tests {
         Harness::builder().build_ui_state(
             move |ui, _state: &mut ()| {
                 let mut state = MarkdownRenderState {
+                    code_copy_caption: CodeCopyCaptionPreparation::default(),
                     mode: MarkdownViewerMode::Preview,
                     outline_open: false,
                     outline_selected: &mut outline_selected,
@@ -4541,6 +4701,505 @@ mod tests {
         assert_eq!(tab.outline_selected, Some(399));
     }
 
+    fn mixed_caption_fixture() -> String {
+        // Keep the actual outline-disabled profile's 400 mixed sections, not
+        // a caption-only surrogate. The profiling module has a separate owner.
+        (0..400)
+            .map(|index| {
+                format!(
+                    "## Section {index}\n\nA **synthetic** paragraph with `inline code` and ordinary text.\n\n\
+                     ```rust\nfn example() {{ let value = {index}; }}\n```\n\n\
+                     | Name | Value |\n| --- | --- |\n| Item | {index} |\n\n"
+                )
+            })
+            .collect()
+    }
+
+    fn caption_oracle_pair(text: &str) -> [(egui::Context, MarkdownPreviewPane); 2] {
+        let document = document(text);
+        std::array::from_fn(|index| {
+            let context = egui::Context::default();
+            context.enable_accesskit();
+            context.set_theme(egui::ThemePreference::Dark);
+            context.set_visuals(theme::default_visuals());
+            context.global_style_mut(|style| {
+                style.scroll_animation = egui::style::ScrollAnimation::none();
+                style.interaction.tooltip_delay = 0.0;
+                style.interaction.show_tooltips_only_when_still = false;
+            });
+            let mut pane = MarkdownPreviewPane::new(
+                LocalMarkdownSource::new("/docs/readme.md").unwrap().into(),
+                "",
+            );
+            // Compare preparation against exactly the same parsed snapshot,
+            // including any honest syntax-budget fallback, not two timed parses.
+            pane.line_heading_indices = build_line_heading_index_lookup(&document);
+            pane.outline_selected = document.headings().first().map(|_| 0);
+            pane.document = Some(document.clone());
+            pane.parsed = text.into();
+            pane.code_copy_probe = Some(CodeCopyProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
+            (context, pane)
+        })
+    }
+
+    fn rebind_caption_oracle(pair: &mut [(egui::Context, MarkdownPreviewPane); 2], text: &str) {
+        let document = document(text);
+        for (_, pane) in pair {
+            pane.parse(String::new());
+            pane.find.recompute(&document, None);
+            pane.line_heading_indices = build_line_heading_index_lookup(&document);
+            pane.outline_selected = document.headings().first().map(|_| 0);
+            pane.document = Some(document.clone());
+            pane.parsed = text.into();
+        }
+    }
+
+    fn caption_oracle_frame(
+        pair: &mut [(egui::Context, MarkdownPreviewPane); 2],
+        frame: usize,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+    ) -> [egui::FullOutput; 2] {
+        let mut output = std::array::from_fn(|index| {
+            let (context, pane) = &mut pair[index];
+            context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(frame as f64 / 60.0),
+                    events: events.clone(),
+                    ..Default::default()
+                },
+                |ui| pane.show(ui),
+            )
+        });
+        assert_eq!(
+            output[0].shapes, output[1].shapes,
+            "frame {frame}: all clipped shapes"
+        );
+        assert_eq!(output[0].pixels_per_point, output[1].pixels_per_point);
+        assert!(output[0].platform_output.accesskit_update.is_some());
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.accesskit_update),
+            format!("{:?}", output[1].platform_output.accesskit_update),
+            "frame {frame}: complete accessibility nodes, IDs, bounds and order"
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.commands),
+            format!("{:?}", output[1].platform_output.commands),
+            "frame {frame}: live commands"
+        );
+        let ordinary = pair[0].1.code_copy_probe.as_ref().unwrap();
+        let prepared = pair[1].1.code_copy_probe.as_ref().unwrap();
+        assert_eq!(
+            ordinary.buttons, prepared.buttons,
+            "frame {frame}: live button responses"
+        );
+        let fences = pair[0]
+            .1
+            .document
+            .as_ref()
+            .filter(|_| pair[0].1.error.is_none())
+            .map_or(0, |document| {
+                document
+                    .blocks()
+                    .iter()
+                    .filter(|block| matches!(block, Block::CodeBlock(_)))
+                    .count()
+            });
+        assert_eq!(ordinary.buttons.len(), fences);
+        assert_eq!(ordinary.preparations, fences);
+        assert_eq!(prepared.preparations, usize::from(fences != 0));
+        assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
+        assert_eq!(pair[0].1.visible_heading, pair[1].1.visible_heading);
+        assert_eq!(pair[0].1.heading_tops, pair[1].1.heading_tops);
+        // These headless assertions inspect shapes without applying textures.
+        for frame_output in &mut output {
+            frame_output.textures_delta.clear();
+        }
+        output
+    }
+
+    #[test]
+    fn code_copy_caption_matches_the_same_context_factory_and_refreshes_dependencies() {
+        let mut preparation = CodeCopyCaptionPreparation {
+            probe: Some(CodeCopyProbe::default()),
+            ..Default::default()
+        };
+        let contexts = [egui::Context::default(), egui::Context::default()];
+        for (index, context) in contexts.iter().enumerate() {
+            // The second context must not inherit the first context's atlas.
+            for scale in [1.0, 1.5] {
+                context.set_pixels_per_point(scale);
+                let before = preparation.probe.as_ref().unwrap().preparations;
+                let mut output = context.run_ui(Default::default(), |ui| {
+                    for (font, color) in [
+                        (
+                            FontId::proportional(TOOLBAR_TEXT_SIZE),
+                            theme::TEXT_SECONDARY,
+                        ),
+                        (
+                            FontId::monospace(TOOLBAR_TEXT_SIZE + 2.0),
+                            theme::TEXT_SECONDARY,
+                        ),
+                        (
+                            FontId::monospace(TOOLBAR_TEXT_SIZE + 2.0),
+                            theme::TEXT_PRIMARY,
+                        ),
+                    ] {
+                        for width in [40.0, 700.0] {
+                            ui.set_max_width(width);
+                            ui.style_mut().override_font_id = Some(FontId::monospace(29.0));
+                            ui.style_mut().visuals.override_text_color = Some(Color32::RED);
+                            ui.set_opacity(0.5);
+                            let next_id = ui.next_auto_id();
+                            let actual = preparation.galley(ui, font.clone(), color);
+                            let reference =
+                                ui.painter()
+                                    .layout_no_wrap("Copy".to_owned(), font.clone(), color);
+                            assert_eq!(actual.as_ref(), reference.as_ref());
+                            assert!(
+                                Arc::ptr_eq(&actual, &reference),
+                                "context={index}, scale={scale}"
+                            );
+                            assert_eq!(
+                                next_id,
+                                ui.next_auto_id(),
+                                "preparation allocates no widget IDs"
+                            );
+                        }
+                    }
+                });
+                assert_eq!(preparation.probe.as_ref().unwrap().preparations - before, 3);
+                output.textures_delta.clear();
+            }
+        }
+        let context = &contexts[1];
+        let mut input = egui::RawInput {
+            viewport_id: egui::ViewportId::from_hash_of("caption-other-viewport"),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .insert(input.viewport_id, Default::default());
+        let mut output = context.run_ui(input, |ui| {
+            let actual = preparation.galley(
+                ui,
+                FontId::proportional(TOOLBAR_TEXT_SIZE),
+                theme::TEXT_SECONDARY,
+            );
+            let reference = ui.painter().layout_no_wrap(
+                "Copy".to_owned(),
+                FontId::proportional(TOOLBAR_TEXT_SIZE),
+                theme::TEXT_SECONDARY,
+            );
+            assert!(Arc::ptr_eq(&actual, &reference));
+            assert_eq!(
+                preparation.prepared.as_ref().unwrap().key.viewport,
+                ui.ctx().viewport_id()
+            );
+        });
+        output.textures_delta.clear();
+
+        let mut preparation = CodeCopyCaptionPreparation {
+            probe: Some(CodeCopyProbe::default()),
+            ..Default::default()
+        };
+        let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
+        let mut prior = None;
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let before = preparation.galley(ui, font.clone(), theme::TEXT_SECONDARY);
+            let mut definitions = egui::FontDefinitions::default();
+            definitions.families.insert(
+                egui::FontFamily::Proportional,
+                definitions.families[&egui::FontFamily::Monospace].clone(),
+            );
+            context.set_fonts(definitions);
+            let after = preparation.galley(ui, font.clone(), theme::TEXT_SECONDARY);
+            let reference =
+                ui.painter()
+                    .layout_no_wrap("Copy".to_owned(), font.clone(), theme::TEXT_SECONDARY);
+            assert!(
+                Arc::ptr_eq(&before, &after),
+                "font updates are deferred within a pass"
+            );
+            assert!(Arc::ptr_eq(&after, &reference));
+            prior = Some(after);
+        });
+        output.textures_delta.clear();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let actual = preparation.galley(ui, font.clone(), theme::TEXT_SECONDARY);
+            let reference =
+                ui.painter()
+                    .layout_no_wrap("Copy".to_owned(), font.clone(), theme::TEXT_SECONDARY);
+            assert!(Arc::ptr_eq(&actual, &reference));
+            assert!(
+                !Arc::ptr_eq(&actual, prior.as_ref().unwrap()),
+                "the new pass cannot reuse the previous atlas's galley"
+            );
+        });
+        assert_eq!(preparation.probe.as_ref().unwrap().preparations, 2);
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn code_copy_caption_preserves_the_mixed_preview_on_cold_warm_and_invalidated_passes() {
+        let markdown = mixed_caption_fixture();
+        let mut pair = caption_oracle_pair(&markdown);
+        let wide = vec2(1180.0, 760.0);
+        for frame in 0..2 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+            let buttons = &pair[1].1.code_copy_probe.as_ref().unwrap().buttons;
+            assert_eq!(buttons.len(), 400);
+            assert!(
+                buttons.last().unwrap().rect.top() > wide.y,
+                "offscreen fences remain live"
+            );
+        }
+        caption_oracle_frame(&mut pair, 2, vec2(360.0, 760.0), Vec::new());
+        for (context, pane) in &mut pair {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.families.insert(
+                egui::FontFamily::Proportional,
+                fonts.families[&egui::FontFamily::Monospace].clone(),
+            );
+            context.set_fonts(fonts);
+            pane.find
+                .set_query(pane.document.as_ref().unwrap(), "synthetic".into());
+        }
+        caption_oracle_frame(&mut pair, 3, wide, Vec::new());
+        for (context, _) in &pair {
+            context.set_theme(egui::ThemePreference::Light);
+            context.set_visuals(egui::Visuals::light());
+        }
+        caption_oracle_frame(&mut pair, 4, wide, Vec::new());
+        for (context, _) in &pair {
+            context.set_pixels_per_point(1.5);
+        }
+        caption_oracle_frame(&mut pair, 5, wide, Vec::new());
+        rebind_caption_oracle(
+            &mut pair,
+            &markdown.replace("fn example()", "fn changed_example()"),
+        );
+        caption_oracle_frame(&mut pair, 6, wide, Vec::new());
+        for (_, pane) in &mut pair {
+            pane.error = Some("Synthetic projection failure".into());
+        }
+        caption_oracle_frame(&mut pair, 7, wide, Vec::new());
+        assert_eq!(pair[1].1.code_copy_probe.as_ref().unwrap().preparations, 0);
+        rebind_caption_oracle(&mut pair, "# No fences\n\nOnly a paragraph.\n");
+        caption_oracle_frame(&mut pair, 8, wide, Vec::new());
+        assert_eq!(pair[1].1.code_copy_probe.as_ref().unwrap().preparations, 0);
+        for (_, pane) in &mut pair {
+            pane.document = None;
+        }
+        caption_oracle_frame(&mut pair, 9, wide, Vec::new());
+    }
+
+    #[test]
+    fn code_copy_caption_preserves_selection_scroll_hover_and_exact_fence_payloads() {
+        let mut pair = caption_oracle_pair(&mixed_caption_fixture());
+        let size = vec2(1180.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let output = caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        let leading = output[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "A " => Some(text),
+                _ => None,
+            })
+            .expect("the mixed paragraph's leading selectable run");
+        let trailing = output[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "and ordinary text." => {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .expect("the mixed paragraph's trailing selectable run");
+        let expected_selection = "A synthetic paragraph with inline code and ordinary text.";
+        let start = leading.pos
+            + leading
+                .galley
+                .pos_from_cursor(leading.galley.begin())
+                .center()
+                .to_vec2();
+        let end = trailing.pos
+            + trailing
+                .galley
+                .pos_from_cursor(trailing.galley.end())
+                .center()
+                .to_vec2();
+        let pointer_button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        caption_oracle_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        caption_oracle_frame(&mut pair, 3, size, vec![egui::Event::PointerMoved(end)]);
+        caption_oracle_frame(&mut pair, 4, size, vec![pointer_button(end, false)]);
+        let output = caption_oracle_frame(&mut pair, 5, size, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == expected_selection.trim())
+        }), "the actual mixed paragraph remains selectable and copyable");
+
+        let mut frame = 6;
+        for fence in [0, 399] {
+            for (_, pane) in &mut pair {
+                let source = pane.code_copy_probe.as_ref().unwrap().buttons[fence]
+                    .source
+                    .start;
+                pane.pending_scroll = Some(PendingScroll::Byte(source));
+            }
+            caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            frame += 1;
+            caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            frame += 1;
+            // egui applies the target after constructing the next content UI.
+            caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            frame += 1;
+            let buttons = &pair[1].1.code_copy_probe.as_ref().unwrap().buttons;
+            let position = buttons[fence].rect.center();
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains(position),
+                "fence={fence}, position={position:?}, rect={:?}, pending={:?}, visible_heading={:?}",
+                buttons[fence].rect,
+                pair[1].1.pending_scroll,
+                pair[1].1.visible_heading,
+            );
+            let hovered_output = caption_oracle_frame(
+                &mut pair,
+                frame,
+                size,
+                vec![egui::Event::PointerMoved(position)],
+            );
+            assert!(pair[1].1.code_copy_probe.as_ref().unwrap().buttons[fence].hovered);
+            frame += 1;
+            let tooltip_output = caption_oracle_frame(&mut pair, frame, size, Vec::new());
+            assert!(hovered_output[1].shapes.iter().chain(&tooltip_output[1].shapes).any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Copy the code block")
+            }), "the live tooltip remains available");
+            frame += 1;
+            caption_oracle_frame(&mut pair, frame, size, vec![pointer_button(position, true)]);
+            frame += 1;
+            let output = caption_oracle_frame(
+                &mut pair,
+                frame,
+                size,
+                vec![pointer_button(position, false)],
+            );
+            assert!(output[1].platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == &format!("fn example() {{ let value = {fence}; }}\n"))
+            }), "pointer click copies this fence, including the offscreen-tail fence");
+            frame += 1;
+            for (context, pane) in &pair {
+                context.memory_mut(|memory| {
+                    memory.request_focus(pane.code_copy_probe.as_ref().unwrap().buttons[fence].id)
+                });
+            }
+            let output = caption_oracle_frame(
+                &mut pair,
+                frame,
+                size,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            assert!(pair[1].1.code_copy_probe.as_ref().unwrap().buttons[fence].focused);
+            assert!(output[1].platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == &format!("fn example() {{ let value = {fence}; }}\n"))
+            }));
+            frame += 1;
+            caption_oracle_frame(
+                &mut pair,
+                frame,
+                size,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            frame += 1;
+        }
+        // Display lines omit terminators; Copy must still use each raw fence.
+        let raw = "```text\nfirst\r\nsecond\n\n```\n\n```text\nlast without terminator";
+        rebind_caption_oracle(&mut pair, raw);
+        let payloads: Vec<String> = pair[0]
+            .1
+            .document
+            .as_ref()
+            .unwrap()
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                Block::CodeBlock(block) => Some(block.code_text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(payloads.len(), 2);
+        assert!(payloads[0].ends_with("\n\n"));
+        assert_eq!(payloads[1], "last without terminator");
+        caption_oracle_frame(&mut pair, frame, size, Vec::new());
+        frame += 1;
+        for (fence, expected) in payloads.iter().enumerate() {
+            for (context, pane) in &pair {
+                context.memory_mut(|memory| {
+                    memory.request_focus(pane.code_copy_probe.as_ref().unwrap().buttons[fence].id)
+                });
+            }
+            let output = caption_oracle_frame(
+                &mut pair,
+                frame,
+                size,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            assert!(output[1].platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == expected)
+            }));
+            frame += 1;
+            caption_oracle_frame(
+                &mut pair,
+                frame,
+                size,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            frame += 1;
+        }
+    }
+
     #[test]
     fn source_syntax_handles_multibyte_text_at_the_former_cache_key_boundary() {
         let source = format!(
@@ -4813,6 +5472,7 @@ mod tests {
             |context| {
                 egui::CentralPanel::default().show(context, |ui| {
                     let mut render_state = MarkdownRenderState {
+                        code_copy_caption: CodeCopyCaptionPreparation::default(),
                         mode: MarkdownViewerMode::Preview,
                         outline_open: true,
                         outline_selected: &mut outline_selected,
@@ -4879,6 +5539,7 @@ mod tests {
             |context| {
                 egui::CentralPanel::default().show(context, |ui| {
                     let mut render_state = MarkdownRenderState {
+                        code_copy_caption: CodeCopyCaptionPreparation::default(),
                         mode: MarkdownViewerMode::Preview,
                         // The user's own toggle stays on; only this frame
                         // declines to draw the panel.

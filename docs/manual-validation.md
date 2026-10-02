@@ -276,6 +276,15 @@ complete constrained-layout oracle checks table-galley reuse across fractional
 wrap widths, DPI, Unicode, empty cells, styles and Find; ordinary table width
 and wrapping regressions remain in place. Separate production-widget gallery
 comparisons cover visible presentation, not native latency.
+The render-local code-header Copy caption has an ordinary/prepared oracle over
+the actual outline-disabled 400-section fixture: complete clipped shapes,
+accessibility nodes and live response IDs/rectangles, cold/warm and
+width/font/theme/scale/content changes, selection, tail navigation and exact
+distinct-fence Copy payloads. This extends CPU evidence for MD-04 and EDIT-09.
+The matched synthetic comparison and adverse controls are recorded in
+[`milestone-progress.md`](milestone-progress.md#preparing-a-repeated-code-header-caption-without-retaining-document-layout);
+actual input identity and final shape/vertex parity are not pixel or native
+input/clipboard/screen-reader qualification.
 This extends automated evidence for SFTPG-01, EDIT-04/05/06 and MD-04/06;
 it does not qualify native scroll/input latency, GPU presentation, transfer
 throughput, screen-reader navigation or the FD-05/FD-06 native drag/reveal

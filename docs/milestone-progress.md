@@ -27,6 +27,81 @@ Copy-caption comparison must include the identical navigation change on both
 its baseline and candidate; saved memoized caption lookups are not proof of
 saved text layouts or improved latency.
 
+## Preparing a repeated code-header caption without retaining document layout
+
+The residual Preview diagnostics showed 400 code headers in the actual mixed
+fixture, with the outline disabled. Each header asked egui's already memoized
+text factory for the same inactive **Copy** caption. The narrow follow-up
+shares only that galley within one fresh renderer invocation, starting at the
+actual header painter and refreshing if its context, viewport/pass, scale,
+font or colour differs. No pane, document or global layout cache is added.
+
+The ordinary-path oracle uses the same 400 mixed sections and real Preview
+pane, comparing all clipped shapes, accessibility nodes and live Copy IDs and
+rectangles through cold/warm, resize, font, theme, scale, Find and content
+changes. Selection, offscreen-tail source scrolling and distinct raw fence
+payloads remain covered. All three regressions, the shared fixture guards
+and the full workspace passed local Windows qualification. Native clipboard
+delivery, screen-reader behavior and usability remain manual. A count of 399
+avoided memoized factory calls is not evidence of 399 avoided text layouts.
+
+The first eight-process comparison was adverse, but also unqualified for
+causal attribution: different physical temporary paths were visible in the
+mixed Preview and four controls, changing their vertex counts. Its negative/
+unproven results and raw files remain unchanged. The correction was a narrowly
+scoped, optional test-only protocol: both builds read the same real owned
+files, checking source identity, content hashes, modification times, kinds,
+sizes and canonical paths without rewriting them or substituting labels.
+
+One fresh matched comparison then ran `A1 B1 B2 A2` and `B3 A3 A4 B4`,
+with no overlapping build or other measurement. Both sides used the identical
+navigation prerequisite `feed4bf` and fixture protocol; only B prepared the
+caption. The original 12 scenes, outline-disabled 400 mixed sections,
+1180-by-760 viewport, one pixel per point, dark/default fonts, eight warmups
+and 40 measured frames were retained. All eight processes passed the original
+highlight guards; actual input identities and final shape/vertex counts
+matched across all 12 scenes. These counts are not pixel or complete
+per-frame output equivalence.
+
+| Order | A mean of run median / p95 scores (ms) | B mean of run median / p95 scores (ms) | B minus A |
+| --- | ---: | ---: | ---: |
+| ABBA | 11.1831 / 12.9256 | 10.0743 / 12.0603 | -9.92% / -6.69% |
+| BAAB | 11.1127 / 12.4834 | 10.3090 / 11.7020 | -7.23% / -6.26% |
+
+All four B mixed medians (9.9986-10.3408ms) were below all four A medians
+(10.9254-11.2999ms). Code-only and Find-heavy Preview median scores also
+favored B in both orders. These are means of per-run summary scores, not
+pooled frame percentiles: the unchanged producer exports eight warmup vectors
+and median/p95 scores at sorted indexes 19/37, not 40 raw UI-frame vectors.
+
+Adverse controls are not dismissed as noise or ruled out as regressions.
+Source in ABBA increased by 0.4675ms (+11.00%) in mean median scores and
+0.4158ms in mean p95 scores; editor syntax in BAAB increased by 0.0783ms
+(+24.51%) and 0.0853ms respectively. Other control tails, tessellation and
+microprobe outliers remain in the record. Cold mixed calls overlapped
+(A 61.2623-64.5810ms; B 62.2185-63.6364ms), and ABBA preparation was slightly
+adverse; neither has an established saving. The JSON 200/2,000/4,000-entry
+highlight assertions passed, but mixed-fence fallback status is not exported.
+The target signal supports focused qualification/review, not an unconditional
+whole-application gain, native latency or representative-hardware acceptance.
+There was no third trial or speculative cache/virtualization follow-up.
+
+The matched reports, all 96 scene scores, 24 order/control comparisons and
+91 sealed raw/proof files are retained under
+`target/markdown-header-preparation-artifacts/r2-quiet-20261001-2314/`.
+The measurement-results SHA256 is
+`60527feb6fd57974538df93af55aff8dfcd16eeab9534e85c5bec9312126485f`;
+the raw-file manifest SHA256 is
+`75a44fef7b2cc626c7cecf697df362e97ac5f0f85562466eea880b444bb91e50`.
+The fresh fixture run was verified and its seven inventoried files cleaned
+up only after all planned processes completed; its claims and proofs remain
+and that identity cannot be reused.
+The bounded [public evidence subset](../validation/terminal-performance/README.md#render-local-code-header-caption-matched-evidence)
+contains the original eight profiles and eight fixture proofs, all 96 control
+scores, all 24 order/control statistics and source/executable/fixture hashes.
+It maps every selected raw member back to the immutable result/manifest above;
+the packaging has its own hash and does not rewrite the original JSON.
+
 ## Separating an outline allocation fix from the residual Preview cost
 
 The mixed Markdown Preview investigation found a genuine unnecessary copy:

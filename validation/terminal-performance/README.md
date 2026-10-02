@@ -33,6 +33,39 @@ measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
 There is no timing threshold in ordinary CI.
 
+### Render-local code-header caption: matched evidence
+
+The focused caption follow-up retains the original 12-scene profile and the
+identical navigation prerequisite on both builds. Its one matched ABBA/BAAB
+series uses the same real owned synthetic files, not substituted display
+labels. The [progress record](../../docs/milestone-progress.md#preparing-a-repeated-code-header-caption-without-retaining-document-layout)
+states the mixed Preview signal, adverse controls and qualification limits.
+
+Reviewable public evidence:
+
+- [Original eight profiles and eight physical-fixture proofs](markdown-caption-matched-2026-10-02-profiles.zip):
+  16 byte-identical JSON files in a 35,258-byte standard ZIP.
+- [All 96 control scores](markdown-caption-matched-2026-10-02-scores.csv).
+- [All 24 order/control statistics](markdown-caption-matched-2026-10-02-order-statistics.csv):
+  means of run median/p95 scores, not pooled frame percentiles.
+- [Provenance and SHA256 mapping](markdown-caption-matched-2026-10-02-provenance.json):
+  selected original member hashes, source/executable/fixture identities and
+  mapping to the immutable `60527feb…` measurement result and `75a44fef…`
+  91-file private manifest. Archive SHA256:
+  `6587690bfae5ff3425305d4ca3626a003ed6f49a68bb88ab8ea7d2cc88af1d33`.
+
+The complete producer outputs retain cold calls, preparation, eight warmup
+vectors, tessellation, JSON-fence guards, syntax and long-Unicode microprobes,
+including adverse samples. Actual controlled physical paths remain truthful;
+this is not an anonymization claim. No executables, process environments,
+private inputs, credentials or terminal contents are included. The unchanged
+producer does not export 40 raw steady UI vectors or mixed-fence fallback
+status. Matched input and final shape/vertex counts do not prove pixel/native
+equivalence; native clipboard, screen-reader and usability evidence remains
+manual. The earlier confounded negative comparison is not pooled or
+retrospectively qualified, and these data do not promise a whole-app or native
+performance gain.
+
 ### Residual mixed Preview investigation, 2026-10-01
 
 The exact baseline is CI-repair PR [#286](https://github.com/fes/fesTerm/pull/286),
