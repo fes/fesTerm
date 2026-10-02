@@ -444,6 +444,8 @@ pub(crate) struct TextEditorTab {
     /// only moving the caret.
     #[cfg(test)]
     last_scroll_target: Option<egui::Rect>,
+    #[cfg(test)]
+    outline_heading_storage: Option<usize>,
     /// Whether the body held focus at the end of the last frame. egui
     /// surrenders focus on Escape before a frame begins, so asking about focus
     /// now would make Escape the one key vi mode could never see.
@@ -587,6 +589,8 @@ impl TextEditorTab {
             last_top_offset: 0,
             #[cfg(test)]
             last_scroll_target: None,
+            #[cfg(test)]
+            outline_heading_storage: None,
             vi_focused: false,
             tab: None,
             find: FindState::default(),
@@ -2032,13 +2036,17 @@ impl TextEditorTab {
             MarkdownPreviewPane::new(preview_source(&self.origin_label), &self.buffer)
         });
         pane.sync(ui.ctx(), &self.buffer);
-        let headings = pane.headings().to_vec();
+        let headings = pane.headings();
         let selected = self
             .sync_heading
             .or_else(|| pane.heading_at_byte(self.caret_offset));
+        #[cfg(test)]
+        {
+            self.outline_heading_storage = Some(headings.as_ptr() as usize);
+        }
         let clicked = crate::markdown_viewer::show_markdown_outline(
             ui,
-            &headings,
+            headings,
             selected,
             height,
             "text-editor-outline",
@@ -4163,6 +4171,136 @@ mod tests {
                 .next()
                 .is_some(),
             "every heading is a row the reader can click"
+        );
+    }
+
+    fn in_memory_outline_harness(text: &str) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+        let documents = DocumentRegistry::shared();
+        let document = documents.borrow_mut().create_untitled(
+            "outline",
+            "outline-fixture.md",
+            text.as_bytes(),
+        );
+        let editor = TextEditorTab::new(document, &documents);
+        Harness::builder()
+            .with_size(egui::vec2(1180.0, 420.0))
+            .build_ui_state(
+                |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    let height = ui.available_height();
+                    state.1.show_outline_rail(ui, height);
+                },
+                (documents, editor),
+            )
+    }
+
+    fn assert_outline_borrows_preview(editor: &TextEditorTab, expected_count: usize) {
+        let headings = editor.preview.as_ref().unwrap().headings();
+        assert_eq!(headings.len(), expected_count);
+        assert_eq!(
+            editor.outline_heading_storage,
+            Some(headings.as_ptr() as usize),
+            "the renderer must receive the snapshot's slice, not a per-frame deep copy"
+        );
+    }
+
+    #[test]
+    fn the_editor_outline_borrows_all_headings_and_reaches_the_offscreen_tail() {
+        let text: String = (0..400)
+            .map(|index| {
+                format!(
+                    "## Section {index}\n\nA **synthetic** paragraph with `inline code` and ordinary text.\n\n\
+                     ```rust\nfn example() {{ let value = {index}; }}\n```\n\n\
+                     | Name | Value |\n| --- | --- |\n| Item | {index} |\n\n"
+                )
+            })
+            .collect();
+        let mut harness = in_memory_outline_harness(&text);
+        assert_outline_borrows_preview(&harness.state().1, 400);
+        let first = harness.get_by_label("Heading level 2: Section 0").rect();
+        for _ in 0..3 {
+            harness.run();
+            assert_outline_borrows_preview(&harness.state().1, 400);
+            assert_eq!(
+                harness.get_by_label("Heading level 2: Section 0").rect(),
+                first
+            );
+        }
+        let headings = harness.state().1.preview.as_ref().unwrap().headings();
+        for (index, heading) in headings.iter().enumerate() {
+            assert_eq!(heading.text(), format!("Section {index}"));
+            assert_eq!(
+                heading.section_start_byte(),
+                text.find(&format!("## Section {index}\n")).unwrap()
+            );
+        }
+
+        for _ in 0..20 {
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::PointerMoved(first.center()));
+            harness.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -2000.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            harness.step();
+        }
+        harness.run();
+        let last = harness.get_by_label("Heading level 2: Section 399").rect();
+        assert!(last.top() >= 0.0 && last.bottom() <= 420.0);
+        harness.get_by_label("Heading level 2: Section 399").click();
+        harness.run();
+        let editor = &harness.state().1;
+        assert_outline_borrows_preview(editor, 400);
+        let offset = text.find("## Section 399\n").unwrap();
+        assert_eq!(editor.caret_offset, offset);
+        assert_eq!(editor.vi_caret, Some(offset));
+        assert_eq!(editor.sync_heading, Some(399));
+        assert_eq!(
+            editor.preview.as_ref().unwrap().visible_heading(),
+            Some(399)
+        );
+        assert_eq!(editor.preview.as_ref().unwrap().rendered_text(), text);
+    }
+
+    #[test]
+    fn the_borrowed_editor_outline_follows_a_rebound_document() {
+        let mut harness = in_memory_outline_harness("## Original\n\nbody\n");
+        assert_outline_borrows_preview(&harness.state().1, 1);
+        let replacement = "intro\n\n## Replaced \u{754c}\n\nbody\n";
+        {
+            let (documents, editor) = harness.state_mut();
+            let document = documents.borrow_mut().create_untitled(
+                "replacement",
+                "replacement.md",
+                replacement.as_bytes(),
+            );
+            editor.rebind(document, documents);
+            assert!(editor.preview.is_none());
+        }
+        harness.run();
+        assert_outline_borrows_preview(&harness.state().1, 1);
+        assert!(harness
+            .query_all_by_label("Heading level 2: Original")
+            .next()
+            .is_none());
+        harness
+            .get_by_label("Heading level 2: Replaced \u{754c}")
+            .click();
+        harness.run();
+        let editor = &harness.state().1;
+        let offset = replacement.find("## Replaced").unwrap();
+        assert_eq!(editor.caret_offset, offset);
+        assert_eq!(editor.vi_caret, Some(offset));
+        assert_eq!(
+            editor.preview.as_ref().unwrap().heading_byte(0),
+            Some(offset)
+        );
+        assert_eq!(
+            editor.preview.as_ref().unwrap().rendered_text(),
+            replacement
         );
     }
 

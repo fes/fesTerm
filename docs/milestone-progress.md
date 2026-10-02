@@ -106,6 +106,24 @@ baseline/candidate captures at the same actual scene paths. Fresh ownership,
 matching input/phase proofs and tracked cleanup are required; workers and real
 document generation remain intact. This is not canonical display metadata
 or anonymization, and its validation/matched visual claims remain pending.
+## Separating an outline allocation fix from the residual Preview cost
+
+The mixed Markdown Preview investigation found a genuine unnecessary copy:
+an enabled editor outline cloned every heading's text and anchor every frame
+although its renderer accepted a borrowed slice. Borrowing the current
+snapshot removes those copies, with cold/warm slice-identity, offscreen-tail
+navigation and document-rebind regressions.
+
+Fresh exact-source ABBA/BAAB release measurements also corrected an important
+assumption: the existing 400-section profile uses the constructor's disabled
+outline default, so it does not measure that fix. Its roughly 11–12ms
+unchanged-frame construction cost and inconsistent p95 remain. Separate
+component diagnostics attribute most work to variable-height table and fenced
+code widgets, not heading copies. The allocation fix is therefore reported
+only for enabled outlines; adverse controls, cold calls and the unresolved
+interaction/layout question remain visible in
+[`validation/terminal-performance/README.md`](../validation/terminal-performance/README.md).
+No speculative block virtualization or persistent layout cache was added.
 
 ## Removing repeated query compilation from document loading
 

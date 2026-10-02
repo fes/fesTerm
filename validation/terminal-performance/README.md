@@ -44,6 +44,123 @@ measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
 There is no timing threshold in ordinary CI.
 
+### Residual mixed Preview investigation, 2026-10-01
+
+The exact baseline is CI-repair PR [#286](https://github.com/fes/fesTerm/pull/286),
+`64a45c94846309d7bb657c3751327c31ed31c31b` (unmerged when measured). The
+candidate removes only an unnecessary deep copy when the editor outline is
+**enabled**: its existing renderer now borrows the preview snapshot's heading
+slice. A 400-heading enabled outline avoids one Vec allocation and 800
+nonempty text/anchor String clones per frame. All outline rows, source
+positions, wrapping, and navigation still use the same renderer; there is
+no new document, galley, or height cache.
+
+**The existing mixed Preview profile does not exercise that optimization.**
+`TextEditorTab::new` uses `EditorViewOptions::default`, whose outline is
+`false`. A separate diagnostic build running the unchanged actual profile
+reported `PROFILE_PREVIEW_PATH title=fixture.md mode=Preview outline=false`.
+The earlier assumption that this fixture cloned 400 headings was wrong.
+Neither the default nor the profile was changed to obtain a favorable result.
+The enabled-outline regression does exercise the borrowed path, proves slice
+identity on cold and repeated frames, checks every heading's source position,
+and scrolls to/clicks the final offscreen heading. A separate rebind regression
+proves the next outline uses the replacement snapshot and Unicode source
+offsets, not stale entries. Existing outline, split-sync, debounce, table,
+Find, source, and resource regressions also pass.
+
+Separate release test executables were built before measurement and retained
+with their source patch and SHA256 identities. Eight explicitly waited fresh
+processes ran the unchanged twelve-scene, control-first probe in ABBA then
+BAAB order, with no overlapping build or capture. Each process retains eight
+warmups, 40 measured frames, preparation/first calls, all microprobes, and all
+scene results in
+[`markdown-residual-2026-10-01.json`](markdown-residual-2026-10-01.json).
+This is synthetic UI construction/tessellation, not native input-to-display
+latency, GPU completion, cold-language opening, or smoothness qualification.
+
+The following are ranges of the **two process-level statistics per source in
+each series**, in milliseconds. They are not pooled frame distributions.
+
+| ABBA scene | Baseline UI median | Candidate UI median | Baseline UI p95 | Candidate UI p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Editor syntax | 0.321–0.329 | 0.324–0.345 | 0.356–0.375 | 0.383–0.398 |
+| Editor Find | 0.827–0.847 | 0.831–0.836 | 0.895–0.902 | 0.902–0.936 |
+| SFTP 100 | 0.694–0.695 | 0.686–0.706 | 0.721–0.735 | 0.740–0.824 |
+| SFTP 5,000 | 0.663–0.685 | 0.661–0.662 | 0.722–0.723 | 0.718–0.722 |
+| Mixed Preview 400 | 11.536–11.989 | 11.569–11.805 | 12.850–13.016 | 12.959–13.391 |
+| Source | 4.194–4.275 | 4.309–4.410 | 4.443–4.676 | 4.652–5.039 |
+| Source Find | 5.748–5.798 | 5.798–5.949 | 5.948–6.313 | 6.052–6.489 |
+| Preview Find | 12.465–12.635 | 12.279–13.019 | 14.400–14.479 | 13.714–14.582 |
+| Headings | 0.362–0.379 | 0.369–0.385 | 0.393–0.439 | 0.395–0.403 |
+| Prose | 1.730–1.743 | 1.752–1.794 | 1.773–1.844 | 1.840–1.912 |
+| Code | 3.556–3.603 | 3.583–4.064 | 3.865–3.956 | 3.990–4.571 |
+| Tables | 3.589–3.697 | 3.612–4.403 | 4.433–4.584 | 3.763–5.105 |
+
+| BAAB scene | Baseline UI median | Candidate UI median | Baseline UI p95 | Candidate UI p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Editor syntax | 0.322–0.324 | 0.324–0.325 | 0.374–0.382 | 0.365–0.386 |
+| Editor Find | 0.831–0.843 | 0.843–0.864 | 0.915–1.087 | 0.918–0.950 |
+| SFTP 100 | 0.681–0.693 | 0.687–0.696 | 0.734–0.787 | 0.746–0.779 |
+| SFTP 5,000 | 0.652–0.669 | 0.678–0.678 | 0.705–0.752 | 0.713–0.732 |
+| Mixed Preview 400 | 11.027–12.235 | 11.383–11.524 | 12.957–13.052 | 12.810–13.304 |
+| Source | 4.228–4.274 | 4.294–4.335 | 4.461–4.582 | 4.564–4.580 |
+| Source Find | 5.802–6.038 | 5.812–5.833 | 6.458–6.706 | 6.136–6.234 |
+| Preview Find | 12.474–12.905 | 12.621–13.598 | 14.169–14.963 | 13.855–14.287 |
+| Headings | 0.360–0.362 | 0.371–0.381 | 0.400–0.403 | 0.427–0.427 |
+| Prose | 1.743–1.772 | 1.732–1.772 | 1.786–2.022 | 1.764–1.846 |
+| Code | 3.552–3.605 | 3.691–3.713 | 3.725–3.764 | 3.998–4.020 |
+| Tables | 3.548–3.579 | 3.576–3.851 | 3.800–4.037 | 3.888–4.161 |
+
+There is **no reliable mixed Preview speedup or p95 benefit**. Its first UI
+calls were 64.46–64.94ms baseline / 63.60–64.31ms candidate in ABBA, and
+64.11–65.45ms / 63.98–65.81ms in BAAB; preparation was 2.03–2.22ms across
+the processes. Rust had already been initialized by the editor control.
+Every scene's final shape/vertex counts match; mixed Preview retains 6,076
+shapes and 3,993 vertices. Adverse Source, syntax, SFTP, code, and table
+controls remain in the record. Full tessellation and microprobe results are
+retained, not replaced by only favorable UI medians.
+
+Three separately identified diagnostic processes temporarily instrumented
+the actual renderer. Their forty-frame component medians were:
+
+| Inclusive component | Diagnostic median range, ms/frame | Calls/frame |
+| --- | ---: | ---: |
+| Code blocks | 4.76–5.15 | 400 |
+| Code headers (within code) | 1.43–1.43 | 400 |
+| Highlighted code jobs (within code) | 0.54–0.83 | 400 |
+| Tables | 5.20–6.43 | 400 |
+| Intrinsic cell jobs/layout (within tables) | 0.96–1.81 | 400 tables / 1,600 cells |
+| Final cell galley helper (within tables) | 0.26–0.27 | 1,600 |
+| Prose | 2.31–3.50 | 400 |
+| Headings | 0.68–0.97 | 400 |
+| Inline jobs (within headings/tables) | 0.56–1.49 | 2,000 |
+
+These inclusive/nested intervals cannot be added or treated as a comparison
+with the uninstrumented series. Timer/aggregation overhead and an adverse
+second process are explicit; all raw component frames, warmups, cold costs,
+patches and hashes are retained. Cold code rendering alone cost
+25.87–26.69ms and cold table rendering 11.00–11.58ms, independently of
+document parsing. Temporary tracing was removed before final validation.
+
+**Residual boundary:** all variable-height blocks still build their selectable
+widgets each frame. Table intrinsic/constrained galley reuse is already in
+place; row height comes from the tallest current wrapped cell, not a stale
+previous-frame width. Code language/Copy heads, label layout, child UIs and
+interactions dominate over merely creating highlighted jobs. Component cost
+alone does not prove those interactions are unnecessary or justify a height,
+galley or whole-block cache. The next focused profiling question is which
+code-header/table-body child-layout, interaction registration or galley-cache
+lookup work can be reused while preserving widget identity, selection,
+accessibility, live widths and font/scale invalidation. No content was skipped,
+highlighting dropped, or speculative virtualization added. The enabled-outline
+allocation fix does **not** resolve this residual bottleneck.
+
+An initial direct executable invocation produced empty logs and no profiles;
+its exit codes were not sufficient to validate it. That rejected attempt is
+recorded separately, with no timings accepted. The valid series used
+`Start-Process -NoNewWindow -Wait -PassThru` and required both a zero exit and
+the actual `profile.json`.
+
 The v0.7.1 follow-up used the same Windows x64, 16-logical-processor EPYC host.
 An original/candidate/candidate/original sequence, with each process explicitly
 waited for and no overlapping benchmark/build, produced these ranges of the
