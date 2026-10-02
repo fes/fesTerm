@@ -2536,6 +2536,7 @@ impl FesTermApp {
         const TOGGLE_MARKDOWN_OUTLINE: u64 = 21;
         const OPEN_SFTP_FILE_MANAGER: u64 = 22;
         const SAVE_TERMINAL_HISTORY_AS: u64 = 24;
+        const REDRAW_TERMINAL: u64 = 25;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -2653,6 +2654,15 @@ impl FesTermApp {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
                     hint: binding_label(A::ResetTerminal),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: REDRAW_TERMINAL,
+                    label: "Redraw Terminal".to_owned(),
+                    hint: Some(
+                        "Repaint every visible region locally without sending input".to_owned(),
+                    ),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2843,6 +2853,11 @@ impl FesTermApp {
             24 => self
                 .state
                 .dispatch(AppCommand::SaveTerminalHistoryAs, context),
+            25 => {
+                self.state
+                    .dispatch(AppCommand::RedrawTerminal(self.state.active()), context);
+                self.restore_active_terminal_focus();
+            }
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -3651,6 +3666,8 @@ impl FesTermApp {
     }
 
     fn show_about(&mut self, context: &egui::Context, escape: bool) {
+        use festerm_ui_egui::controls::{action_button, action_button_sized, ActionButtonRole};
+
         if !self.overlays.about_open {
             return;
         }
@@ -3674,13 +3691,27 @@ impl FesTermApp {
         let installation_kind = self.updates.installation_kind();
         let automatic_update_checks =
             self.state.automatic_update_checks() && installation_kind.can_install();
-        let width = (context.content_rect().width() - 32.0).clamp(280.0, 420.0);
+        let frame =
+            egui::Frame::popup(&context.global_style()).inner_margin(egui::Margin::same(14));
+        let size = festerm_ui_egui::controls::modal_content_size(
+            context.content_rect().size(),
+            &frame,
+            egui::vec2(420.0, 600.0),
+        );
         egui::Modal::new(egui::Id::new("fesTerm about dialog"))
+            .frame(frame)
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
-                ui.set_width(width);
+                ui.set_width(size.x);
+                ui.set_max_height(size.y);
+                ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("About fesTerm");
                 ui.add_space(6.0);
+                let footer_height = 56.0 + 3.0 * ui.spacing().item_spacing.y;
+                egui::ScrollArea::vertical()
+                    .id_salt("about_dialog_content")
+                    .max_height((ui.available_height() - footer_height).max(0.0))
+                    .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(about_icon) = &self.about_icon {
                         ui.add(
@@ -3728,7 +3759,7 @@ impl FesTermApp {
                         ui.label(*message);
                     }
                     UpdateStatus::Idle => {
-                        if ui.button("Check for Updates").clicked() {
+                        if action_button(ui, ActionButtonRole::Secondary, "Check for Updates").clicked() {
                             update_action = Some(UpdateAction::Check);
                         }
                     }
@@ -3740,7 +3771,7 @@ impl FesTermApp {
                     }
                     UpdateStatus::Current => {
                         ui.label("fesTerm is up to date.");
-                        if ui.button("Check Again").clicked() {
+                        if action_button(ui, ActionButtonRole::Secondary, "Check Again").clicked() {
                             update_action = Some(UpdateAction::Check);
                         }
                     }
@@ -3757,7 +3788,7 @@ impl FesTermApp {
                             }
                         }
                         if installation_kind.can_install() {
-                            if ui.button("Download Update").clicked() {
+                            if action_button(ui, ActionButtonRole::Accent, "Download Update").clicked() {
                                 update_action = Some(UpdateAction::Download);
                             }
                         } else {
@@ -3784,7 +3815,7 @@ impl FesTermApp {
                             "fesTerm {} is downloaded and verified.",
                             summary.version
                         ));
-                        if ui.button("Install and Restart").clicked() {
+                        if action_button(ui, ActionButtonRole::Accent, "Install and Restart").clicked() {
                             update_action = Some(UpdateAction::Install);
                         }
                     }
@@ -3805,7 +3836,7 @@ impl FesTermApp {
                         retry_check,
                     } => {
                         ui.colored_label(theme::STATUS_ERROR, *message);
-                        if *retry_check && ui.button("Try Again").clicked() {
+                        if *retry_check && action_button(ui, ActionButtonRole::Secondary, "Try Again").clicked() {
                             update_action = Some(UpdateAction::Check);
                         }
                     }
@@ -3848,19 +3879,39 @@ impl FesTermApp {
                             );
                         });
                 }
-                ui.horizontal(|ui| {
-                    if ui.button("Copy Version Information").clicked() {
-                        context.copy_text(Self::version_information());
+                    });
+                ui.add_space(ui.spacing().item_spacing.y);
+                let copy_size = egui::vec2(ui.available_width(), 28.0);
+                if action_button_sized(
+                    ui,
+                    copy_size,
+                    ActionButtonRole::Secondary,
+                    "Copy Version Information",
+                ).clicked() {
+                    context.copy_text(Self::version_information());
+                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 28.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                    if action_button_sized(
+                        ui,
+                        egui::vec2(80.0, 28.0),
+                        ActionButtonRole::Accent,
+                        "Close",
+                    ).clicked() {
+                        close = true;
                     }
                     if self.overlays.about_licenses_open {
-                        if ui.button("Hide Licenses").clicked() {
+                        if action_button(
+                            ui,
+                            ActionButtonRole::Secondary,
+                            "Hide Licenses",
+                        ).clicked() {
                             self.overlays.about_licenses_open = false;
                         }
-                    } else if ui.button("Licenses").clicked() {
+                    } else if action_button(ui, ActionButtonRole::Secondary, "Licenses").clicked() {
                         self.overlays.about_licenses_open = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
                     }
                 });
             });
@@ -4094,26 +4145,28 @@ impl FesTermApp {
             .is_some_and(|open| open.text().is_dirty())
     }
 
-    fn show_save_as_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+    fn show_save_as_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
         let Some(picker) = self.overlays.save_as_picker.as_mut() else {
             return;
         };
         picker.poll();
-        let width = (content_rect.width() - 32.0).clamp(420.0, 700.0);
-        let height = (content_rect.height() - 24.0).clamp(360.0, 600.0);
         let mut outcome = None;
-        egui::Modal::new(egui::Id::new("text_editor_save_as")).show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_width(width);
-                    ui.set_max_width(width);
-                    ui.set_max_height(height);
-                    ui.heading("Save As");
-                    ui.add_space(6.0);
-                    outcome = Some(picker.ui(ui));
-                });
-        });
+        let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(14));
+        let size = festerm_ui_egui::controls::modal_content_size(
+            ctx.content_rect().size(),
+            &frame,
+            egui::vec2(700.0, 600.0),
+        );
+        egui::Modal::new(egui::Id::new("text_editor_save_as"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(size.x);
+                ui.set_height(size.y);
+                ui.spacing_mut().interact_size.y = 28.0;
+                ui.heading("Save As");
+                ui.add_space(6.0);
+                outcome = Some(picker.ui(ui));
+            });
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path }) => {
                 self.close_save_as_picker(ctx);
@@ -4139,26 +4192,34 @@ impl FesTermApp {
         }
     }
 
-    fn show_markdown_file_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+    fn show_markdown_file_picker(&mut self, ctx: &egui::Context, _content_rect: egui::Rect) {
         let Some(picker) = self.overlays.markdown_file_picker.as_mut() else {
             return;
         };
         picker.poll();
-        let width = (content_rect.width() - 32.0).clamp(420.0, 640.0);
-        let height = (content_rect.height() - 24.0).clamp(360.0, 560.0);
         let mut outcome = None;
-        egui::Modal::new(egui::Id::new("markdown_file_picker")).show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_width(width);
-                    ui.set_max_width(width);
-                    ui.set_max_height(height);
-                    ui.heading("Open File");
-                    ui.add_space(6.0);
-                    outcome = Some(picker.ui(ui));
-                });
-        });
+        let margin = if ctx.content_rect().height() < 360.0 {
+            8
+        } else {
+            14
+        };
+        let frame =
+            egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(margin));
+        let size = festerm_ui_egui::controls::modal_content_size(
+            ctx.content_rect().size(),
+            &frame,
+            egui::vec2(640.0, 560.0),
+        );
+        egui::Modal::new(egui::Id::new("markdown_file_picker"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(size.x);
+                ui.set_height(size.y);
+                ui.spacing_mut().interact_size.y = 28.0;
+                ui.heading("Open File");
+                ui.add_space(6.0);
+                outcome = Some(picker.ui(ui));
+            });
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
                 self.remember_markdown_file_picker_directory();
@@ -6312,6 +6373,152 @@ impl FesTermApp {
         self.state.dispatch(command, context);
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_about_for_gallery(
+        &mut self,
+        licenses: bool,
+        updates: UpdateController,
+        context: &egui::Context,
+    ) {
+        self.updates = updates;
+        self.dispatch_chrome_actions(vec![ChromeAction::OpenAbout], context);
+        self.overlays.about_licenses_open = licenses;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_about_icon_for_gallery(&mut self, context: &egui::Context) {
+        self.about_icon = Some(load_application_icon(context));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_palette_for_gallery(&mut self, context: &egui::Context) {
+        self.dispatch_chrome_actions(vec![ChromeAction::TogglePalette], context);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_file_picker_for_gallery(
+        &mut self,
+        directory: std::path::PathBuf,
+        context: &egui::Context,
+    ) {
+        // A missing fixture directory intentionally exercises the real worker's
+        // error path, rather than falling back to the user's home directory.
+        self.overlays.markdown_file_picker =
+            Some(MarkdownFilePicker::new(directory, context.clone()));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_save_as_for_gallery(
+        &mut self,
+        source: std::path::PathBuf,
+        directory: std::path::PathBuf,
+        name: String,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::OpenTextEditor { path: source }, context);
+        assert!(self.state.active_document().is_some());
+        self.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+            directory,
+            name,
+            context.clone(),
+        ));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn request_paste_for_gallery(&mut self, text: String, context: &egui::Context) {
+        self.handle_paste_request(self.state.active(), text, None, context);
+        assert!(self.overlays.pending_paste.is_some());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn paste_preview_for_gallery(&self) -> (String, usize, usize) {
+        bounded_paste_preview(
+            &self
+                .overlays
+                .pending_paste
+                .as_ref()
+                .expect("gallery paste confirmation")
+                .text,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_document_dirty_for_gallery(&self) -> bool {
+        self.active_editor_still_dirty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_terminal_title_for_gallery(&mut self, title: &str) {
+        let tab = self.state.active();
+        self.state
+            .session_tab_mut(tab)
+            .expect("gallery session")
+            .terminal
+            .ingest(format!("\x1b]0;{title}\x07").as_bytes());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn palette_identity_for_gallery(&self) -> String {
+        let TabContent::Session(session) = &self.state.active_tab().content else {
+            panic!("gallery palette session");
+        };
+        let item = self
+            .palette_items()
+            .into_iter()
+            .find(|item| item.is_tab && item.label == session.label)
+            .expect("real palette session item");
+        format!(
+            "{}  —  {}, {}",
+            item.label,
+            item.hint.expect("synthetic secondary metadata"),
+            item.shortcut_label.expect("configured quick-tab shortcut"),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dirty_document_close_for_gallery(
+        &mut self,
+        path: std::path::PathBuf,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::OpenTextEditor { path }, context);
+        let documents = self.state.documents().clone();
+        let TabContent::TextEditor(editor) = &mut self.state.active_tab_mut().content else {
+            panic!("gallery document must open in the real editor");
+        };
+        editor.set_mode_for_gallery(crate::text_editor::EditorMode::Edit);
+        editor.type_for_gallery(&documents, "\nSynthetic unsaved change.\n");
+        self.request_active_tab_close_for_gallery(context);
+        assert!(self.overlays.pending_document_close.is_some());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn configure_session_for_gallery(
+        &mut self,
+        read_only: bool,
+        context: &egui::Context,
+    ) {
+        let tab = self.state.active();
+        let session = self.state.session_tab_mut(tab).expect("fixture session");
+        session.label = "Synthetic SSH".into();
+        session
+            .terminal
+            .ingest(b"Synthetic session history.\r\nfixture$ ");
+        if read_only {
+            session
+                .controller
+                .set_lifecycle_for_test(festerm_session::SessionLifecycle::Exited(
+                    festerm_session::SessionExit::with_exit_code(0),
+                ));
+        }
+        if !self.state.interface_settings().confirm_session_close() {
+            self.state
+                .dispatch(AppCommand::ToggleConfirmSessionClose, context);
+        }
+    }
+
     pub(crate) fn request_active_tab_close_for_gallery(&mut self, context: &egui::Context) {
         let active = self.state.active();
         self.request_close_tab(active, context);
@@ -7957,6 +8164,684 @@ mod tests {
         assert_eq!(confirmation_width(360.0, 440.0), 328.0);
         assert_eq!(confirmation_width(360.0, 360.0), 328.0);
         assert_eq!(confirmation_width(900.0, 440.0), 440.0);
+    }
+
+    fn dialog_style_sizes() -> [egui::Vec2; 3] {
+        [
+            egui::vec2(752.0, 516.0),
+            egui::vec2(360.0, 516.0),
+            egui::vec2(360.0, 240.0),
+        ]
+    }
+
+    fn dialog_style_harness(app: FesTermApp, size: egui::Vec2) -> Harness<'static, FesTermApp> {
+        let mut harness = Harness::builder()
+            .with_size(size)
+            .with_max_steps(16)
+            .build_ui_state(
+                |ui, app: &mut FesTermApp| {
+                    let rect = ui.ctx().content_rect();
+                    let mut root = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt("dialog_style_full_root")
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    root.set_clip_rect(rect);
+                    app.ui_content(&mut root);
+                },
+                app,
+            );
+        harness.ctx.set_theme(egui::ThemePreference::Dark);
+        harness.ctx.set_visuals(theme::default_visuals());
+        harness
+            .ctx
+            .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+        harness.run_steps(4);
+        harness
+    }
+
+    fn assert_style_modal_inside_root(harness: &Harness<'_, FesTermApp>, id: &str) {
+        let root = harness.ctx.content_rect();
+        let modal = harness
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::new(id)))
+            .expect("the modal is present");
+        assert!(
+            root.contains_rect(modal),
+            "{id}: {modal:?} outside {root:?}"
+        );
+    }
+
+    fn assert_style_action_inside_root(harness: &Harness<'_, FesTermApp>, label: &str) {
+        let action = harness
+            .query_all_by_label(label)
+            .last()
+            .expect("the modal action is present")
+            .rect();
+        assert!(
+            harness.ctx.content_rect().contains_rect(action),
+            "{label}: {action:?}"
+        );
+        assert!(
+            action.height() >= 24.0 && action.width() >= 24.0,
+            "{label}: {action:?}"
+        );
+        let (clip, text_rect) = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                (text.galley.job.text == label).then_some((
+                    shape.clip_rect,
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                ))
+            })
+            .next_back()
+            .expect("the action label is painted");
+        let visible = action.intersect(clip);
+        assert!(
+            clip.contains_rect(text_rect),
+            "{label}: text clipped by {clip:?}"
+        );
+        assert!(clip.contains(action.center()));
+        assert!(
+            visible.width() >= 24.0 && visible.height() >= 24.0,
+            "{label}: {action:?} loses its minimum visible click target to {clip:?}"
+        );
+    }
+
+    fn assert_style_modal_action(harness: &Harness<'_, FesTermApp>, modal: &str, label: &str) {
+        assert_style_action_inside_root(harness, label);
+        let area = harness
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::new(modal)))
+            .unwrap();
+        let text_rect = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                (text.galley.job.text == label)
+                    .then_some(text.galley.rect.translate(text.pos.to_vec2()))
+            })
+            .next_back()
+            .unwrap();
+        let action = harness
+            .query_all_by_label(label)
+            .find(|node| node.rect().contains(text_rect.center()) && node.rect().height() >= 24.0)
+            .expect("the painted action belongs to its accessible modal control");
+        assert!(
+            area.contains_rect(action.rect()),
+            "{label}: {:?}",
+            action.rect()
+        );
+        if label == "Save" && modal == "text_editor_save_as" {
+            let response = harness
+                .ctx
+                .read_response(egui::Id::new("save_as_save"))
+                .expect("the Save As widget response is present");
+            let filename = harness
+                .ctx
+                .read_response(egui::Id::new("save_as_file_name"))
+                .unwrap();
+            assert_eq!(response.layer_id, filename.layer_id);
+            assert_eq!(response.rect, action.rect());
+            assert!(area.contains_rect(response.interact_rect));
+            assert!(response.interact_rect.width() >= 24.0);
+            assert!(response.interact_rect.height() >= 24.0);
+        }
+    }
+
+    #[test]
+    fn about_actions_stay_inside_the_full_root_with_licenses_and_update_disclosures() {
+        for size in dialog_style_sizes() {
+            for packaged in [false, true] {
+                let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+                app.overlays.about_open = true;
+                app.overlays.about_licenses_open = true;
+                if packaged {
+                    app.updates = UpdateController::ready_to_install_for_test();
+                }
+                let mut harness = dialog_style_harness(app, size);
+                assert_style_modal_inside_root(&harness, "fesTerm about dialog");
+                for label in ["Copy Version Information", "Hide Licenses", "Close"] {
+                    assert_style_action_inside_root(&harness, label);
+                }
+                harness.get_by_label(AI_AUTHORSHIP_SUMMARY);
+                harness.get_by_label(AI_AUTHORSHIP_DETAIL);
+                harness.get_by_label_contains("Crash reports and logs are not uploaded.");
+                if packaged {
+                    harness.get_by_label_contains(
+                        "No profile, session, terminal, device, or configuration data is sent.",
+                    );
+                    harness.get_by_label("Install and Restart");
+                } else {
+                    assert!(harness.query_by_label("Check for Updates").is_none());
+                }
+                harness.query_all_by_label("Close").last().unwrap().click();
+                harness.step();
+                assert!(!harness.state().overlays.about_open);
+                assert!(!harness.state().overlays.about_licenses_open);
+            }
+        }
+    }
+
+    #[test]
+    fn safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets() {
+        for size in dialog_style_sizes() {
+            for purpose in ["close", "paste", "update", "reset"] {
+                let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                let context = egui::Context::default();
+                app.state.dispatch(
+                    AppCommand::RenameTab(
+                        tab,
+                        "synthetic-staging-with-a-long-stable-identity".to_owned(),
+                    ),
+                    &context,
+                );
+                let (modal, confirm) = match purpose {
+                    "close" => {
+                        set_confirm_session_close(&mut app, &context, true);
+                        app.request_close_tab(tab, &context);
+                        ("close_session_confirmation", "Close Session")
+                    }
+                    "paste" => {
+                        let text = "printf 'owned Unicode λ fixture'\n".repeat(200);
+                        app.handle_paste_request(tab, text, None, &context);
+                        ("paste_confirmation", "Paste")
+                    }
+                    "update" => {
+                        app.updates = UpdateController::ready_to_install_for_test();
+                        app.request_update_install();
+                        ("quit_confirmation", "Install and Restart")
+                    }
+                    "reset" => {
+                        app.state.dispatch(AppCommand::ToggleChipLayout, &context);
+                        app.request_reset_interface_settings(&context);
+                        ("reset_interface_settings_confirmation", "Reset")
+                    }
+                    _ => unreachable!(),
+                };
+                let mut harness = dialog_style_harness(app, size);
+                assert_style_modal_inside_root(&harness, modal);
+                assert_style_action_inside_root(&harness, "Cancel");
+                assert_style_action_inside_root(&harness, confirm);
+                assert!(harness.get_by_label("Cancel").is_focused());
+                let before = transport.sent();
+                let selection = harness
+                    .state()
+                    .state
+                    .session_tab(tab)
+                    .unwrap()
+                    .view
+                    .selection()
+                    .clone();
+
+                let outside = egui::pos2(2.0, 2.0);
+                harness.event(egui::Event::PointerMoved(outside));
+                harness.event(egui::Event::PointerButton {
+                    pos: outside,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.event(egui::Event::PointerButton {
+                    pos: outside,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.step();
+                assert!(
+                    harness.state().overlays.blocks_terminal_input(),
+                    "outside clicks do not dismiss a safety decision"
+                );
+                harness.key_press(egui::Key::Enter);
+                harness.step();
+                assert!(harness.state().state.session_tab(tab).is_some());
+                assert!(!harness.state().quit_confirmed);
+                assert!(!harness.state().update_restart_authorized);
+                assert_eq!(transport.sent(), before);
+                assert_eq!(
+                    harness
+                        .state()
+                        .state
+                        .session_tab(tab)
+                        .unwrap()
+                        .view
+                        .selection(),
+                    &selection
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_confirmation_layout_preserves_escape_and_stale_generation_safety() {
+        for paste in [false, true] {
+            for stale in [false, true] {
+                let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                let context = egui::Context::default();
+                if paste {
+                    app.handle_paste_request(
+                        tab,
+                        "owned first\nowned second\n".repeat(200),
+                        None,
+                        &context,
+                    );
+                } else {
+                    set_confirm_session_close(&mut app, &context, true);
+                    app.request_close_tab(tab, &context);
+                }
+                let mut harness = dialog_style_harness(app, egui::vec2(360.0, 240.0));
+                let before = transport.sent();
+                if stale {
+                    harness
+                        .state_mut()
+                        .state
+                        .session_tab_mut(tab)
+                        .unwrap()
+                        .controller
+                        .advance_lifecycle_generation();
+                } else {
+                    harness.key_press(egui::Key::Escape);
+                }
+                harness.step();
+                assert!(harness.state().overlays.pending_close.is_none());
+                assert!(harness.state().overlays.pending_paste.is_none());
+                assert_eq!(harness.state().state.active(), tab);
+                assert_eq!(transport.sent(), before);
+                harness.event(egui::Event::Text("z".to_owned()));
+                harness.run_steps(2);
+                assert_eq!(
+                    transport.sent().concat(),
+                    b"z",
+                    "viable terminal focus must return without an extra click"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dirty_document_confirmation_wraps_actions_without_changing_the_save_default() {
+        for size in dialog_style_sizes() {
+            let (mut app, terminal, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+            let context = egui::Context::default();
+            app.state
+                .session_tab_mut(terminal)
+                .unwrap()
+                .terminal
+                .ingest(b"owned history snapshot\r\n");
+            app.state
+                .dispatch(AppCommand::OpenTerminalHistoryInEditor, &context);
+            let editor = app.state.active();
+            let document = app.state.active_document().unwrap();
+            app.request_close_tab(editor, &context);
+            let mut harness = dialog_style_harness(app, size);
+            assert_style_modal_inside_root(&harness, "document_close_confirmation");
+            assert_style_action_inside_root(&harness, "Cancel");
+            assert_style_action_inside_root(&harness, "Discard changes");
+            let save = harness
+                .query_all_by_label("Save")
+                .find(|save| save.is_focused())
+                .expect("Save remains the default");
+            assert!(harness.ctx.content_rect().contains_rect(save.rect()));
+            assert!(save.rect().height() >= 24.0);
+            harness.key_press(egui::Key::Escape);
+            harness.step();
+            assert!(harness.state().overlays.pending_document_close.is_none());
+            assert_eq!(harness.state().state.active(), editor);
+            assert!(harness
+                .state()
+                .state
+                .documents()
+                .borrow()
+                .get(document)
+                .unwrap()
+                .text()
+                .is_dirty());
+            assert!(transport.sent().is_empty());
+        }
+    }
+
+    struct DialogStyleFixture(PathBuf);
+
+    impl DialogStyleFixture {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let directory = std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join("ui-style-fixtures")
+                .join(format!(
+                    "style-{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ))
+                .join("synthetic-project-with-a-long-directory-name");
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("NOTES.md"), "# Owned fixture\n").unwrap();
+            Self(directory)
+        }
+    }
+
+    impl Drop for DialogStyleFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(self.0.parent().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn save_as_nested_panels_preserve_the_short_sheet_paint_clip() {
+        let fixture = DialogStyleFixture::new();
+        let source = fixture.0.join("SOURCE.md");
+        fs::write(&source, "# Synthetic source\n").unwrap();
+        for size in dialog_style_sizes() {
+            for show_details in [false, true] {
+                let (mut app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                let context = egui::Context::default();
+                if show_details {
+                    app.state
+                        .dispatch(AppCommand::ToggleShowSessionDetails, &context);
+                }
+                app.open_save_as_for_gallery(
+                    source.clone(),
+                    fixture.0.clone(),
+                    "NOTES.md".to_owned(),
+                    &context,
+                );
+                let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
+                for _ in 0..200 {
+                    harness.step();
+                    if harness.query_by_label("NOTES.md").is_some() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                harness.get_by_label("NOTES.md");
+                harness.set_size(size);
+                harness.run_steps(3);
+                let area = harness
+                    .ctx
+                    .memory(|memory| memory.area_rect(egui::Id::new("text_editor_save_as")))
+                    .unwrap();
+                let name = harness.get_by_role_and_label(accesskit::Role::TextInput, "File name");
+                assert!(
+                    area.contains_rect(name.rect()),
+                    "{size:?}: {:?}",
+                    name.rect()
+                );
+                assert_style_modal_action(&harness, "text_editor_save_as", "Save");
+                assert_style_modal_action(&harness, "text_editor_save_as", "Cancel");
+                let mut table_text_seen = false;
+                for shape in &harness.output().shapes {
+                    let egui::Shape::Text(text) = &shape.shape else {
+                        continue;
+                    };
+                    if !["Name", "Size", "Modified", "NOTES.md"]
+                        .contains(&text.galley.job.text.as_str())
+                    {
+                        continue;
+                    }
+                    table_text_seen = true;
+                    let visible = shape
+                        .clip_rect
+                        .intersect(harness.ctx.content_rect())
+                        .intersect(text.galley.rect.translate(text.pos.to_vec2()));
+                    assert!(
+                        !visible.is_positive() || area.contains_rect(visible),
+                        "{size:?}, details={show_details}: {} paints {visible:?} outside {area:?}",
+                        text.galley.job.text
+                    );
+                }
+                assert!(table_text_seen);
+                assert!(transport.sent().is_empty());
+                assert_eq!(fs::read_to_string(&source).unwrap(), "# Synthetic source\n");
+                assert_eq!(
+                    fs::read_to_string(fixture.0.join("NOTES.md")).unwrap(),
+                    "# Owned fixture\n"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deep_open_picker_keeps_initial_path_and_filter_visible_without_losing_ancestors() {
+        let fixture = DialogStyleFixture::new();
+        let directory = fixture
+            .0
+            .join("documentation")
+            .join("architecture")
+            .join("decisions")
+            .join("release-review");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("NOTES.md"), "# Owned deep fixture\n").unwrap();
+        for size in dialog_style_sizes() {
+            for show_details in [false, true] {
+                for missing in [false, true] {
+                    let target = if missing {
+                        directory.join("missing-owned-folder")
+                    } else {
+                        directory.clone()
+                    };
+                    let ancestors = crate::sftp_file_manager::breadcrumb_segments(
+                        &festerm_ssh::SftpPath::local(&target),
+                    );
+                    let (mut app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+                    if show_details {
+                        app.state.dispatch(
+                            AppCommand::ToggleShowSessionDetails,
+                            &egui::Context::default(),
+                        );
+                    }
+                    app.overlays.markdown_file_picker =
+                        Some(MarkdownFilePicker::new(target, egui::Context::default()));
+                    let mut harness = dialog_style_harness(app, egui::vec2(752.0, 516.0));
+                    let expected = if missing {
+                        "Could not load the folder."
+                    } else {
+                        "NOTES.md"
+                    };
+                    for _ in 0..200 {
+                        harness.step();
+                        if harness.query_by_label(expected).is_some() {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    harness.get_by_label(expected);
+                    harness.set_size(size);
+                    harness.run_steps(3);
+                    let path = harness
+                        .get_by_role_and_label(accesskit::Role::TextInput, "File or folder path");
+                    assert!(harness.ctx.content_rect().contains_rect(path.rect()));
+                    let area = harness
+                        .ctx
+                        .memory(|memory| memory.area_rect(egui::Id::new("markdown_file_picker")))
+                        .unwrap();
+                    assert!(path.rect().top() <= area.top() + 128.0,
+                "deep breadcrumbs must not push the initial path field below the toolbar: {:?} in {area:?}",
+                path.rect());
+                    assert_eq!(
+                        harness
+                            .query_all_by_role(accesskit::Role::TextInput)
+                            .count(),
+                        2
+                    );
+                    let fields = harness
+                        .query_all_by_role(accesskit::Role::TextInput)
+                        .map(|field| field.rect())
+                        .collect::<Vec<_>>();
+                    for field in fields {
+                        assert!(area.contains_rect(field), "{size:?}: {:?}", field);
+                        {
+                            let position = field.center();
+                            harness.event(egui::Event::PointerMoved(position));
+                            for pressed in [true, false] {
+                                harness.event(egui::Event::PointerButton {
+                                    pos: position,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                });
+                            }
+                            harness.run_steps(2);
+                            assert!(
+                                harness
+                                    .query_all_by_role(accesskit::Role::TextInput)
+                                    .find(|node| node.rect() == field)
+                                    .unwrap()
+                                    .is_focused(),
+                                "{size:?}: the existing input does not accept pointer focus at {position:?}"
+                            );
+                        }
+                    }
+                    assert_style_modal_inside_root(&harness, "markdown_file_picker");
+                    assert_style_modal_action(&harness, "markdown_file_picker", "Cancel");
+                    if missing {
+                        let (clip, text_rect) = harness
+                            .output()
+                            .shapes
+                            .iter()
+                            .find_map(|shape| {
+                                let egui::Shape::Text(text) = &shape.shape else {
+                                    return None;
+                                };
+                                (text.galley.job.text == expected).then_some((
+                                    shape.clip_rect,
+                                    text.galley.rect.translate(text.pos.to_vec2()),
+                                ))
+                            })
+                            .expect("the initial folder error is painted");
+                        assert!(
+                            clip.contains_rect(text_rect),
+                            "{size:?}: error clipped by {clip:?}"
+                        );
+                        assert!(area.contains_rect(text_rect));
+                    }
+                    if size == egui::vec2(360.0, 516.0) {
+                        harness.get_by_label(&ancestors.last().unwrap().label);
+                        harness
+                            .get_by_label(&ancestors.last().unwrap().label)
+                            .hover();
+                        harness.event(egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(if missing { 260.0 } else { 120.0 }, 0.0),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                        harness.run_steps(30);
+                        let ancestor = harness.get_by_label("architecture");
+                        assert!(harness
+                            .ctx
+                            .content_rect()
+                            .contains(ancestor.rect().center()));
+                        ancestor.click();
+                        harness.step();
+                        assert_eq!(
+                            harness
+                                .state()
+                                .overlays
+                                .markdown_file_picker
+                                .as_ref()
+                                .unwrap()
+                                .current_directory(),
+                            Some(directory.parent().unwrap().parent().unwrap().to_path_buf())
+                        );
+                    }
+                    assert!(transport.sent().is_empty());
+                    assert_eq!(
+                        fs::read_to_string(directory.join("NOTES.md")).unwrap(),
+                        "# Owned deep fixture\n"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting() {
+        let fixture = DialogStyleFixture::new();
+        for size in dialog_style_sizes() {
+            for show_details in [false, true] {
+                for save_as in [false, true] {
+                    for missing in [false, true] {
+                        let (mut app, tab, transport) =
+                            FesTermApp::for_test_with_fake_ssh_session([]);
+                        let directory = if missing {
+                            fixture
+                                .0
+                                .join("missing-owned-folder-with-an-actionable-error")
+                        } else {
+                            fixture.0.clone()
+                        };
+                        let context = egui::Context::default();
+                        if show_details {
+                            app.state
+                                .dispatch(AppCommand::ToggleShowSessionDetails, &context);
+                        }
+                        let modal = if save_as {
+                            app.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+                                directory,
+                                "NOTES.md".to_owned(),
+                                context,
+                            ));
+                            "text_editor_save_as"
+                        } else {
+                            app.overlays.markdown_file_picker =
+                                Some(MarkdownFilePicker::new(directory, context));
+                            "markdown_file_picker"
+                        };
+                        let mut harness = dialog_style_harness(app, size);
+                        let expected = if missing {
+                            "Could not load the folder."
+                        } else {
+                            "NOTES.md"
+                        };
+                        for _ in 0..200 {
+                            harness.step();
+                            if harness.query_by_label(expected).is_some() {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        harness.get_by_label(expected);
+                        assert_style_modal_inside_root(&harness, modal);
+                        assert_style_modal_action(&harness, modal, "Cancel");
+                        let cancel_rect = harness.get_by_label("Cancel").rect();
+                        harness.get_by_label("Cancel").click();
+                        harness.step();
+                        assert!(harness.state().overlays.save_as_picker.is_none());
+                        assert!(
+                            harness.state().overlays.markdown_file_picker.is_none(),
+                            "{size:?}, details={show_details}, missing={missing}, cancel={cancel_rect:?}, modal={:?}, cancel text shapes={:?}",
+                            harness.ctx.memory(|memory| memory.area_rect(egui::Id::new(modal))),
+                            harness.output().shapes.iter().filter_map(|shape| {
+                                let egui::Shape::Text(text) = &shape.shape else { return None; };
+                                (text.galley.job.text == "Cancel").then_some((shape.clip_rect, text.pos))
+                            }).collect::<Vec<_>>()
+                        );
+                        assert_eq!(harness.state().state.active(), tab);
+                        assert!(transport.sent().is_empty());
+                        assert_eq!(
+                            fs::read_to_string(fixture.0.join("NOTES.md")).unwrap(),
+                            "# Owned fixture\n"
+                        );
+                        harness.event(egui::Event::Text("z".to_owned()));
+                        harness.run_steps(2);
+                        assert_eq!(transport.sent().concat(), b"z");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -10431,6 +11316,106 @@ mod tests {
         keyboard_clipboard_reply(&context, token, "controlled-palette");
         harness.run();
         assert_eq!(transport.sent().concat(), b"controlled-palette");
+    }
+
+    #[test]
+    fn redraw_terminal_palette_command_is_local_unbound_and_preserves_tui_keys() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let item = harness
+            .state()
+            .palette_items()
+            .into_iter()
+            .find(|item| item.label == "Redraw Terminal")
+            .expect("terminal palette offers redraw");
+        assert_eq!(item.shortcut_label, None);
+        let active = harness.state().state.active();
+        {
+            let session = harness.state_mut().state.session_tab_mut(active).unwrap();
+            session.terminal.ingest(b"\x1b[?1049h\x1b[1;31mTUI content");
+        }
+        harness.run();
+        let before = harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .terminal
+            .clone();
+        let resizes = harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .controller
+            .resize_probe()
+            .generations();
+        let selection = harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .view
+            .selection()
+            .clone();
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::P,
+        );
+        harness.run();
+        harness.event(egui::Event::Text("Redraw Terminal".to_owned()));
+        harness.run();
+        harness.get_by_label_contains("Redraw Terminal").click();
+        harness.run();
+        assert!(!harness.state().palette.is_open());
+        let session = harness.state_mut().state.session_tab_mut(active).unwrap();
+        assert_eq!(session.terminal, before);
+        assert_eq!(session.view.selection(), &selection);
+        assert_eq!(session.controller.resize_probe().generations(), resizes);
+        assert!(transport.sent().is_empty(), "redraw sends no TUI input");
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::R);
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"\x0c\x12");
+
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(active)
+            .unwrap()
+            .controller
+            .set_lifecycle_for_test(festerm_session::SessionLifecycle::Exited(
+                festerm_session::SessionExit::with_exit_code(0),
+            ));
+        assert!(harness
+            .state()
+            .palette_items()
+            .iter()
+            .any(|item| item.label == "Redraw Terminal"));
+        harness
+            .state_mut()
+            .dispatch_palette_selection(item.id, &context);
+        harness.run();
+        assert_eq!(
+            harness
+                .state_mut()
+                .state
+                .session_tab_mut(active)
+                .unwrap()
+                .terminal,
+            before
+        );
+
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenLauncher, &context);
+        assert!(!harness
+            .state()
+            .palette_items()
+            .iter()
+            .any(|item| item.label == "Redraw Terminal"));
     }
 
     #[test]

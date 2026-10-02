@@ -27,6 +27,10 @@ mod markdown_viewer;
 mod multiplexer_sessions;
 mod native_smoke;
 mod overlay_state;
+#[cfg(test)]
+mod owned_fixture_paths;
+#[cfg(test)]
+mod performance_fixtures;
 mod port_forward_draft;
 mod save_as;
 mod screens;

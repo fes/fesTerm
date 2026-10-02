@@ -733,6 +733,12 @@ and session diagnostics. Licenses shows the repository license and bundled
 dependency/asset notices, including the exact Inter font license once the font
 is shipped.
 
+Current implementation keeps the complete About disclosures in a bounded
+scrolling body and leaves Copy Version Information, Licenses, and Close outside
+that scroll. Actions reuse the existing semantic button roles and have at least
+28 px height; narrow layouts do not shorten authorship, diagnostic sensitivity,
+update eligibility, or transmitted-data disclosures.
+
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases
 `latest/download/festerm-update.json` endpoint only after the user presses the
@@ -2476,6 +2482,11 @@ moves selection, Enter activates, and Escape closes and restores previous
 focus. Query text clears on close and is never logged or persisted. Results
 scroll while the search field and group context remain visible.
 
+Current implementation bounds the palette against the full root viewport,
+including frame margins and short-window title/search space. Long row text
+and shortcuts elide in separate columns rather than painting over each other;
+the complete stable identity and secondary text remain the accessible label.
+
 With an empty query, the palette presents a **Sessions** group in chip order,
 with the active surface visibly identified, followed by an applicable
 **Commands** group. Session matching and ranking prefer stable identity over
@@ -2506,6 +2517,14 @@ palette.
 The palette does not search terminal history. Its trigger uses
 `CommandPalette`; the ordinary `Search` icon is reserved for terminal-content
 search.
+
+**Redraw Terminal** is available for an active terminal, including retained
+disconnected history. It has no keyboard binding and does not reserve common
+TUI keys such as Ctrl+L or Ctrl+R. It rebuilds the visible presentation and
+forces retained native regions to repaint even when their contents are
+unchanged. It sends no terminal input, resize, or recovery control request,
+and preserves content, modes, selection, scroll position and zoom.
+**Reset Terminal** is different: it resets terminal state, not just painting.
 
 ### Terminal-content search
 
@@ -3026,6 +3045,54 @@ palette—not an overflow menu—is the session switcher when many chips are
 offscreen.
 
 The terminal viewport must never become fragmented or uncovered because chrome, diagnostics, or footer geometry was calculated after terminal dimensions.
+
+Current implementation gives Open File and Save As one popup frame and
+calculates their content size after subtracting that frame and a 16 px root
+gutter. At the supported `360 × 240` root, the sheet content scrolls rather than
+forcing a 420 px width or 360 px height. Save As retains its existing file-name,
+overwrite/blocker notice, and action footer inside the scrollable sheet.
+Safety dialogs keep their full disclosures in a bounded body, with wrapped
+28 px actions outside it; existing safe/default focus and cancellation policy
+remain authoritative.
+
+The first matched headless review still blocks acceptance of this implementation:
+short Save As child content can paint outside its bounded sheet, and the deep
+Open File breadcrumb occupies the initial narrow ready/error viewport.
+Passing rectangle/interaction tests do not replace clipped-paint and usable
+initial-presentation evidence.
+
+The follow-up Save As layout pins the filename, overwrite notice and actions
+before allocating the remaining viewport to scrollable navigation and rows.
+Nested panels intersect their clip with the inherited viewport before creating
+widgets, preserving both paint and pointer clipping rather than masking drawing
+after interaction. Picker sizing uses the full client root, not the editor or
+terminal's smaller content area. Open File keeps all breadcrumb ancestors in a
+height-bounded horizontal scroll region; a new path starts at its current
+directory, and full paths remain available on hover with exact navigation
+targets. Open File pins Cancel before allocating its remaining space to the
+path/filter controls and bounded error/list body; short roots use compact
+insets/gaps without changing typography or reducing disclosures. Tests prove
+initial modal-owned fields/actions at all three roots and both densities,
+initial error visibility, restored terminal input focus and refusal of clipped
+Save As row/action pointer clicks. Save uses an explicit stable response ID
+on the filename's modal layer, not a background button label match. Fresh
+matched drawing must still pass before visual acceptance.
+
+The fresh `style-pair-20261002-r2` comparison subsequently rendered the corrected
+`426c458` source and the retained production-f0 runner at identical physical
+inputs/settings. All 23 AFTER images were inspected: observed off-root sheets
+fell from eight to zero, and observed off-root action scenes from seven to zero.
+Save As filename/notice/Save/Cancel and Open File path/filter/Cancel are initially
+visible without scrolling the whole sheet. At 360×240, the Open File body starts
+with the table header/item count; rows, Save As navigation and long About/safety
+disclosures use their bounded body scroll regions. This is a geometry/action
+slice, not a native/usability acceptance or a claim that every body item is
+initially visible. Raw missing/null/duplicate-label observations remain
+unqualified; see the evidence boundaries in `docs/manual-validation.md`.
+
+Byte-identical [focused BEFORE/AFTER review images](images/dialog-style-review/style-pair-20261002-r2/)
+retain their exact [source/physical-input provenance](images/dialog-style-review/style-pair-20261002-r2/provenance.json);
+they are separate from the original gallery and are not platform snapshots.
 
 ## Future Populated Launcher Example
 

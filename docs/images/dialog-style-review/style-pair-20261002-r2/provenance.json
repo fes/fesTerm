@@ -1,0 +1,41 @@
+{
+  "run": "style-pair-20261002-r2",
+  "production_before": "f0a533a5047adfe0a5f3fba48c6e08ab825a5b6a",
+  "scaffold": "66ed402190288fd69186a1dc6458d6fc1f0b8037",
+  "production_after": "426c45827ebb2c77981178cf7740d78cfa76f9b2",
+  "before_runner_sha256": "510af3f2194a5db5abdac75d1e678b5ea5ba96ca712a2b6b9d6b825dfb2da6b4",
+  "after_runner_sha256": "5dc2f7859792f50b1643f28f451ec91783bc5dcbc122a0f68b186a1f8b79a259",
+  "physical_root": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-gallery-owned-comparisons\\style-pair-20261002-r2",
+  "matching": "Same23scene IDs/sizes/settings and242realinput file SHA/mtime/kind; actual worker readiness before resize, CPU Microsoft Basic Render Driver/DX12, PPP1.0.",
+  "boundary": "Byte-identical excerpts of retained headless production-theme captures, not native UI/hardware/usability/timing/pixel-equality acceptance. Actual controlled checkout paths reviewed; not anonymous or generally location-independent. Original48gallery files untouched.",
+  "images": [
+    {
+      "file": "before-save-as-short.png",
+      "scene": "style-save-as-notes-overwrite-short",
+      "phase": "baseline",
+      "size": [360, 240],
+      "sha256": "99325885a75cd53903a5edc16735b617e060c0d3b2268b94ee79906ea2c4a78e"
+    },
+    {
+      "file": "after-save-as-short.png",
+      "scene": "style-save-as-notes-overwrite-short",
+      "phase": "candidate",
+      "size": [360, 240],
+      "sha256": "dd1c1a410da6411732c4feadae956cca8939074b880df5b6ed52223b0b47eabe"
+    },
+    {
+      "file": "before-open-file-narrow.png",
+      "scene": "style-open-file-deep-ready-narrow",
+      "phase": "baseline",
+      "size": [360, 516],
+      "sha256": "7dbf360759bbc02e160e97df5cd83c947ffd21e6bcd0e8f1b58d788c8cd5efcb"
+    },
+    {
+      "file": "after-open-file-narrow.png",
+      "scene": "style-open-file-deep-ready-narrow",
+      "phase": "candidate",
+      "size": [360, 516],
+      "sha256": "3dc7c8a7777e91ec659504415f24a6b73265b1e995dfc3ed653f9b07f14093d9"
+    }
+  ]
+}

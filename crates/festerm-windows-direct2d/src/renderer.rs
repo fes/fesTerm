@@ -588,6 +588,12 @@ impl CachedRenderer {
         })
     }
 
+    /// Discards retained pixels so the next frame is drawn in full.
+    /// Previously published surfaces remain immutable and independently owned.
+    pub fn invalidate(&mut self) {
+        self.previous = None;
+    }
+
     pub fn render(
         &mut self,
         rect: Rect,
@@ -1727,6 +1733,39 @@ mod tests {
             .unwrap();
         assert_eq!(unchanged.updated_regions, 0);
         assert_eq!(unchanged.updated_pixels, 0);
+        renderer.invalidate();
+        let forced = renderer
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &scene(Some(Color32::BLUE)),
+                &textures,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            forced.updated_pixels,
+            u64::from(forced.surface.texture.width()) * u64::from(forced.surface.texture.height()),
+            "explicit invalidation must redraw even unchanged regions"
+        );
+        assert_ne!(forced.surface.texture, unchanged.surface.texture);
+        let settled = renderer
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &scene(Some(Color32::BLUE)),
+                &textures,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            settled.updated_pixels, 0,
+            "ordinary reuse resumes afterwards"
+        );
         let changed = renderer
             .render(
                 canvas,
@@ -1749,6 +1788,7 @@ mod tests {
         for (frame, expected) in [
             (&original, [255, 0, 0, 255]),
             (&unchanged, [255, 0, 0, 255]),
+            (&forced, [255, 0, 0, 255]),
             (&changed, [0, 255, 0, 255]),
             (&erased, [0, 0, 0, 255]),
         ] {
