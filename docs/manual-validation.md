@@ -111,7 +111,7 @@ possible.
 | AS-05 | Close Launcher, Settings, exited, failed, and disconnected surfaces immediately; closing the final surface returns Launcher. | Functional | Yes |
 | AS-06 | With **Confirm before closing live sessions** on, close a live local/SSH session from chip, context menu, shortcut, palette, native menu, and overlay; each opens the same confirmation bound to the intended session. Turn it off and repeat; every route closes immediately through the same bounded policy. Restart and verify the chosen value persisted, then restore the default on value. | Native functional + usability | Yes; consequence wording and immediate-close expectation remain human review |
 | AS-07 | With live-close confirmation open, initial Enter does not confirm, Escape cancels without PTY bytes, outside click does not dismiss, and deliberate focus + activation closes exactly the bound session. | Native functional | Yes: UI automation plus controlled PTY/lifecycle oracle |
-| AS-08 | Request application/window quit with multiple live sessions (close button, native Quit menu, and Cmd+Q — fesTerm's single window means all three arrive as the same close request); aggregate consequence is accurate, Cancel returns exact window state without acting, and deliberate confirmation exits the process exactly once. Repeat with zero live sessions and confirm no dialog appears. | Native functional | Yes: automate the counts/cancel/confirm oracle; final native window-teardown timing remains human review |
+| AS-08 | Request application/window quit with multiple live sessions (close button, native Quit menu, and Cmd+Q — fesTerm's single window means all three arrive as the same close request); aggregate consequence is accurate, Cancel returns exact window state without acting, and deliberate confirmation exits the process exactly once. Repeat Cancel and confirm through accessibility invocation, then with zero live sessions and confirm no dialog appears. | Native functional | Headless safe-default, Cancel/confirm and accessibility activation are automated, including terminal-blackout isolation. Native multi-transport counts, platform routes and whole-window/descendant teardown remain qualification evidence |
 | AS-09 | With multiple local/SSH sessions and long/changing titles, toggle **Show session details in chips** at ordinary and narrow widths, with the status bar on and off. Verify one coherent resize per transition; `34→28` px chip and `42→36` px chrome geometry; stable chip identity/type/state/Close targets; only the active detail relocates to the footer; title-first/factual-fallback precedence; ellipsis priority; empty Launcher/Settings footer; and palette/hover/accessibility/Inspector access when both displays are off. Repeat with wrapped rows and on macOS traffic-light chrome. | Native functional + visual + usability + accessibility | Automate preference/state, grid-resize count, geometry, active-value, and narrow screenshots; retain native hit-target, title-churn readability, macOS optical alignment, and screen-reader review |
 
 ### Terminal interaction, history, and overlays
@@ -767,6 +767,16 @@ foreground assumption without changing the application's focus behavior or the
 shared no-input CPU helper. Evidence is limited to that connected host at 200%
 scale: mixed-DPI transitions, cache eligibility/native CPU comparison, the
 CPU-fixture Quit path and the broader CP-18/#282 matrix remain unqualified.
+
+The subsequent first native A quiet interval passed its strict interval guards
+but failed normal Quit cleanup: the unique owned UIA invocation focused the
+button without activating it. The failed series is retained, not a native
+performance result. An untimed observer and two failing headless accessibility
+tests established that terminal modal blackout removed accessibility requests
+before foreground confirmation widgets rendered. The corrected view defers
+those requests until after its own controls, preserving terminal blackout and
+the ordinary confirmation policy. Exact-source native Quit requalification and
+the balanced CPU comparison remain pending.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

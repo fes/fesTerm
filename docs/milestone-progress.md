@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Keeping accessibility actions with foreground confirmations
+
+The first connected native CPU case passed its interval guards but could not
+quit normally. Its unique owned UIA invocation returned and focused **Quit
+fesTerm**, yet the confirmation stayed open. An untimed observer reproduced
+this without measurement retries; follow-up cleanup through a second close
+request was recorded separately, not treated as confirmation acceptance.
+
+The terminal's modal blackout was deleting every global accessibility request
+before the foreground dialog rendered. egui had already processed accessibility
+focus, explaining why the button focused without clicking. Two deterministic
+accessibility regressions reproduced both broken Quit and broken Cancel.
+The view now defers those requests while its background controls render, then
+restores them for foreground widgets. A view-level regression proves background
+history and terminal bytes remain blocked, including simultaneous background
+and foreground invocations. Safe-default focus and the existing quit policy
+remain unchanged; native requalification and CPU comparisons are separate gates.
+
 ## Focusing the restored OS-input fixture without stealing another window
 
 A connected DevBox reproduced the native restore blocker even with both WARP

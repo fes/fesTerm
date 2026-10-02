@@ -988,6 +988,11 @@ it introduces no favorable timing threshold or memory acceptance budget.
 
 The controlled child deliberately remains live after production. Primary-window
 Quit is always confirmed, even with per-tab `confirm_session_close=false`.
+The terminal's modal blackout defers accessibility requests until after its
+background controls render, allowing the foreground confirmation to receive
+UIA invocation without enabling terminal-local controls. A returned invocation
+or focus change alone is not acceptance: the application must actually exit
+normally within the unchanged deadline, with its owned descendants absent.
 Previously sending only `WM_CLOSE` left this ordinary confirmation pending and
 the harness force-killed the application. The driver now invokes the unique
 **Quit fesTerm** accessibility button belonging to its test window, records

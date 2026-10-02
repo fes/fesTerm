@@ -149,6 +149,15 @@ disabled. Its driver must explicitly invoke the unique test-owned **Quit
 fesTerm** button and verify normal process and descendant-tree exit. A forced
 kill is preserved cleanup evidence, not graceful-shutdown acceptance.
 
+An accessibility invocation returning successfully is not proof that the
+confirmation handled it. Terminal modal blackout defers accessibility requests
+until its background controls have rendered, then restores them for foreground
+widgets. Deterministic regressions cover both Quit and Cancel activation and
+prove that terminal-local history controls and terminal input remain inert.
+Native acceptance still requires actual normal process and descendant-tree exit
+within the unchanged cleanup deadline; a second close request is not evidence
+that the first explicit invocation succeeded.
+
 ## Flaky failure policy
 
 **No silent retries.**
