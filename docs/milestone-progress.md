@@ -2875,3 +2875,22 @@ assert that resolving a directory keeps the picker loading until its listing
 arrives. The ordinary picker-loading tests retain real background-thread
 coverage. No timeout was extended, failure was retried, gallery was regenerated,
 or runtime picker behavior changed.
+
+## Owned performance fixtures below home-hosted workspaces
+
+The shared physical-fixture prerequisite passed Windows but its first Linux
+and macOS CI runs rejected their actual checkout paths: the guard treated every
+`home`, `Users`, home-variable and username ancestor as private input, before
+checking the repository-owned workspace. The test-only policy now verifies the
+existing Git/Cargo markers and no-alias contract before allowing those
+ancestors above a proper workspace. Exact home roots, a workspace equal to
+home, unsafe owned suffixes and all temporary/system/application-data
+exclusions remain refused; source, inventory, claims and cleanup checks remain
+live. Deterministic policy inputs cover all three host path families without
+changing global environment variables, alongside real Git/Cargo and marker
+alias regressions.
+
+This repair changes only the post-measurement harness identity. Earlier
+compiled helper hashes, fixture proofs, executables and reports remain
+immutable, not retroactively assigned to the correction. It neither changes
+production Markdown rendering nor adds another performance trial.

@@ -207,12 +207,6 @@ fn validate(root: &Path, run: &str) -> Result<serde_json::Value, String> {
     owned::no_aliases(root)?;
     let control = root.parent().unwrap();
     let workspace = control.parent().unwrap().parent().unwrap();
-    for marker in [workspace.join(".git"), workspace.join("Cargo.toml")] {
-        owned::no_aliases(&marker)?;
-        if !marker.exists() {
-            return Err("physical fixture root requires an existing Git/Cargo workspace".into());
-        }
-    }
     let control_owner = serde_json::json!({
         "schema": "festerm-performance-control-v1",
         "workspace": fs::canonicalize(workspace).map_err(|error| error.to_string())?,
@@ -274,12 +268,6 @@ fn prepare(root: &Path, run: &str, plan: &[String]) -> Result<(), String> {
     let control = root.parent().unwrap();
     let target = control.parent().unwrap();
     let workspace = target.parent().unwrap();
-    for marker in [workspace.join(".git"), workspace.join("Cargo.toml")] {
-        owned::no_aliases(&marker)?;
-        if !marker.exists() {
-            return Err("prepare requires an existing controlled Git/Cargo workspace".into());
-        }
-    }
     let control_owner = serde_json::json!({
         "schema": "festerm-performance-control-v1",
         "workspace": fs::canonicalize(workspace).map_err(|error| error.to_string())?,

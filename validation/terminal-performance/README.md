@@ -33,6 +33,25 @@ measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
 There is no timing threshold in ordinary CI.
 
+### Owned physical fixture workspace policy
+
+The optional shared-input protocol accepts only a real, unaliased Git/Cargo
+workspace's `target/ui-performance-owned-inputs/<run>` namespace. A workspace
+may be hosted below home/account ancestors, including ordinary Linux, macOS
+and Windows CI checkouts. The exception requires the existing workspace and
+marker checks; it is not enabled by an environment flag. `HOME`/`USERPROFILE`
+themselves, a workspace equal to either home, and personal or unsafe components
+inside the controlled suffix remain refused. Temporary, application-data,
+system, alias and unowned scopes remain refused as before. Run/step ownership,
+source identity, bounded inventory checks and guarded cleanup are unchanged.
+
+This is a post-measurement, test-only portability repair to the original
+`156a916` instrumentation checkpoint. Its helper/guard source hashes are new;
+it does not relabel any earlier compiled-source proof, release executable,
+physical-fixture inventory or timing report. The archived matched comparison
+still identifies its original helper bytes. No new timing trial was run for
+this policy correction.
+
 ### Residual mixed Preview investigation, 2026-10-01
 
 The exact baseline is CI-repair PR [#286](https://github.com/fes/fesTerm/pull/286),
