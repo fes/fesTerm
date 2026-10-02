@@ -1842,6 +1842,7 @@
       ],
       "automated_tests": [
         "terminal_zoom_is_session_local_bounded_and_resettable",
+        "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
         "zoom_palette_commands_change_only_the_active_session_and_reset"
       ],
       "manual_scenarios": [
@@ -2220,6 +2221,57 @@
       "prerequisites": [
         "a grammar or query that fails to load has no automated trigger: the fallback is exercised by construction (an unknown language) rather than by a broken grammar",
         "scroll smoothness over a large real source file while a session produces output, and the binary-size delta on Windows and Linux, are manual evidence"
+      ]
+    },
+    {
+      "id": "ios-rendering-spike",
+      "edges": [
+        "MOB-*"
+      ],
+      "requirements": [
+        "docs/adr/0042-ios-rendering-spike-host.md"
+      ],
+      "decisions": [
+        "ADR-0031",
+        "ADR-0042"
+      ],
+      "automated_tests": [
+        "mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend",
+        "mobile_probe_uses_core_encoding_without_echoing_or_retaining_input",
+        "mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning",
+        "mobile_gpu_limits_accept_simulator_downlevel_capabilities",
+        "mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard",
+        "mobile_persistent_keyboard_does_not_restart_ime_between_frames",
+        "mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries",
+        "mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release",
+        "mobile_arrow_tap_and_early_drag_reach_existing_pointer_routing",
+        "mobile_arrow_multitouch_resize_and_background_cancel_without_keys",
+        "mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports",
+        "mobile_pinch_takes_over_arrows_and_quarantines_remaining_finger",
+        "mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected",
+        "mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning",
+        "mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal",
+        "responsive_tiers_follow_measured_space_not_device_identity",
+        "compact_files_layout_keeps_both_panes_on_screen",
+        "compact_files_layout_keeps_collision_and_queue_actions_reachable",
+        "wide_files_layout_keeps_horizontal_panes_on_screen",
+        "transfer_direction_follows_the_selected_source_pane",
+        "collision_requires_an_explicit_decision_and_queue_is_bounded",
+        "transfer_progress_is_monotonic_and_completes",
+        "markdown_fixture_uses_shared_parser_and_has_navigable_contents",
+        "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
+        "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically"
+      ],
+      "manual_scenarios": [
+        "MOB-01",
+        "MOB-02",
+        "MOB-03",
+        "MOB-04",
+        "MOB-05"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]
