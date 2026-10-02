@@ -1,5 +1,5 @@
 name = "festerm"
-version = "0.7.1"
+version = "0.8.0"
 product-name = "fesTerm"
 identifier = "dev.fes.festerm"
 description = "A compact local, SSH, and serial terminal."
@@ -12,7 +12,7 @@ binaries = [
   { path = "festerm", main = true },
 ]
 resources = [
-  { src = "../target/release/festerm-sessiond-0.7.1.exe", target = "festerm-sessiond-0.7.1.exe" },
+  { src = "../target/release/festerm-sessiond-0.8.0.exe", target = "festerm-sessiond-0.8.0.exe" },
   { src = "../target/release/runtime/conpty", target = "runtime/conpty" },
 ]
 
