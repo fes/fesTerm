@@ -87,6 +87,26 @@ events arriving during a frame; no output/frame-rate budget is introduced.
 
 ## How to use the graph
 
+### Isolated iOS feasibility host
+
+These edges belong only to `app/festerm-mobile` (ADR 0042), not the desktop
+application or a supported mobile SSH workflow. Checkpoint: newly launched
+preview with repository-owned fixtures; Reset restores terminal content.
+The iOS workflow's isolated Simulator smoke automates install, launch survival,
+first UI callback, terminate/relaunch and PNG capture for `MOB-01`/`MOB-03`.
+A live process without the UI callback fails; app stderr is retained. Screenshots still
+require visual review; it does not qualify gestures or background/resume.
+The mobile device descriptor requests downlevel GPU limits to accommodate the
+observed Simulator Metal limit; issue #261 remains the native startup gate.
+
+| ID | From → To | Action / guard | Oracle | Return | Layer |
+| --- | --- | --- | --- | --- | --- |
+| `MOB-01` | Cold → fixture | Launch, rotate/resize, select and scroll | Shared ANSI/Unicode grid paints within available area; bounded history remains readable | Reset fixture or relaunch | H, V, N, U |
+| `MOB-02` | Fixture → input probe | Use docked Esc/Tab/Ctrl/Alt, long-press/drag arrows, native IME or hardware keyboard | Persistent keyboard request on iPhone/iPad without repeated IME interruption on idle frames, accessory taps or terminal keys; grid above measured keyboard; one-shot modifiers; temporary direction helper with neutral zone and three repeat speeds; release/cancellation stops repeats without mouse-report leakage; encoded byte count changes with no duplicate text, execution or retained text | Reset fixture | P, H, N |
+| `MOB-03` | Active → suspended → active | Background/foreground, memory warning, terminate/relaunch | No suspended redraw; resume repaints; memory warning preserves grid and text size; process death restarts fixture honestly | Relaunch | P, N |
+| `MOB-04` | Fixture → pinching → fixture | Pinch two terminal contacts; take over an arrow hold; reverse at limits; lift/cancel/rotate | Terminal-only zoom uses shared bounds; one coalesced scale per frame; keyboard/chrome unchanged; no arrow or mouse-report leakage; remaining contacts stay captured; an existing ordinary drag retains ownership | Lift all fingers; Reset fixture | P, H, N, U |
+| `MOB-05` | Terminal ↔ Files ↔ README | Switch fixed preview categories; select both Files panes, transfer/collide; toggle Markdown Preview/Source/Contents and activate a heading; resize across tiers | Only Terminal requests persistent keyboard/gesture ownership; state survives switching; Files uses Wide horizontal, Compact Remote-top/Local-bottom and Minimal focused-pane layouts with upload moving up, download moving down and bounded synthetic transfer state; Markdown wraps and exposes navigable contents; every workflow remains prominently offline and synthetic | Select Terminal or relaunch | P, H, V, U |
+
 Each test run starts at a named checkpoint, follows one or more edges, asserts
 the edge oracle, and returns through the named recovery edge. Never depend on
 the state left by an unrelated test. A driver may skip an edge only when its
@@ -127,7 +147,7 @@ clipboard data, shell profile, credentials, host, path, or terminal history.
 | `K8 SshAuth` | Fixture host accepted for this attempt; password authentication surface focused and empty. | Clear password, cancel attempt, return to destination then `K1`. |
 | `K9 LiveSsh` | Connected disposable SSH fixture with known non-secret inspector facts. | Disconnect preserving history, then close to `K1`. |
 | `K10 RestoreMixed` | Workspace recipe with one successful local definition, one SSH auth-required definition, and one invalid/missing definition. | Close restored surfaces and remove disposable workspace; return `K1`. |
-| `K11 Narrow` | Any applicable checkpoint at `360 × 516` logical px and recorded scale. | Restore `752 × 516` baseline. |
+| `K11 Narrow` | Any applicable checkpoint at `360 × 516` logical px and recorded scale; dialog/palette geometry also exercises the supported `360 × 240` short root with complete disclosures and reachable actions. | Restore `752 × 516` baseline. |
 | `K12 Modal` | A specified close/paste/trust/destructive dialog open with Cancel focused. | Take its safe Cancel/Escape edge, verify zero unintended bytes/effects. |
 | `K13 Serial` | Serial fixture: Linux `crates/festerm-serial/tests/socat_loopback.rs` virtual loopback, or a representative hardware adapter on macOS/Windows per `docs/native-smoke-policy.md`. | Close/release port, remove loopback or disconnect the hardware fixture, return `K1`. |
 | `K14 ChangedHostKey` | Disposable SSH fixture whose persisted trust record names a different fingerprint than the one currently presented. | Cancel; restore fixture trust store to its prior single-record state; return to destination or `K1`. |
@@ -333,6 +353,7 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 | `PAL-03` | Palette → filtered | Search stable identity, dynamic secondary, command names, no-match. | Stable identity ranks first; empty groups disappear; result list scrolls while field/context remain; query never persists/logs. | Clear query. | P,H,V |
 | `PAL-04` | Palette → prior | Escape or select no action. | Query clears; exact viable prior focus restored; no terminal Escape byte. | Reopen `PAL-01`. | H,N |
 | `PAL-05` | `K5/K6 → Editor/Save As` | From the command palette, choose **Open Terminal History in Editor** or **Save Terminal History As…**. | The active terminal tab is the only snapshot source. The action freezes retained primary history plus the currently applicable visible screen into an independent plain-text snapshot with no ANSI/control-sequence export and no PTY input. **Open…** activates a new untitled dirty editor tab; **Save As…** opens that same snapshot and immediately continues into the ordinary Save As sheet; later plain **Save** / `:w` / `:wq` on that untitled snapshot also route through Save As until a destination exists. If the retained text exceeds the editor's declared bounds, the action refuses without opening a document and says which limit stopped it. Exited/disconnected retained history works the same way. | Close the snapshot editor, or complete/cancel Save As. | P,H,N |
+| `PAL-06` | `K5/K6 → same` | Choose **Redraw Terminal** from the palette; no new shortcut. | Typed active-terminal presentation is rebuilt in full, including unchanged native retained regions. Core state, selection, history offset and zoom stay unchanged; no input, resize or recovery control is sent. Ordinary cache reuse resumes afterwards; Ctrl+L/Ctrl+R still reach the TUI. Non-terminal surfaces omit the command. | Continue in the same terminal. | P,H,N |
 | `KEY-01` | `K2/K4` | Exercise all documented shortcuts and plain Ctrl+T/C/W in Vim/Emacs/tmux fixtures. | Reserved physical modifiers act once; plain terminal chords reach PTY; same-batch actions retain event order and current target; IME suppression ends on owner loss; menu/palette routes exist. | Exit fixture TUI and rebuild `K2`. | P,H,N |
 | `KEY-02` | Any → Settings → customized | Open keyboard editor, filter by scope/customized/unbound, search title and description, select rows, type and **Record shortcut** chords, unbind/reset; restart with isolated config. | Actions stay grouped by scope; only one inline editor is open; row keycaps, gutter dots, **Customized** badges, effective defaults/scopes and hints agree; captured keys are not dispatched; overlapping/invalid chords retain error feedback; save/reload preserves unrelated settings; Ctrl+Shift+F12 remains recovery. | Reset keyboard bindings only. | P,H,V,N; partial |
 | `KEY-03` | Terminal → recording → stopped | Record input routing in Inspector, exercise keyboard/copy/mouse, stop/clear/copy report. | Off by default; bounded RAM-only, content-free report; actual core/queue and local-selection decisions correlated without invented OS IDs or frame-level “both”; deferred queue settlement retains original event/session identity, never revives cleared/evicted records; no input side effects. | Stop and clear recording. | P,H,N,privacy; partial |

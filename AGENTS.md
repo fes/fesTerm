@@ -23,6 +23,11 @@ Read `README.md`, then use the document that matches the task:
 
 ## Current Structure
 
+- `app/festerm-mobile`: experimental iOS Phase 1 rendering/lifecycle host;
+  offline fixture only, governed by ADR 0042 and `MOB-01`–`04` native gates.
+- `crates/festerm-ios-window`: main-thread UIKit keyboard geometry and
+  notification adapter; shared core/renderer contain no native FFI.
+
 - `crates/festerm-core`: GUI-, PTY-, and SSH-independent terminal state,
   parser, input encoding, and bounded queues.
 - `crates/festerm-test-support`: repository-owned golden-fixture parser and

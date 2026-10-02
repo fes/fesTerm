@@ -4,6 +4,189 @@ Follow-up to [#242](https://github.com/fes/fesTerm/issues/242), after #253
 corrected application-window selection. This investigates CPU work that
 continues after the GUI frame counter stops advancing.
 
+## Bounded non-terminal surface matrix
+
+The existing optional `replay_warp_ui_surfaces` and
+`profile_interactive_surfaces` entry points now share a 26-state catalog, each
+at normal and narrow width (52 added variants). The original four WARP controls,
+twelve document/list construction scenes and 48 gallery scenarios are retained.
+The bounded batch covers About/licensing and existing synthetic idle/ready/
+installed updater controllers; expanded chrome and first/middle/last chip menus;
+live/read-only selection, OSC 8 link, frozen enabled/disabled path and history
+menus; live-close/risky-paste/final-dirty-document confirmations; and actual-task
+small/large/error Open File and small/large/error/overwrite Save As states.
+
+**Initial status: scaffolding, awaiting the exclusive validation slot.**
+No new measurements, captures or native acceptance are claimed here. Missing
+updater variants, empty picker readiness (which needs a model-state accessor),
+filter/sort/final-row/reopen interactions, aggregate quit/drop/reset safety
+variants and all native-platform evidence remain explicit prerequisites in
+[`surface-matrix.json`](surface-matrix.json). No existing CP-16/CP-17 budget is
+extended to About or menus, and no favorable menu latency threshold is invented.
+
+The [existing gallery generator](../../scripts/build_ui_state_doc.py) also
+expands that reconciled audit into a machine-readable report. It lists every
+audited state group and reusable state-profile dimension, with a named
+prerequisite and `currently_unmeasured` or `native_only` status. Supplied v2
+reports may mark **only an exact bounded fixture/metric** `covered`; broader
+slash-separated alternatives remain unqualified. Images never pass native rows.
+
+```powershell
+# Run only after obtaining the exclusive build/measurement slot.
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_SURFACE_PROFILE_OUT = "$PWD\target\evidence\surface-profile-attempt-01"
+$env:FESTERM_WARP_UI_OUT = "$PWD\target\evidence\surface-warp-attempt-01"
+cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
+cargo test --release -p festerm --bin festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1
+python scripts\build_ui_state_doc.py --surface-matrix-report target\evidence\surface-coverage-attempt-01.json --surface-profile target\evidence\surface-profile-attempt-01\profile.json --warp-replay target\evidence\surface-warp-attempt-01
+```
+
+Both probes remain under their existing optional-runner flags
+`FESTERM_RUN_SURFACE_PROFILE=1` / `FESTERM_RUN_WARP_UI_PROBE=1`; neither becomes
+a default benchmark or snapshot gate. Gallery generation uses
+`FESTERM_UI_GALLERY_OUT` pointed at a fresh owned directory before updating
+the reviewed document/images. `capture_surface_gallery(SurfaceKind, narrow)`
+is the shared full-root themed fixture API for style review.
+`capture_palette_gallery(narrow)` adds two gallery-only production command-palette
+views for coordinated style review. Palette
+performance remains unmeasured and outside the initial 52-variant probe batch.
+An additional 23 gallery-only style-review variants bring the total to 125,
+without changing the probe scene catalog. The reusable API is
+`capture_style_review_gallery(StyleReviewKind, size, fixture_id)`, returning
+the image and geometry observations. Its nine kinds combine ready-update/licenses,
+filtered long palette identity/secondary/shortcut, deep-directory Open File
+ready/error, `NOTES.md` overwrite/disabled remote, long live close, maximum
+bounded paste, dirty-document close, and applicable overflow controls.
+Each has `752 × 516` and `360 × 516` roots; About, ready Open File, Save As,
+paste and dirty close also have `360 × 240` variants.
+
+Geometry iteration does **not** require the full 125-image generation. The
+existing ignored capture test accepts `FESTERM_UI_GALLERY_SCENES=style-review`
+for these 23 curated cases, or a comma-delimited list of exact scene IDs for a
+smaller iteration. Unknown, empty and duplicate selections fail explicitly.
+Selected captures require `FESTERM_UI_GALLERY_OUT` to name a fresh empty
+evidence directory, preventing partial generation from pruning the published
+gallery or overwriting a failed attempt. With the selector unset, the existing
+full-gallery behavior is unchanged.
+
+```powershell
+# Only after the primary grants the exclusive capture slot:
+$env:FESTERM_UI_GALLERY_SCENES = 'style-review'
+$env:FESTERM_UI_GALLERY_OUT = "$PWD\target\evidence\style-before-attempt-01"
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact --nocapture --test-threads=1
+# Use a different fresh output for AFTER; do not change physical fixture IDs.
+Remove-Item Env:FESTERM_UI_GALLERY_SCENES
+Remove-Item Env:FESTERM_UI_GALLERY_OUT
+```
+
+These style fixtures assert their actual state at `752 × 516` before resizing
+the same application, without navigation or task reload. This proves worker
+readiness even if a short root virtualizes all rows away. The existing manifest
+records optional `geometry` observations against **`ctx.content_rect()`**, not
+the gallery harness's inset Ui: area/action bounds, actual action heights,
+focus and full palette identity. Missing or off-root controls are observations,
+not passes; no style/native acceptance is inferred. Geometry is also emitted
+to retained capture logs before drawing, preserving diagnostics for a failed
+render. No new snapshot baselines or budgets are introduced.
+
+Keep pre-style f0 production-widget captures and integrated-style captures in
+fresh disjoint output directories, with identical fixture IDs, physical checkout
+roots and renderer settings. Compiled `CARGO_MANIFEST_DIR` can otherwise change
+the visible real origin/breadcrumb across binaries. For the curated style
+entry point only, opt in to **actual shared physical I/O identity** with:
+
+- `FESTERM_UI_SURFACE_FIXTURE_ROOT`: absolute
+  `<controlled-workspace>\target\ui-gallery-owned-comparisons\<run>`;
+- `FESTERM_UI_SURFACE_FIXTURE_RUN`: the same simple run identity as that leaf;
+- `FESTERM_UI_SURFACE_FIXTURE_PHASE`: `baseline`, then `candidate` in a
+  separate sequential test process, with the same selected scene IDs.
+
+The helper creates its control-owner marker itself; do not pre-create an
+unowned control folder or run leaf. The controlled workspace must already
+contain Cargo/Git metadata. Known personal/system/temporary locations,
+username components, root/traversal/UNC/device paths and ancestor/child
+symlinks or Windows reparse points are refused. Baseline cannot adopt an
+existing leaf, even if empty. A persistent control-level run claim also rejects
+reusing a deleted run identity. Candidate requires the completed matching
+baseline ownership, selection and retained evidence/input proofs; each phase
+is claimable once. Baseline inputs remain frozen at the **same real scene paths**.
+Candidate constructors verify/reuse them without rewriting bytes or timestamps,
+with actual workers/documents and unchanged freshness/dirty-close semantics.
+Kind/root-size, file bytes and modified times must match before drawing.
+
+Owned inputs stay present until all selected PNGs/digests and the manifest
+are saved and verified. Baseline completion retains all inputs and its completed
+marker for candidate use. Only candidate completion removes inventoried files and empty
+directories after rechecking ownership/contents; modified or untracked inputs
+are retained instead. Control, phase and input-proof records remain. Failed
+or completed scopes cannot be silently retried/reused: use a fresh run for a
+new baseline/candidate pair, retaining previous records. Evidence directories
+must be fresh and disjoint from each other and the physical input scope.
+
+```powershell
+# Scaffold/runtime checks and the exclusive slot grant must precede use.
+$env:FESTERM_UI_GALLERY_SCENES = 'style-review' # or exact curated IDs
+$env:FESTERM_UI_SURFACE_FIXTURE_RUN = 'style-pair-01'
+$env:FESTERM_UI_SURFACE_FIXTURE_ROOT = 'Q:\src\OSS\fesTerm-ui-fleet\benchmarks\target\ui-gallery-owned-comparisons\style-pair-01'
+$env:FESTERM_UI_SURFACE_FIXTURE_PHASE = 'baseline'
+$env:FESTERM_UI_GALLERY_OUT = "$PWD\target\evidence\style-pair-01-before"
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact --nocapture --test-threads=1
+# After style integration, keep ROOT/RUN/selector unchanged, even across binaries:
+$env:FESTERM_UI_SURFACE_FIXTURE_PHASE = 'candidate'
+$env:FESTERM_UI_GALLERY_OUT = "$PWD\target\evidence\style-pair-01-after"
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact --nocapture --test-threads=1
+Remove-Item Env:FESTERM_UI_GALLERY_SCENES, Env:FESTERM_UI_GALLERY_OUT, Env:FESTERM_UI_SURFACE_FIXTURE_ROOT, Env:FESTERM_UI_SURFACE_FIXTURE_RUN, Env:FESTERM_UI_SURFACE_FIXTURE_PHASE
+```
+
+This mode is **unexecuted scaffolding pending the primary's exclusive slot**;
+cross-worktree matched visual claims remain unqualified until its guards and
+sequential runs are validated. The default APIs retain compiled-worktree
+paths and make no matched-identity claim. Manifest captions/geometry state the
+actual physical scene directory and selected mode, never substitute synthetic
+metadata, adopt a generation-losing document, use junctions or sanitize pixels.
+This is not a canonical display-metadata feature or a generic PII-free pipeline.
+The 52-variant probe catalog is unchanged.
+
+An intentional geometry change is not a pixel-equality
+pass. Physical document/picker labels can reveal checkout usernames; review before
+publication or coordinate a canonical-display seam that preserves real generation
+and freshness semantics. Existing 48 baseline images remain untouched until
+authorized reviewed generation.
+
+Completed-render probes instead call raw `Context::run_ui` with production Dark visuals: they
+never submit the filled outer frame used by the visual-only gallery harness.
+
+Each probe output root must be fresh. Per-scene `status.json` and reports retain
+partial attempts if a task/semantic/pixel guard fails. Synthetic comparison
+files live at stable scene-specific paths under this worktree's
+`target/ui-gallery-fixtures/surface-batch`; a successful scene removes them,
+while a failed one retains them. The opt-in shared style scope follows the
+phase-level retention/targeted cleanup contract above instead. Set a fresh simple
+`FESTERM_UI_SURFACE_FIXTURE_RUN` tag to retry without deleting failed inputs.
+Changed fixture paths can change pixels; do not pool or compare mismatched tags.
+References require every matching scene PNG, including new states and dimensions.
+
+v2 records fixture/model preparation, the first fresh-context UI call and first
+tessellation, real-task/interaction readiness frames, eight warmups, and ordered
+steady construction/tessellation samples. Original controls preserve their
+workload order and painting policy. Expanded fixtures enable AccessKit for
+semantic checks; query-tree processing and texture uploads are outside their
+UI timer. Original WARP warm/steady UI samples still include texture-delta
+handling; that boundary is recorded, not pooled with the expanded UI-only bucket.
+The WARP report additionally records renderer initialization, first ready draw
+and five completed draw/sync/readback samples with median/p95/min/max and the
+exact percentile rule. That draw bucket includes renderer tessellation,
+submission, synchronization and CPU image readback. **It is not native
+input-to-display, OS presentation latency or actual idle scheduling.**
+
+Cold-process start is explicitly `null/not measured`: a fresh context in an
+already-running test process is not a cold application. Package/revision,
+dirty-source state, test-binary SHA256, OS/architecture, process ID, fixture
+root, adapter, scale and sample arrays accompany results. An artifact does not
+prove the host was quiet; execution still requires the primary's exclusive slot
+and retained external logs. #286 and #287 are prerequisites. No host-copy,
+retained-composition or #282 default-on gate is changed.
+
 ## Established cause
 
 Hot, process-scoped snapshots on the affected Windows x64 host found worker

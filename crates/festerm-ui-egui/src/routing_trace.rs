@@ -31,6 +31,7 @@ impl Metadata {
             InputEvent::Key(Key::Tab) => "tab",
             InputEvent::Key(Key::Escape) => "escape",
             InputEvent::Key(_) => "nontext-key",
+            InputEvent::ModifiedKey { .. } => "modified-key-redacted",
             InputEvent::Paste(_) => "paste-redacted",
             InputEvent::Focus(_) => "focus",
             InputEvent::Mouse(mouse) => match mouse.kind {
@@ -52,6 +53,11 @@ impl Metadata {
                     | (u8::from(mouse.modifiers.contains(festerm_core::Modifiers::CONTROL)) << 2)
             }
             InputEvent::Key(Key::Control(_)) => 4,
+            InputEvent::ModifiedKey { modifiers, .. } => {
+                u8::from(modifiers.contains(festerm_core::Modifiers::SHIFT))
+                    | (u8::from(modifiers.contains(festerm_core::Modifiers::ALT)) << 1)
+                    | (u8::from(modifiers.contains(festerm_core::Modifiers::CONTROL)) << 2)
+            }
             _ => 0,
         };
         Self { class, modifiers }

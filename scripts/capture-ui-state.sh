@@ -4,7 +4,7 @@
 # `ui_gallery::capture_ui_state_gallery` test in the `festerm` crate. Every
 # scenario renders the real product UI against repository-owned fixture
 # data via `egui_kittest`'s headless harness -- no network access, no real
-# user configuration, and no PII.
+# user configuration. Actual owned checkout paths still need publication review.
 #
 # Safe to re-run repeatedly: the test itself prunes stale PNGs left over
 # from removed or renamed scenarios, so the output directory always matches
@@ -13,6 +13,9 @@
 # Usage: scripts/capture-ui-state.sh [output-directory]
 #   output-directory defaults to docs/images/ui-state (relative to the
 #   workspace root) when omitted, matching the test's own default.
+#   FESTERM_UI_GALLERY_SCENES=style-review selects only the 23 geometry cases;
+#   exact comma-delimited scene IDs select a smaller subset. Selected capture
+#   requires an explicit fresh empty evidence output directory.
 set -euo pipefail
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -27,20 +30,25 @@ mkdir -p "$output_directory"
 output_directory=$(CDPATH= cd -- "$output_directory" && pwd)
 export FESTERM_UI_GALLERY_OUT="$output_directory"
 
-# Defence in depth for the no-PII guarantee. The gallery is written to render
+# Defence in depth against personal-resource reads. The gallery renders
 # only repository-owned fixtures, but a surface that reads configuration or
 # lists a directory could start doing so through an innocuous change, and the
-# result would be real user data committed as a PNG. Running the capture under
-# a throwaway HOME makes that structurally impossible rather than merely
-# reviewed for: there is no real profile, history or key material to find.
+# result could include real user data in a PNG. An isolated HOME removes
+# ordinary profiles, history and key material from that lookup, but does not
+# canonicalize physical fixture labels or replace publication review.
 #
 # Cargo and rustup resolve their own homes from HOME, so those are pinned to
 # the real ones first -- otherwise the override would trigger a full toolchain
 # re-download into the throwaway directory.
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}
 export RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}
-isolated_home=$(mktemp -d)
-trap 'rm -rf "$isolated_home"' EXIT
+isolated_home="$PWD/target/ui-gallery-capture-homes/capture-${BASHPID}-$(date +%s)"
+if [ -e "$isolated_home" ]; then
+    printf 'Capture home already exists; retain it and use a fresh attempt: %s\n' "$isolated_home" >&2
+    exit 1
+fi
+mkdir -p "$isolated_home"
+trap 'status=$?; if [ "$status" -eq 0 ]; then rm -rf "$isolated_home"; else printf "Retained failed capture home: %s\n" "$isolated_home" >&2; fi' EXIT
 export HOME="$isolated_home"
 
 cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact

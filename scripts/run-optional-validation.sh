@@ -21,6 +21,16 @@ emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
+if [ "$(uname -s)" = Darwin ]; then
+    if python3 scripts/smoke-ios-simulator.py --run --build; then
+        printf 'suite=ios-simulator status=pass\n' >>"$result_path"
+    else
+        printf 'suite=ios-simulator status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=ios-simulator status=skipped reason=macos-required\n' >>"$result_path"
+fi
 cargo build --workspace
 if python3 scripts/check_keyboard_routing.py; then
     printf 'suite=keyboard-routing-synthesized status=pass\n' >>"$result_path"
@@ -96,7 +106,7 @@ fi
 rm -f "$emoji_result_path"
 
 if [ "${FESTERM_RUN_SURFACE_PROFILE:-}" = "1" ]; then
-    if cargo test --release -p festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1; then
+    if cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1; then
         printf 'suite=interactive-surface-profile status=pass\n' >>"$result_path"
     else
         printf 'suite=interactive-surface-profile status=fail\n' >>"$result_path"

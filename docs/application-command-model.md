@@ -156,6 +156,13 @@ The command palette is a discoverability and invocation surface, not a separate 
 
 Searchable session switching should resolve a stable session identity and dispatch the ordinary session-switch command.
 
+The palette-only **Redraw Terminal** entry dispatches
+`AppCommand::RedrawTerminal(TabId)`. The presentation owner invalidates only
+that view's row/glyph caches and requests a full local paint. An optional
+native painter receives a one-frame presentation hint to bypass retained
+pixels; no terminal state or backend control crosses the renderer boundary.
+There is deliberately no keyboard action/default chord for this command.
+
 ## State Ownership
 
 Command execution should follow the ownership boundaries in `ARCHITECTURE.md`:

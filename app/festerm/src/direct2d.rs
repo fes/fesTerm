@@ -324,14 +324,19 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 .enabled()
                 .then(festerm_windows_direct2d::RenderTimings::default);
             let result = match renderer.lock() {
-                Ok(mut renderer) => renderer.render(
-                    frame.rect,
-                    frame.pixels_per_point,
-                    festerm_ui_egui::theme::SURFACE_TERMINAL,
-                    &frame.primitives,
-                    &frame.textures,
-                    render_timings.as_mut(),
-                ),
+                Ok(mut renderer) => {
+                    if frame.full_redraw {
+                        renderer.invalidate();
+                    }
+                    renderer.render(
+                        frame.rect,
+                        frame.pixels_per_point,
+                        festerm_ui_egui::theme::SURFACE_TERMINAL,
+                        &frame.primitives,
+                        &frame.textures,
+                        render_timings.as_mut(),
+                    )
+                }
                 Err(_) => {
                     observed.active.store(false, Ordering::Relaxed);
                     festerm_ui_egui::remove_root_terminal_painter(context);
@@ -779,6 +784,89 @@ mod tests {
             fixture(false, 1.0, false, false, true),
             fixture(true, 1.0, false, false, true)
         );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn native_full_redraw_replaces_identical_terminal_pixels_once() {
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+        use festerm_core::{Dimensions, Terminal};
+        use festerm_ui_egui::{EncodedInputSink, TerminalView};
+        use std::sync::atomic::Ordering;
+
+        struct Sink;
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, _: &[u8]) {
+                panic!("local redraw must not send terminal input");
+            }
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+        }
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let context = egui::Context::default();
+        let status = super::native::install(&context, &state).unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(48, 24).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25lunchanged ASCII terminal");
+        let mut view = TerminalView::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(480.0, 480.0),
+            )),
+            time: Some(0.0),
+            ..Default::default()
+        };
+        let mut reference = None;
+        for index in 0..8 {
+            if index == 3 {
+                view.request_full_redraw();
+            }
+            if index == 5 {
+                terminal.ingest(b"\x1b[2J\x1b[H");
+                view.request_full_redraw();
+            }
+            if index == 6 {
+                terminal.ingest(b"unchanged ASCII terminal");
+            }
+            let mut output = context.run_ui(input.clone(), |ui| {
+                view.show(ui, &mut terminal, &mut Sink);
+            });
+            renderer.handle_delta(&mut output.textures_delta);
+            let image = renderer.render(&context, &output).unwrap();
+            assert!(status.active.load(Ordering::Relaxed));
+            if index == 2 || index == 4 || index == 7 {
+                assert_eq!(status.last_updated_pixels.load(Ordering::Relaxed), 0);
+            }
+            if index == 2 {
+                assert!(status.last_surface_pixels.load(Ordering::Relaxed) > 0);
+                reference = Some(image.clone());
+            }
+            if index == 3 {
+                assert_eq!(
+                    status.last_updated_pixels.load(Ordering::Relaxed),
+                    status.last_surface_pixels.load(Ordering::Relaxed),
+                    "identical native pixels must all be replaced on explicit redraw"
+                );
+                assert_eq!(Some(image), reference);
+            }
+            if index == 6 {
+                assert_eq!(
+                    status.last_updated_pixels.load(Ordering::Relaxed),
+                    status.last_surface_pixels.load(Ordering::Relaxed),
+                    "a redraw while blank must also discard older retained pixels"
+                );
+            }
+        }
     }
 
     #[cfg(all(windows, target_arch = "x86_64"))]

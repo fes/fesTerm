@@ -68,10 +68,45 @@ PNGs plus `manifest.json` to `docs/images/ui-state/`:
 python3 scripts/build_ui_state_doc.py    # rebuild the document
 ```
 
-This tier is PII-free by construction, not by review: it never reads the
-user's configuration, credentials, host keys or filesystem. Every host is an
-`example.com`/`example.net` subdomain and every address comes from the
-documentation-reserved ranges in RFC 5737.
+Profile identities and document contents are repository-owned synthetic data:
+hosts use `example.com`/`example.net` subdomains and addresses use the
+documentation-reserved ranges in RFC 5737. Capture must run with isolated user
+directories so personal configuration, credentials, host keys and clipboard
+content are not sources.
+
+**Publication limitation:** this tier is not yet PII-free by construction.
+Local editor and picker fixtures perform real I/O under the worktree, and their
+production widgets display those absolute fixture paths. A checkout under
+`C:\Users\<name>` or `/home/<name>` can therefore expose a personal identity;
+an isolated `HOME` does not hide the checkout path. Pictures also vary with
+checkout/worktree location. Until test-only document/picker metadata fixtures
+separate canonical synthetic display identities from isolated physical paths,
+public captures require a controlled, non-personal checkout root and explicit
+review of path-bearing views and any exported metadata. Do not publish captures
+from a personalized checkout root based on the synthetic-content claim alone.
+
+Every gallery harness seeds its **actual** egui context with the production
+Dark preference and `festerm_ui_egui::theme::default_visuals()` before capture.
+The test application constructor deliberately omits production context setup;
+styling a separate fixture context does not style the harness. The portable
+`gallery_frames_use_production_theme_for_app_and_popup` test asserts emitted
+background and popup fills from real app/widget frames, without a new
+platform-specific snapshot baseline. Fonts, viewport sizes, fixtures, and
+cropping remain owned by the existing scenarios. Editor and picker files are
+created only under the worktree's ignored `target/ui-gallery-fixtures/` and
+removed after capture. This avoids using the personal OS temporary directory
+for those fixtures, but does not make their displayed absolute roots anonymous.
+
+On Windows, invoke the same capture test directly from PowerShell with an
+isolated, worktree-owned `HOME` (and `USERPROFILE`, `APPDATA`, and
+`LOCALAPPDATA`) after pinning `CARGO_HOME` and `RUSTUP_HOME` to the installed
+toolchain homes:
+
+```text
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact
+python scripts/build_ui_state_doc.py
+python scripts/build_ui_state_doc.py --check
+```
 
 The gallery calls `Harness::render()` and never `Harness::snapshot`. That
 distinction is deliberate. The snapshot API is a regression gate that *fails*
