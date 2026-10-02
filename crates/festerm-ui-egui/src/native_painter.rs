@@ -12,6 +12,8 @@ use egui::{
 pub struct TerminalPaintFrame {
     pub rect: Rect,
     pub pixels_per_point: f32,
+    /// Bypass retained-region reuse for this presentation, even if identical.
+    pub full_redraw: bool,
     pub primitives: Vec<ClippedPrimitive>,
     pub textures: Vec<(TextureId, Arc<ColorImage>)>,
 }
@@ -70,10 +72,11 @@ pub(crate) struct Batch {
     images: Images,
     start: ShapeIdx,
     rect: Rect,
+    full_redraw: bool,
 }
 
 impl Batch {
-    pub(crate) fn begin(painter: &Painter, rect: Rect) -> Option<Self> {
+    pub(crate) fn begin(painter: &Painter, rect: Rect, full_redraw: bool) -> Option<Self> {
         let context = painter.ctx();
         if context.viewport_id() != ViewportId::ROOT
             || painter.opacity() != 1.0
@@ -95,6 +98,7 @@ impl Batch {
             images,
             start,
             rect: rect.intersect(context.viewport_rect()),
+            full_redraw,
         })
     }
 
@@ -110,13 +114,13 @@ impl Batch {
                 .cloned()
                 .collect::<Vec<_>>()
         });
-        if shapes.is_empty() || !self.rect.is_positive() {
+        if (shapes.is_empty() && !self.full_redraw) || !self.rect.is_positive() {
             return;
         }
         let count = shapes.len();
         let pixels_per_point = self.context.pixels_per_point();
         let primitives = self.context.tessellate(shapes, pixels_per_point);
-        if primitives.is_empty() {
+        if primitives.is_empty() && !self.full_redraw {
             return;
         }
         let mut textures = self
@@ -132,10 +136,15 @@ impl Batch {
         let frame = TerminalPaintFrame {
             rect: self.rect,
             pixels_per_point,
+            full_redraw: self.full_redraw,
             primitives,
             textures: textures.into_iter().collect(),
         };
         if let Some(callback) = (self.hook.0)(&self.context, frame) {
+            if count == 0 {
+                painter.add(Shape::Callback(callback));
+                return;
+            }
             for index in self.start.0..self.start.0 + count {
                 painter.set(ShapeIdx(index), Shape::Noop);
             }
@@ -157,6 +166,51 @@ mod tests {
     use egui::Color32;
 
     #[test]
+    fn empty_full_redraw_reaches_the_native_hook_without_inventing_pixels() {
+        let context = Context::default();
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = called.clone();
+        install_root_terminal_painter(&context, move |_, frame| {
+            assert!(frame.full_redraw);
+            assert!(frame.primitives.is_empty());
+            observed.store(true, std::sync::atomic::Ordering::Relaxed);
+            None
+        });
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            Batch::begin(painter, ui.max_rect(), true)
+                .unwrap()
+                .finish(painter);
+        });
+        output.textures_delta.clear();
+        assert!(called.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn empty_full_redraw_can_insert_the_native_callback() {
+        let context = Context::default();
+        install_root_terminal_painter(&context, |_, frame| {
+            assert!(frame.full_redraw);
+            assert!(frame.primitives.is_empty());
+            Some(PaintCallback {
+                rect: frame.rect,
+                callback: Arc::new(()),
+            })
+        });
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            Batch::begin(painter, ui.max_rect(), true)
+                .unwrap()
+                .finish(painter);
+        });
+        assert!(matches!(
+            output.shapes.last().map(|shape| &shape.shape),
+            Some(Shape::Callback(_))
+        ));
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn declined_native_paint_keeps_original_shapes() {
         let context = Context::default();
         install_root_terminal_painter(&context, |_, frame| {
@@ -166,7 +220,7 @@ mod tests {
         });
         let mut output = context.run_ui(Default::default(), |ui| {
             let painter = ui.painter();
-            let batch = Batch::begin(painter, ui.max_rect()).unwrap();
+            let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
             let index = painter.rect_filled(ui.max_rect(), 0.0, Color32::RED);
             batch.finish(painter);
             ui.ctx().graphics(|graphics| {
@@ -195,7 +249,7 @@ mod tests {
             let painter = ui.painter();
             let rect = ui.max_rect();
             let prefix = painter.rect_filled(rect, 0.0, Color32::GREEN);
-            let batch = Batch::begin(painter, rect).unwrap();
+            let batch = Batch::begin(painter, rect, false).unwrap();
             let first = painter.rect_filled(rect, 0.0, Color32::RED);
             let second = painter.rect_filled(rect, 0.0, Color32::BLUE);
             batch.finish(painter);
@@ -218,10 +272,10 @@ mod tests {
         let rect = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(50.0, 50.0));
         let mut painter = context.layer_painter(egui::LayerId::background());
         painter.set_opacity(0.5);
-        assert!(Batch::begin(&painter, rect).is_none());
+        assert!(Batch::begin(&painter, rect, false).is_none());
         painter.set_opacity(1.0);
         painter.set_invisible();
-        assert!(Batch::begin(&painter, rect).is_none());
+        assert!(Batch::begin(&painter, rect, false).is_none());
         remove_root_terminal_painter(&context);
         assert!(!installed(&context));
     }

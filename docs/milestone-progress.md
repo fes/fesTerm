@@ -2877,3 +2877,20 @@ Native Windows capture also required opening directory timestamp handles with
 the proper access and backup flags, covered by a file/directory timestamp
 regression. This changes neither product styling nor renderer defaults, and
 does not establish native desktop, latency, or usability acceptance.
+
+### A local redraw without resetting a TUI
+
+The owner requested a palette command that repairs the local terminal display
+without borrowing common TUI shortcuts or asking the running program to redraw.
+Reset Terminal is not that operation: it resets emulated screen/cursor/mode
+state. Redraw Terminal instead invalidates the targeted view's presentation
+caches and carries a one-frame full-paint hint through the existing native
+painter snapshot. The retained Direct2D renderer discards only its last-frame
+reuse candidate, so even identical regions are freshly drawn while older
+published surfaces stay immutable. Ordinary reuse resumes on the next frame.
+
+The command is palette-only, preserves terminal state, selection, reading
+anchor and zoom, and does not send input, resize or daemon recovery controls.
+Deterministic coverage checks unchanged-row rebuilding, complete native
+pixel replacement, one-shot reuse recovery, command routing and Ctrl+L/Ctrl+R
+delivery. Native desktop feel remains separate manual evidence.

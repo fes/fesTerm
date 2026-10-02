@@ -730,11 +730,19 @@
         "escape_dismisses_without_a_selection",
         "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
         "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
-        "oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents"
+        "oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents",
+        "redraw_terminal_palette_command_is_local_unbound_and_preserves_tui_keys",
+        "full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state",
+        "full_redraw_request_is_view_local",
+        "native_full_redraw_replaces_identical_terminal_pixels_once",
+        "empty_full_redraw_reaches_the_native_hook_without_inventing_pixels",
+        "empty_full_redraw_can_insert_the_native_callback",
+        "retained_frames_update_only_changed_regions_and_preserve_older_pixels"
       ],
       "manual_scenarios": [
         "AS-04",
-        "TI-15"
+        "TI-15",
+        "TI-16"
       ],
       "status": "partial",
       "prerequisites": []
