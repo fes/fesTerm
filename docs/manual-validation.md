@@ -149,6 +149,52 @@ possible.
 | AS-08 | Request application/window quit with multiple live sessions (close button, native Quit menu, and Cmd+Q — fesTerm's single window means all three arrive as the same close request); aggregate consequence is accurate, Cancel returns exact window state without acting, and deliberate confirmation exits the process exactly once. Repeat with zero live sessions and confirm no dialog appears. | Native functional | Yes: automate the counts/cancel/confirm oracle; final native window-teardown timing remains human review |
 | AS-09 | With multiple local/SSH sessions and long/changing titles, toggle **Show session details in chips** at ordinary and narrow widths, with the status bar on and off. Verify one coherent resize per transition; `34→28` px chip and `42→36` px chrome geometry; stable chip identity/type/state/Close targets; only the active detail relocates to the footer; title-first/factual-fallback precedence; ellipsis priority; empty Launcher/Settings footer; and palette/hover/accessibility/Inspector access when both displays are off. Repeat with wrapped rows and on macOS traffic-light chrome. | Native functional + visual + usability + accessibility | Automate preference/state, grid-resize count, geometry, active-value, and narrow screenshots; retain native hit-target, title-churn readability, macOS optical alignment, and screen-reader review |
 
+The dialog-style regressions cover full-root `752 × 516`, `360 × 516`, and
+`360 × 240` layouts with the production Dark/default visuals: About with license
+and update disclosures; long-target close, bounded paste, update-consent, and
+reset decisions; Open File/Save As with project-owned long paths and missing
+folders in both chrome densities; and palette/overflow row bounds. They assert
+minimum action targets, Cancel/default focus, non-destructive cancellation,
+Escape/generation invalidation, and terminal focus restoration. These extend
+AS-07, CP-05/06/09, and TI-15 automated geometry/semantic coverage, not native
+platform or usability acceptance. Native DPI/edge placement, short-sheet
+scrolling feel, screen-reader traversal, and visual comparison remain in NP-02
+and the corresponding existing scenarios.
+
+The retained matching 23-state run `style-pair-20261001-1700` is not a completed
+style acceptance: actual candidate `daf9796` drawing shows short Save As table
+content outside its sheet and narrow deep Open File breadcrumbs occupying the
+initial ready/error viewport. Rectangle containment and safe wheel-reachable
+Cancel tests pass but do not prove these painting/presentation properties.
+Keep those deterministic visual blockers separate from the native follow-up
+above; no capability/status is promoted by successful capture completion.
+
+Follow-up deterministic tests reproduce the nested-panel paint escape, enforce
+inherited paint/pointer clipping and initially visible modal-owned Save As
+filename/Save/Cancel at all three roots with both chrome densities, and verify
+deep-path/filter placement plus exact ancestor navigation after horizontal
+scrolling. The stricter Open File short-root initial-control test now passes
+after reserving its footer and budgeting its error/list viewport; initial
+path/filter pointer focus and error paint are checked at all three sizes/both
+densities. Cancel restores terminal input without an extra click. Save As
+hidden row/action pointer tests also pass, with an explicit Save response ID
+on the filename's modal layer. Fixes still require a fresh uniformly matched
+drawing pair; the completed old run remains failed visual evidence.
+
+The authorized fresh `style-pair-20261002-r2` pair is now retained separately:
+production-f0 BEFORE executable `510af3f…`, corrected `426c458` AFTER executable
+`5dc2f785…`, exactly 23 scenes, 242 real file SHA/mtime/kind matches, Microsoft
+Basic Render Driver CPU/DX12 and PPP 1.0. All 23 AFTER images were inspected;
+initial principal fields/actions and clipped paint converge, while compact
+body navigation/rows/disclosures scroll. Successful candidate completion
+performed only inventoried input cleanup, so neither completed pair may be
+reused. Original 48 gallery assets and failed first-pair evidence are unchanged.
+About-short's update action is outside its initial body viewport, overflow
+popup areas remain unobserved, and collapsed-palette/update-announcement states
+remain unqualified. Duplicate global Save labels are not ownership evidence;
+the direct response/default-focus tests supply that proof. Native platform,
+hardware and usability scenarios above remain pending.
+
 ### Terminal interaction, history, and overlays
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
@@ -168,6 +214,7 @@ possible.
 | TI-13 | In Session Inspector Diagnostics start/stop/clear input recording and explicitly copy its report. Exercise local selection, terminal-owned/unreported mouse motion, reported mouse events, local context/history gestures and subsequent Copy. Inspect a report for absence of fake token/URL/clipboard contents. | Native functional + privacy/usability | Core/queue/selection classification, bounded storage and redaction automated; physical-event attribution and remote-program interpretation remain unknown, not invented |
 | TI-14 | In local, SSH, and text-mode SFTP sessions, right-click visible absolute paths, `~/` paths, relative paths, wrapped/Unicode names, and an OSC 8 link near path-like text. Verify **Open in viewer** appears only for the frozen clicked target, opens local files locally, opens remote files only through the same live verified SSH/SFTP transport, keeps OSC 8 actions intact, and explains unknown cwd / disconnected transport / missing subsystem / host-trust limits honestly instead of guessing or invoking a shell. Include long Windows/UNC/remote paths, real repeated filename spaces, combining/emoji names, display controls, and a wide character wrapping with one spare column, both live and in retained history. Preview spacing stays natural and single-line, elision keeps useful filename/root context, the complete escaped target is available on hover/accessibility, and Copy/Open preserve real filename bytes without synthetic wrap padding. | Native functional + security + usability/accessibility | Partly: parser, bounded display/grapheme layout, exact menu-action values, core-owned wrap extents, live/history detection, remote-text-tab routing, live-transport/fingerprint pinning, and unavailable-state coverage are automated. A real loopback SSH/SFTP server covers typed-password/session-only trust, exact file bytes, size limits, missing/non-file targets, stalled/refused subsystems, shell responsiveness, and shutdown. Native GUI end-to-end remote open, edge/DPI placement, screen-reader delivery and refusal-overlay/readability usability remain manual |
 | TI-15 | From a live session, an alternate-screen TUI, and an exited/disconnected history, use the command palette and the terminal context menu (with and without a selection) to choose **Open Terminal History in Editor** and **Save Terminal History As…**. Confirm the new editor shows `UNTITLED`, starts dirty, contains logical plain text without ANSI/control sequences, omits synthetic soft-wrap newlines, uses retained primary history plus the applicable visible screen, and stays unchanged while later terminal output arrives or while the saved copy is edited. Confirm plain **Save** / `:w` / `:wq` on the untitled snapshot go through Save As until a destination exists, Save As cancellation/failure is non-destructive, oversize retained history is refused without partial export, and no PTY input is sent. | Native functional + usability | Mostly: core extraction, palette/context routing, disconnected access, immutable snapshot behavior, honest bounds refusal, untitled-save routing, and save-error handling are automated; native menu placement, edge positioning, alternate-screen usability, and cross-platform Save As feel remain human review |
+| TI-16 | In primary/alternate screens and disconnected history, choose **Redraw Terminal** from the palette. Confirm content, cursor, modes, selection, reading anchor and zoom remain unchanged, terminal focus returns, and Ctrl+L/Ctrl+R still belong to the TUI. On eligible Windows Direct2D, unchanged regions are repainted once and ordinary reuse resumes. Do not substitute **Reset Terminal**, which changes terminal state. | Native functional + usability | Row-cache, native full-surface invalidation, palette/typed-command routing, core-state preservation, no input/resize and TUI-key coverage are automated; native desktop appearance and cross-platform focus/usability remain manual pending |
 
 Windows ConPTY prompt timing qualification is automated by
 `python scripts/check_windows_conpty_prompt.py --cycles 20` and the fixed
@@ -592,6 +639,16 @@ baseline. `textureless_bordered_panels_match_pixels_across_dpi` covers border
 geometry in normal CI. Native Settings scrolling, profile interaction, window
 drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
+
+The bounded non-terminal expansion adds production-widget menu/About/safety/
+picker fixtures to those same opt-in probes and gallery, not to the native CPU
+oracle. Its [reconciled matrix](../validation/windows-warp/surface-matrix.json)
+retains 33 families, all audited state groups and named native prerequisites.
+The initial scaffolding awaits exclusive validation; no new headless evidence
+has been accepted. Even completed offscreen reports cannot qualify About/menu
+idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
+mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
+unchanged; no new latency budgets are implied.
 
 ### Experimental Direct2D qualification
 

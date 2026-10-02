@@ -1976,6 +1976,8 @@ pub enum AppCommand {
     /// Freezes the active terminal's retained text into a new independent
     /// editor snapshot.
     OpenTerminalHistoryInEditor,
+    /// Repaints this terminal's local presentation without protocol effects.
+    RedrawTerminal(TabId),
     /// Opens a new independent terminal snapshot and immediately asks where
     /// to save it.
     SaveTerminalHistoryAs,
@@ -3324,6 +3326,14 @@ impl AppState {
             }
             AppCommand::ReconnectSession(tab) => self.request_reconnect(tab),
             AppCommand::ActivateTab(id) => self.activate(id),
+            AppCommand::RedrawTerminal(id) => {
+                if let Some(session) = self.session_tab_mut(id) {
+                    session.view.request_full_redraw();
+                    context.request_repaint();
+                } else {
+                    tracing::warn!(target: "festerm::commands", "terminal redraw target is not a session");
+                }
+            }
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),

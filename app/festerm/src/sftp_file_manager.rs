@@ -6055,11 +6055,41 @@ impl MarkdownFilePicker {
     pub(crate) fn ui(&mut self, ui: &mut Ui) -> MarkdownPickerOutcome {
         let mut outcome = MarkdownPickerOutcome::Pending;
         let width = ui.available_width();
+        let inherited_clip = ui.clip_rect();
+        let gap = if ui.available_height() < 200.0 {
+            0.0
+        } else {
+            6.0
+        };
         // These rows are a list to be clicked, not prose to be selected. Left
         // selectable, every label under the pointer turns the cursor into an
         // I-beam and the sheet reads as a document rather than as a chooser.
         ui.style_mut().interaction.selectable_labels = false;
 
+        egui::Panel::bottom(egui::Id::new("markdown_file_picker_footer"))
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new())
+            .show(ui, |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(inherited_clip));
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("{} items", self.pane.visible_entries().len()))
+                            .font(font_for_text_role(SftpTextRole::Footer))
+                            .color(theme::TEXT_MUTED),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.cancel_path_request();
+                            outcome = MarkdownPickerOutcome::Cancelled;
+                        }
+                    });
+                });
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new())
+            .show(ui, |ui| {
+        ui.set_clip_rect(ui.clip_rect().intersect(inherited_clip));
         ui.horizontal(|ui| {
             if toolbar_icon_button(ui, SftpGlyph::Back, "Back").clicked() {
                 self.navigate_back();
@@ -6075,45 +6105,58 @@ impl MarkdownFilePicker {
             }
             ui.add_space(SFTP_TOOLBAR_NAV_GAP);
             let mut breadcrumb_target = None;
-            ui.horizontal_wrapped(|ui| {
-                for (index, segment) in breadcrumb_segments(&self.pane.current_path)
-                    .into_iter()
-                    .enumerate()
-                {
-                    if index > 0 && segment.label != "/" {
-                        ui.label(
-                            RichText::new("/")
+            let breadcrumb_width = ui.available_width();
+            egui::ScrollArea::horizontal()
+                .id_salt((
+                    "markdown_picker_breadcrumbs",
+                    path_key(&self.pane.current_path),
+                ))
+                .max_width(breadcrumb_width)
+                .max_height(32.0)
+                .auto_shrink([false, true])
+                .stick_to_right(true)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (index, segment) in breadcrumb_segments(&self.pane.current_path)
+                            .into_iter()
+                            .enumerate()
+                        {
+                            if index > 0 && segment.label != "/" {
+                                ui.label(
+                                    RichText::new("/")
+                                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            }
+                            let text = RichText::new(segment.label.clone())
                                 .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
-                    let text = RichText::new(segment.label.clone())
-                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                        .color(if segment.current {
-                            theme::TEXT_PRIMARY
-                        } else {
-                            theme::TEXT_SECONDARY
-                        });
-                    if segment.current {
-                        ui.label(text);
-                    } else if ui
-                        .add(
-                            egui::Button::new(text)
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::NONE)
-                                .min_size(egui::vec2(0.0, 18.0)),
-                        )
-                        .clicked()
-                    {
-                        breadcrumb_target = Some(segment.path);
-                    }
-                }
-            });
+                                .color(if segment.current {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_SECONDARY
+                                });
+                            if segment.current {
+                                ui.label(text).on_hover_text(segment.path.display());
+                            } else if ui
+                                .add(
+                                    egui::Button::new(text)
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::NONE)
+                                        .min_size(egui::vec2(0.0, 24.0)),
+                                )
+                                .on_hover_text(segment.path.display())
+                                .clicked()
+                            {
+                                breadcrumb_target = Some(segment.path);
+                            }
+                        }
+                    });
+                });
             if let Some(path) = breadcrumb_target {
                 self.navigate_to_breadcrumb(path);
             }
         });
-        ui.add_space(6.0);
+        ui.add_space(gap);
 
         let path_id = ui.make_persistent_id("markdown_picker_path");
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::L)) {
@@ -6140,15 +6183,20 @@ impl MarkdownFilePicker {
                 self.submit_path();
             }
         });
-        ui.add_space(6.0);
+        ui.add_space(gap);
 
         let mut filter_text = self.pane.filter.clone();
         let filter_response = show_filter_field(ui, &mut filter_text, PaneFocus::Local, width);
         if filter_response.changed() {
             self.pane.set_filter(filter_text);
         }
-        ui.add_space(6.0);
+        ui.add_space(gap);
 
+        ScrollArea::vertical()
+            .id_salt("markdown_picker_listing")
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, false])
+            .show_viewport(ui, |ui, viewport| {
         if let Some(summary) = self.pane.error.clone() {
             ui.colored_label(theme::STATUS_ERROR, summary);
             if let Some(details) = &self.pane.details {
@@ -6221,9 +6269,11 @@ impl MarkdownFilePicker {
 
         let mut picked_item: Option<SftpDirectoryItem> = None;
         let entries = self.pane.visible_entries();
+        let rows_height = (viewport.height() - ui.min_rect().height())
+            .max(SFTP_TABLE_ROW_HEIGHT);
         let scroll_output = ScrollArea::vertical()
             .id_salt("markdown_file_picker_rows")
-            .max_height(280.0)
+            .max_height(280.0_f32.min(rows_height))
             .vertical_scroll_offset(self.pane.scroll_offset)
             .show_rows(ui, SFTP_TABLE_ROW_HEIGHT, entries.len(), |ui, range| {
                 for item in &entries[range] {
@@ -6344,19 +6394,6 @@ impl MarkdownFilePicker {
             self.cancel_path_request();
             outcome = self.open_item(&item);
         }
-
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{} items", entries.len()))
-                    .font(font_for_text_role(SftpTextRole::Footer))
-                    .color(theme::TEXT_MUTED),
-            );
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
-                    self.cancel_path_request();
-                    outcome = MarkdownPickerOutcome::Cancelled;
-                }
             });
         });
 

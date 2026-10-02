@@ -27,6 +27,110 @@ Copy-caption comparison must include the identical navigation change on both
 its baseline and candidate; saved memoized caption lookups are not proof of
 saved text layouts or improved latency.
 
+## Fitting dialogs to the supported root instead of a preferred width
+
+Faithful production-theme captures separated actual layout defects from a
+misleading gallery palette. Open File and Save As still imposed a 420 px
+minimum inside nested popup frames, and the palette assumed a 420 px window
+even though the application supports a 360 px root.
+
+The bounded style slice measures the full frame before choosing content size,
+uses one picker frame, and allows short sheets to scroll. About and legacy
+safety actions reuse the existing semantic roles with explicit minimum targets;
+disclosures scroll without being shortened, and palette labels cannot paint
+over their shortcut column. Chrome overflow adopts the same 30 px row policy
+as the existing context menus. Confirmation target/generation checks,
+safe/default focus, cancellation, and semantic command dispatch stay in their
+original owners.
+
+The first full-root picker test also exposed Save As reserving an entire
+sheet-width breadcrumb after its navigation buttons. The private toolbar now
+passes only its remaining width, and the existing three-segment breadcrumb
+truncates within that budget while keeping exact navigation targets and full
+accessible/hover identities. Short sheets remain genuinely scrollable; the
+interaction regression scrolls the sheet and clicks Cancel only with its full
+label and minimum click target visible, instead of treating an off-viewport
+accessibility node as a usable action.
+
+Co-located full-root regressions use synthetic fake transports and
+worktree-owned picker fixtures, without new platform snapshot baselines.
+Headless geometry and production-widget captures remain distinct from native
+DPI, accessibility, and usability acceptance.
+
+The first retained 23-state matching pair (`style-pair-20261001-1700`,
+production-f0 baseline and candidate `daf9796`) also demonstrated the limit of
+rectangle-only tests. Observed popup areas now fit the root, but the short Save
+As capture paints table content below the bounded sheet, and deep Open File
+breadcrumbs consume the initial narrow ready/error viewport. These are
+automated visual acceptance blockers, not native-only follow-up or a completed
+style convergence claim. The completed pair remains immutable; its successful
+capture entry performed the inventoried input cleanup, so another iteration
+needs a fresh uniformly matched pair rather than a relabeled candidate.
+
+The follow-up stays in the owned picker seams: Save As pins its filename,
+complete overwrite notice and actions, gives navigation/rows the remaining
+viewport, and intersects nested-panel clips before registering child widgets.
+An initial paint-only correction was superseded because drawing containment
+alone cannot establish pointer safety. Tests now prove initial modal-owned
+Save/Cancel and filename at all three roots/both densities, and clipped pointer
+clicks cannot trigger either action. The local Open File
+toolbar keeps every ancestor and exact navigation target in one horizontally
+scrollable row rather than wrapping the whole path down the sheet; ready/error
+tests verify the fields and actual ancestor navigation. A stricter initial
+short-root test then exposed unreserved listing/footer space; the authorized
+local layout fix pins Cancel and gives complete errors/rows a bounded
+remaining viewport. Initial path/filter pointer focus, error paint and
+modal-owned actions now pass at all three roots/both densities, and cancellation
+restores viable terminal input. Hidden Save As row clicks cannot change
+selection, filename or navigation; the explicit Save response shares the
+filename's modal layer. Fresh drawing must still qualify the source fixes.
+The completed `daf9796` comparison is not retroactively qualified.
+
+The fresh second pair, `style-pair-20261002-r2`, retained the same f0 executable
+and rendered corrected source `426c458` against newly owned, identically
+matched physical inputs. All 23 AFTER pictures were inspected, including the
+short roots: filename/overwrite/actions no longer disappear in Save As, deep
+Open File paths no longer displace its initial fields/Cancel, and nested rows
+do not paint over the application. Eight observed off-root sheets and seven
+off-root action scenes became zero, without treating null or background-label
+matches as passes. Compact body rows/navigation/disclosures still scroll;
+native/usability acceptance is unchanged. The two completed pairs stay
+immutable, the original 48 gallery images remain intact, and no timing or
+anonymous-origin claim is made.
+
+## Expanding evidence without pretending every surface is measured
+
+The non-terminal performance audit also found a coverage gap: the original
+four WARP and twelve document/list scenes did not measure expanded menus,
+About, safety dialogs or file-picker states. A bounded shared fixture catalog
+now arranges 26 real production-widget states at normal and narrow widths,
+while preserving those controls. Actual directory workers must reach a ready
+entry or error before a picker can be sampled; fake transport recorders and
+existing updater test controllers avoid personal resources and live operations.
+
+The reconciled 33-family/163-GUI-reference matrix names every remaining state
+group and native prerequisite. Expanded reports separate preparation, first
+UI/tessellation, readiness, warmup and steady distributions; WARP completion
+includes drawing/synchronization/readback, not physical presentation. This
+first scaffolding batch awaits the exclusive validation slot and claims no new
+timings or native passes. See `validation/windows-warp/README.md`.
+
+Coordinated geometry review also needs combinations absent from those timing
+scenes: licenses beside a ready updater, long identities, deep paths, overwrite
+notices and the maximum paste disclosure. Gallery-only fixtures exercise these
+through actual commands/tasks and resize an already-verified application to
+normal, narrow and short roots. Optional manifest observations preserve clipping
+and action/focus bounds rather than calling a screenshot a pass. Both before/after
+generation and publication-safe physical display identities remain pending.
+
+Moving binaries between worktrees exposed another comparison boundary: real
+origins and picker breadcrumbs can change even when widget code does not.
+A test-only opt-in owned physical-root/run contract now scaffolds sequential
+baseline/candidate captures at the same actual scene paths. Fresh ownership,
+matching input/phase proofs and tracked cleanup are required; workers and real
+document generation remain intact. This is not canonical display metadata
+or anonymization, and its validation/matched visual claims remain pending.
+
 ## Separating an outline allocation fix from the residual Preview cost
 
 The mixed Markdown Preview investigation found a genuine unnecessary copy:
@@ -2901,3 +3005,20 @@ Native Windows capture also required opening directory timestamp handles with
 the proper access and backup flags, covered by a file/directory timestamp
 regression. This changes neither product styling nor renderer defaults, and
 does not establish native desktop, latency, or usability acceptance.
+
+### A local redraw without resetting a TUI
+
+The owner requested a palette command that repairs the local terminal display
+without borrowing common TUI shortcuts or asking the running program to redraw.
+Reset Terminal is not that operation: it resets emulated screen/cursor/mode
+state. Redraw Terminal instead invalidates the targeted view's presentation
+caches and carries a one-frame full-paint hint through the existing native
+painter snapshot. The retained Direct2D renderer discards only its last-frame
+reuse candidate, so even identical regions are freshly drawn while older
+published surfaces stay immutable. Ordinary reuse resumes on the next frame.
+
+The command is palette-only, preserves terminal state, selection, reading
+anchor and zoom, and does not send input, resize or daemon recovery controls.
+Deterministic coverage checks unchanged-row rebuilding, complete native
+pixel replacement, one-shot reuse recovery, command routing and Ctrl+L/Ctrl+R
+delivery. Native desktop feel remains separate manual evidence.
