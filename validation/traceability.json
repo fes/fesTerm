@@ -29,7 +29,6 @@
     "ADR-0011",
     "ADR-0012",
     "ADR-0013",
-    "ADR-0014",
     "ADR-0015",
     "ADR-0016"
   ],
@@ -594,7 +593,8 @@
     {
       "id": "session-chips",
       "edges": [
-        "CHIP-*"
+        "CHIP-0[1-9]",
+        "CHIP-1[0-3]"
       ],
       "requirements": [
         "docs/gui-design.md#independent-session-chips"
@@ -607,6 +607,35 @@
         "chip_context_menu_targets_inactive_chip_without_activating_it",
         "dragging_one_chip_onto_another_emits_a_reorder_action",
         "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape",
+        "session_alias_rename_is_instance_only_and_terminal_titles_never_become_aliases",
+        "session_alias_reset_clears_override_and_empty_commit_keeps_previous_name",
+        "session_alias_pending_edits_are_bounded_and_live_failed_edits_join_the_next_transaction",
+        "session_alias_workspace_round_trip_restores_local_serial_and_authentication_surfaces",
+        "session_alias_authentication_completion_and_password_retry_preserve_only_same_instance",
+        "session_alias_running_sessions_completion_uses_exact_native_generation_without_workspace",
+        "session_alias_workspace_owns_name_independently_of_native_seed_and_replacement",
+        "session_alias_reconnect_keeps_view_name_without_seeding_a_replacement_generation",
+        "session_alias_fresh_native_attachment_refuses_an_old_generation_seed",
+        "session_alias_native_seed_updates_never_rename_other_current_views",
+        "session_alias_native_seed_broadcast_keeps_window_views_independent_and_latest_edit_wins",
+        "session_alias_multi_window_move_save_restore_and_reset_use_one_configuration",
+        "session_alias_native_metadata_saves_without_workspace_restore_or_terminal_contents",
+        "session_alias_workspace_opt_out_keeps_mux_name_live_only_without_writing_metadata",
+        "session_alias_actual_save_failure_is_visible_and_never_broadcasts_unsaved_metadata",
+        "session_alias_rejected_secret_edit_is_visible_without_mutating_or_saving",
+        "session_alias_restored_authentication_chips_display_saved_view_aliases",
+        "session_alias_failed_reset_remains_retryable_until_metadata_is_really_removed",
+        "session_alias_fixture_cleanup_preserves_original_panics_for_files_and_empty_directories",
+        "was_saved_is_true_for_every_successful_save_variant_and_false_otherwise",
+        "session_alias_context_menu_reset_targets_only_an_explicit_inactive_override",
+        "session_alias_bounds_sanitize_user_edits_and_reject_invalid_metadata",
+        "session_alias_metadata_rejects_legacy_endpoints_duplicates_and_unknown_fields",
+        "durable_aliases_round_trip_without_workspace_and_refuse_recycled_generations",
+        "workspace_replacements_preserve_durable_aliases_and_update_bookkeeping",
+        "durable_alias_registry_is_bounded_without_pruning_absent_sessions",
+        "legacy_configuration_has_no_session_aliases_or_added_defaults",
+        "native_session_identity_reports_actual_registry_facts_across_reconnect",
+        "native_session_identity_copies_existing_registry_facts_without_changing_provider_record",
         "single_row_layout_shrinks_chips_before_falling_back_to_a_scrollbar",
         "focused_chip_priority_is_identical_at_both_vertical_densities",
         "single_row_compacts_only_inactive_chips_with_water_filling",
@@ -618,7 +647,33 @@
       ],
       "manual_scenarios": [
         "AS-03",
-        "AS-09"
+        "AS-09",
+        "AS-10"
+      ],
+      "status": "partial",
+      "prerequisites": []
+    },
+    {
+      "id": "session-alias-view-ownership",
+      "edges": [
+        "CHIP-14"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-chip-context-menu-and-rename",
+        "docs/configuration.md#session-display-aliases"
+      ],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0018"
+      ],
+      "automated_tests": [
+        "session_alias_mux_workspace_names_are_per_view_not_backend_lookup",
+        "workspace_aliases_round_trip_for_all_mux_kinds_without_provider_identity",
+        "session_alias_native_seed_updates_never_rename_other_current_views",
+        "session_alias_workspace_opt_out_keeps_mux_name_live_only_without_writing_metadata"
+      ],
+      "manual_scenarios": [
+        "AS-10"
       ],
       "status": "partial",
       "prerequisites": []

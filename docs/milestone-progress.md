@@ -3,6 +3,47 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Saving frontend session names without renaming their backends
+
+Chip rename used to change only a live label: it neither dirtied the workspace
+nor survived restoration, and Running Sessions had no profile-backed workspace
+entry from which to recover it. Naming is now explicit logical-tab metadata with
+a separate captured default, reset-to-default action, bounded validation, and
+one centralized atomic save across windows. Restored SSH/SFTP authentication
+and password retry preserve the alias without changing reusable launch fields.
+Terminal OSC titles remain secondary, never a persistence source.
+
+Review clarified that a name belongs to the saved fesTerm tab, not to every
+view of a physical backend. A strict tmux/Screen identity proposal would have
+required unproved remote helpers, process-generation adapters and new platform
+prerequisites. The user chose frontend ownership instead. Every existing
+restorable terminal kind, including local/SSH tmux and Screen, keeps its own
+optional alias through opted-in workspace restoration even when the backend
+was recreated. A new attachment does not acquire another view's name.
+
+Native sessiond already records the daemon PID, creation generation and exact
+IPC endpoint. Its successful-connection facts support a separate bounded seed
+for fresh Running Sessions views, even without workspace restore. That seed
+cannot follow a recycled native generation or overwrite an existing view's
+alias. Rename/reset remains local to the target view; seed changes affect only
+future attachments. All-window saves commit once and broadcast only successful
+documents, while failures remain visible and retryable.
+
+Qualification caught a presentation gap: restored authentication surfaces
+retained alias metadata but still displayed the profile default. Both SSH and
+terminal SFTP waiting chips now honor their saved view alias before
+authentication. Nonempty rejected edits produce content-free refusal notices
+without a write, and owned save-failure fixtures preserve the original assertion
+failure when unwinding through file or empty-directory cleanup.
+
+No provider commands, protocol, remote runtime, process FFI, platform minimum
+or ownership boundary changes. The unapproved identity proposal was removed
+from publishable source. Focused deterministic regressions and the complete
+Windows local CI-equivalent suite passed under the fleet's exclusive validation
+lease on 2026-10-02. Required remote platform checks and AS-10
+native/accessibility/usability evidence remain pending; no accepted milestone
+or platform status is advanced.
+
 ## Removing repeated query compilation from document loading
 
 Steady-state measurements hid a much larger Markdown stall: the first Preview

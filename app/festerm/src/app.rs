@@ -128,7 +128,6 @@ enum ApplicationShortcut {
     /// since `Cmd+Shift+F` is already `ToggleFocusMode` there.
     Find,
 }
-
 #[derive(Clone, Copy)]
 enum ZoomCommand {
     In,
@@ -1493,6 +1492,95 @@ impl FesTermApp {
         std::mem::take(&mut self.workspace_save_requested)
     }
 
+    pub(crate) fn take_session_name_changes(&mut self) -> crate::tabs::SessionNameChanges {
+        self.state.take_session_name_changes()
+    }
+
+    pub(crate) fn settle_session_name_save(&mut self, saved: bool, configuration: &Configuration) {
+        self.state.settle_session_name_save(saved, configuration);
+    }
+
+    /// One complete replacement covers all windows' aliases and, when
+    /// enabled, their workspace. No per-window writer can overwrite a
+    /// sibling's committed naming metadata.
+    pub(crate) fn save_session_names(
+        &mut self,
+        changes: Vec<(
+            festerm_config::DurableSessionIdentity,
+            Option<festerm_config::SessionAlias>,
+            u64,
+        )>,
+        additional_windows: Vec<festerm_config::WorkspaceWindow>,
+        next_identifier: &mut usize,
+        include_workspace: bool,
+    ) -> bool {
+        if self.role == WindowRole::Secondary || self.native_smoke.is_some() {
+            return false;
+        }
+        let mut replacement = if include_workspace {
+            self.state.capture_workspace_configuration(
+                additional_windows,
+                next_identifier,
+                self.window_geometry,
+            )
+        } else {
+            Ok(self.state.configuration().clone())
+        };
+        // Latest explicit edit wins only for the seed, not another live view.
+        let mut changes = changes;
+        changes.sort_unstable_by_key(|(_, _, revision)| *revision);
+        for (identity, alias, _) in changes {
+            replacement = replacement.and_then(|configuration| {
+                configuration.with_durable_session_alias(identity, alias)
+            });
+        }
+        self.apply_configuration_save(
+            replacement,
+            ConfigurationStartupStatus::SessionNamesSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_session_names,
+        )
+    }
+
+    pub(crate) fn show_session_name_persistence_notice(
+        &mut self,
+        context: &egui::Context,
+        persistence_unavailable: bool,
+    ) {
+        let message = if persistence_unavailable {
+            "This naming change applies to this open tab only. To retain it after restart, enable Restore workspace and use a saved profile, or reattach the same verified native session."
+        } else {
+            ConfigurationStartupStatus::SessionNamesSaveFailure(
+                crate::configuration_startup::ConfigurationLoadFailure::Unreadable,
+            )
+            .settings_message()
+        };
+        self.show_session_name_notice(context, message);
+    }
+
+    pub(crate) fn show_session_name_validation_notice(
+        &mut self,
+        context: &egui::Context,
+        failure: festerm_config::ConfigError,
+    ) {
+        let message = match failure.kind() {
+            festerm_config::ConfigErrorKind::ForbiddenSecretValue => {
+                "Session name was not changed because it contains secret-like values. Choose a different display name."
+            }
+            _ => {
+                "Session name was not changed because it is invalid. Choose a different display name."
+            }
+        };
+        self.show_session_name_notice(context, message);
+    }
+
+    fn show_session_name_notice(&mut self, context: &egui::Context, message: &str) {
+        self.overlays.transient_notice = Some((
+            message.to_owned(),
+            std::time::Instant::now() + Duration::from_secs(8),
+        ));
+        context.request_repaint();
+    }
+
     /// Whether workspace restore is enabled, which is a configuration
     /// preference and therefore identical in every window.
     pub(crate) const fn restores_workspace(&self) -> bool {
@@ -2387,6 +2475,21 @@ impl FesTermApp {
                             .dispatch(AppCommand::RenameTab(id, name), context);
                     }
                 }
+                ChromeAction::UseDefaultName {
+                    id: chip_id,
+                    restore_focus,
+                } => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state
+                            .dispatch(AppCommand::UseDefaultSessionName(id), context);
+                        let active = self.state.active();
+                        if let Some(session) = self.state.session_tab_mut(active) {
+                            session.view.request_focus_on_next_frame();
+                        } else if let Some(target) = restore_focus {
+                            context.memory_mut(|memory| memory.request_focus(target));
+                        }
+                    }
+                }
             }
             self.cancel_invalid_clipboard_paste(context);
         }
@@ -2644,7 +2747,10 @@ impl FesTermApp {
                     (tab.title().to_owned(), Some(tab.origin_label().to_owned()))
                 }
                 TabContent::SshAuthenticationRequired(tab) => (
-                    tab.profile.identifier().to_owned(),
+                    tab.alias.as_ref().map_or_else(
+                        || tab.profile.identifier().to_owned(),
+                        |alias| alias.as_str().to_owned(),
+                    ),
                     Some(format!(
                         "SSH authentication required · {}:{}",
                         tab.profile.host(),
@@ -2652,7 +2758,10 @@ impl FesTermApp {
                     )),
                 ),
                 TabContent::SftpAuthenticationRequired(tab) => (
-                    tab.profile.identifier().to_owned(),
+                    tab.alias.as_ref().map_or_else(
+                        || tab.profile.identifier().to_owned(),
+                        |alias| alias.as_str().to_owned(),
+                    ),
                     Some(format!(
                         "SFTP authentication required · {}:{}",
                         tab.profile.host(),
@@ -4531,7 +4640,10 @@ impl FesTermApp {
                         tab.chip_status(self.state.documents()),
                     ),
                     TabContent::SshAuthenticationRequired(tab) => (
-                        tab.profile.identifier().to_owned(),
+                        tab.alias.as_ref().map_or_else(
+                            || tab.profile.identifier().to_owned(),
+                            |alias| alias.as_str().to_owned(),
+                        ),
                         Some(format!(
                             "SSH authentication required · {}:{}",
                             tab.profile.host(),
@@ -4540,7 +4652,10 @@ impl FesTermApp {
                         ChipStatus::Neutral,
                     ),
                     TabContent::SftpAuthenticationRequired(tab) => (
-                        tab.profile.identifier().to_owned(),
+                        tab.alias.as_ref().map_or_else(
+                            || tab.profile.identifier().to_owned(),
+                            |alias| alias.as_str().to_owned(),
+                        ),
                         Some(format!(
                             "SFTP authentication required · {}:{}",
                             tab.profile.host(),
@@ -4596,6 +4711,7 @@ impl FesTermApp {
                     status,
                     closable: true,
                     renamable,
+                    has_explicit_alias: matches!(&tab.content, TabContent::Session(session) if session.can_use_default_name()),
                     movable_across_windows,
                     quick_switch_number: crate::keyboard::QUICK_ACTIONS
                         .get(index)
@@ -6050,6 +6166,52 @@ impl FesTermApp {
 
     pub(crate) fn tab_count_for_test(&self) -> usize {
         self.state.tabs().len()
+    }
+
+    pub(crate) fn set_session_metadata_for_test(
+        &mut self,
+        tab: TabId,
+        profile: Option<&str>,
+        native: Option<festerm_config::DurableSessionIdentity>,
+    ) {
+        let session = self.state.session_tab_mut(tab).unwrap();
+        session.profile_identifier = profile.map(str::to_owned);
+        if let Some(identity) = native {
+            session.set_test_durable_identity(identity);
+        }
+    }
+
+    pub(crate) fn session_label_for_test(&self, tab: TabId) -> &str {
+        &self.state.session_tab(tab).unwrap().label
+    }
+
+    pub(crate) fn session_alias_for_test(&self, tab: TabId) -> Option<&str> {
+        self.state
+            .session_tab(tab)
+            .unwrap()
+            .explicit_alias()
+            .map(festerm_config::SessionAlias::as_str)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn can_use_default_name_for_test(&self, tab: TabId) -> bool {
+        self.state.session_tab(tab).unwrap().can_use_default_name()
+    }
+
+    pub(crate) fn session_name_notice_for_test(&self) -> Option<&str> {
+        self.overlays
+            .transient_notice
+            .as_ref()
+            .map(|(text, _)| text.as_str())
+    }
+
+    pub(crate) fn chip_primary_for_test(&self, tab: TabId) -> String {
+        self.chip_view_models()
+            .0
+            .into_iter()
+            .find(|chip| chip.id == ChipId(tab.chip_id()))
+            .unwrap()
+            .primary
     }
 
     /// Builds a primary window from a configuration that carries a saved

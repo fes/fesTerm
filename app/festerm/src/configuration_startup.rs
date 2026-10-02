@@ -27,6 +27,8 @@ pub(crate) enum ConfigurationStartupStatus {
     InitialFailure(ConfigurationLoadFailure),
     WorkspaceSaved,
     WorkspaceSaveFailure(ConfigurationLoadFailure),
+    SessionNamesSaved,
+    SessionNamesSaveFailure(ConfigurationLoadFailure),
     PasswordCredentialSaved,
     PasswordCredentialSaveFailure(ConfigurationLoadFailure),
     InterfaceSettingsSaved,
@@ -57,6 +59,7 @@ impl ConfigurationStartupStatus {
         matches!(
             self,
             Self::WorkspaceSaved
+                | Self::SessionNamesSaved
                 | Self::PasswordCredentialSaved
                 | Self::InterfaceSettingsSaved
                 | Self::KnownHostTrustSaved
@@ -93,7 +96,7 @@ impl ConfigurationStartupStatus {
                 "The native configuration location is unavailable. Set FESTERM_CONFIG_PATH to a Unicode file path, then restart fesTerm."
             }
             Self::WorkspaceSaved => {
-                "Workspace metadata was saved. Only restorable tab order, focus, and configured profile references were written."
+                "Workspace metadata was saved. Only restorable tab order, focus, configured profile references, and explicit display aliases were written."
             }
             Self::WorkspaceSaveFailure(ConfigurationLoadFailure::Invalid) => {
                 "Workspace metadata was not saved because the configuration is invalid. The active configuration remains unchanged."
@@ -107,6 +110,8 @@ impl ConfigurationStartupStatus {
             Self::WorkspaceSaveFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "Workspace metadata was not saved because its location is unavailable. The active configuration remains unchanged."
             }
+            Self::SessionNamesSaved => "Session display names were saved without changing profiles or provider attachment identities.",
+            Self::SessionNamesSaveFailure(_) => "Session name changes apply now but could not be saved. They will not survive restart; check configuration access and rename or use the default name again to retry.",
             Self::PasswordCredentialSaved => {
                 "The saved SSH password reference was updated. The password remains only in native secure storage."
             }
@@ -211,6 +216,46 @@ pub(crate) struct ConfigurationReloader {
     selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
 }
 
+#[cfg(test)]
+pub(crate) struct SessionNameConfigurationFixture {
+    pub(crate) path: PathBuf,
+}
+
+#[cfg(test)]
+impl SessionNameConfigurationFixture {
+    pub(crate) fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            path: std::env::current_dir().unwrap().join(format!(
+                ".festerm-session-name-fixture-{}-{id}.toml",
+                std::process::id(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for SessionNameConfigurationFixture {
+    fn drop(&mut self) {
+        let cleanup = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) if metadata.is_dir() => fs::remove_dir(&self.path),
+            Ok(_) => fs::remove_file(&self.path),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = cleanup {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return;
+            }
+            if std::thread::panicking() {
+                eprintln!("Session name fixture cleanup failed: {:?}", error.kind());
+            } else {
+                panic!("Session name fixture cleanup failed: {:?}", error.kind());
+            }
+        }
+    }
+}
+
 impl ConfigurationReloader {
     #[cfg(test)]
     fn from_selection(selected_path: Result<PathBuf, ConfigurationLoadFailure>) -> Self {
@@ -274,6 +319,16 @@ impl ConfigurationReloader {
         match self.save_configuration(configuration) {
             Ok(()) => ConfigurationStartupStatus::WorkspaceSaved,
             Err(failure) => ConfigurationStartupStatus::WorkspaceSaveFailure(failure),
+        }
+    }
+
+    pub(crate) fn save_session_names(
+        &self,
+        configuration: &Configuration,
+    ) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::SessionNamesSaved,
+            Err(failure) => ConfigurationStartupStatus::SessionNamesSaveFailure(failure),
         }
     }
 
@@ -527,6 +582,36 @@ mod tests {
     }
 
     #[test]
+    fn session_alias_fixture_cleanup_preserves_original_panics_for_files_and_empty_directories() {
+        for directory in [false, true] {
+            for unwind in [false, true] {
+                let fixture = SessionNameConfigurationFixture::new();
+                let path = fixture.path.clone();
+                if directory {
+                    fs::create_dir(&path).unwrap();
+                } else {
+                    fs::write(&path, "owned fixture").unwrap();
+                }
+                let result = std::panic::catch_unwind(move || {
+                    let _fixture = fixture;
+                    if unwind {
+                        panic!("controlled session name fixture failure");
+                    }
+                });
+                if unwind {
+                    assert_eq!(
+                        result.unwrap_err().downcast_ref::<&str>().copied(),
+                        Some("controlled session name fixture failure")
+                    );
+                } else {
+                    result.unwrap();
+                }
+                assert!(!path.exists());
+            }
+        }
+    }
+
+    #[test]
     fn was_saved_is_true_for_every_successful_save_variant_and_false_otherwise() {
         // #53: a single source of truth for "did this status just commit a
         // write", replacing seven independently hand-written matches!(...)
@@ -534,6 +619,7 @@ mod tests {
         // methods.
         for saved in [
             ConfigurationStartupStatus::WorkspaceSaved,
+            ConfigurationStartupStatus::SessionNamesSaved,
             ConfigurationStartupStatus::PasswordCredentialSaved,
             ConfigurationStartupStatus::InterfaceSettingsSaved,
             ConfigurationStartupStatus::KnownHostTrustSaved,
@@ -549,6 +635,7 @@ mod tests {
             ConfigurationStartupStatus::Missing,
             ConfigurationStartupStatus::InitialFailure(ConfigurationLoadFailure::Invalid),
             ConfigurationStartupStatus::WorkspaceSaveFailure(ConfigurationLoadFailure::Invalid),
+            ConfigurationStartupStatus::SessionNamesSaveFailure(ConfigurationLoadFailure::Invalid),
             ConfigurationStartupStatus::PasswordCredentialSaveFailure(
                 ConfigurationLoadFailure::Invalid,
             ),

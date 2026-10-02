@@ -600,6 +600,7 @@ without permanently taking mouse input away from terminal applications.
 ### Session-chip context menu and rename
 
 A terminal session chip's context menu contains **Rename session**, applicable
+**Use default name** when an explicit alias exists, applicable
 **Move left** and **Move right** entries (omitted at the respective edge), a
 separator, and **Close session**. The menu targets the clicked chip without
 activating it. Close uses the same live-session consequence and confirmation
@@ -620,6 +621,49 @@ value does not replace the existing name. Moving focus elsewhere commits a
 valid value and otherwise restores the previous name. The resulting display text is
 sanitized and bounded by the same rules as other chip identity text. Rename
 never edits the terminal-provided secondary title.
+
+Rename changes only this session's explicit display alias. It never edits a
+reusable profile, provider attachment name, destination, shell input, or
+terminal contents. **Use default name** removes the override; it does not save
+the current default as another fixed alias. Existing sessions retain their
+original default when a profile is edited, while a newly launched unrelated
+session uses its ordinary default. Control, bidi-direction, and Unicode
+line/paragraph-separator characters are removed from user edits; names are
+trimmed and limited to 200 Unicode scalar
+values, and an empty result leaves the prior name unchanged. The existing
+configuration secret-material rejection also applies to saved aliases.
+Nonempty rejected edits show a bounded app notice without echoing the rejected
+text; the prior name and metadata remain unchanged and no save is attempted.
+
+Profile-backed local, SSH, terminal SFTP, and serial workspace tabs save optional
+aliases as logical-view metadata when Restore workspace is enabled, including
+local/SSH tmux and Screen and restored SSH/SFTP tabs awaiting authentication.
+Authentication retries, reconnect, backend recreation, and moving a tab between
+windows retain that view's override. A new attachment does not inherit another
+view's alias by profile or provider name. External OSC titles remain transient
+and are never an alias source. Disabling restoration never silently enables it;
+without a restorable descriptor or verified native seed, edits remain live-only
+with visible feedback.
+
+Native `festerm-sessiond` aliases also live in a bounded, local configuration
+seed registry keyed by the actual daemon PID, creation generation and generation
+endpoint, not a chip position, runtime TabId, profile name, or provider name
+alone. The same native generation reattached through Running Sessions recovers
+the last saved seed without workspace restoration. A replacement generation
+does not. The registry never overwrites a saved tab's or other existing view's
+explicit alias, even if both views attach to the same native session. Reset
+removes only the current logical view's override and its associated seed; other
+view aliases remain unchanged. All windows' pending edits
+and optional workspace metadata use one atomic configuration replacement;
+failure leaves the last saved document unchanged and produces a visible notice
+that the current name is not saved.
+
+**Qualification:** focused regressions and the Windows local CI-equivalent
+suite passed on 2026-10-02. Required remote platform checks and the
+native/accessibility/usability evidence in AS-10 remain pending.
+Alias ownership is deliberately frontend-tab ownership, not an arbitrary
+physical tmux/Screen instance naming service. No provider commands, remote
+helpers, platform prerequisites or attach-only stale-generation checks change.
 
 The name hit target consumes the double-click so it cannot become a custom
 title-bar maximize gesture or terminal input. Since the first click follows the
@@ -995,6 +1039,8 @@ The primary tab label should follow this order:
 5. Generic fallback such as `Local Shell` or `SSH Session`.
 
 The terminal-provided dynamic title must not replace the primary identity.
+The profile default, explicit logical-view alias, and durable attachment identity
+are separate values; naming a chip never changes the attachment target.
 
 ### Dynamic terminal title
 
