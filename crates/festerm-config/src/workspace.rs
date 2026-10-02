@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::{
-    validate_identifier, ConfigError, ConfigErrorKind, Profile, RemoteProfileKind,
+    validate_identifier, ConfigError, ConfigErrorKind, Profile, RemoteProfileKind, SessionAlias,
     SshProfileConfiguration,
 };
 
@@ -330,6 +330,7 @@ impl WorkspaceTab {
         let tab = Self::LocalSession(SessionTabConfiguration {
             id: identifier.into(),
             profile_id: profile_id.into(),
+            alias: None,
         });
         tab.validate_metadata()?;
         Ok(tab)
@@ -343,6 +344,7 @@ impl WorkspaceTab {
         let tab = Self::SshSession(SessionTabConfiguration {
             id: identifier.into(),
             profile_id: profile_id.into(),
+            alias: None,
         });
         tab.validate_metadata()?;
         Ok(tab)
@@ -356,6 +358,7 @@ impl WorkspaceTab {
         let tab = Self::SftpSession(SessionTabConfiguration {
             id: identifier.into(),
             profile_id: profile_id.into(),
+            alias: None,
         });
         tab.validate_metadata()?;
         Ok(tab)
@@ -369,6 +372,7 @@ impl WorkspaceTab {
         let tab = Self::SftpFileManager(SessionTabConfiguration {
             id: identifier.into(),
             profile_id: profile_id.into(),
+            alias: None,
         });
         tab.validate_metadata()?;
         Ok(tab)
@@ -382,6 +386,7 @@ impl WorkspaceTab {
         let tab = Self::SerialSession(SessionTabConfiguration {
             id: identifier.into(),
             profile_id: profile_id.into(),
+            alias: None,
         });
         tab.validate_metadata()?;
         Ok(tab)
@@ -413,7 +418,27 @@ impl WorkspaceTab {
         }
     }
 
+    /// Adds only display metadata to a profile-backed workspace instance.
+    pub fn with_session_alias(mut self, alias: Option<SessionAlias>) -> Result<Self, ConfigError> {
+        if let Self::LocalSession(tab)
+        | Self::SshSession(tab)
+        | Self::SftpSession(tab)
+        | Self::SerialSession(tab) = &mut self
+        {
+            tab.alias = alias;
+        } else if alias.is_some() {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidSessionAlias));
+        }
+        self.validate_metadata()?;
+        Ok(self)
+    }
+
     fn validate_metadata(&self) -> Result<(), ConfigError> {
+        if let Self::SftpFileManager(tab) = self {
+            if tab.alias.is_some() {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidSessionAlias));
+            }
+        }
         match self {
             Self::Launcher(tab) => validate_tab_identifier(tab.identifier()),
             Self::Settings(tab) => validate_tab_identifier(tab.identifier()),
@@ -500,6 +525,8 @@ impl ProfilesTabConfiguration {
 pub struct SessionTabConfiguration {
     id: String,
     profile_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alias: Option<SessionAlias>,
 }
 
 impl SessionTabConfiguration {
@@ -511,6 +538,10 @@ impl SessionTabConfiguration {
     /// Returns the reusable profile identifier used to recreate this session.
     pub fn profile_id(&self) -> &str {
         &self.profile_id
+    }
+
+    pub fn alias(&self) -> Option<&SessionAlias> {
+        self.alias.as_ref()
     }
 
     fn validate(&self) -> Result<(), ConfigError> {

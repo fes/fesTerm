@@ -56,6 +56,10 @@ pub enum ConfigErrorKind {
     WorkspaceProfileKindMismatch,
     UnknownFocusedWorkspaceTab,
     InvalidWorkspaceWindowGeometry,
+    InvalidSessionAlias,
+    InvalidDurableSessionIdentity,
+    DuplicateDurableSessionAlias,
+    TooManyDurableSessionAliases,
     InvalidKnownHost,
     DuplicateKnownHost,
     InvalidInterfaceSettings,
@@ -176,6 +180,18 @@ impl fmt::Display for ConfigError {
             }
             ConfigErrorKind::InvalidWorkspaceWindowGeometry => formatter.write_str(
                 "workspace window geometry must be finite, with a positive size",
+            ),
+            ConfigErrorKind::InvalidSessionAlias => formatter.write_str(
+                "session aliases must be nonempty, trimmed, display-safe strings of at most 200 characters",
+            ),
+            ConfigErrorKind::InvalidDurableSessionIdentity => formatter.write_str(
+                "durable session aliases require a bounded exact provider generation and endpoint",
+            ),
+            ConfigErrorKind::DuplicateDurableSessionAlias => formatter.write_str(
+                "durable session alias identities must be unique",
+            ),
+            ConfigErrorKind::TooManyDurableSessionAliases => formatter.write_str(
+                "at most 1024 durable session aliases may be retained; use the default name to remove an override",
             ),
             ConfigErrorKind::InvalidKnownHost => formatter.write_str(
                 "known_hosts[] entries must have a valid host, nonzero port, and a canonical SHA256: fingerprint",

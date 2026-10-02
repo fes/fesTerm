@@ -22,11 +22,11 @@ use std::thread::JoinHandle;
 
 use eframe::egui;
 use festerm_config::{
-    ChipLayoutPreference, ConfigError, Configuration, EmojiPresentationPreference,
-    InterfaceSettings, PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
-    ScrollbackLimitPreference, SftpPaneOrderPreference,
-    SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
-    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    ChipLayoutPreference, ConfigError, Configuration, DurableSessionIdentity,
+    EmojiPresentationPreference, InterfaceSettings, PersistenceConfiguration,
+    PersistenceProviderKind, ScrollSpeedPreference, ScrollbackLimitPreference, SessionAlias,
+    SftpPaneOrderPreference, SshPortForwardDirection as ConfigSshPortForwardDirection,
+    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{
     Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
@@ -540,6 +540,14 @@ pub struct SessionTab {
     /// Transient terminal-provided titles are shown as secondary metadata and
     /// must never replace this.
     pub label: String,
+    default_label: String,
+    explicit_alias: Option<SessionAlias>,
+    /// Associated native reattachment seed, never authority over this view.
+    alias_identity: Option<DurableSessionIdentity>,
+    name_save_pending: bool,
+    name_edit_revision: u64,
+    #[cfg(test)]
+    test_durable_identity: Option<DurableSessionIdentity>,
     /// Static connection metadata resolved before a session starts. This gives
     /// the chip useful secondary identity before the child emits an OSC title.
     pub launch_secondary: Option<String>,
@@ -672,6 +680,7 @@ fn terminal_history_snapshot_label(
 /// authentication form instead of starting a transport.
 pub struct SshAuthenticationRequiredTab {
     pub profile: SshProfileConfiguration,
+    pub alias: Option<SessionAlias>,
 }
 
 /// A restored SFTP workspace surface that deliberately has no live session.
@@ -681,6 +690,7 @@ pub struct SshAuthenticationRequiredTab {
 /// authentication form instead of starting a transport.
 pub struct SftpAuthenticationRequiredTab {
     pub profile: SshProfileConfiguration,
+    pub alias: Option<SessionAlias>,
 }
 
 /// A GUI SFTP file-manager launch surface that has destination metadata but no
@@ -734,6 +744,49 @@ struct SessionResultMeta<'a> {
 }
 
 impl SessionTab {
+    pub fn explicit_alias(&self) -> Option<&SessionAlias> {
+        self.explicit_alias.as_ref()
+    }
+
+    pub(crate) fn can_use_default_name(&self) -> bool {
+        self.explicit_alias().is_some() || self.name_save_pending
+    }
+
+    fn set_alias(&mut self, alias: Option<SessionAlias>) {
+        self.label = alias.as_ref().map_or_else(
+            || self.default_label.clone(),
+            |alias| alias.as_str().to_owned(),
+        );
+        self.explicit_alias = alias;
+    }
+
+    fn durable_identity(&self) -> Option<DurableSessionIdentity> {
+        #[cfg(test)]
+        if let Some(identity) = &self.test_durable_identity {
+            return Some(identity.clone());
+        }
+        let Some(ApplicationSession::Persistent(session)) = self.controller.session() else {
+            return None;
+        };
+        native_alias_identity(&session.native_identity()?)
+    }
+
+    fn restore_alias(&mut self, alias: Option<&SessionAlias>) {
+        self.set_alias(alias.cloned());
+    }
+
+    /// Only newly opened native views are seeded; saved views own their alias.
+    fn seed_native_alias(&mut self, configuration: &Configuration) {
+        if self.explicit_alias.is_some() || self.name_save_pending {
+            return;
+        }
+        if let Some(identity) = self.durable_identity() {
+            let alias = configuration.durable_session_alias(&identity).cloned();
+            self.alias_identity = alias.as_ref().map(|_| identity);
+            self.set_alias(alias);
+        }
+    }
+
     fn set_scrollback_limit(&mut self, preference: ScrollbackLimitPreference) {
         let authoritative = self
             .controller
@@ -1262,6 +1315,13 @@ impl SessionTab {
             controller,
             view: TerminalView::default(),
             label: label.to_owned(),
+            default_label: label.to_owned(),
+            explicit_alias: None,
+            alias_identity: None,
+            name_save_pending: false,
+            name_edit_revision: 0,
+            #[cfg(test)]
+            test_durable_identity: None,
             launch_secondary,
             profile_identifier,
             inspector_transport,
@@ -2091,6 +2151,8 @@ pub enum AppCommand {
     /// Renames a session tab's stable primary identity (label). No-op for
     /// Launcher/Settings tabs, whose names are fixed.
     RenameTab(TabId, String),
+    /// Removes the override, rather than saving today's default as an alias.
+    UseDefaultSessionName(TabId),
     ToggleSessionInspector,
     /// Flips between wrapped and single-row-scroll chip layout
     /// (`docs/gui-design.md` "Wrapping must remain user-configurable").
@@ -2355,7 +2417,28 @@ const fn chip_layout_to_preference(layout: ChipLayout) -> ChipLayoutPreference {
     }
 }
 
-/// Owns the always-nonempty tab collection and the active-tab cursor.
+/// Pending naming edits collected before moving or closing windows.
+#[derive(Default)]
+pub(crate) struct SessionNameChanges {
+    pub(crate) changed: bool,
+    pub(crate) durable_aliases: Vec<(DurableSessionIdentity, Option<SessionAlias>, u64)>,
+    pub(crate) persistence_unavailable: bool,
+    pub(crate) capacity_exceeded: bool,
+    pub(crate) validation_failure: Option<ConfigError>,
+}
+
+fn native_alias_identity(
+    identity: &festerm_sessiond::NativeSessionIdentity,
+) -> Option<DurableSessionIdentity> {
+    DurableSessionIdentity::native(
+        &identity.name,
+        identity.pid,
+        identity.created_at_unix_ms,
+        &identity.endpoint,
+    )
+    .ok()
+}
+
 struct PendingResume {
     target: TabId,
     receiver: std::sync::mpsc::Receiver<Result<SessionTab, String>>,
@@ -2472,6 +2555,11 @@ pub struct AppState {
     /// "Configuration": save/restore is automatic, not a manual action).
     /// Consumed once per frame via `take_workspace_dirty`.
     workspace_dirty: bool,
+    session_names_dirty: bool,
+    pending_durable_aliases: Vec<(DurableSessionIdentity, Option<SessionAlias>, u64)>,
+    session_name_persistence_unavailable: bool,
+    session_name_capacity_exceeded: bool,
+    session_name_validation_failure: Option<ConfigError>,
 }
 
 impl AppState {
@@ -2529,6 +2617,11 @@ impl AppState {
             pending_profile_create: None,
             pending_profile_usage: None,
             workspace_dirty: false,
+            session_names_dirty: false,
+            pending_durable_aliases: Vec::new(),
+            session_name_persistence_unavailable: false,
+            session_name_capacity_exceeded: false,
+            session_name_validation_failure: None,
         }
     }
 
@@ -2607,7 +2700,7 @@ impl AppState {
             if focused_tab_id == Some(workspace_tab.identifier()) {
                 focused = Some(id);
             }
-            let content = match workspace_tab {
+            let mut content = match workspace_tab {
                 WorkspaceTab::Launcher(_) => TabContent::Launcher,
                 WorkspaceTab::Settings(_) => TabContent::Settings,
                 WorkspaceTab::Profiles(_) => TabContent::Profiles,
@@ -2632,6 +2725,7 @@ impl AppState {
                         .expect("validated workspace SSH profile reference");
                     TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
                         profile: ssh.clone(),
+                        alias: tab.alias().cloned(),
                     })
                 }
                 WorkspaceTab::SftpSession(tab) => {
@@ -2641,6 +2735,7 @@ impl AppState {
                         .expect("validated workspace SFTP profile reference");
                     TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
                         profile: ssh.clone(),
+                        alias: tab.alias().cloned(),
                     })
                 }
                 WorkspaceTab::SftpFileManager(tab) => {
@@ -2683,6 +2778,15 @@ impl AppState {
                     )))
                 }
             };
+            if let TabContent::Session(session) = &mut content {
+                let saved = match workspace_tab {
+                    WorkspaceTab::LocalSession(tab) | WorkspaceTab::SerialSession(tab) => Some(tab),
+                    _ => None,
+                };
+                if let Some(saved) = saved {
+                    session.restore_alias(saved.alias());
+                }
+            }
             restored.push(Tab { id, content });
         }
 
@@ -2850,7 +2954,20 @@ impl AppState {
                     })
                     .transpose()?,
             };
-            if let Some(workspace_tab) = workspace_tab {
+            if let Some(mut workspace_tab) = workspace_tab {
+                match &tab.content {
+                    TabContent::Session(session) => {
+                        workspace_tab =
+                            workspace_tab.with_session_alias(session.explicit_alias.clone())?;
+                    }
+                    TabContent::SshAuthenticationRequired(tab) => {
+                        workspace_tab = workspace_tab.with_session_alias(tab.alias.clone())?;
+                    }
+                    TabContent::SftpAuthenticationRequired(tab) => {
+                        workspace_tab = workspace_tab.with_session_alias(tab.alias.clone())?;
+                    }
+                    _ => {}
+                }
                 if tab.id == self.active {
                     focused_tab_id = Some(workspace_tab.identifier().to_owned());
                 }
@@ -3341,6 +3458,7 @@ impl AppState {
             AppCommand::MoveTabLeft(id) => self.move_tab(id, -1),
             AppCommand::MoveTabRight(id) => self.move_tab(id, 1),
             AppCommand::RenameTab(id, name) => self.rename(id, name),
+            AppCommand::UseDefaultSessionName(id) => self.use_default_session_name(id),
             AppCommand::ToggleSessionInspector => {
                 if matches!(self.active_tab().content, TabContent::Session(_)) {
                     self.inspector_open = !self.inspector_open;
@@ -4879,10 +4997,29 @@ impl AppState {
                     | TabContent::SftpAuthenticationRequired(_)
                     | TabContent::SftpFileManagerAuthenticationRequired(_)
             ) {
+                match &tab.content {
+                    TabContent::SshAuthenticationRequired(saved)
+                        if session.profile_identifier.as_deref()
+                            == Some(saved.profile.identifier()) =>
+                    {
+                        session.set_alias(saved.alias.clone());
+                    }
+                    TabContent::SftpAuthenticationRequired(saved)
+                        if session.profile_identifier.as_deref()
+                            == Some(saved.profile.identifier()) =>
+                    {
+                        session.set_alias(saved.alias.clone());
+                    }
+                    _ => {}
+                }
+                if matches!(tab.content, TabContent::Launcher) {
+                    session.seed_native_alias(&self.configuration);
+                }
                 tab.content = TabContent::Session(Box::new(session));
                 return;
             }
         }
+        session.seed_native_alias(&self.configuration);
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
@@ -4941,6 +5078,21 @@ impl AppState {
     /// every open tab, independent of which is active, matching
     /// `session_tabs_mut`'s "keep making progress in the background" policy.
     pub fn reprompt_rejected_ssh_passwords(&mut self, context: &egui::Context) {
+        self.reprompt_rejected_ssh_passwords_with_start(context, SessionTab::start_ssh);
+    }
+
+    fn reprompt_rejected_ssh_passwords_with_start(
+        &mut self,
+        context: &egui::Context,
+        mut start: impl FnMut(
+            SshConnectionProfile,
+            SshAuthentication,
+            SshSessionOptions,
+            Option<&str>,
+            u8,
+            &egui::Context,
+        ) -> SessionTab,
+    ) {
         let mut restarts = Vec::new();
         for (index, tab) in self.tabs.iter().enumerate() {
             let TabContent::Session(session) = &tab.content else {
@@ -4966,7 +5118,7 @@ impl AppState {
             ));
         }
         for (index, profile, profile_identifier, options) in restarts {
-            let mut restarted = SessionTab::start_ssh(
+            let mut restarted = start(
                 profile,
                 SshAuthentication::interactive(),
                 options,
@@ -4976,6 +5128,13 @@ impl AppState {
             );
             restarted.apply_frontend_terminal_configuration(self.scrollback_limit);
             if let Some(tab) = self.tabs.get_mut(index) {
+                if let TabContent::Session(previous) = &tab.content {
+                    restarted.default_label = previous.default_label.clone();
+                    restarted.set_alias(previous.explicit_alias.clone());
+                    restarted.alias_identity = previous.alias_identity.clone();
+                    restarted.name_save_pending = previous.name_save_pending;
+                    restarted.name_edit_revision = previous.name_edit_revision;
+                }
                 tab.content = TabContent::Session(Box::new(restarted));
             }
         }
@@ -5098,15 +5257,119 @@ impl AppState {
     /// state) and for an empty trimmed name, matching the chrome-side
     /// rename-commit rule that empty names are discarded.
     fn rename(&mut self, id: TabId, name: String) {
-        let trimmed = name.trim();
-        if trimmed.is_empty() {
+        if self.session_tab(id).is_none() {
             return;
         }
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
+        match SessionAlias::from_user_input(&name) {
+            Ok(Some(alias)) => self.change_session_alias(id, Some(alias)),
+            Ok(None) => {}
+            Err(error) => self.session_name_validation_failure = Some(error),
+        }
+    }
+
+    fn use_default_session_name(&mut self, id: TabId) {
+        self.change_session_alias(id, None);
+    }
+
+    fn change_session_alias(&mut self, id: TabId, alias: Option<SessionAlias>) {
+        let Some(session) = self.session_tab(id) else {
             return;
         };
-        if let TabContent::Session(session) = &mut tab.content {
-            session.label = trimmed.to_owned();
+        if alias.is_none() && session.explicit_alias.is_none() && !session.name_save_pending {
+            return;
+        }
+        let identity = if alias.is_none() {
+            session
+                .alias_identity
+                .clone()
+                .or_else(|| session.durable_identity())
+        } else {
+            session.durable_identity()
+        };
+        let workspace_available = self.restore_workspace
+            && session
+                .profile_identifier
+                .as_deref()
+                .is_some_and(|profile| self.configuration.profile(profile).is_some());
+        let unavailable = !workspace_available && identity.is_none();
+        static NEXT_NAME_EDIT_REVISION: AtomicU64 = AtomicU64::new(1);
+        let revision = NEXT_NAME_EDIT_REVISION.fetch_add(1, Ordering::Relaxed);
+        let session = self.session_tab_mut(id).expect("session was checked");
+        if identity.is_some() {
+            session.alias_identity = identity.clone();
+        }
+        session.set_alias(alias.clone());
+        session.name_save_pending = workspace_available || identity.is_some();
+        session.name_edit_revision = revision;
+        if let Some(identity) = identity {
+            self.pending_durable_aliases
+                .retain(|(existing, _, _)| *existing != identity);
+            if self.pending_durable_aliases.len() < festerm_config::MAX_DURABLE_SESSION_ALIASES {
+                self.pending_durable_aliases
+                    .push((identity, alias, revision));
+            } else {
+                self.session_name_capacity_exceeded = true;
+            }
+        }
+        self.session_names_dirty = true;
+        self.workspace_dirty = true;
+        self.session_name_persistence_unavailable |= unavailable;
+    }
+
+    pub(crate) fn take_session_name_changes(&mut self) -> SessionNameChanges {
+        let mut changes = SessionNameChanges {
+            changed: std::mem::take(&mut self.session_names_dirty),
+            durable_aliases: std::mem::take(&mut self.pending_durable_aliases),
+            persistence_unavailable: std::mem::take(&mut self.session_name_persistence_unavailable),
+            capacity_exceeded: std::mem::take(&mut self.session_name_capacity_exceeded),
+            validation_failure: self.session_name_validation_failure.take(),
+        };
+        // A failed write is not retried every frame, but the next naming
+        // transaction must include other still-live unsaved native edits.
+        for (_, session) in self.session_tabs_with_id_mut() {
+            if !session.name_save_pending {
+                continue;
+            }
+            let Some(identity) = session.alias_identity.clone() else {
+                continue;
+            };
+            if let Some(previous) = changes
+                .durable_aliases
+                .iter_mut()
+                .find(|(key, _, _)| key == &identity)
+            {
+                if previous.2 < session.name_edit_revision {
+                    previous.1 = session.explicit_alias.clone();
+                    previous.2 = session.name_edit_revision;
+                }
+            } else if changes.durable_aliases.len() < festerm_config::MAX_DURABLE_SESSION_ALIASES {
+                changes.durable_aliases.push((
+                    identity,
+                    session.explicit_alias.clone(),
+                    session.name_edit_revision,
+                ));
+            } else {
+                changes.capacity_exceeded = true;
+            }
+        }
+        changes
+    }
+
+    pub(crate) fn settle_session_name_save(&mut self, saved: bool, configuration: &Configuration) {
+        for (_, session) in self.session_tabs_with_id_mut() {
+            if saved
+                && (session.alias_identity.is_some()
+                    || (configuration.interface_settings().restore_workspace()
+                        && session
+                            .profile_identifier
+                            .as_deref()
+                            .is_some_and(|profile| configuration.profile(profile).is_some())))
+            {
+                session.name_save_pending = false;
+                if session.explicit_alias.is_none() {
+                    session.alias_identity = None;
+                }
+            }
         }
     }
 
@@ -5149,6 +5412,17 @@ impl AppState {
 
 #[cfg(test)]
 impl SessionTab {
+    pub(crate) fn set_test_durable_identity(&mut self, identity: DurableSessionIdentity) {
+        let DurableSessionIdentity::FestermSessiond { name, .. } = &identity;
+        self.inspector_transport = InspectorTransport::Local {
+            persistence: Some(InspectorPersistence {
+                provider_label: PersistenceProviderKind::FestermSessiond.label(),
+                session_name: name.clone(),
+            }),
+        };
+        self.test_durable_identity = Some(identity);
+    }
+
     fn for_test_ssh(
         session: crate::session_controller::fake::FakeSshSession,
         username: &str,
@@ -5164,6 +5438,12 @@ impl SessionTab {
             controller,
             view: TerminalView::default(),
             label: format!("{username}@{host}"),
+            default_label: format!("{username}@{host}"),
+            explicit_alias: None,
+            alias_identity: None,
+            name_save_pending: false,
+            name_edit_revision: 0,
+            test_durable_identity: None,
             launch_secondary: Some(format!("SSH · {host}:{port}")),
             profile_identifier: None,
             inspector_transport: InspectorTransport::Ssh {
@@ -5212,6 +5492,771 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn alias_test_configuration() -> Configuration {
+        let directory = std::env::current_dir().unwrap();
+        let child = directory.join(".festerm-alias-owned-missing-child.exe");
+        let device = directory.join(".festerm-alias-owned-missing-device");
+        assert!(!child.exists());
+        assert!(!device.exists());
+        Configuration::new(vec![
+            festerm_config::Profile::local(
+                "local",
+                child.to_string_lossy().into_owned(),
+                Vec::new(),
+                None,
+            )
+            .unwrap(),
+            festerm_config::Profile::ssh(
+                "remote",
+                "ssh.example.test",
+                22,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap(),
+            festerm_config::Profile::serial_with_defaults(
+                "serial",
+                device.to_string_lossy().into_owned(),
+            )
+            .unwrap(),
+        ])
+        .unwrap()
+    }
+
+    fn alias_test_native_identity(generation: u128) -> DurableSessionIdentity {
+        DurableSessionIdentity::native(
+            "build",
+            42,
+            generation,
+            format!("owned-native-42-{generation}"),
+        )
+        .unwrap()
+    }
+
+    fn alias_test_session(
+        profile: Option<&str>,
+    ) -> (SessionTab, crate::session_controller::fake::FakeSshSession) {
+        let fake = crate::session_controller::fake::FakeSshSession::new([]);
+        let mut tab = SessionTab::for_test_ssh(fake.clone(), "deploy", "ssh.example.test", 22);
+        tab.profile_identifier = profile.map(str::to_owned);
+        (tab, fake)
+    }
+
+    #[test]
+    fn session_alias_rename_is_instance_only_and_terminal_titles_never_become_aliases() {
+        let context = egui::Context::default();
+        let configuration = alias_test_configuration();
+        let mut state = AppState::for_test_with_configuration(configuration.clone());
+        let (first, first_transport) = alias_test_session(Some("remote"));
+        state.place_session(first);
+        let first_id = state.active();
+        let (second, second_transport) = alias_test_session(Some("remote"));
+        state.place_session(second);
+        let second_id = state.active();
+        state
+            .session_tab_mut(first_id)
+            .unwrap()
+            .terminal
+            .ingest(b"\x1b]2;untrusted title\x07");
+        let grid = state
+            .session_tab(first_id)
+            .unwrap()
+            .terminal
+            .row_text(0)
+            .unwrap();
+        state.dispatch(
+            AppCommand::RenameTab(first_id, " \nBuild\u{202e} bench\t ".into()),
+            &context,
+        );
+        assert_eq!(
+            state.active(),
+            second_id,
+            "inactive rename must not activate its target"
+        );
+        assert_eq!(state.session_tab(first_id).unwrap().label, "Build bench");
+        assert_eq!(state.session_tab(second_id).unwrap().explicit_alias(), None);
+        assert_eq!(state.configuration(), &configuration);
+        assert_eq!(
+            state.session_tab(first_id).unwrap().terminal.title(),
+            "untrusted title"
+        );
+        assert_eq!(
+            state
+                .session_tab(first_id)
+                .unwrap()
+                .terminal
+                .row_text(0)
+                .unwrap(),
+            grid
+        );
+        assert!(first_transport.sent().is_empty());
+        assert!(first_transport.operations().is_empty());
+        assert!(second_transport.sent().is_empty());
+        assert!(state.take_workspace_dirty());
+        let captured = state
+            .capture_workspace_configuration(Vec::new(), &mut 1, None)
+            .unwrap();
+        let text = captured.to_toml().unwrap();
+        assert!(text.contains("Build bench"));
+        assert!(!text.contains("untrusted title"));
+        let WorkspaceTab::SshSession(first) = &captured.workspace().unwrap().tabs()[0] else {
+            panic!("SSH tab")
+        };
+        let WorkspaceTab::SshSession(second) = &captured.workspace().unwrap().tabs()[1] else {
+            panic!("SSH tab")
+        };
+        assert_eq!(first.alias().unwrap().as_str(), "Build bench");
+        assert!(second.alias().is_none());
+    }
+
+    #[test]
+    fn session_alias_reset_clears_override_and_empty_commit_keeps_previous_name() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let (session, transport) = alias_test_session(None);
+        state.place_session(session);
+        let tab = state.active();
+        let default = state.session_tab(tab).unwrap().label.clone();
+        state.dispatch(AppCommand::RenameTab(tab, "Custom".into()), &context);
+        state.dispatch(AppCommand::RenameTab(tab, " \r\n ".into()), &context);
+        assert_eq!(state.session_tab(tab).unwrap().label, "Custom");
+        state.dispatch(AppCommand::UseDefaultSessionName(tab), &context);
+        assert_eq!(state.session_tab(tab).unwrap().label, default);
+        assert!(state.session_tab(tab).unwrap().explicit_alias().is_none());
+        state.dispatch(AppCommand::RenameTab(tab, default.clone()), &context);
+        assert!(
+            state.session_tab(tab).unwrap().explicit_alias().is_some(),
+            "an explicit equal-to-default name is still an override"
+        );
+        state.dispatch(AppCommand::UseDefaultSessionName(tab), &context);
+        assert!(state.session_tab(tab).unwrap().explicit_alias().is_none());
+        assert!(transport.sent().is_empty());
+    }
+
+    #[test]
+    fn session_alias_pending_edits_are_bounded_and_live_failed_edits_join_the_next_transaction() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test_with_configuration(Configuration::empty());
+        let (mut first, _) = alias_test_session(None);
+        first.set_test_durable_identity(alias_test_native_identity(100));
+        state.place_session(first);
+        let first_tab = state.active();
+        state.dispatch(AppCommand::RenameTab(first_tab, "First".into()), &context);
+        assert!(state.take_session_name_changes().changed);
+        state.settle_session_name_save(false, &Configuration::empty());
+        let (mut second, _) = alias_test_session(None);
+        second.set_test_durable_identity(alias_test_native_identity(101));
+        state.place_session(second);
+        let second_tab = state.active();
+        state.dispatch(AppCommand::RenameTab(second_tab, "Second".into()), &context);
+        let changes = state.take_session_name_changes();
+        assert_eq!(changes.durable_aliases.len(), 2);
+        let committed = changes
+            .durable_aliases
+            .into_iter()
+            .try_fold(
+                Configuration::empty(),
+                |configuration, (identity, alias, _)| {
+                    configuration.with_durable_session_alias(identity, alias)
+                },
+            )
+            .unwrap();
+        state.settle_session_name_save(true, &committed);
+        assert!(!state.session_tab(first_tab).unwrap().name_save_pending);
+        assert!(!state.session_tab(second_tab).unwrap().name_save_pending);
+        assert_eq!(
+            committed
+                .durable_session_alias(&alias_test_native_identity(100))
+                .unwrap()
+                .as_str(),
+            "First"
+        );
+        state.pending_durable_aliases = (1..=festerm_config::MAX_DURABLE_SESSION_ALIASES)
+            .map(|generation| {
+                (
+                    alias_test_native_identity(generation as u128),
+                    Some(SessionAlias::new("Retained").unwrap()),
+                    0,
+                )
+            })
+            .collect();
+        state
+            .session_tab_mut(second_tab)
+            .unwrap()
+            .set_test_durable_identity(alias_test_native_identity(2000));
+        state.dispatch(AppCommand::RenameTab(second_tab, "Extra".into()), &context);
+        let overflow = state.take_session_name_changes();
+        assert!(overflow.capacity_exceeded);
+        assert_eq!(
+            overflow.durable_aliases.len(),
+            festerm_config::MAX_DURABLE_SESSION_ALIASES
+        );
+        assert!(overflow
+            .durable_aliases
+            .iter()
+            .all(|(identity, _, _)| identity != &alias_test_native_identity(2000)));
+        assert_eq!(state.session_tab(second_tab).unwrap().label, "Extra");
+        assert_eq!(state.configuration(), &Configuration::empty());
+    }
+
+    #[test]
+    fn session_alias_workspace_round_trip_restores_local_serial_and_authentication_surfaces() {
+        let context = egui::Context::default();
+        let alias = SessionAlias::new("One instance").unwrap();
+        let workspace = WorkspaceConfiguration::new(
+            vec![
+                WorkspaceTab::local_session("local-one", "local")
+                    .unwrap()
+                    .with_session_alias(Some(alias.clone()))
+                    .unwrap(),
+                WorkspaceTab::local_session("local-two", "local").unwrap(),
+                WorkspaceTab::ssh_session("ssh", "remote")
+                    .unwrap()
+                    .with_session_alias(Some(alias.clone()))
+                    .unwrap(),
+                WorkspaceTab::sftp_session("sftp", "remote")
+                    .unwrap()
+                    .with_session_alias(Some(alias.clone()))
+                    .unwrap(),
+                WorkspaceTab::serial_session("serial", "serial")
+                    .unwrap()
+                    .with_session_alias(Some(alias))
+                    .unwrap(),
+            ],
+            Some("ssh".into()),
+        )
+        .unwrap();
+        let original = alias_test_configuration();
+        let saved = original.with_workspace(workspace).unwrap();
+        let restarted = Configuration::parse(&saved.to_toml().unwrap()).unwrap();
+        assert_eq!(restarted.profiles(), original.profiles());
+        let state = AppState::with_restored_workspace(
+            &context,
+            restarted.clone(),
+            restarted.workspace().unwrap(),
+        );
+        for index in [0, 4] {
+            let TabContent::Session(session) = &state.tabs()[index].content else {
+                panic!("session")
+            };
+            assert_eq!(session.label, "One instance");
+            assert!(
+                session.controller.start_error().is_some(),
+                "only owned nonexistent launch targets are used"
+            );
+        }
+        let TabContent::Session(other) = &state.tabs()[1].content else {
+            panic!("session")
+        };
+        assert_eq!(other.label, "local");
+        assert!(other.explicit_alias().is_none());
+        let TabContent::SshAuthenticationRequired(ssh) = &state.tabs()[2].content else {
+            panic!("SSH authentication")
+        };
+        assert_eq!(ssh.alias.as_ref().unwrap().as_str(), "One instance");
+        let TabContent::SftpAuthenticationRequired(sftp) = &state.tabs()[3].content else {
+            panic!("SFTP authentication")
+        };
+        assert_eq!(sftp.alias.as_ref().unwrap().as_str(), "One instance");
+        assert_eq!(
+            state
+                .capture_workspace_configuration(Vec::new(), &mut 1, None)
+                .unwrap()
+                .profiles(),
+            original.profiles()
+        );
+    }
+
+    #[test]
+    fn session_alias_authentication_completion_and_password_retry_preserve_only_same_instance() {
+        let context = egui::Context::default();
+        for (sftp, provider) in [
+            (false, None),
+            (true, None),
+            (false, Some(PersistenceProviderKind::Tmux)),
+            (false, Some(PersistenceProviderKind::Screen)),
+            (true, Some(PersistenceProviderKind::Tmux)),
+            (true, Some(PersistenceProviderKind::Screen)),
+        ] {
+            let mut configuration = alias_test_configuration();
+            if let Some(provider) = provider {
+                let profile = configuration
+                    .profile("remote")
+                    .unwrap()
+                    .clone()
+                    .with_persistence(provider, "build")
+                    .unwrap();
+                configuration = configuration.with_profile(profile).unwrap();
+            }
+            let mut state = AppState::for_test_with_configuration(configuration);
+            let profile = state
+                .configuration()
+                .profile("remote")
+                .unwrap()
+                .as_ssh()
+                .unwrap()
+                .clone();
+            let alias = Some(SessionAlias::new("My remote").unwrap());
+            state.active_tab_mut().content = if sftp {
+                TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
+                    profile,
+                    alias,
+                })
+            } else {
+                TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
+                    profile,
+                    alias,
+                })
+            };
+            let tab_id = state.active();
+            let (mut session, transport) = alias_test_session(Some("remote"));
+            if sftp {
+                session.inspector_transport = InspectorTransport::Sftp {
+                    username: "deploy".into(),
+                    host: "ssh.example.test".into(),
+                    port: 22,
+                };
+            } else if let Some(provider) = provider {
+                if let InspectorTransport::Ssh { persistence, .. } =
+                    &mut session.inspector_transport
+                {
+                    *persistence = Some(InspectorPersistence {
+                        provider_label: provider.label(),
+                        session_name: "build".into(),
+                    });
+                }
+            }
+            state.place_session(session);
+            assert_eq!(state.active(), tab_id);
+            assert_eq!(state.session_tab(tab_id).unwrap().label, "My remote");
+            state.dispatch(AppCommand::ReconnectSession(tab_id), &context);
+            assert_eq!(state.session_tab(tab_id).unwrap().label, "My remote");
+            let session = state.session_tab_mut(tab_id).unwrap();
+            session.ssh_password_retry = Some(SshPasswordRetryState {
+                profile: ssh_profile(),
+                profile_identifier: Some("remote".into()),
+                options: SshSessionOptions::new(),
+                attempts: 0,
+            });
+            session
+                .controller
+                .set_lifecycle_for_test(SessionLifecycle::Failed(
+                    festerm_session::SessionError::new(
+                        SessionErrorKind::Authentication,
+                        "owned rejection",
+                    ),
+                ));
+            state.reprompt_rejected_ssh_passwords_with_start(&context, |_, _, _, profile, _, _| {
+                alias_test_session(profile).0
+            });
+            assert_eq!(state.session_tab(tab_id).unwrap().label, "My remote");
+            assert_eq!(
+                state
+                    .session_tab(tab_id)
+                    .unwrap()
+                    .explicit_alias()
+                    .unwrap()
+                    .as_str(),
+                "My remote"
+            );
+            assert!(transport.sent().is_empty());
+        }
+    }
+
+    #[test]
+    fn session_alias_running_sessions_completion_uses_exact_native_generation_without_workspace() {
+        let context = egui::Context::default();
+        let identity = alias_test_native_identity(100);
+        let alias = SessionAlias::new("Build bench").unwrap();
+        let saved = Configuration::empty()
+            .with_durable_session_alias(identity.clone(), Some(alias))
+            .unwrap();
+        let restarted = Configuration::parse(&saved.to_toml().unwrap()).unwrap();
+        assert!(restarted.workspace().is_none());
+        let mut state = AppState::for_test_with_configuration(restarted);
+        let (mut resumed, transport) = alias_test_session(None);
+        resumed.default_label = "build".into();
+        resumed.set_alias(None);
+        resumed.set_test_durable_identity(identity.clone());
+        state.place_session(resumed);
+        let tab = state.active();
+        assert_eq!(state.session_tab(tab).unwrap().label, "Build bench");
+        assert!(state.session_tab(tab).unwrap().profile_identifier.is_none());
+        assert_eq!(
+            state
+                .session_tab(tab)
+                .unwrap()
+                .durable_session_label()
+                .unwrap(),
+            format!(
+                "{} · build",
+                PersistenceProviderKind::FestermSessiond.label()
+            )
+        );
+        state.dispatch(AppCommand::UseDefaultSessionName(tab), &context);
+        assert_eq!(state.session_tab(tab).unwrap().label, "build");
+        let changes = state.take_session_name_changes();
+        assert_eq!(changes.durable_aliases.len(), 1);
+        assert_eq!(changes.durable_aliases[0].0, identity);
+        assert!(changes.durable_aliases[0].1.is_none());
+        state.dispatch(AppCommand::OpenLauncher, &context);
+        let (mut replacement, _) = alias_test_session(None);
+        replacement.set_test_durable_identity(alias_test_native_identity(101));
+        state.place_session(replacement);
+        assert!(state
+            .session_tab(state.active())
+            .unwrap()
+            .explicit_alias()
+            .is_none());
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_workspace_owns_name_independently_of_native_seed_and_replacement() {
+        let identity = alias_test_native_identity(100);
+        let old_alias = SessionAlias::new("Old workspace name").unwrap();
+        let workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::local_session("native", "local")
+                .unwrap()
+                .with_session_alias(Some(old_alias))
+                .unwrap()],
+            Some("native".into()),
+        )
+        .unwrap();
+        let configuration = alias_test_configuration()
+            .with_workspace(workspace)
+            .unwrap()
+            .with_durable_session_alias(
+                identity.clone(),
+                Some(SessionAlias::new("Latest name").unwrap()),
+            )
+            .unwrap();
+        for reset in [false, true] {
+            let document = if reset {
+                configuration
+                    .with_durable_session_alias(identity.clone(), None)
+                    .unwrap()
+            } else {
+                configuration.clone()
+            };
+            let restarted = Configuration::parse(&document.to_toml().unwrap()).unwrap();
+            let WorkspaceTab::LocalSession(saved) = &restarted.workspace().unwrap().tabs()[0]
+            else {
+                panic!("native workspace descriptor")
+            };
+            assert_eq!(saved.alias().unwrap().as_str(), "Old workspace name");
+            let (mut session, transport) = alias_test_session(Some("local"));
+            session.set_test_durable_identity(identity.clone());
+            session.restore_alias(saved.alias());
+            session.seed_native_alias(&restarted);
+            assert_eq!(session.label, "Old workspace name");
+            session.set_test_durable_identity(alias_test_native_identity(101));
+            session.seed_native_alias(&restarted);
+            assert_eq!(session.label, "Old workspace name");
+            assert_eq!(session.explicit_alias().unwrap(), saved.alias().unwrap());
+            assert!(session.alias_identity.is_none());
+            assert!(transport.sent().is_empty());
+            assert!(transport.operations().is_empty());
+        }
+    }
+
+    #[test]
+    fn session_alias_reconnect_keeps_view_name_without_seeding_a_replacement_generation() {
+        let first = alias_test_native_identity(100);
+        let second = alias_test_native_identity(101);
+        let configuration = Configuration::empty()
+            .with_durable_session_alias(first.clone(), Some(SessionAlias::new("Old").unwrap()))
+            .unwrap()
+            .with_durable_session_alias(
+                second.clone(),
+                Some(SessionAlias::new("Own saved name").unwrap()),
+            )
+            .unwrap();
+        let mut state = AppState::for_test_with_configuration(configuration.clone());
+        let (mut session, transport) = alias_test_session(None);
+        session.set_test_durable_identity(first);
+        state.place_session(session);
+        let tab = state.active();
+        assert_eq!(state.session_tab(tab).unwrap().label, "Old");
+        state
+            .session_tab_mut(tab)
+            .unwrap()
+            .set_test_durable_identity(second.clone());
+        state.adopt_configuration(configuration.clone());
+        assert_eq!(state.session_tab(tab).unwrap().label, "Old");
+        let without_seeds = configuration
+            .with_durable_session_alias(alias_test_native_identity(100), None)
+            .unwrap()
+            .with_durable_session_alias(second.clone(), None)
+            .unwrap();
+        state.adopt_configuration(without_seeds);
+        assert_eq!(state.session_tab(tab).unwrap().label, "Old");
+        state.adopt_configuration(configuration.clone());
+        assert_eq!(state.session_tab(tab).unwrap().label, "Old");
+        assert_eq!(
+            state.session_tab(tab).unwrap().alias_identity.as_ref(),
+            Some(&alias_test_native_identity(100))
+        );
+        let (mut fresh, _) = alias_test_session(None);
+        fresh.set_test_durable_identity(second.clone());
+        state.place_session(fresh);
+        assert_eq!(
+            state.session_tab(state.active()).unwrap().label,
+            "Own saved name"
+        );
+        state.use_default_session_name(tab);
+        let reset = state.take_session_name_changes();
+        assert_eq!(reset.durable_aliases.len(), 1);
+        assert_eq!(reset.durable_aliases[0].0, alias_test_native_identity(100));
+        assert!(reset.durable_aliases[0].1.is_none());
+        assert_eq!(state.configuration(), &configuration);
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_fresh_native_attachment_refuses_an_old_generation_seed() {
+        let first = alias_test_native_identity(100);
+        let replacement = alias_test_native_identity(101);
+        let configuration = Configuration::empty()
+            .with_durable_session_alias(
+                first.clone(),
+                Some(SessionAlias::new("Old generation seed").unwrap()),
+            )
+            .unwrap();
+        let configuration = Configuration::parse(&configuration.to_toml().unwrap()).unwrap();
+        assert!(configuration.workspace().is_none());
+        let mut state = AppState::for_test_with_configuration(configuration.clone());
+        let (mut fresh, transport) = alias_test_session(None);
+        fresh.set_test_durable_identity(replacement.clone());
+        let default = fresh.label.clone();
+        state.place_session(fresh);
+        let fresh = state.session_tab(state.active()).unwrap();
+        assert_eq!(fresh.durable_identity(), Some(replacement));
+        assert_eq!(fresh.label, default);
+        assert!(fresh.explicit_alias().is_none());
+        assert!(fresh.alias_identity.is_none());
+        assert_eq!(
+            state
+                .configuration()
+                .durable_session_alias(&first)
+                .unwrap()
+                .as_str(),
+            "Old generation seed"
+        );
+        assert_eq!(state.configuration(), &configuration);
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_native_seed_updates_never_rename_other_current_views() {
+        let identity = alias_test_native_identity(100);
+        let configuration = alias_test_configuration()
+            .with_durable_session_alias(
+                identity.clone(),
+                Some(SessionAlias::new("Initial seed").unwrap()),
+            )
+            .unwrap();
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let (mut first, first_transport) = alias_test_session(Some("local"));
+        first.set_test_durable_identity(identity.clone());
+        state.place_session(first);
+        let first = state.active();
+        let (mut second, second_transport) = alias_test_session(Some("local"));
+        second.set_test_durable_identity(identity.clone());
+        state.place_session(second);
+        let second = state.active();
+        state.rename(second, "Second view".into());
+        state.rename(first, "First view".into());
+        let changes = state.take_session_name_changes();
+        assert_eq!(changes.durable_aliases.len(), 1);
+        assert_eq!(
+            changes.durable_aliases[0].1.as_ref().unwrap().as_str(),
+            "First view"
+        );
+        let saved = state
+            .configuration()
+            .with_durable_session_alias(identity.clone(), changes.durable_aliases[0].1.clone())
+            .unwrap();
+        state.settle_session_name_save(true, &saved);
+        state.adopt_configuration(saved);
+        assert_eq!(state.session_tab(first).unwrap().label, "First view");
+        assert_eq!(state.session_tab(second).unwrap().label, "Second view");
+        assert!(!state.session_tab(second).unwrap().name_save_pending);
+        let workspace = state
+            .capture_workspace_configuration(Vec::new(), &mut 1, None)
+            .unwrap();
+        let names: Vec<_> = workspace
+            .workspace()
+            .unwrap()
+            .tabs()
+            .iter()
+            .map(|tab| {
+                let WorkspaceTab::LocalSession(tab) = tab else {
+                    panic!("local view");
+                };
+                tab.alias().unwrap().as_str()
+            })
+            .collect();
+        assert_eq!(names, ["First view", "Second view"]);
+        state.use_default_session_name(first);
+        let reset = state.take_session_name_changes();
+        let reset = state
+            .configuration()
+            .with_durable_session_alias(reset.durable_aliases[0].0.clone(), None)
+            .unwrap();
+        state.settle_session_name_save(true, &reset);
+        state.adopt_configuration(reset);
+        assert!(state.session_tab(first).unwrap().explicit_alias().is_none());
+        assert_eq!(state.session_tab(second).unwrap().label, "Second view");
+        state.open_launcher();
+        let (mut fresh, _) = alias_test_session(Some("local"));
+        fresh.set_test_durable_identity(identity);
+        state.place_session(fresh);
+        assert!(state
+            .session_tab(state.active())
+            .unwrap()
+            .explicit_alias()
+            .is_none());
+        assert_eq!(state.session_tab(second).unwrap().label, "Second view");
+        assert!(first_transport.sent().is_empty());
+        assert!(first_transport.operations().is_empty());
+        assert!(second_transport.sent().is_empty());
+        assert!(second_transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_mux_workspace_names_are_per_view_not_backend_lookup() {
+        let context = egui::Context::default();
+        for provider in [
+            PersistenceProviderKind::Tmux,
+            PersistenceProviderKind::Screen,
+        ] {
+            for local in [false, true] {
+                let profile_id = if local { "local" } else { "remote" };
+                let configuration = alias_test_configuration();
+                let profile = configuration
+                    .profile(profile_id)
+                    .unwrap()
+                    .clone()
+                    .with_persistence(provider, "build")
+                    .unwrap();
+                let configuration = configuration.with_profile(profile).unwrap();
+                let mut state = AppState::for_test_with_configuration(configuration.clone());
+                let (mut session, transport) = alias_test_session(Some(profile_id));
+                let persistence = Some(InspectorPersistence {
+                    provider_label: provider.label(),
+                    session_name: "build".into(),
+                });
+                if local {
+                    session.inspector_transport = InspectorTransport::Local { persistence };
+                } else if let InspectorTransport::Ssh {
+                    persistence: target,
+                    ..
+                } = &mut session.inspector_transport
+                {
+                    *target = persistence;
+                }
+                state.place_session(session);
+                let tab = state.active();
+                state.dispatch(AppCommand::RenameTab(tab, "My alias".into()), &context);
+                let changes = state.take_session_name_changes();
+                assert!(!changes.persistence_unavailable);
+                assert!(changes.durable_aliases.is_empty());
+                let saved = state
+                    .capture_workspace_configuration(Vec::new(), &mut 1, None)
+                    .unwrap();
+                let restarted = Configuration::parse(&saved.to_toml().unwrap()).unwrap();
+                assert_eq!(restarted.profiles(), configuration.profiles());
+                assert_eq!(
+                    state
+                        .session_tab(tab)
+                        .unwrap()
+                        .durable_session_label()
+                        .unwrap(),
+                    format!("{} · build", provider.label())
+                );
+                let descriptor = match &restarted.workspace().unwrap().tabs()[0] {
+                    WorkspaceTab::LocalSession(tab) | WorkspaceTab::SshSession(tab) => tab,
+                    _ => panic!("mux workspace tab"),
+                };
+                assert_eq!(descriptor.alias().unwrap().as_str(), "My alias");
+                if local {
+                    let (mut recreated, _) = alias_test_session(Some(profile_id));
+                    recreated.inspector_transport = InspectorTransport::Local {
+                        persistence: Some(InspectorPersistence {
+                            provider_label: provider.label(),
+                            session_name: "build".into(),
+                        }),
+                    };
+                    recreated.restore_alias(descriptor.alias());
+                    assert_eq!(recreated.label, "My alias");
+                } else {
+                    let mut restored = AppState::with_restored_workspace(
+                        &context,
+                        restarted.clone(),
+                        restarted.workspace().unwrap(),
+                    );
+                    let TabContent::SshAuthenticationRequired(auth) =
+                        &restored.active_tab().content
+                    else {
+                        panic!("restored mux authentication");
+                    };
+                    assert_eq!(auth.alias.as_ref().unwrap().as_str(), "My alias");
+                    let (mut authenticated, _) = alias_test_session(Some(profile_id));
+                    if let InspectorTransport::Ssh { persistence, .. } =
+                        &mut authenticated.inspector_transport
+                    {
+                        *persistence = Some(InspectorPersistence {
+                            provider_label: provider.label(),
+                            session_name: "build".into(),
+                        });
+                    }
+                    restored.place_session(authenticated);
+                    assert_eq!(
+                        restored.session_tab(restored.active()).unwrap().label,
+                        "My alias"
+                    );
+                }
+                state.open_launcher();
+                let (mut fresh, _) = alias_test_session(Some(profile_id));
+                fresh.inspector_transport = if local {
+                    InspectorTransport::Local {
+                        persistence: Some(InspectorPersistence {
+                            provider_label: provider.label(),
+                            session_name: "build".into(),
+                        }),
+                    }
+                } else {
+                    InspectorTransport::Ssh {
+                        username: "deploy".into(),
+                        host: "ssh.example.test".into(),
+                        port: 22,
+                        persistence: Some(InspectorPersistence {
+                            provider_label: provider.label(),
+                            session_name: "build".into(),
+                        }),
+                    }
+                };
+                state.place_session(fresh);
+                assert!(state
+                    .session_tab(state.active())
+                    .unwrap()
+                    .explicit_alias()
+                    .is_none());
+                assert_eq!(state.session_tab(tab).unwrap().label, "My alias");
+                state.dispatch(AppCommand::UseDefaultSessionName(tab), &context);
+                assert!(state.session_tab(tab).unwrap().explicit_alias().is_none());
+                assert!(transport.sent().is_empty());
+                assert!(transport.operations().is_empty());
+            }
+        }
+    }
 
     #[test]
     fn session_notifier_wakes_one_frame_without_a_settling_repaint() {
@@ -5793,6 +6838,7 @@ mod tests {
             id: TabId::next(),
             content: TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
                 profile: ssh,
+                alias: None,
             }),
         });
         let sftp = state
@@ -5805,6 +6851,7 @@ mod tests {
             id: TabId::next(),
             content: TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
                 profile: sftp,
+                alias: None,
             }),
         });
         state.active = settings;

@@ -83,6 +83,7 @@ struct ConnectedSession {
     stream: Box<dyn SessionStream>,
     protocol_version: u16,
     snapshot_schema_version: u16,
+    identity: Option<NativeSessionIdentity>,
 }
 
 type Reconnector =
@@ -185,6 +186,28 @@ pub struct UnattachedSession {
     /// Daemon generation, not just the reusable display name.
     pub pid: u32,
     pub endpoint: String,
+}
+
+/// Read-only identity of the registry generation actually connected.
+/// Display metadata may use these existing facts without changing attach
+/// policy or storing launch instructions in the daemon.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeSessionIdentity {
+    pub name: String,
+    pub pid: u32,
+    pub created_at_unix_ms: u128,
+    pub endpoint: String,
+}
+
+impl NativeSessionIdentity {
+    fn from_record(record: &SessionRecord) -> Self {
+        Self {
+            name: record.name.clone(),
+            pid: record.pid,
+            created_at_unix_ms: record.created_at_unix_ms,
+            endpoint: record.socket.clone(),
+        }
+    }
 }
 
 /// Enumerates locally registered `festerm-sessiond` sessions that are alive
@@ -332,6 +355,7 @@ struct Shared {
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
     protocol_version: Mutex<u16>,
+    identity: Mutex<Option<NativeSessionIdentity>>,
     recovered_terminal: Mutex<Option<Terminal>>,
     recovery_resize_blocked: AtomicBool,
     recovery_adoption_blocked: AtomicBool,
@@ -569,21 +593,41 @@ impl PersistentSession {
         notifier: Arc<dyn SessionEventNotifier>,
         reconnector: Option<Arc<Reconnector>>,
     ) -> Result<Self, PersistentSessionError> {
-        Self::from_stream_with_protocol(
+        Self::from_stream_with_protocol_and_identity(
             connection.stream,
             notifier,
             reconnector,
             connection.protocol_version,
             connection.snapshot_schema_version,
+            connection.identity,
         )
     }
 
+    #[cfg(test)]
     fn from_stream_with_protocol(
         stream: Box<dyn SessionStream>,
         notifier: Arc<dyn SessionEventNotifier>,
         reconnector: Option<Arc<Reconnector>>,
         protocol_version: u16,
         snapshot_schema_version: u16,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::from_stream_with_protocol_and_identity(
+            stream,
+            notifier,
+            reconnector,
+            protocol_version,
+            snapshot_schema_version,
+            None,
+        )
+    }
+
+    fn from_stream_with_protocol_and_identity(
+        stream: Box<dyn SessionStream>,
+        notifier: Arc<dyn SessionEventNotifier>,
+        reconnector: Option<Arc<Reconnector>>,
+        protocol_version: u16,
+        snapshot_schema_version: u16,
+        identity: Option<NativeSessionIdentity>,
     ) -> Result<Self, PersistentSessionError> {
         let (events_tx, events_rx) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (commands_tx, commands_rx) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
@@ -596,6 +640,7 @@ impl PersistentSession {
                 ..SessionMetrics::default()
             }),
             protocol_version: Mutex::new(protocol_version),
+            identity: Mutex::new(identity),
             recovered_terminal: Mutex::new(None),
             recovery_resize_blocked: AtomicBool::new(recovery_snapshot_required(
                 protocol_version,
@@ -642,6 +687,14 @@ impl PersistentSession {
             events: Mutex::new(events_rx),
             reconnector,
         })
+    }
+
+    pub fn native_identity(&self) -> Option<NativeSessionIdentity> {
+        self.shared
+            .identity
+            .lock()
+            .expect("healthy native-identity lock")
+            .clone()
     }
 
     /// Whether a manual, resume-only reconnect can currently be requested.
@@ -772,6 +825,10 @@ impl PersistentSession {
                 }
                 match connection {
                     Ok(connection) => {
+                        *shared
+                            .identity
+                            .lock()
+                            .expect("healthy native-identity lock") = connection.identity;
                         *shared
                             .protocol_version
                             .lock()
@@ -1846,6 +1903,7 @@ fn connect_record_with_cancel(
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
             snapshot_schema_version: record.snapshot_schema_version,
+            identity: Some(NativeSessionIdentity::from_record(record)),
         })
     }
 
@@ -1865,6 +1923,7 @@ fn connect_record_with_cancel(
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
             snapshot_schema_version: record.snapshot_schema_version,
+            identity: Some(NativeSessionIdentity::from_record(record)),
         })
     }
 }
@@ -2754,6 +2813,7 @@ mod client_worker_tests {
             stream,
             protocol_version: 1,
             snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            identity: None,
         }
     }
 
@@ -2867,6 +2927,84 @@ mod client_worker_tests {
             thread::sleep(POLL_INTERVAL);
         }
         ready()
+    }
+
+    #[test]
+    fn native_session_identity_copies_existing_registry_facts_without_changing_provider_record() {
+        let record = SessionRecord {
+            name: "same-name".into(),
+            pid: 42,
+            socket: "owned-native-42-100".into(),
+            shell: "owned-shell".into(),
+            arguments: Vec::new(),
+            working_directory: None,
+            created_at_unix_ms: 100,
+            attached: false,
+            protocol_version: PROTOCOL_VERSION,
+            snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            scrollback_limit_bytes: festerm_core::DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            helper_identity: None,
+        };
+        let original = record.clone();
+        assert_eq!(
+            NativeSessionIdentity::from_record(&record),
+            NativeSessionIdentity {
+                name: "same-name".into(),
+                pid: 42,
+                created_at_unix_ms: 100,
+                endpoint: "owned-native-42-100".into(),
+            }
+        );
+        assert_eq!(record.name, original.name);
+        assert_eq!(record.socket, original.socket);
+        assert_eq!(record.pid, original.pid);
+        assert_eq!(record.created_at_unix_ms, original.created_at_unix_ms);
+        assert_eq!(record.attached, original.attached);
+    }
+
+    #[test]
+    fn native_session_identity_reports_actual_registry_facts_across_reconnect() {
+        let original = NativeSessionIdentity {
+            name: "same-name".into(),
+            pid: 42,
+            created_at_unix_ms: 100,
+            endpoint: "owned-native-42-100".into(),
+        };
+        let replacement = NativeSessionIdentity {
+            created_at_unix_ms: 101,
+            endpoint: "owned-native-42-101".into(),
+            ..original.clone()
+        };
+        let expected = replacement.clone();
+        let stream = ScriptedStream::default();
+        let mut connected = connected_test(Box::new(stream.clone()));
+        connected.identity = Some(original.clone());
+        let session = PersistentSession::from_stream_with_reconnector(
+            connected,
+            noop_session_event_notifier(),
+            Some(Arc::new(move |_| {
+                let mut connected = connected_test(Box::new(ScriptedStream::default()));
+                connected.identity = Some(replacement.clone());
+                Ok(connected)
+            })),
+        )
+        .unwrap();
+        assert_eq!(session.native_identity(), Some(original));
+        assert!(wait_for(|| session.lifecycle() == SessionLifecycle::Running));
+        stream.lock().eof = true;
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Disconnected(_)
+        )));
+        session.try_reconnect().unwrap();
+        assert!(wait_for(
+            || session.native_identity().as_ref() == Some(&expected)
+        ));
+        assert_eq!(session.native_identity(), Some(expected));
+        assert_eq!(
+            session.shutdown(Duration::from_secs(5)).unwrap(),
+            ShutdownResult::Stopped
+        );
     }
 
     #[test]
@@ -3394,6 +3532,7 @@ mod tests {
             stream,
             protocol_version: 1,
             snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            identity: None,
         }
     }
 
