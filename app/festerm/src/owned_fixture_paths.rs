@@ -243,37 +243,34 @@ pub(crate) fn write_new(path: &Path, value: &serde_json::Value) -> Result<(), St
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+pub(crate) struct TestWorkspace {
+    directory: tempfile::TempDir,
+    workspace: PathBuf,
+}
 
-    const NAMESPACE: &str = "ui-performance-owned-inputs";
-
-    fn inputs(home: &str, username: &str) -> PolicyInputs {
-        PolicyInputs {
-            scopes: vec![("HOME", home.into()), ("USERPROFILE", home.into())],
-            usernames: vec![username.into(), username.into()],
-        }
-    }
-
-    fn workspace(label: &str) -> (PathBuf, PathBuf, PathBuf) {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let case = Path::new(env!("CARGO_MANIFEST_DIR"))
+#[cfg(test)]
+impl TestWorkspace {
+    pub(crate) fn new(label: &str) -> Self {
+        assert!(simple_identity(label));
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap()
             .join("target")
-            .join("evidence")
-            .join(format!(
-                "fixture-path-policy-{label}-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-        fs::create_dir_all(case.parent().unwrap()).unwrap();
-        fs::create_dir(&case).unwrap();
-        let home = case.join("home").join("fixture_account");
-        let workspace = home.join("workspace");
+            .join("evidence");
+        no_aliases(&parent).unwrap();
+        fs::create_dir_all(&parent).unwrap();
+        no_aliases(&parent).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix(&format!("fixture-workspace-{label}-"))
+            .tempdir_in(&parent)
+            .unwrap();
+        let workspace = directory
+            .path()
+            .join("home")
+            .join("fixture_account")
+            .join("workspace");
         fs::create_dir_all(&workspace).unwrap();
         let git = std::process::Command::new("git")
             .args(["-c", "init.templateDir=", "init", "--quiet"])
@@ -282,7 +279,52 @@ mod tests {
             .unwrap();
         assert!(git.status.success(), "{git:?}");
         fs::write(workspace.join("Cargo.toml"), "[workspace]\n").unwrap();
-        (case, home, workspace)
+        path_policy(
+            &workspace
+                .join("target")
+                .join("ui-performance-owned-inputs")
+                .join("ownership-check"),
+            "ownership-check",
+            "ui-performance-owned-inputs",
+        )
+        .unwrap();
+        Self {
+            directory,
+            workspace,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.workspace
+    }
+
+    pub(crate) fn home(&self) -> &Path {
+        self.workspace.parent().unwrap()
+    }
+
+    pub(crate) fn case_path(&self) -> &Path {
+        self.directory.path()
+    }
+
+    pub(crate) fn close(self) {
+        let path = self.case_path().to_owned();
+        no_aliases(&path).unwrap();
+        self.directory.close().unwrap();
+        assert!(!path.exists());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NAMESPACE: &str = "ui-performance-owned-inputs";
+
+    fn inputs(home: &str, username: &str) -> PolicyInputs {
+        PolicyInputs {
+            scopes: vec![("HOME", home.into()), ("USERPROFILE", home.into())],
+            usernames: vec![username.into(), username.into()],
+        }
     }
 
     fn root(workspace: &Path, run: &str) -> PathBuf {
@@ -334,9 +376,11 @@ mod tests {
 
     #[test]
     fn home_ancestry_requires_real_git_cargo_and_no_aliases() {
-        let (case, home, workspace) = workspace("verification");
+        let owned_workspace = TestWorkspace::new("verification");
+        let home = owned_workspace.home();
+        let workspace = owned_workspace.path();
         let inputs = inputs(home.to_str().unwrap(), "fixture_account");
-        let root = root(&workspace, "run");
+        let root = root(workspace, "run");
         assert!(path_policy_with_inputs(&root, "run", NAMESPACE, &inputs).is_ok());
         for name in [".git", "Cargo.toml"] {
             let marker = workspace.join(name);
@@ -374,15 +418,17 @@ mod tests {
         #[cfg(unix)]
         fs::remove_file(&marker).unwrap();
         fs::rename(moved, marker).unwrap();
-        fs::remove_dir_all(case).unwrap();
+        owned_workspace.close();
     }
 
     #[test]
     fn verified_workspace_does_not_exempt_home_itself_or_unsafe_owned_suffixes() {
-        let (case, home, workspace) = workspace("exclusions");
-        let fixture_root = root(&workspace, "run");
+        let owned_workspace = TestWorkspace::new("exclusions");
+        let home = owned_workspace.home();
+        let workspace = owned_workspace.path();
+        let fixture_root = root(workspace, "run");
         for variable in ["HOME", "USERPROFILE"] {
-            for excluded in [&workspace, &fixture_root] {
+            for excluded in [workspace, fixture_root.as_path()] {
                 let inputs = PolicyInputs {
                     scopes: vec![(variable, excluded.to_str().unwrap().into())],
                     usernames: Vec::new(),
@@ -395,9 +441,9 @@ mod tests {
         let inputs = inputs(home.to_str().unwrap(), "fixture_account");
         for run in ["home", "Users", "fixture_account", "windows", "temp"] {
             assert!(
-                path_policy_with_inputs(&root(&workspace, run), run, NAMESPACE, &inputs).is_err()
+                path_policy_with_inputs(&root(workspace, run), run, NAMESPACE, &inputs).is_err()
             );
         }
-        fs::remove_dir_all(case).unwrap();
+        owned_workspace.close();
     }
 }
