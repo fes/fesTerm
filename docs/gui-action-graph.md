@@ -521,6 +521,16 @@ point, allowing only the unused wrap-limit metadata to differ. They require
 measured-galley reuse for fitting cells and preserve wrapping, styles, Unicode,
 Find formatting and intrinsic size without removing any labels.
 
+Code-byte navigation regressions for `MD-04` and `EDIT-09` render all 400
+fences, prove the tail is initially outside the viewport, then require its
+selected row to be visible through viewer Find and the shared editor Preview.
+The horizontal child retains the existing target while the vertical target is
+forwarded after that child closes. Wrapped-code geometry/offset, selection,
+exact raw fence Copy and keyboard activation remain covered. These CPU
+interaction checks do not replace native `CP-06`/`CP-15` evidence. Table-cell
+byte navigation is a separate, still-unimplemented gap; it is not part of this
+code-row repair.
+
 ## R. Approved text editor and shared document model
 
 `EDIT-01` is resolved by the design decisions recorded in

@@ -159,6 +159,13 @@ the already-counted Unicode prefix, and highlighting visits only the matches
 overlapping each text run. These are internal cost reductions, not changes to
 match counts, current-match selection, clipping, or Unicode source offsets.
 
+Preview code-byte navigation forwards the existing selected row's vertical
+target after its horizontal code scroller closes. Find and the shared editor
+Preview therefore reach offscreen fences instead of consuming the byte request
+inside a horizontal-only viewport. The original row choice, horizontal target,
+wrapping, selection and raw code Copy remain unchanged. Table cells do not yet
+handle byte targets; this separate gap is not covered by the code-row fix.
+
 Text selection and Copy produce plain text by default. Code-block Copy copies
 only code content, excluding the language label and line numbers. A future
 **Copy as Markdown** command may be added only with a precise source-range

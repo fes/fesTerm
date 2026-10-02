@@ -2060,6 +2060,7 @@ impl MarkdownRenderState<'_> {
                         bottom: CODE_BLOCK_PADDING_Y - CODE_BLOCK_TRAILING_LEAD,
                     })
                     .show(ui, |ui| {
+                        let mut vertical_scroll_target = None;
                         egui::ScrollArea::horizontal()
                             .id_salt(("markdown-code", block.span().byte_range().start))
                             .show(ui, |ui| {
@@ -2073,10 +2074,19 @@ impl MarkdownRenderState<'_> {
                                     if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
                                     {
                                         response.scroll_to_me(Some(Align::Center));
+                                        vertical_scroll_target = Some(response.rect);
                                         *self.pending_scroll = None;
                                     }
                                 }
                             });
+                        if let Some(mut target) = vertical_scroll_target {
+                            // The horizontal child consumes both target axes.
+                            // Reissue the selected line to the outer vertical
+                            // viewport without requesting horizontal movement.
+                            target.min.x = ui.clip_rect().min.x;
+                            target.max.x = ui.clip_rect().max.x;
+                            ui.scroll_to_rect(target, Some(Align::Center));
+                        }
                     });
             });
     }
@@ -4235,6 +4245,300 @@ mod tests {
                 &Default::default(),
             )
             .unwrap()
+    }
+
+    fn code_navigation_fixture() -> String {
+        (0..400)
+            .map(|index| format!("## Entry {index}\n\n```text\nnav_target_{index}\n```\n\n"))
+            .collect()
+    }
+
+    fn code_navigation_context() -> egui::Context {
+        let context = egui::Context::default();
+        context.set_theme(egui::ThemePreference::Dark);
+        context.set_visuals(theme::default_visuals());
+        context.global_style_mut(|style| {
+            style.scroll_animation = egui::style::ScrollAnimation::none();
+        });
+        context
+    }
+
+    fn code_navigation_frame(
+        context: &egui::Context,
+        frame: usize,
+        events: Vec<egui::Event>,
+        show: impl FnMut(&mut egui::Ui),
+    ) -> egui::FullOutput {
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(1180.0, 760.0),
+                )),
+                time: Some(frame as f64 / 60.0),
+                events,
+                ..Default::default()
+            },
+            show,
+        );
+        // These tests inspect CPU shapes and interactions, not uploaded textures.
+        output.textures_delta.clear();
+        output
+    }
+
+    fn visible_code_geometry(
+        output: &egui::FullOutput,
+        text: &str,
+    ) -> Option<(egui::Rect, egui::Rect)> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(label) if label.galley.job.text == text => {
+                let rect = label.galley.rect.translate(label.pos.to_vec2());
+                shape
+                    .clip_rect
+                    .intersects(rect)
+                    .then_some((rect, shape.clip_rect))
+            }
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn code_byte_navigation_reaches_the_offscreen_shared_preview_tail_and_keeps_copy_selection() {
+        let text = code_navigation_fixture();
+        let context = code_navigation_context();
+        let mut pane = MarkdownPreviewPane::new(
+            LocalMarkdownSource::new("/docs/navigation.md")
+                .unwrap()
+                .into(),
+            &text,
+        );
+        let source = pane
+            .document
+            .as_ref()
+            .unwrap()
+            .blocks()
+            .iter()
+            .rev()
+            .find_map(|block| match block {
+                Block::CodeBlock(block) => Some(block.span().start().byte_offset()),
+                _ => None,
+            })
+            .unwrap();
+        let output = code_navigation_frame(&context, 0, Vec::new(), |ui| pane.show(ui));
+        assert!(visible_code_geometry(&output, "nav_target_399").is_none());
+        pane.pending_scroll = Some(PendingScroll::Byte(source));
+        code_navigation_frame(&context, 1, Vec::new(), |ui| pane.show(ui));
+        code_navigation_frame(&context, 2, Vec::new(), |ui| pane.show(ui));
+        let output = code_navigation_frame(&context, 3, Vec::new(), |ui| pane.show(ui));
+        let geometry = visible_code_geometry(&output, "nav_target_399");
+        assert!(
+            geometry.is_some(),
+            "pending={:?}, heading={:?}, last Copy={:?}",
+            pane.pending_scroll,
+            pane.visible_heading,
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(label) if label.galley.job.text == "Copy" => Some(label.pos),
+                    _ => None,
+                })
+                .next_back()
+        );
+        let (rect, clip) = geometry.unwrap();
+        assert!(clip.contains(rect.center()));
+        assert!(pane.pending_scroll.is_none());
+        assert_eq!(output.shapes.iter().filter(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(label) if label.galley.job.text == "Copy")
+        }).count(), 400, "all fence headers still run");
+
+        let label = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "nav_target_399" => {
+                    Some(label)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let start = label.pos
+            + label
+                .galley
+                .pos_from_cursor(label.galley.begin())
+                .center()
+                .to_vec2();
+        let end = label.pos
+            + label
+                .galley
+                .pos_from_cursor(label.galley.end())
+                .center()
+                .to_vec2();
+        let pointer = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        code_navigation_frame(
+            &context,
+            4,
+            vec![egui::Event::PointerMoved(start), pointer(start, true)],
+            |ui| pane.show(ui),
+        );
+        code_navigation_frame(&context, 5, vec![egui::Event::PointerMoved(end)], |ui| {
+            pane.show(ui)
+        });
+        code_navigation_frame(&context, 6, vec![pointer(end, false)], |ui| pane.show(ui));
+        let output =
+            code_navigation_frame(&context, 7, vec![egui::Event::Copy], |ui| pane.show(ui));
+        assert!(output.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == "nav_target_399")
+        }));
+        let position = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "Copy" => {
+                    let rect = label.galley.rect.translate(label.pos.to_vec2());
+                    (shape.clip_rect.contains(rect.center()) && rect.bottom() < start.y)
+                        .then_some(rect)
+                }
+                _ => None,
+            })
+            .max_by(|left, right| left.center().y.total_cmp(&right.center().y))
+            .unwrap()
+            .center();
+        code_navigation_frame(
+            &context,
+            8,
+            vec![egui::Event::PointerMoved(position), pointer(position, true)],
+            |ui| pane.show(ui),
+        );
+        let output = code_navigation_frame(&context, 9, vec![pointer(position, false)], |ui| {
+            pane.show(ui)
+        });
+        assert!(
+            output.platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == "nav_target_399\n")
+            }),
+            "the tail header copies its exact raw fence, not selected display text"
+        );
+        code_navigation_frame(
+            &context,
+            10,
+            vec![egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            }],
+            |ui| pane.show(ui),
+        );
+        assert!(context.memory(|memory| memory.focused()).is_some());
+        let output = code_navigation_frame(
+            &context,
+            11,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            |ui| pane.show(ui),
+        );
+        assert!(
+            output.platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == "nav_target_399\n")
+            }),
+            "the existing focused Copy action remains live"
+        );
+    }
+
+    #[test]
+    fn code_byte_navigation_preserves_horizontal_wrap_geometry_and_offset() {
+        let line = format!("{} tail_token", "wide_".repeat(100));
+        let text = format!("```text\n{line}\n```\n");
+        let context = code_navigation_context();
+        let mut pane = MarkdownPreviewPane::new(
+            LocalMarkdownSource::new("/docs/wide.md").unwrap().into(),
+            &text,
+        );
+        let source = pane.document.as_ref().unwrap().blocks()[0]
+            .span()
+            .start()
+            .byte_offset();
+        let output = code_navigation_frame(&context, 0, Vec::new(), |ui| pane.show(ui));
+        let (original_rect, original_clip) = visible_code_geometry(&output, &line).unwrap();
+        let original_galley = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == line => {
+                    Some(label.galley.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            original_galley.rows.len() > 1,
+            "the actual code path wraps long rows within its horizontal child"
+        );
+        assert!(original_rect.width() <= original_clip.width());
+        pane.pending_scroll = Some(PendingScroll::Byte(source));
+        code_navigation_frame(&context, 1, Vec::new(), |ui| pane.show(ui));
+        let output = code_navigation_frame(&context, 2, Vec::new(), |ui| pane.show(ui));
+        let (rect, clip) = visible_code_geometry(&output, &line).unwrap();
+        assert_eq!(rect, original_rect);
+        assert_eq!(clip, original_clip);
+        let galley = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == line => Some(&label.galley),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(galley.as_ref(), original_galley.as_ref());
+        let output = code_navigation_frame(&context, 3, Vec::new(), |ui| pane.show(ui));
+        let (retained, _) = visible_code_geometry(&output, &line).unwrap();
+        assert_eq!(
+            retained.min.x, rect.min.x,
+            "vertical forwarding must not reset the horizontal offset"
+        );
+    }
+
+    #[test]
+    fn code_byte_navigation_find_reaches_the_viewer_preview_tail() {
+        let text = code_navigation_fixture();
+        let context = code_navigation_context();
+        let mut tab = MarkdownViewerTab::open_remote(
+            test_remote_source("/docs/navigation.md"),
+            "/docs/navigation.md".into(),
+            text.into_bytes(),
+        );
+        tab.outline_open = false;
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let output = code_navigation_frame(&context, 0, Vec::new(), |ui| {
+            assert!(tab.show(ui, tab_id).is_none());
+        });
+        assert!(visible_code_geometry(&output, "nav_target_399").is_none());
+        assert_eq!(tab.set_find_query_for_test("nav_target_399"), 1);
+        tab.advance_find(false);
+        let span = tab.find.current_match().unwrap().span();
+        code_navigation_frame(&context, 1, Vec::new(), |ui| {
+            assert!(tab.show(ui, tab_id).is_none());
+        });
+        let output = code_navigation_frame(&context, 2, Vec::new(), |ui| {
+            assert!(tab.show(ui, tab_id).is_none());
+        });
+        let (rect, clip) = visible_code_geometry(&output, "nav_target_399").unwrap();
+        assert!(clip.contains(rect.center()));
+        assert!(tab.pending_scroll.is_none());
+        assert_eq!(tab.find.current_match().unwrap().span(), span);
+        assert_eq!(tab.outline_selected, Some(399));
     }
 
     #[test]

@@ -130,6 +130,11 @@ text into a section and the preview comes with it; scroll the preview and the
 text follows. Whichever pane is moving leads, so the two never pull against
 each other.
 
+The shared Markdown Preview uses the same code-byte navigation as the viewer:
+the selected code row forwards its vertical target after the horizontal child
+closes. This keeps offscreen code reachable without changing per-view scroll,
+selection, source positions, or the original horizontal wrapping/targeting.
+
 **Syntax highlighting** is on by default and colours source by what it means —
 keyword, string, comment, type — from the same engine and the same palette the
 Markdown preview's fenced code uses (ADR 0035). Colour is presentation only: it
