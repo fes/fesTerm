@@ -2851,3 +2851,29 @@ assert that resolving a directory keeps the picker loading until its listing
 arrives. The ordinary picker-loading tests retain real background-thread
 coverage. No timeout was extended, failure was retried, gallery was regenerated,
 or runtime picker behavior changed.
+
+## Reviewing the production palette, not the harness default
+
+The UI-state gallery mixed semantic fesTerm surfaces with generic-grey egui
+controls and popup frames. That was a capture defect, not evidence that the
+native application had the same appearance: the production constructor pins
+Dark and installs blue-graphite visuals, while the test constructor omits that
+context setup. All gallery harnesses now share one setup on their actual
+rendering context. A portable regression checks emitted fills from the real
+application and terminal popup, rather than merely checking a palette helper.
+
+The existing generator rebuilt all 48 images, their manifest, and the state
+document. Representative launcher, profile, inspector, terminal-menu, editor,
+and Save As images were visually inspected; fonts, layout and synthetic
+contents were retained. Editor/picker physical fixtures now stay inside the
+worktree rather than the personal OS temporary directory. Review caught that
+this alone does not anonymize their displayed identities: a personalized
+checkout root can still expose a username and make images vary across
+worktrees. Publication therefore requires a controlled non-personal checkout
+and path/metadata review until test-only document/picker metadata fixtures
+separate canonical synthetic labels from physical I/O.
+
+Native Windows capture also required opening directory timestamp handles with
+the proper access and backup flags, covered by a file/directory timestamp
+regression. This changes neither product styling nor renderer defaults, and
+does not establish native desktop, latency, or usability acceptance.

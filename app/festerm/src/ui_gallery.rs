@@ -618,6 +618,28 @@ fn synthetic_screen_sessions() -> Vec<MultiplexerSession> {
 // Rendering helpers.
 // --------------------------------------------------------------------
 
+fn gallery_harness<'a, State>(
+    size: egui::Vec2,
+    show: impl FnMut(&mut egui::Ui, &mut State) + 'a,
+    state: State,
+) -> Harness<'a, State> {
+    let mut harness = Harness::builder()
+        .with_size(size)
+        .build_ui_state(show, state);
+    // The test app constructor bypasses production context setup. Apply it to
+    // the harness's actual context, not a separate context used by fixtures.
+    harness.ctx.set_theme(egui::ThemePreference::Dark);
+    harness
+        .ctx
+        .set_visuals(festerm_ui_egui::theme::default_visuals());
+    // set_visuals replaces kittest's non-blinking cursor setting.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
+    harness.step();
+    harness
+}
+
 /// Crops a rendered frame to the vertical band `[top, bottom)`, in points
 /// (== pixels at the harness's default `pixels_per_point` of 1.0).
 fn crop_vertical(image: &image::RgbaImage, top: f32, bottom: f32) -> image::RgbaImage {
@@ -729,9 +751,9 @@ fn render_launcher(
     screen_sessions: Vec<MultiplexerSession>,
 ) -> image::RgbaImage {
     let tab_id = AppState::for_test().active();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui(move |ui| {
+    let mut harness = gallery_harness(
+        egui::vec2(width, height),
+        move |ui, ()| {
             let _ = screens::show_launcher(
                 ui,
                 tab_id,
@@ -743,7 +765,9 @@ fn render_launcher(
                 &tmux_sessions,
                 &screen_sessions,
             );
-        });
+        },
+        (),
+    );
     harness.run();
     finish(&mut harness)
 }
@@ -861,9 +885,9 @@ fn render_launcher_form(
 ) -> image::RgbaImage {
     let configuration = synthetic_configuration();
     let tab_id = AppState::for_test().active();
-    let mut harness = Harness::<()>::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui(move |ui| {
+    let mut harness = gallery_harness(
+        egui::vec2(width, height),
+        move |ui, ()| {
             let _ = screens::show_launcher(
                 ui,
                 tab_id,
@@ -875,7 +899,9 @@ fn render_launcher_form(
                 &[],
                 &[],
             );
-        });
+        },
+        (),
+    );
     harness.run();
     open_launcher_card(&mut harness, card_label);
     if reveal_advanced {
@@ -1088,11 +1114,13 @@ fn replay_warp_ui_surfaces() {
 /// above `bottom_label`.
 fn render_settings_card(top_label: Option<&str>, bottom_label: &str) -> image::RgbaImage {
     let model = synthetic_settings_view_model();
-    let mut harness = Harness::<()>::builder()
-        .with_size(egui::vec2(900.0, 3200.0))
-        .build_ui(move |ui| {
+    let mut harness = gallery_harness(
+        egui::vec2(900.0, 3200.0),
+        move |ui, ()| {
             let _ = screens::show_settings(ui, model.clone());
-        });
+        },
+        (),
+    );
     harness.run();
     let top = top_label
         .map(|label| harness.get_by_label(label).rect().top() - 22.0)
@@ -1140,9 +1168,9 @@ fn keyboard_editor_harness(
     initial_bindings: KeyboardBindings,
 ) -> Harness<'static, ()> {
     let mut bindings = initial_bindings;
-    Harness::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui(move |ui| {
+    gallery_harness(
+        egui::vec2(width, height),
+        move |ui, ()| {
             if crate::keyboard::recording(ui.ctx()) {
                 let events = ui
                     .ctx()
@@ -1154,7 +1182,9 @@ fn keyboard_editor_harness(
             {
                 bindings = next;
             }
-        })
+        },
+        (),
+    )
 }
 
 fn capture_keyboard_editor_collapsed() -> image::RgbaImage {
@@ -1208,9 +1238,9 @@ fn capture_keyboard_editor_filtered() -> image::RgbaImage {
 fn render_profiles(width: f32, height: f32, pending_edit: Option<String>) -> image::RgbaImage {
     let configuration = synthetic_configuration();
     let tab_id = AppState::for_test().active();
-    let mut harness = Harness::<()>::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui(move |ui| {
+    let mut harness = gallery_harness(
+        egui::vec2(width, height),
+        move |ui, ()| {
             let _ = screens::show_profiles(
                 ui,
                 tab_id,
@@ -1219,7 +1249,9 @@ fn render_profiles(width: f32, height: f32, pending_edit: Option<String>) -> ima
                 None::<NewProfileKind>,
                 festerm_config::PersistenceProviderKind::FestermSessiond,
             );
-        });
+        },
+        (),
+    );
     harness.run();
     finish(&mut harness)
 }
@@ -1312,14 +1344,13 @@ fn render_terminal_session(
         terminal,
         sink: GallerySink,
     };
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui_state(
-            |ui, state: &mut TerminalSessionState| {
-                state.view.show(ui, &mut state.terminal, &mut state.sink);
-            },
-            state,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(width, height),
+        |ui, state: &mut TerminalSessionState| {
+            state.view.show(ui, &mut state.terminal, &mut state.sink);
+        },
+        state,
+    );
     // The view's first frame or two may only install the terminal font
     // family and request a repaint rather than paint the grid; settle
     // before rendering so the transcript is actually on screen.
@@ -1415,17 +1446,16 @@ fn terminal_menu_harness(
         sink: GallerySink,
         options,
     };
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(940.0, 320.0))
-        .build_ui_state(
-            |ui, state: &mut TerminalMenuState| {
-                let options = state.options.clone();
-                state
-                    .view
-                    .show_with_options(ui, &mut state.terminal, &mut state.sink, options);
-            },
-            state,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(940.0, 320.0),
+        |ui, state: &mut TerminalMenuState| {
+            let options = state.options.clone();
+            state
+                .view
+                .show_with_options(ui, &mut state.terminal, &mut state.sink, options);
+        },
+        state,
+    );
     harness.run();
     harness.run();
     harness
@@ -1469,6 +1499,71 @@ fn capture_terminal_path_menu() -> image::RgbaImage {
     finish(&mut harness)
 }
 
+#[test]
+fn gallery_frames_use_production_theme_for_app_and_popup() {
+    fn has_fill_at(shape: &egui::Shape, position: egui::Pos2, expected: egui::Color32) -> bool {
+        match shape {
+            egui::Shape::Rect(rect) => rect.fill == expected && rect.rect.contains(position),
+            egui::Shape::Vec(shapes) => shapes
+                .iter()
+                .any(|shape| has_fill_at(shape, position, expected)),
+            _ => false,
+        }
+    }
+
+    fn assert_fill_at<State>(
+        harness: &Harness<'_, State>,
+        position: egui::Pos2,
+        expected: egui::Color32,
+    ) {
+        assert!(
+            harness.output().shapes.iter().any(|shape| has_fill_at(
+                &shape.shape,
+                position,
+                expected
+            )),
+            "production fill {expected:?} must be painted at {position:?}",
+        );
+    }
+
+    let mut menu = terminal_menu_harness("Synthetic menu fixture.\r\n", Default::default());
+    open_terminal_context_menu(&mut menu, 4, 0);
+    menu.remove_cursor();
+    menu.run();
+    assert_fill_at(
+        &menu,
+        menu.get_by_label("Paste").rect().center(),
+        festerm_ui_egui::theme::SURFACE_OVERLAY,
+    );
+    assert_eq!(menu.ctx.theme(), egui::Theme::Dark);
+
+    let app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());
+    let mut app = gallery_harness(
+        egui::vec2(980.0, 700.0),
+        |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+        app,
+    );
+    let context = app.ctx.clone();
+    app.state_mut()
+        .dispatch_for_gallery(AppCommand::OpenSettings, &context);
+    app.remove_cursor();
+    app.run();
+    assert!(app.query_by_label("INTERFACE").is_some());
+    assert_fill_at(
+        &app,
+        egui::pos2(9.0, 9.0),
+        festerm_ui_egui::theme::SURFACE_WINDOW,
+    );
+    assert_eq!(app.ctx.theme(), egui::Theme::Dark);
+    assert!(
+        !app.ctx
+            .style_of(egui::Theme::Dark)
+            .visuals
+            .text_cursor
+            .blink
+    );
+}
+
 // -- sftp-workspace -----------------------------------------------------------
 
 /// A fixed synthetic instant used for every "modified"/"loaded" timestamp
@@ -1483,29 +1578,59 @@ fn synthetic_timestamp() -> SystemTime {
 }
 
 fn gallery_fixture_directory(name: &str) -> PathBuf {
-    if cfg!(unix) {
-        PathBuf::from(format!("/tmp/festerm-ui-gallery-{name}"))
-    } else {
-        std::env::temp_dir().join(format!("festerm-ui-gallery-{name}"))
-    }
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("gallery package belongs to the workspace")
+        .join("target")
+        .join("ui-gallery-fixtures")
+        .join(name)
 }
 
 fn reset_gallery_fixture_directory(name: &str) -> PathBuf {
     let directory = gallery_fixture_directory(name);
     let _ = fs::remove_dir_all(&directory);
-    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    fs::create_dir_all(&directory).expect("the gallery can write its isolated fixture directory");
     directory
 }
 
 fn set_synthetic_modified_time(path: &Path) {
-    fs::File::open(path)
-        .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(synthetic_timestamp())))
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        // Directory handles need backup semantics; timestamps need attribute
+        // write access for both files and directories.
+        fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+    };
+    #[cfg(not(windows))]
+    let file = fs::File::open(path);
+    file.and_then(|file| file.set_times(fs::FileTimes::new().set_modified(synthetic_timestamp())))
         .unwrap_or_else(|error| {
             panic!(
                 "setting deterministic gallery timestamp for {} must succeed: {error}",
                 path.display()
             )
         });
+}
+
+#[test]
+fn gallery_fixture_timestamps_are_fixed_for_files_and_directories() {
+    let directory = reset_gallery_fixture_directory("timestamp-regression");
+    let file = directory.join("NOTES.md");
+    fs::write(&file, "Synthetic timestamp fixture.\n").unwrap();
+    for path in [&directory, &file] {
+        set_synthetic_modified_time(path);
+        assert_eq!(
+            fs::metadata(path).unwrap().modified().unwrap(),
+            synthetic_timestamp()
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
 }
 
 fn synthetic_directory_item(
@@ -1587,14 +1712,13 @@ fn capture_sftp_workspace_browser() -> image::RgbaImage {
         &ctx,
     );
     let tab_id = AppState::for_test().active();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1180.0, 760.0))
-        .build_ui_state(
-            move |ui, tab: &mut SftpFileManagerTab| {
-                let _ = tab.show(ui, tab_id);
-            },
-            tab,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(1180.0, 760.0),
+        move |ui, tab: &mut SftpFileManagerTab| {
+            let _ = tab.show(ui, tab_id);
+        },
+        tab,
+    );
     harness.run();
     finish(&mut harness)
 }
@@ -1633,7 +1757,7 @@ fn synthetic_markdown_prose() -> String {
 
 // -- editor -------------------------------------------------------------------
 
-/// The editor reads a real file, so the gallery writes one into a temporary
+/// The editor reads a real file, so the gallery writes one into an isolated
 /// directory of its own. The contents are the same invented project notes the
 /// Markdown scenarios use, so nothing here comes from the machine it runs on.
 fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
@@ -1710,20 +1834,9 @@ fn render_editor_over(
     mode: crate::text_editor::EditorMode,
     prepare: Option<PrepareEditor<'_>>,
 ) -> image::RgbaImage {
-    // The editor names the file it is editing, so the fixture's own path ends
-    // up in the capture. A per-process temporary directory would put a
-    // different machine-specific path in every run, rewriting these images
-    // whether or not the UI changed and publishing the host's temporary
-    // directory layout along with them. One fixed, synthetic-looking
-    // directory keeps a capture a function of the UI alone; the scenarios run
-    // one after another, each cleaning up after itself.
-    let directory = if cfg!(unix) {
-        std::path::PathBuf::from("/tmp/festerm-ui-gallery")
-    } else {
-        std::env::temp_dir().join("festerm-ui-gallery")
-    };
-    let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    // Keep fixtures in the worktree rather than a personal OS temp directory,
+    // since the editor and picker display the fixture path.
+    let directory = reset_gallery_fixture_directory("editor");
     let path = directory.join(file_name);
     std::fs::write(&path, contents).expect("the gallery can write its fixture");
 
@@ -1741,14 +1854,13 @@ fn render_editor_over(
         prepare(&documents, &mut editor, &path);
     }
     let tab_id = AppState::for_test().active();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(900.0, 820.0))
-        .build_ui_state(
-            move |ui, state: &mut (crate::documents::SharedDocuments, TextEditorTab)| {
-                let _ = state.1.show(ui, tab_id, &state.0);
-            },
-            (documents, editor),
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(900.0, 820.0),
+        move |ui, state: &mut (crate::documents::SharedDocuments, TextEditorTab)| {
+            let _ = state.1.show(ui, tab_id, &state.0);
+        },
+        (documents, editor),
+    );
     harness.run();
     // A blinking caret makes a capture depend on when it was taken, which
     // would rewrite these files on every run and bury real changes in churn.
@@ -1888,12 +2000,11 @@ fn capture_text_editor_dirty_close() -> image::RgbaImage {
         &context,
     );
 
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(980.0, 700.0))
-        .build_ui_state(
-            |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
-            app,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(980.0, 700.0),
+        |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+        app,
+    );
     harness.run();
     press_edit_for_gallery(&mut harness);
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
@@ -1947,12 +2058,11 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
         &context,
     );
 
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(980.0, 700.0))
-        .build_ui_state(
-            |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
-            app,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(980.0, 700.0),
+        |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+        app,
+    );
     harness.run();
 
     // Both documents are typed into, because a file changed underneath a view
@@ -2008,12 +2118,11 @@ fn capture_text_editor_save_as() -> image::RgbaImage {
     let mut app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());
     app.dispatch_for_gallery(crate::tabs::AppCommand::OpenTextEditor { path }, &context);
 
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1080.0, 760.0))
-        .build_ui_state(
-            |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
-            app,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(1080.0, 760.0),
+        |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+        app,
+    );
     harness.run();
 
     harness.get_by_label("Save As").click();
@@ -2064,14 +2173,13 @@ fn render_markdown(
     );
     adjust(&mut tab);
     let tab_id = AppState::for_test().active();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui_state(
-            move |ui, tab: &mut MarkdownViewerTab| {
-                let _ = tab.show(ui, tab_id);
-            },
-            tab,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(width, height),
+        move |ui, tab: &mut MarkdownViewerTab| {
+            let _ = tab.show(ui, tab_id);
+        },
+        tab,
+    );
     harness.run();
     interact(&mut harness);
     harness.run();
@@ -2131,16 +2239,15 @@ fn render_inspector_over_terminal(
         terminal,
         sink: GallerySink,
     };
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(width, height))
-        .build_ui_state(
-            move |ui, state: &mut DiagnosticsSessionState| {
-                let content_rect = ui.max_rect();
-                state.view.show(ui, &mut state.terminal, &mut state.sink);
-                let _ = inspector::show(ui.ctx(), content_rect, content.clone(), false);
-            },
-            state,
-        );
+    let mut harness = gallery_harness(
+        egui::vec2(width, height),
+        move |ui, state: &mut DiagnosticsSessionState| {
+            let content_rect = ui.max_rect();
+            state.view.show(ui, &mut state.terminal, &mut state.sink);
+            let _ = inspector::show(ui.ctx(), content_rect, content.clone(), false);
+        },
+        state,
+    );
     harness.run();
     harness.run();
     finish(&mut harness)
@@ -2278,9 +2385,9 @@ fn render_chips(
     available_update: Option<&'static str>,
 ) -> image::RgbaImage {
     let chips = synthetic_chip_view_models();
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1000.0, 160.0))
-        .build_ui(move |ui| {
+    let mut harness = gallery_harness(
+        egui::vec2(1000.0, 160.0),
+        move |ui, ()| {
             let _ = chrome::show(
                 ui,
                 &chips,
@@ -2292,7 +2399,9 @@ fn render_chips(
                 false,
                 available_update,
             );
-        });
+        },
+        (),
+    );
     // One chip deliberately demonstrates the "new output" pulse cue
     // (`pulse_new_output: true`), which keeps requesting a repaint forever
     // by design. `finish`'s `Harness::run()` would treat that as a hang and
