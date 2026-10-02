@@ -775,8 +775,13 @@ performance result. An untimed observer and two failing headless accessibility
 tests established that terminal modal blackout removed accessibility requests
 before foreground confirmation widgets rendered. The corrected view defers
 those requests until after its own controls, preserving terminal blackout and
-the ordinary confirmation policy. Exact-source native Quit requalification and
-the balanced CPU comparison remain pending.
+the ordinary confirmation policy. A clean committed `537bbcc` release then
+passed a shipping-A (`0`,`0`) untimed native proof on the same connected 200%
+DevBox: one owned UIA invocation was followed by exit code 0 in under one second,
+without a second close request or forced termination. Both actual before-close
+and confirmation captures were reviewed, and the app and two captured descendant
+PIDs were independently absent. This qualifies that local-process Quit route,
+not the full AS-08 platform/transport matrix or a balanced native CPU comparison.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

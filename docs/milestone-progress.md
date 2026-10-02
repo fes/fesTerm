@@ -19,7 +19,12 @@ The view now defers those requests while its background controls render, then
 restores them for foreground widgets. A view-level regression proves background
 history and terminal bytes remain blocked, including simultaneous background
 and foreground invocations. Safe-default focus and the existing quit policy
-remain unchanged; native requalification and CPU comparisons are separate gates.
+remain unchanged. The clean committed `537bbcc` shipping-A release subsequently
+exited normally in under one second after one owned UIA invocation. Actual
+before-close and safe-default confirmation captures were reviewed; the app and
+both captured descendants were independently absent, with no second close or
+forced termination. This is a single connected 200% Windows functional proof,
+not native performance evidence or closure of the broader #282 gates.
 
 ## Focusing the restored OS-input fixture without stealing another window
 

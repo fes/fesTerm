@@ -158,6 +158,13 @@ Native acceptance still requires actual normal process and descendant-tree exit
 within the unchanged cleanup deadline; a second close request is not evidence
 that the first explicit invocation succeeded.
 
+The 2026-10-02 clean `537bbcc` shipping-A (`0`,`0`) release passed that one-shot
+untimed proof on the connected 200% Windows DevBox: one unique owned UIA Quit
+invocation, exit code 0 in under one second, normal captured-descendant exit,
+and no follow-up close or forced kill. Both actual client captures were reviewed
+and all three PIDs independently absent. This does not establish a balanced CPU
+comparison or the full AS-08 native-platform/transport matrix.
+
 ## Flaky failure policy
 
 **No silent retries.**

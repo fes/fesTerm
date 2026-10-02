@@ -1057,6 +1057,20 @@ launch or CPU sample. The sleep/display inhibitor was released. The CPU fixture'
 new primary-Quit confirmation path remains natively unverified, and correcting
 restore-state assertions does not resolve the observed focus failure.
 
+The 2026-10-02 follow-up corrected the OS-input fixture's owned-client focus
+preparation and qualified shipping-A/requested-C restore/input separately.
+Its first balanced native A quiet case then passed the interval guards but
+failed normal Quit cleanup; that failed series remains preserved and supplies
+no accepted comparison. An untimed observer and two red accessibility tests
+identified terminal blackout consuming the foreground dialog's action.
+The clean committed `537bbcc` correction, release executable
+`AF411D78EFFE4F160681AD73FE2E960E06C5E9090364C9B18E56D6AF2C501B0E`,
+then passed a one-invocation shipping-A native Quit proof: exit code 0 in under
+one second, no second close or forced kill, and independently absent app/child
+PIDs. Its two actual captures were reviewed. This local-process functional proof
+does not replace a fresh, complete native A/B/C series, palette control or the
+broader #282 qualification matrix.
+
 The [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
 contains provenance, ordered attempts, raw distributions, logs, external
 captures, cleanup records and a gate-by-gate report. All eight #282 gates
