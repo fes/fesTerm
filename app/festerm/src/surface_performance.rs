@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::{
     documents::DocumentRegistry,
     markdown_viewer::{MarkdownPreviewPane, MarkdownViewerTab},
+    performance_fixtures::{self, PerformanceFixtures},
     sftp_file_manager::SftpFileManagerTab,
     tabs::TabId,
     text_editor::{EditorMode, TextEditorTab},
@@ -221,14 +222,6 @@ fn surface_timing_distributions_preserve_order_and_tail_without_budgets() {
     assert_eq!(report["max_ms"], 30.0);
 }
 
-struct OwnedFixtures(PathBuf);
-
-impl OwnedFixtures {
-    fn path(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
 fn directory(location: SftpLocation, path: SftpPath, count: usize) -> SftpDirectorySnapshot {
     SftpDirectorySnapshot {
         location,
@@ -334,18 +327,13 @@ fn profile_interactive_surfaces() {
         "use a fresh performance evidence directory"
     );
     std::fs::create_dir_all(&output).unwrap();
-    let fixtures = OwnedFixtures(output.join("fixtures"));
-    std::fs::create_dir(&fixtures.0).unwrap();
+    let mut fixtures = PerformanceFixtures::from_environment().unwrap();
     let mut samples = Vec::new();
     let tab = TabId::next_for_test();
 
-    let source: String = (0..2000)
-        .map(|index| {
-            format!("fn entry_{index}() {{ let value = {index}; println!(\"{{value}}\"); }}\n")
-        })
-        .collect();
+    let source = performance_fixtures::rust_input();
     let source_path = fixtures.path().join("fixture.rs");
-    std::fs::write(&source_path, &source).unwrap();
+    fixtures.write_input(&source_path, &source).unwrap();
     let documents = DocumentRegistry::shared();
     let preparation_started = Instant::now();
     let document = documents.borrow_mut().open_local(&source_path).unwrap();
@@ -358,6 +346,9 @@ fn profile_interactive_surfaces() {
             assert!(editor.show(ui, tab, &documents).is_none());
         },
     ));
+    fixtures
+        .observe("editor-syntax-2000-lines", &source_path)
+        .unwrap();
     let syntax_status = documents.borrow().get(document).unwrap().syntax_status();
     assert!(
         syntax_status.is_highlighted(),
@@ -373,6 +364,9 @@ fn profile_interactive_surfaces() {
             assert!(editor.show(ui, tab, &documents).is_none());
         },
     ));
+    fixtures
+        .observe("editor-find-2000-capped-matches", &source_path)
+        .unwrap();
     assert_eq!(editor.find_match_count_for_test(), 2000);
 
     // Keep controls before Markdown query work: its CPU duration must not
@@ -403,19 +397,13 @@ fn profile_interactive_surfaces() {
                 assert!(browser.show(ui, tab).is_none());
             },
         ));
+        let actual_path = fixtures.path().to_owned();
+        fixtures.observe(name, &actual_path).unwrap();
     }
 
-    let markdown: String = (0..400)
-        .map(|index| {
-            format!(
-                "## Section {index}\n\nA **synthetic** paragraph with `inline code` and ordinary text.\n\n\
-                 ```rust\nfn example() {{ let value = {index}; }}\n```\n\n\
-                 | Name | Value |\n| --- | --- |\n| Item | {index} |\n\n"
-            )
-        })
-        .collect();
+    let markdown = performance_fixtures::markdown_input();
     let markdown_path = fixtures.path().join("fixture.md");
-    std::fs::write(&markdown_path, &markdown).unwrap();
+    fixtures.write_input(&markdown_path, &markdown).unwrap();
     let preparation_started = Instant::now();
     let document = documents.borrow_mut().open_local(&markdown_path).unwrap();
     let mut preview = TextEditorTab::new(document, &documents);
@@ -428,6 +416,10 @@ fn profile_interactive_surfaces() {
             assert!(preview.show(ui, tab, &documents).is_none());
         },
     ));
+    fixtures
+        .observe("markdown-preview-400-sections", &markdown_path)
+        .unwrap();
+    let viewer_path = markdown_path.clone();
     let preparation_started = Instant::now();
     let mut viewer = MarkdownViewerTab::open_local(markdown_path);
     viewer.toggle_mode();
@@ -439,16 +431,25 @@ fn profile_interactive_surfaces() {
             assert!(viewer.show(ui, tab).is_none());
         },
     ));
+    fixtures
+        .observe("markdown-source-400-sections", &viewer_path)
+        .unwrap();
 
     let matches = viewer.set_find_query_for_test("e");
     assert_eq!(matches, markdown.match_indices("e").count());
     samples.push(measure("markdown-source-find", matches, |ui| {
         assert!(viewer.show(ui, tab).is_none());
     }));
+    fixtures
+        .observe("markdown-source-find", &viewer_path)
+        .unwrap();
     viewer.toggle_mode();
     samples.push(measure("markdown-preview-find", matches, |ui| {
         assert!(viewer.show(ui, tab).is_none());
     }));
+    fixtures
+        .observe("markdown-preview-find", &viewer_path)
+        .unwrap();
 
     for name in [
         "markdown-preview-headings",
@@ -456,24 +457,13 @@ fn profile_interactive_surfaces() {
         "markdown-preview-code",
         "markdown-preview-tables",
     ] {
-        let text: String = (0..400)
-            .map(|index| match name {
-                "markdown-preview-headings" => format!("## Section {index}\n\n"),
-                "markdown-preview-prose" => {
-                    "A **synthetic** paragraph with `inline code` and ordinary text.\n\n".into()
-                }
-                "markdown-preview-code" => {
-                    format!("```rust\nfn example() {{ let value = {index}; }}\n```\n\n")
-                }
-                "markdown-preview-tables" => {
-                    format!("| Name | Value |\n| --- | --- |\n| Item | {index} |\n\n")
-                }
-                _ => unreachable!(),
-            })
-            .collect();
-        let source = LocalMarkdownSource::new(fixtures.path().join(format!("{name}.md"))).unwrap();
+        let text = performance_fixtures::fragment_input(name);
+        let path = fixtures.path().join(format!("{name}.md"));
+        fixtures.verify_fragment(&path, &text).unwrap();
+        let source = LocalMarkdownSource::new(path.clone()).unwrap();
         let mut pane = MarkdownPreviewPane::new(source.into(), &text);
         samples.push(measure(name, 400, |ui| pane.show(ui)));
+        fixtures.observe(name, &path).unwrap();
     }
 
     let fenced_loading: Vec<_> = [200, 2000, 4000]
@@ -501,7 +491,7 @@ fn profile_interactive_surfaces() {
 
     let long_line = "e\u{301} ".repeat(20_000);
     let long_path = fixtures.path().join("long-line.md");
-    std::fs::write(&long_path, &long_line).unwrap();
+    fixtures.write_input(&long_path, &long_line).unwrap();
     let mut long_viewer = MarkdownViewerTab::open_local(long_path);
     let mut find_times = Vec::with_capacity(MEASURED_FRAMES);
     for iteration in 0..WARMUP_FRAMES + MEASURED_FRAMES {
@@ -560,5 +550,6 @@ fn profile_interactive_surfaces() {
     });
     let json = serde_json::to_string_pretty(&report).unwrap();
     std::fs::write(output.join("profile.json"), &json).unwrap();
+    fixtures.finish(&output, Some(&report)).unwrap();
     println!("{json}");
 }

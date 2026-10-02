@@ -44,6 +44,37 @@ measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
 There is no timing threshold in ordinary CI.
 
+### Owned physical fixture workspace policy
+
+The optional shared-input protocol accepts only a real, unaliased Git/Cargo
+workspace's `target/ui-performance-owned-inputs/<run>` namespace. A workspace
+may be hosted below home/account ancestors, including ordinary Linux, macOS
+and Windows CI checkouts. The exception requires the existing workspace and
+marker checks; it is not enabled by an environment flag. `HOME`/`USERPROFILE`
+themselves, a workspace equal to either home, and personal or unsafe components
+inside the controlled suffix remain refused. Temporary, application-data,
+system, alias and unowned scopes remain refused as before. Run/step ownership,
+source identity, bounded inventory checks and guarded cleanup are unchanged.
+
+This is a post-measurement, test-only portability repair to the original
+`156a916` instrumentation checkpoint. Its helper/guard source hashes are new;
+it does not relabel any earlier compiled-source proof, release executable,
+physical-fixture inventory or timing report. The archived matched comparison
+still identifies its original helper bytes. No new timing trial was run for
+this policy correction.
+
+The ordinary protocol guards allocate independent, RAII-owned real Git/Cargo
+workspaces below the compiled repository's `target/evidence`. Each receives a
+fresh control namespace, not just a unique run below a shared parent. The
+template-free Git initializer and existing no-alias/ownership checks are reused.
+Cold, deliberately ownerless and parallel scopes retain all twelve physical
+input, claim and cleanup checks without adopting or repairing an existing
+unowned namespace. Operator and earlier measurement namespaces are untouched.
+This follow-up changes only unit-test workspace setup and helper source
+identity; original measured proofs, reports and public evidence retain their
+original hashes. The failed Windows logs do not uniquely identify the missing
+file or whether cache state or test ordering produced the ownerless parent.
+
 ### Residual mixed Preview investigation, 2026-10-01
 
 The exact baseline is CI-repair PR [#286](https://github.com/fes/fesTerm/pull/286),
