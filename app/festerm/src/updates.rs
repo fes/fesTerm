@@ -58,6 +58,7 @@ pub(crate) enum UpdateStatus {
     Checking,
     Current,
     Available(UpdateSummary),
+    Refreshing(UpdateSummary, RefreshPurpose),
     Downloading(UpdateSummary),
     ReadyToInstall(UpdateSummary),
     Installing(UpdateSummary),
@@ -72,9 +73,15 @@ impl UpdateStatus {
     pub(crate) const fn is_busy(&self) -> bool {
         matches!(
             self,
-            Self::Checking | Self::Downloading(_) | Self::Installing(_)
+            Self::Checking | Self::Refreshing(_, _) | Self::Downloading(_) | Self::Installing(_)
         )
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RefreshPurpose {
+    Download,
+    Install,
 }
 
 trait UpdateBackend: Send + Sync {
@@ -156,6 +163,7 @@ impl DownloadedUpdate for CargoDownloadedUpdate {
 
 enum WorkerResult {
     Checked(Result<Option<Box<dyn PendingUpdate>>, ()>),
+    Refreshed(Result<Option<Box<dyn PendingUpdate>>, ()>),
     Downloaded(Result<Box<dyn DownloadedUpdate>, ()>),
     Installed(Result<(), ()>),
 }
@@ -165,6 +173,7 @@ impl WorkerResult {
         matches!(
             (self, status),
             (Self::Checked(_), UpdateStatus::Checking)
+                | (Self::Refreshed(_), UpdateStatus::Refreshing(_, _))
                 | (Self::Downloaded(_), UpdateStatus::Downloading(_))
                 | (Self::Installed(_), UpdateStatus::Installing(_))
         )
@@ -180,6 +189,7 @@ pub(crate) struct UpdateController {
     backend: Option<Arc<dyn UpdateBackend>>,
     pending_update: Option<Box<dyn PendingUpdate>>,
     downloaded_update: Option<Box<dyn DownloadedUpdate>>,
+    install_after_download: bool,
     receiver: Option<Receiver<WorkerResult>>,
     worker_spawner: WorkerSpawner,
     schedule: AutomaticSchedule,
@@ -237,6 +247,7 @@ impl UpdateController {
             backend,
             pending_update: None,
             downloaded_update: None,
+            install_after_download: false,
             receiver: None,
             worker_spawner: spawn_worker,
             schedule: AutomaticSchedule::default(),
@@ -276,6 +287,24 @@ impl UpdateController {
     #[cfg(test)]
     fn ready_to_install_result_for_test(result: Result<(), ()>) -> Self {
         struct Downloaded(Result<(), ()>);
+        struct Backend(Result<(), ()>);
+        struct Pending(Result<(), ()>);
+
+        impl UpdateBackend for Backend {
+            fn check(&self) -> Result<Option<Box<dyn PendingUpdate>>, ()> {
+                Ok(Some(Box::new(Pending(self.0))))
+            }
+        }
+
+        impl PendingUpdate for Pending {
+            fn summary(&self) -> UpdateSummary {
+                Downloaded(self.0).summary()
+            }
+
+            fn download(self: Box<Self>) -> Result<Box<dyn DownloadedUpdate>, ()> {
+                panic!("a same-version refresh must reuse the verified download")
+            }
+        }
 
         impl DownloadedUpdate for Downloaded {
             fn summary(&self) -> UpdateSummary {
@@ -294,6 +323,7 @@ impl UpdateController {
         let downloaded = Downloaded(result);
         controller.status = UpdateStatus::ReadyToInstall(downloaded.summary());
         controller.downloaded_update = Some(Box::new(downloaded));
+        controller.backend = Some(Arc::new(Backend(result)));
         controller.worker_spawner = run_worker_inline;
         controller
     }
@@ -313,6 +343,7 @@ impl UpdateController {
             backend: Some(backend),
             pending_update: None,
             downloaded_update: None,
+            install_after_download: false,
             receiver: None,
             worker_spawner: run_worker_inline,
             schedule: AutomaticSchedule::default(),
@@ -370,7 +401,7 @@ impl UpdateController {
         if self.status.is_busy() || matches!(self.status, UpdateStatus::Unavailable(_)) {
             return false;
         }
-        // An update already found and not yet acted on needs no re-asking.
+        // User download/install actions refresh a waiting release independently.
         if matches!(
             self.status,
             UpdateStatus::Available(_)
@@ -452,6 +483,7 @@ impl UpdateController {
         };
         self.pending_update = None;
         self.downloaded_update = None;
+        self.install_after_download = false;
         self.status = UpdateStatus::Checking;
         self.receiver = Some((self.worker_spawner)(Box::new(move || {
             WorkerResult::Checked(backend.check())
@@ -459,13 +491,31 @@ impl UpdateController {
     }
 
     pub(crate) fn begin_download(&mut self) {
-        if !self.installation_kind.can_install() || self.status.is_busy() {
+        if !self.installation_kind.can_install() || self.pending_update.is_none() {
             return;
         }
-        let Some(update) = self.pending_update.take() else {
+        let UpdateStatus::Available(summary) = &self.status else {
             return;
         };
+        self.begin_refresh(summary.clone(), RefreshPurpose::Download);
+    }
+
+    fn begin_refresh(&mut self, summary: UpdateSummary, purpose: RefreshPurpose) {
+        let Some(backend) = self.backend.clone() else {
+            self.fail("This build does not contain an update verification key.");
+            return;
+        };
+        self.pending_update = None;
+        self.install_after_download = false;
+        self.status = UpdateStatus::Refreshing(summary, purpose);
+        self.receiver = Some((self.worker_spawner)(Box::new(move || {
+            WorkerResult::Refreshed(backend.check())
+        })));
+    }
+
+    fn start_download(&mut self, update: Box<dyn PendingUpdate>, install_after_download: bool) {
         let summary = update.summary();
+        self.install_after_download = install_after_download;
         self.status = UpdateStatus::Downloading(summary);
         self.receiver = Some((self.worker_spawner)(Box::new(move || {
             WorkerResult::Downloaded(update.download())
@@ -473,17 +523,33 @@ impl UpdateController {
     }
 
     pub(crate) fn begin_install(&mut self) {
-        if !self.installation_kind.can_install() || self.status.is_busy() {
+        if !self.installation_kind.can_install() || self.downloaded_update.is_none() {
             return;
         }
-        let Some(update) = self.downloaded_update.take() else {
+        let UpdateStatus::ReadyToInstall(summary) = &self.status else {
             return;
         };
+        self.begin_refresh(summary.clone(), RefreshPurpose::Install);
+    }
+
+    fn start_install(&mut self, update: Box<dyn DownloadedUpdate>) {
         let summary = update.summary();
         self.status = UpdateStatus::Installing(summary);
         self.receiver = Some((self.worker_spawner)(Box::new(move || {
             WorkerResult::Installed(update.install())
         })));
+    }
+
+    fn fail(&mut self, message: &'static str) {
+        self.pending_update = None;
+        self.downloaded_update = None;
+        self.install_after_download = false;
+        self.receiver = None;
+        self.schedule.in_flight = false;
+        self.status = UpdateStatus::Failed {
+            message,
+            retry_check: true,
+        };
     }
 
     pub(crate) fn poll(&mut self) {
@@ -497,24 +563,18 @@ impl UpdateController {
                 self.receiver = None;
                 let automatic = std::mem::take(&mut self.schedule.in_flight);
                 if self.status.is_busy() {
-                    self.status = if automatic {
-                        UpdateStatus::Idle
+                    if automatic {
+                        self.status = UpdateStatus::Idle;
                     } else {
-                        UpdateStatus::Failed {
-                            message: "The update worker stopped unexpectedly.",
-                            retry_check: true,
-                        }
-                    };
+                        self.fail("The update worker stopped unexpectedly.");
+                    }
                 }
                 return;
             }
         };
         self.receiver = None;
         if !result.matches_status(&self.status) {
-            self.status = UpdateStatus::Failed {
-                message: "The update worker returned an unexpected result.",
-                retry_check: true,
-            };
+            self.fail("The update worker returned an unexpected result.");
             return;
         }
         let automatic = matches!(result, WorkerResult::Checked(_)) && self.schedule.in_flight;
@@ -542,15 +602,73 @@ impl UpdateController {
                     }
                 };
             }
+            WorkerResult::Refreshed(result) => {
+                let UpdateStatus::Refreshing(previous, purpose) = &self.status else {
+                    self.fail("The update worker returned an unexpected result.");
+                    return;
+                };
+                let purpose = *purpose;
+                let update = match result {
+                    Ok(Some(update)) => update,
+                    Ok(None) => {
+                        self.fail(
+                            "The previously offered update is no longer available. \
+                             Check for updates again.",
+                        );
+                        return;
+                    }
+                    Err(()) => {
+                        self.fail(
+                            "Could not check the latest release. No update was installed. \
+                             Check your network connection and try again.",
+                        );
+                        return;
+                    }
+                };
+                let latest = update.summary();
+                let versions = Version::parse(&previous.version).and_then(|previous| {
+                    Version::parse(&latest.version).map(|latest| (previous, latest))
+                });
+                let (previous, latest) = match versions {
+                    Ok(versions) => versions,
+                    Err(error) => {
+                        tracing::error!(%error, "invalid version during update refresh");
+                        self.fail(
+                            "The update release has an invalid version. Check for updates again.",
+                        );
+                        return;
+                    }
+                };
+                if latest.cmp_precedence(&previous).is_lt() {
+                    tracing::warn!("latest release is older than the previously offered update");
+                    self.fail(
+                        "The offered update changed to an older release. Check for updates again.",
+                    );
+                    return;
+                }
+                if purpose == RefreshPurpose::Install && latest == previous {
+                    let Some(downloaded) = self.downloaded_update.take() else {
+                        self.fail(
+                            "The verified update is no longer available. Check for updates again.",
+                        );
+                        return;
+                    };
+                    self.start_install(downloaded);
+                } else {
+                    self.downloaded_update = None;
+                    self.start_download(update, purpose == RefreshPurpose::Install);
+                }
+            }
             WorkerResult::Downloaded(Ok(update)) => {
-                self.status = UpdateStatus::ReadyToInstall(update.summary());
-                self.downloaded_update = Some(update);
+                if std::mem::take(&mut self.install_after_download) {
+                    self.start_install(update);
+                } else {
+                    self.status = UpdateStatus::ReadyToInstall(update.summary());
+                    self.downloaded_update = Some(update);
+                }
             }
             WorkerResult::Downloaded(Err(())) => {
-                self.status = UpdateStatus::Failed {
-                    message: "The update could not be downloaded or its signature was invalid.",
-                    retry_check: true,
-                };
+                self.fail("The update could not be downloaded or its signature was invalid.");
             }
             WorkerResult::Installed(Ok(())) => {
                 let summary = match &self.status {
@@ -614,6 +732,7 @@ mod tests {
 
     use super::*;
 
+    #[derive(Clone)]
     enum CheckOutcome {
         Current,
         Available(FakeUpdatePlan),
@@ -651,12 +770,14 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct FakeUpdatePlan {
         summary: UpdateSummary,
         download_result: Result<FakeInstallPlan, ()>,
         download_dispatches: Arc<AtomicUsize>,
     }
 
+    #[derive(Clone)]
     struct FakeInstallPlan {
         result: Result<(), ()>,
         install_dispatches: Arc<AtomicUsize>,
@@ -740,6 +861,11 @@ mod tests {
         controller.begin_download();
         assert_eq!(
             controller.status(),
+            &UpdateStatus::Refreshing(update_summary(), RefreshPurpose::Download)
+        );
+        controller.poll();
+        assert_eq!(
+            controller.status(),
             &UpdateStatus::Downloading(update_summary())
         );
         controller.poll();
@@ -747,6 +873,20 @@ mod tests {
             controller.status(),
             &UpdateStatus::ReadyToInstall(update_summary())
         );
+    }
+
+    fn backend_with_plan(plan: FakeUpdatePlan, checks: usize) -> Arc<FakeBackend> {
+        FakeBackend::new((0..checks).map(|_| CheckOutcome::Available(plan.clone())))
+    }
+
+    fn newer_update_plan(
+        version: &str,
+        download_result: Result<FakeInstallPlan, ()>,
+        downloads: Arc<AtomicUsize>,
+    ) -> FakeUpdatePlan {
+        let mut plan = update_plan(download_result, downloads);
+        plan.summary.version = version.to_owned();
+        plan
     }
 
     const DAY: u64 = 24 * 60 * 60;
@@ -906,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn an_update_already_waiting_is_not_re_checked() {
+    fn an_update_already_waiting_is_not_re_checked_automatically() {
         let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
             Err(()),
             Arc::new(AtomicUsize::new(0)),
@@ -999,10 +1139,13 @@ mod tests {
     fn download_successfully_reaches_ready_to_install() {
         let downloads = Arc::new(AtomicUsize::new(0));
         let installs = Arc::new(AtomicUsize::new(0));
-        let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
-            Ok(install_plan(Ok(()), Arc::clone(&installs))),
-            Arc::clone(&downloads),
-        ))]);
+        let backend = backend_with_plan(
+            update_plan(
+                Ok(install_plan(Ok(()), Arc::clone(&installs))),
+                Arc::clone(&downloads),
+            ),
+            2,
+        );
         let mut controller = UpdateController::with_test_backend(backend);
         begin_available_check(&mut controller);
 
@@ -1034,14 +1177,12 @@ mod tests {
     #[test]
     fn download_failure_is_retryable_and_content_safe() {
         let downloads = Arc::new(AtomicUsize::new(0));
-        let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
-            Err(()),
-            Arc::clone(&downloads),
-        ))]);
+        let backend = backend_with_plan(update_plan(Err(()), Arc::clone(&downloads)), 2);
         let mut controller = UpdateController::with_test_backend(backend);
         begin_available_check(&mut controller);
 
         controller.begin_download();
+        controller.poll();
         controller.poll();
 
         assert_eq!(
@@ -1059,15 +1200,20 @@ mod tests {
     fn successful_install_is_dispatched_and_reported() {
         let downloads = Arc::new(AtomicUsize::new(0));
         let installs = Arc::new(AtomicUsize::new(0));
-        let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
-            Ok(install_plan(Ok(()), Arc::clone(&installs))),
-            downloads,
-        ))]);
+        let backend = backend_with_plan(
+            update_plan(Ok(install_plan(Ok(()), Arc::clone(&installs))), downloads),
+            3,
+        );
         let mut controller = UpdateController::with_test_backend(backend);
         begin_available_check(&mut controller);
         begin_successful_download(&mut controller);
 
         controller.begin_install();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::Refreshing(update_summary(), RefreshPurpose::Install)
+        );
+        controller.poll();
         assert_eq!(
             controller.status(),
             &UpdateStatus::Installing(update_summary())
@@ -1085,15 +1231,16 @@ mod tests {
     fn install_failure_is_retryable_and_content_safe() {
         let downloads = Arc::new(AtomicUsize::new(0));
         let installs = Arc::new(AtomicUsize::new(0));
-        let backend = FakeBackend::new([CheckOutcome::Available(update_plan(
-            Ok(install_plan(Err(()), Arc::clone(&installs))),
-            downloads,
-        ))]);
+        let backend = backend_with_plan(
+            update_plan(Ok(install_plan(Err(()), Arc::clone(&installs))), downloads),
+            3,
+        );
         let mut controller = UpdateController::with_test_backend(backend);
         begin_available_check(&mut controller);
         begin_successful_download(&mut controller);
 
         controller.begin_install();
+        controller.poll();
         controller.poll();
 
         assert_eq!(installs.load(Ordering::Relaxed), 1);
@@ -1104,6 +1251,215 @@ mod tests {
                 retry_check: true,
             }
         );
+    }
+
+    #[test]
+    fn downloading_rechecks_and_selects_the_latest_release_without_installing_it() {
+        let old_downloads = Arc::new(AtomicUsize::new(0));
+        let new_downloads = Arc::new(AtomicUsize::new(0));
+        let installs = Arc::new(AtomicUsize::new(0));
+        let latest = newer_update_plan(
+            "0.5.0",
+            Ok(install_plan(Ok(()), installs.clone())),
+            new_downloads.clone(),
+        );
+        let latest_summary = latest.summary.clone();
+        let backend = FakeBackend::new([
+            CheckOutcome::Available(update_plan(Err(()), old_downloads.clone())),
+            CheckOutcome::Available(latest),
+        ]);
+        let mut controller = UpdateController::with_test_backend(backend.clone());
+        controller.set_automatic_checks_enabled(false);
+        begin_available_check(&mut controller);
+
+        controller.begin_download();
+        assert!(controller.status().is_busy());
+        controller.begin_check();
+        controller.begin_download();
+        controller.begin_install();
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 2);
+        controller.poll();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::Downloading(latest_summary.clone())
+        );
+        controller.poll();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::ReadyToInstall(latest_summary)
+        );
+        assert_eq!(old_downloads.load(Ordering::Relaxed), 0);
+        assert_eq!(new_downloads.load(Ordering::Relaxed), 1);
+        assert_eq!(installs.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn installing_rechecks_and_verifies_a_newer_release_instead_of_installing_cached_bytes() {
+        let old_downloads = Arc::new(AtomicUsize::new(0));
+        let old_installs = Arc::new(AtomicUsize::new(0));
+        let new_downloads = Arc::new(AtomicUsize::new(0));
+        let new_installs = Arc::new(AtomicUsize::new(0));
+        let old = update_plan(
+            Ok(install_plan(Ok(()), old_installs.clone())),
+            old_downloads.clone(),
+        );
+        let latest = newer_update_plan(
+            "0.5.0",
+            Ok(install_plan(Ok(()), new_installs.clone())),
+            new_downloads.clone(),
+        );
+        let latest_summary = latest.summary.clone();
+        let backend = FakeBackend::new([
+            CheckOutcome::Available(old.clone()),
+            CheckOutcome::Available(old),
+            CheckOutcome::Available(latest),
+        ]);
+        let mut controller = UpdateController::with_test_backend(backend.clone());
+        begin_available_check(&mut controller);
+        begin_successful_download(&mut controller);
+        controller.set_automatic_checks_enabled(false);
+
+        controller.begin_install();
+        assert!(controller.status().is_busy());
+        controller.begin_check();
+        controller.begin_install();
+        controller.begin_download();
+        assert_eq!(backend.checks.load(Ordering::Relaxed), 3);
+        controller.poll();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::Downloading(latest_summary.clone())
+        );
+        assert_eq!(new_installs.load(Ordering::Relaxed), 0);
+        controller.poll();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::Installing(latest_summary.clone())
+        );
+        assert_eq!(new_installs.load(Ordering::Relaxed), 1);
+        controller.poll();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::Installed(latest_summary)
+        );
+        assert_eq!(old_downloads.load(Ordering::Relaxed), 1);
+        assert_eq!(old_installs.load(Ordering::Relaxed), 0);
+        assert_eq!(new_downloads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn freshness_failures_never_download_or_install_a_stale_release() {
+        for purpose in [RefreshPurpose::Download, RefreshPurpose::Install] {
+            for outcome in [
+                CheckOutcome::Failure,
+                CheckOutcome::Current,
+                CheckOutcome::Available(newer_update_plan(
+                    "0.1.0",
+                    Err(()),
+                    Arc::new(AtomicUsize::new(0)),
+                )),
+                CheckOutcome::Available(newer_update_plan(
+                    "invalid",
+                    Err(()),
+                    Arc::new(AtomicUsize::new(0)),
+                )),
+            ] {
+                let downloads = Arc::new(AtomicUsize::new(0));
+                let installs = Arc::new(AtomicUsize::new(0));
+                let old = update_plan(
+                    Ok(install_plan(Ok(()), installs.clone())),
+                    downloads.clone(),
+                );
+                let mut outcomes = vec![CheckOutcome::Available(old.clone())];
+                if purpose == RefreshPurpose::Install {
+                    outcomes.push(CheckOutcome::Available(old));
+                }
+                outcomes.push(outcome);
+                let mut controller =
+                    UpdateController::with_test_backend(FakeBackend::new(outcomes));
+                begin_available_check(&mut controller);
+                if purpose == RefreshPurpose::Install {
+                    begin_successful_download(&mut controller);
+                    controller.begin_install();
+                } else {
+                    controller.begin_download();
+                }
+                controller.poll();
+                assert!(matches!(
+                    controller.status(),
+                    UpdateStatus::Failed {
+                        retry_check: true,
+                        ..
+                    }
+                ));
+                assert_eq!(installs.load(Ordering::Relaxed), 0);
+                assert_eq!(
+                    downloads.load(Ordering::Relaxed),
+                    usize::from(purpose == RefreshPurpose::Install)
+                );
+                assert!(controller.pending_update.is_none());
+                assert!(controller.downloaded_update.is_none());
+                assert!(!controller.install_after_download);
+            }
+        }
+    }
+
+    #[test]
+    fn newer_release_verification_failure_never_installs_the_cached_release() {
+        let old_installs = Arc::new(AtomicUsize::new(0));
+        let new_downloads = Arc::new(AtomicUsize::new(0));
+        let old = update_plan(
+            Ok(install_plan(Ok(()), old_installs.clone())),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let backend = FakeBackend::new([
+            CheckOutcome::Available(old.clone()),
+            CheckOutcome::Available(old),
+            CheckOutcome::Available(newer_update_plan("0.5.0", Err(()), new_downloads.clone())),
+        ]);
+        let mut controller = UpdateController::with_test_backend(backend);
+        begin_available_check(&mut controller);
+        begin_successful_download(&mut controller);
+        controller.begin_install();
+        controller.poll();
+        controller.poll();
+        assert_eq!(
+            controller.status(),
+            &UpdateStatus::Failed {
+                message: "The update could not be downloaded or its signature was invalid.",
+                retry_check: true,
+            }
+        );
+        assert_eq!(new_downloads.load(Ordering::Relaxed), 1);
+        assert_eq!(old_installs.load(Ordering::Relaxed), 0);
+        assert!(controller.downloaded_update.is_none());
+        assert!(!controller.install_after_download);
+    }
+
+    #[test]
+    fn refresh_worker_disconnect_or_stale_completion_discards_cached_install_authority() {
+        for stale in [false, true] {
+            let mut controller = UpdateController::ready_to_install_for_test();
+            controller.begin_install();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            if stale {
+                sender.send(WorkerResult::Checked(Ok(None))).unwrap();
+            }
+            drop(sender);
+            controller.receiver = Some(receiver);
+            controller.poll();
+            assert!(matches!(
+                controller.status(),
+                UpdateStatus::Failed {
+                    retry_check: true,
+                    ..
+                }
+            ));
+            assert!(controller.downloaded_update.is_none());
+            assert!(controller.receiver.is_none());
+            controller.begin_install();
+            assert!(matches!(controller.status(), UpdateStatus::Failed { .. }));
+        }
     }
 
     #[test]

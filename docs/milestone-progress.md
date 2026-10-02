@@ -43,6 +43,23 @@ Windows local CI-equivalent suite passed under the fleet's exclusive validation
 lease on 2026-10-02. Required remote platform checks and AS-10
 native/accessibility/usability evidence remain pending; no accepted milestone
 or platform status is advanced.
+## Refreshing stale update offers before download and installation
+
+A discovered release previously stayed pinned until the user installed it,
+even if a newer release appeared meanwhile. Download and consented install
+actions now refresh the existing fixed GitHub release endpoint. Download names
+and verifies the latest eligible release without installing it; install
+reuses verified same-version bytes or fetches and verifies a newer release
+before proceeding under the user's restart consent.
+
+The extra worker stage remains nonblocking and busy, with actual target
+versions shown in About. Refresh/verification failures, withdrawals, invalid
+versions and older refreshed offers abort without installing cached older
+bytes. Developer/package-manager eligibility, compiled verification keys,
+automatic-check policy and one-shot authorized restart remain unchanged.
+CP-05 and issue #62 retain signed native replacement/relaunch evidence; unit
+fixtures are not that evidence.
+
 ## Letting code navigation leave its horizontal child
 
 A 400-fence offscreen-tail interaction oracle exposed a navigation defect
