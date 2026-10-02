@@ -297,7 +297,8 @@ impl SaveAsPicker {
                 self.refresh();
             }
             ui.add_space(SFTP_TOOLBAR_NAV_GAP);
-            if let Some(path) = show_breadcrumb(ui, &self.pane.current_path, width) {
+            let breadcrumb_width = width.min(ui.available_width());
+            if let Some(path) = show_breadcrumb(ui, &self.pane.current_path, breadcrumb_width) {
                 self.load(path);
             }
         });
@@ -569,9 +570,34 @@ fn show_breadcrumb(ui: &mut Ui, path: &SftpPath, width: f32) -> Option<SftpPath>
     };
 
     ui.allocate_ui_with_layout(
-        egui::vec2(width, 24.0),
+        egui::vec2(width, 28.0),
         Layout::left_to_right(Align::Center),
         |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let visible = &segments[start..];
+            let font = font_for_text_role(SftpTextRole::Breadcrumb);
+            let separator_width = ui
+                .painter()
+                .layout_no_wrap("/".to_owned(), font.clone(), theme::TEXT_MUTED)
+                .size()
+                .x;
+            let prefix_width = if start > 0 {
+                ui.painter()
+                    .layout_no_wrap("…".to_owned(), font, theme::TEXT_MUTED)
+                    .size()
+                    .x
+                    + separator_width
+            } else {
+                0.0
+            };
+            let separators = visible.len().saturating_sub(1);
+            let widgets = visible.len() + separators + if start > 0 { 2 } else { 0 };
+            let segment_width = ((width
+                - prefix_width
+                - separators as f32 * separator_width
+                - widgets.saturating_sub(1) as f32 * ui.spacing().item_spacing.x)
+                / visible.len().max(1) as f32)
+                .max(0.0);
             if start > 0 {
                 ui.label(
                     RichText::new("…")
@@ -598,14 +624,21 @@ fn show_breadcrumb(ui: &mut Ui, path: &SftpPath, width: f32) -> Option<SftpPath>
                         theme::TEXT_SECONDARY
                     });
                 if segment.current {
-                    ui.add(egui::Label::new(text).truncate());
+                    ui.add_sized(
+                        egui::vec2(segment_width, 28.0),
+                        egui::Label::new(text).truncate(),
+                    )
+                    .on_hover_text(segment.path.display());
                 } else if ui
-                    .add(
+                    .add_sized(
+                        egui::vec2(segment_width, 28.0),
                         egui::Button::new(text)
+                            .wrap_mode(egui::TextWrapMode::Truncate)
                             .fill(Color32::TRANSPARENT)
                             .stroke(egui::Stroke::NONE)
-                            .min_size(egui::vec2(0.0, 24.0)),
+                            .min_size(egui::vec2(0.0, 28.0)),
                     )
+                    .on_hover_text(segment.path.display())
                     .clicked()
                 {
                     target = Some(segment.path.clone());
@@ -660,6 +693,56 @@ mod tests {
     };
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn save_as_breadcrumb_respects_remaining_toolbar_width_and_exact_navigation_identity() {
+        let path = SftpPath::local(
+            std::env::current_dir()
+                .unwrap()
+                .join("target")
+                .join("synthetic-ancestor-with-a-long-name")
+                .join("synthetic-parent-with-a-long-name")
+                .join("synthetic-current-directory-with-a-long-name"),
+        );
+        let segments = breadcrumb_segments(&path);
+        let visible = &segments[segments.len().saturating_sub(3)..];
+        for size in [
+            egui::vec2(752.0, 516.0),
+            egui::vec2(360.0, 516.0),
+            egui::vec2(360.0, 240.0),
+        ] {
+            let mut harness = Harness::builder().with_size(size).build_ui_state(
+                |ui, selected: &mut Option<SftpPath>| {
+                    ui.spacing_mut().interact_size.y = 28.0;
+                    ui.horizontal(|ui| {
+                        toolbar_icon_button(ui, SftpGlyph::Up, "Up one level");
+                        toolbar_icon_button(ui, SftpGlyph::Home, "Home");
+                        toolbar_icon_button(ui, SftpGlyph::Refresh, "Refresh folder");
+                        ui.add_space(SFTP_TOOLBAR_NAV_GAP);
+                        let remaining = ui.available_width();
+                        *selected = show_breadcrumb(ui, &path, remaining).or(selected.clone());
+                    });
+                },
+                None,
+            );
+            harness.ctx.set_theme(egui::ThemePreference::Dark);
+            harness.ctx.set_visuals(theme::default_visuals());
+            harness.run();
+            for segment in visible {
+                let node = harness.get_by_label(&segment.label);
+                assert!(
+                    harness.ctx.content_rect().contains_rect(node.rect()),
+                    "{size:?}: {} {:?}",
+                    segment.label,
+                    node.rect()
+                );
+                assert!(node.rect().width() >= 24.0);
+            }
+            harness.get_by_label(&visible[0].label).click();
+            harness.run();
+            assert_eq!(harness.state().as_ref(), Some(&visible[0].path));
+        }
+    }
 
     struct TemporaryDirectory {
         path: PathBuf,

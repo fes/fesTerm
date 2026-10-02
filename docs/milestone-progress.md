@@ -19,6 +19,15 @@ as the existing context menus. Confirmation target/generation checks,
 safe/default focus, cancellation, and semantic command dispatch stay in their
 original owners.
 
+The first full-root picker test also exposed Save As reserving an entire
+sheet-width breadcrumb after its navigation buttons. The private toolbar now
+passes only its remaining width, and the existing three-segment breadcrumb
+truncates within that budget while keeping exact navigation targets and full
+accessible/hover identities. Short sheets remain genuinely scrollable; the
+interaction regression scrolls the sheet and clicks Cancel only with its full
+label and minimum click target visible, instead of treating an off-viewport
+accessibility node as a usable action.
+
 Co-located full-root regressions use synthetic fake transports and
 worktree-owned picker fixtures, without new platform snapshot baselines.
 Headless geometry and production-widget captures remain distinct from native

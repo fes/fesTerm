@@ -1371,6 +1371,7 @@
         "saving_an_untitled_snapshot_from_dirty_close_continues_through_save_as",
         "save_as_matching_an_existing_file_states_the_overwrite_and_still_saves",
         "file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting",
+        "save_as_breadcrumb_respects_remaining_toolbar_width_and_exact_navigation_identity",
         "dirty_document_confirmation_wraps_actions_without_changing_the_save_default",
         "virtualized_save_as_picker_reaches_and_selects_the_final_row",
         "save_as_matching_an_existing_directory_disables_save_and_says_why",

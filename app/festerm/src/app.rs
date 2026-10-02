@@ -8055,6 +8055,31 @@ mod tests {
             action.height() >= 24.0 && action.width() >= 24.0,
             "{label}: {action:?}"
         );
+        let (clip, text_rect) = harness
+            .output()
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                (text.galley.job.text == label).then_some((
+                    shape.clip_rect,
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                ))
+            })
+            .next_back()
+            .expect("the action label is painted");
+        let visible = action.intersect(clip);
+        assert!(
+            clip.contains_rect(text_rect),
+            "{label}: text clipped by {clip:?}"
+        );
+        assert!(clip.contains(action.center()));
+        assert!(
+            visible.width() >= 24.0 && visible.height() >= 24.0,
+            "{label}: {action:?} loses its minimum visible click target to {clip:?}"
+        );
     }
 
     #[test]
@@ -8346,12 +8371,35 @@ mod tests {
                         harness.get_by_label(expected);
                         assert_style_modal_inside_root(&harness, modal);
                         harness.get_by_label("Cancel").scroll_to_me();
-                        harness.run_steps(12);
+                        harness.run_steps(30);
+                        // Exercise the sheet's real wheel path before clicking
+                        // a footer that may start outside its viewport.
+                        let area = harness
+                            .ctx
+                            .memory(|memory| memory.area_rect(egui::Id::new(modal)))
+                            .unwrap();
+                        harness.hover_at(egui::pos2(area.center().x, area.top() + 60.0));
+                        harness.event(egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, -1000.0),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                        harness.run_steps(30);
                         assert_style_action_inside_root(&harness, "Cancel");
+                        let cancel_rect = harness.get_by_label("Cancel").rect();
                         harness.get_by_label("Cancel").click();
                         harness.step();
                         assert!(harness.state().overlays.save_as_picker.is_none());
-                        assert!(harness.state().overlays.markdown_file_picker.is_none());
+                        assert!(
+                            harness.state().overlays.markdown_file_picker.is_none(),
+                            "{size:?}, details={show_details}, missing={missing}, cancel={cancel_rect:?}, modal={:?}, cancel text shapes={:?}",
+                            harness.ctx.memory(|memory| memory.area_rect(egui::Id::new(modal))),
+                            harness.output().shapes.iter().filter_map(|shape| {
+                                let egui::Shape::Text(text) = &shape.shape else { return None; };
+                                (text.galley.job.text == "Cancel").then_some((shape.clip_rect, text.pos))
+                            }).collect::<Vec<_>>()
+                        );
                         assert_eq!(harness.state().state.active(), tab);
                         assert!(transport.sent().is_empty());
                         assert_eq!(

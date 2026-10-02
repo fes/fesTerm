@@ -168,7 +168,7 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
 
             ui.separator();
             ScrollArea::vertical()
-                .max_height(ui.available_height().min(220.0).max(0.0))
+                .max_height(ui.available_height().clamp(0.0, 220.0))
                 .show(ui, |ui| {
                     // `with_cross_justify(true)` makes each row fill the full
                     // available width instead of shrinking to its own text, so
