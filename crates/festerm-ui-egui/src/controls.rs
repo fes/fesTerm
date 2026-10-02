@@ -7,6 +7,17 @@ use crate::{
 
 pub const ACTION_BUTTON_CORNER_RADIUS: f32 = 6.0;
 
+/// Leaves a 16-point root gutter outside the modal's complete frame.
+pub fn modal_content_size(
+    available: egui::Vec2,
+    frame: &egui::Frame,
+    preferred: egui::Vec2,
+) -> egui::Vec2 {
+    (available - egui::Vec2::splat(32.0) - frame.total_margin().sum())
+        .max(egui::Vec2::ZERO)
+        .min(preferred)
+}
+
 #[derive(Clone, Copy)]
 pub enum ActionButtonRole {
     Accent,
@@ -171,4 +182,28 @@ pub fn search_field(ui: &mut Ui, field_config: SearchField<'_>, value: &mut Stri
         info
     });
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modal_size_reserves_the_entire_frame_and_root_gutter() {
+        let frame = egui::Frame::new()
+            .inner_margin(egui::Margin::same(14))
+            .stroke(Stroke::new(1.0, Color32::WHITE));
+        assert_eq!(
+            modal_content_size(egui::vec2(360.0, 240.0), &frame, egui::vec2(700.0, 600.0)),
+            egui::vec2(298.0, 178.0)
+        );
+        assert_eq!(
+            modal_content_size(egui::vec2(752.0, 516.0), &frame, egui::vec2(420.0, 320.0)),
+            egui::vec2(420.0, 320.0)
+        );
+        assert_eq!(
+            modal_content_size(egui::Vec2::splat(10.0), &frame, egui::Vec2::splat(400.0)),
+            egui::Vec2::ZERO
+        );
+    }
 }

@@ -1,0 +1,608 @@
+{
+  "schema": "festerm-markdown-caption-public-evidence-v1",
+  "comparison": "one matched R2; no third trial",
+  "original_evidence": {
+    "measurement_results_sha256": "60527feb6fd57974538df93af55aff8dfcd16eeab9534e85c5bec9312126485f",
+    "original_91_file_manifest_sha256": "75a44fef7b2cc626c7cecf697df362e97ac5f0f85562466eea880b444bb91e50",
+    "selected_original_profile_and_fixture_proof_files": 16,
+    "all_original_91_entries_verified_unchanged_during_packaging": true,
+    "original_private_evidence_remains_immutable": true,
+    "archive_excludes": [
+      "executables",
+      "process environment",
+      "stdout/stderr",
+      "private user inputs",
+      "credentials",
+      "terminal contents",
+      "unrelated captures"
+    ]
+  },
+  "archive": {
+    "file": "markdown-caption-matched-2026-10-02-profiles.zip",
+    "sha256": "6587690bfae5ff3425305d4ca3626a003ed6f49a68bb88ab8ea7d2cc88af1d33",
+    "bytes": 35258,
+    "members": 16,
+    "format": "stdlib ZIP_DEFLATED level9; fixed packaging-only entry timestamp2026-10-02T00:00:00, not fixture mtime",
+    "original_json_bytes_not_normalized_or_redacted": true
+  },
+  "selected_raw_files": [
+    {
+      "run": "A1",
+      "side": "A",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "A1/profile.json",
+          "original_relative_output": "A1/profile/profile.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "18e734c7fd5f7af7d8f662b598d5c3251730f2cb2a2b44157b96b2fb54079ad7",
+          "original_bytes": 11064,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "A1/fixture-proof.json",
+          "original_relative_output": "A1/profile/fixture-proof.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "3cc4cf7c3cbd03bb9e609f257c3e820df94c25d430cd7d63f091fc34ce523e97",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "B1",
+      "side": "B",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "B1/profile.json",
+          "original_relative_output": "B1/profile/profile.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "1454659f82fd3add1cee19785075414a552b9dc69e981ad8d5d9aeda505f016a",
+          "original_bytes": 10978,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "B1/fixture-proof.json",
+          "original_relative_output": "B1/profile/fixture-proof.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "4500ad852b1d0343e8a8f4859ae5db6bb7a364adeb01e968629d5f2b2893a294",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "B2",
+      "side": "B",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "B2/profile.json",
+          "original_relative_output": "B2/profile/profile.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "7cf5c50f585d930f1304954b5e2d8cfae2327dd763da74f6e4034a74258f66e1",
+          "original_bytes": 11042,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "B2/fixture-proof.json",
+          "original_relative_output": "B2/profile/fixture-proof.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "c713d48cc32bd5a02e8d4d844cdf967d2058e62647c91b63a1196890a7d50413",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "A2",
+      "side": "A",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "A2/profile.json",
+          "original_relative_output": "A2/profile/profile.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "98d9b93475720e0618951c5555deeb7c6fe3ef8621eabd75669c62633d3ec1bd",
+          "original_bytes": 10984,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "A2/fixture-proof.json",
+          "original_relative_output": "A2/profile/fixture-proof.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "416dc9710b7530306c22cd7c78db7795b74036f66a6a3ac33c0e47ff6be35c80",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "B3",
+      "side": "B",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "B3/profile.json",
+          "original_relative_output": "B3/profile/profile.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "c72dd80763717a5e666e7779e5c8e54c976857c5bb7f5c2bd1e97c8fbae6c599",
+          "original_bytes": 11099,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "B3/fixture-proof.json",
+          "original_relative_output": "B3/profile/fixture-proof.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "312ab50a05cba9fb059a578899dc066e99e27cd40cccad140adb32099ac93d67",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "A3",
+      "side": "A",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "A3/profile.json",
+          "original_relative_output": "A3/profile/profile.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "e370b5b2dd43a727800df2771191fa9dd8cd3812d89805c3990fa77a587c6e84",
+          "original_bytes": 11009,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "A3/fixture-proof.json",
+          "original_relative_output": "A3/profile/fixture-proof.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "492336341cf631f5e537842da90d63c9066e45c1c5bf6c6d5a367875566c4cba",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "A4",
+      "side": "A",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "A4/profile.json",
+          "original_relative_output": "A4/profile/profile.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "8a2a7e14651acd763b4338afbc2b65d180ce71be93e5633c3e1d08c10c4ac06f",
+          "original_bytes": 11085,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "A4/fixture-proof.json",
+          "original_relative_output": "A4/profile/fixture-proof.json",
+          "original_worktree_variant": "A",
+          "original_sha256": "23a7ac47404d38de3760e111594918682c35f46cf898742383ff42efb2581101",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    },
+    {
+      "run": "B4",
+      "side": "B",
+      "files": [
+        {
+          "kind": "profile",
+          "archive_member": "B4/profile.json",
+          "original_relative_output": "B4/profile/profile.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "23cd58fdbb9ddf1b610aee170336b3c6e42a50a415f2d54c668fdf91b19cc36c",
+          "original_bytes": 11044,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        },
+        {
+          "kind": "fixture-proof",
+          "archive_member": "B4/fixture-proof.json",
+          "original_relative_output": "B4/profile/fixture-proof.json",
+          "original_worktree_variant": "B",
+          "original_sha256": "2ebec6a46513f647ad177657adb23508eeec238d0576497ca546ba7cad497ace",
+          "original_bytes": 15464,
+          "byte_identical_to_original_91_file_manifest_entry": true
+        }
+      ]
+    }
+  ],
+  "derived_tables": {
+    "scores": {
+      "file": "markdown-caption-matched-2026-10-02-scores.csv",
+      "sha256": "bd73db65912b348900f63ad04af60d3a67e142d8769a7b0c7316fc95ad77f64b",
+      "bytes": 9525,
+      "rows": 96,
+      "original_file": "all-run-scene-scores.csv",
+      "byte_identical_to_original_91_file_manifest_entry": false,
+      "original_sha256": "2cd6eddc9533a40246bfe2f5b9294848661700c6b1be6a93950bbd341b1eef45",
+      "numeric_cells_identical_to_original_after_LF_packaging": true
+    },
+    "order-statistics": {
+      "file": "markdown-caption-matched-2026-10-02-order-statistics.csv",
+      "sha256": "ea88d92a9280c5a81e24c6abbfa0759e7ec655e4ae3a56626c879e8ae7766dea",
+      "bytes": 6335,
+      "rows": 24,
+      "original_file": "per-order-comparisons.csv",
+      "byte_identical_to_original_91_file_manifest_entry": false,
+      "original_sha256": "10a3500c7cd39ea74d6e21733dcc7e55e619d26a07c6b2c6778a360bed0a7694",
+      "numeric_cells_identical_to_original_after_LF_packaging": true
+    }
+  },
+  "variants": {
+    "A": {
+      "measured_navigation_base": "feed4bf6d59fcd4cb0d10c9348cc04cb462cd9b0",
+      "build_description": "feed4bf navigation base + exact shared test-only protocol, accepted raw CRLF variant; no caption",
+      "viewer_raw_windows_sha256": "50a0ea91805995f30eb8cf0db33576b79beec6380314557662ddbd2370655f6b",
+      "frozen_executable_sha256": "8f5782d9ccc344796fe56427611bce3eac1da76a051523315e962bd2950ec239",
+      "shared_protocol_actual_compiled_source_sha256": {
+        "profile_sha256": "4f50b3af5778d6895b263c27602cdb5845e08bf9da7d5943ff4e1d87845c932b",
+        "helper_sha256": "95c97748575c3b12b9df7274ab2f6000ba434fadcc126cf2553e34c843630eb4",
+        "guards_sha256": "ce45c65d3ae6f7b9e83d3da96e7b4f2ea63248b746c17e58674502c36a0c6f39"
+      }
+    },
+    "B": {
+      "measured_navigation_base": "feed4bf6d59fcd4cb0d10c9348cc04cb462cd9b0",
+      "build_description": "identical baseline + only preserved render-local caption variant/oracles/docs",
+      "viewer_raw_windows_sha256": "f3b7370d8c0f058e7f312afdbc8cd4b21f084da18b4165162254507858577230",
+      "frozen_executable_sha256": "5a848ff5d94d8f0b98ae61e347bcd6a9b0cb6672af70ac7ef38fe4136a929b49",
+      "shared_protocol_actual_compiled_source_sha256": {
+        "profile_sha256": "4f50b3af5778d6895b263c27602cdb5845e08bf9da7d5943ff4e1d87845c932b",
+        "helper_sha256": "95c97748575c3b12b9df7274ab2f6000ba434fadcc126cf2553e34c843630eb4",
+        "guards_sha256": "ce45c65d3ae6f7b9e83d3da96e7b4f2ea63248b746c17e58674502c36a0c6f39"
+      }
+    }
+  },
+  "shared_protocol_canonical_checkpoint": "156a91685ad0e6acfccca84743e9f3e2fe2262f3",
+  "shared_actual_raw_sources": [
+    {
+      "file": "main.rs",
+      "raw_sha256": "f94ae9110cd83ab6e58622959ec738fc52bee1e8401049921146540aa859e174",
+      "bytes": 17132,
+      "canonical_lf_checkpoint_sha256": "1f07a7b8d972731f6b0ee662554160cc6041a4fc9794269ea88ac2016504a1ee"
+    },
+    {
+      "file": "surface_performance.rs",
+      "raw_sha256": "4f50b3af5778d6895b263c27602cdb5845e08bf9da7d5943ff4e1d87845c932b",
+      "bytes": 16536,
+      "canonical_lf_checkpoint_sha256": "6dcd5131b3a8980f99a477cddae65698fb2241ae99d575bc1d77290ec749b526"
+    },
+    {
+      "file": "owned_fixture_paths.rs",
+      "raw_sha256": "ce45c65d3ae6f7b9e83d3da96e7b4f2ea63248b746c17e58674502c36a0c6f39",
+      "bytes": 6220,
+      "canonical_lf_checkpoint_sha256": "a691ef8ad3af5439bb4c9d27c53850853d31ed76fed986b13e862788889a2844"
+    },
+    {
+      "file": "performance_fixtures.rs",
+      "raw_sha256": "95c97748575c3b12b9df7274ab2f6000ba434fadcc126cf2553e34c843630eb4",
+      "bytes": 34617,
+      "canonical_lf_checkpoint_sha256": "bdbe4883b97687d3978bd572806b32d614f16e31f6940ea166aa31f992cbe7a0"
+    }
+  ],
+  "caption_canonical_git_lf_sha256": "79b6ae0c4893f341915993cb37d5fc54753bbbf42576b2da49173652947d02e3",
+  "caption_raw_windows_crlf_sha256": "f3b7370d8c0f058e7f312afdbc8cd4b21f084da18b4165162254507858577230",
+  "eol_proof_boundary": "Actual raw compiled/checkout identities are distinct from canonical LF Git content; exact content and Windows CRLF roundtrip proven, no normalized hash substituted for actual compiled source proof.",
+  "fixture": {
+    "real_physical_root": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210",
+    "run": "md-shared-20261001-2210",
+    "ready_sha256": "e2a130153842b453ed3bdff58b9942605abbf5496f82e5a8a757296600e8e76d",
+    "actual_observed_bindings": [
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.rs",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.rs",
+        "input": {
+          "bytes": 115780,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515589263800,
+          "path": "fixture.rs",
+          "sha256": "97b7c30d44900dbd8da5bd424d917449f8f22d8432af3e2ad25d6a2d4676dc2a"
+        },
+        "scene": "editor-syntax-2000-lines"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.rs",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.rs",
+        "input": {
+          "bytes": 115780,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515589263800,
+          "path": "fixture.rs",
+          "sha256": "97b7c30d44900dbd8da5bd424d917449f8f22d8432af3e2ad25d6a2d4676dc2a"
+        },
+        "scene": "editor-find-2000-capped-matches"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs",
+        "input": {
+          "bytes": 0,
+          "kind": "directory",
+          "modified_unix_nanos": 1790919515594305000,
+          "path": ".",
+          "sha256": null
+        },
+        "scene": "sftp-100-rows-per-pane"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs",
+        "input": {
+          "bytes": 0,
+          "kind": "directory",
+          "modified_unix_nanos": 1790919515594305000,
+          "path": ".",
+          "sha256": null
+        },
+        "scene": "sftp-5000-rows-per-pane"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "input": {
+          "bytes": 69670,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515591275900,
+          "path": "fixture.md",
+          "sha256": "e4133f450da40c43e05a816b4b585a613e1b31cfbf2897123975ec74aec47fd7"
+        },
+        "scene": "markdown-preview-400-sections"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "input": {
+          "bytes": 69670,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515591275900,
+          "path": "fixture.md",
+          "sha256": "e4133f450da40c43e05a816b4b585a613e1b31cfbf2897123975ec74aec47fd7"
+        },
+        "scene": "markdown-source-400-sections"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "input": {
+          "bytes": 69670,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515591275900,
+          "path": "fixture.md",
+          "sha256": "e4133f450da40c43e05a816b4b585a613e1b31cfbf2897123975ec74aec47fd7"
+        },
+        "scene": "markdown-source-find"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\fixture.md",
+        "input": {
+          "bytes": 69670,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515591275900,
+          "path": "fixture.md",
+          "sha256": "e4133f450da40c43e05a816b4b585a613e1b31cfbf2897123975ec74aec47fd7"
+        },
+        "scene": "markdown-preview-find"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-headings.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-headings.md",
+        "input": {
+          "bytes": 6290,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515592291100,
+          "path": "markdown-preview-headings.md",
+          "sha256": "77cbdeff7b2f3292ef81cc4f16789b1d2f97a1d4b40c26ede6e818bdfcac50e0"
+        },
+        "scene": "markdown-preview-headings"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-prose.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-prose.md",
+        "input": {
+          "bytes": 26000,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515592291100,
+          "path": "markdown-preview-prose.md",
+          "sha256": "a18d897b991cb30c957471ad7201dbd987a6ff474a4d490270d5f0623d15fd95"
+        },
+        "scene": "markdown-preview-prose"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-code.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-code.md",
+        "input": {
+          "bytes": 18690,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515594305000,
+          "path": "markdown-preview-code.md",
+          "sha256": "dbf6ff440e48b311e55c499bbd8f5d7435438f0013e577e6dc4fc2977b8c0d8b"
+        },
+        "scene": "markdown-preview-code"
+      },
+      {
+        "actual_input_path": "Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-tables.md",
+        "basis": "observed physical path; profile callers bind real constructors, protocol-only checks do not execute widgets; no display-label substitution",
+        "canonical_input_path": "\\\\?\\Q:\\src\\OSS\\fesTerm-ui-fleet\\benchmarks\\target\\ui-performance-owned-inputs\\md-shared-20261001-2210\\inputs\\markdown-preview-tables.md",
+        "input": {
+          "bytes": 18690,
+          "kind": "file",
+          "modified_unix_nanos": 1790919515594305000,
+          "path": "markdown-preview-tables.md",
+          "sha256": "d51c6bc177c933dc1305e5521b3006cd412216918c99429fc71d1c3fb02ef48a"
+        },
+        "scene": "markdown-preview-tables"
+      }
+    ],
+    "all12_final_shape_vertex_structures": [
+      {
+        "name": "editor-syntax-2000-lines",
+        "items": 2000,
+        "viewport_points": null,
+        "last_shape_count": 82,
+        "last_vertex_count": 9389
+      },
+      {
+        "name": "editor-find-2000-capped-matches",
+        "items": 2000,
+        "viewport_points": null,
+        "last_shape_count": 88,
+        "last_vertex_count": 9957
+      },
+      {
+        "name": "sftp-100-rows-per-pane",
+        "items": 200,
+        "viewport_points": null,
+        "last_shape_count": 686,
+        "last_vertex_count": 14532
+      },
+      {
+        "name": "sftp-5000-rows-per-pane",
+        "items": 10000,
+        "viewport_points": null,
+        "last_shape_count": 686,
+        "last_vertex_count": 14540
+      },
+      {
+        "name": "markdown-preview-400-sections",
+        "items": 400,
+        "viewport_points": null,
+        "last_shape_count": 6076,
+        "last_vertex_count": 4081
+      },
+      {
+        "name": "markdown-source-400-sections",
+        "items": 4800,
+        "viewport_points": null,
+        "last_shape_count": 492,
+        "last_vertex_count": 4126
+      },
+      {
+        "name": "markdown-source-find",
+        "items": 4800,
+        "viewport_points": null,
+        "last_shape_count": 507,
+        "last_vertex_count": 4782
+      },
+      {
+        "name": "markdown-preview-find",
+        "items": 4800,
+        "viewport_points": null,
+        "last_shape_count": 6504,
+        "last_vertex_count": 5494
+      },
+      {
+        "name": "markdown-preview-headings",
+        "items": 400,
+        "viewport_points": null,
+        "last_shape_count": 416,
+        "last_vertex_count": 484
+      },
+      {
+        "name": "markdown-preview-prose",
+        "items": 400,
+        "viewport_points": null,
+        "last_shape_count": 94,
+        "last_vertex_count": 3604
+      },
+      {
+        "name": "markdown-preview-code",
+        "items": 400,
+        "viewport_points": null,
+        "last_shape_count": 2821,
+        "last_vertex_count": 3416
+      },
+      {
+        "name": "markdown-preview-tables",
+        "items": 400,
+        "viewport_points": null,
+        "last_shape_count": 2836,
+        "last_vertex_count": 1988
+      }
+    ],
+    "all12_actual_canonical_paths_source_inventory_and_counts_match_all8": true,
+    "truthful_paths_not_anonymized_or_display_label_substitution": true,
+    "cleanup": {
+      "plan": [
+        "A1",
+        "B1",
+        "B2",
+        "A2",
+        "B3",
+        "A3",
+        "A4",
+        "B4"
+      ],
+      "ready_sha256": "e2a130153842b453ed3bdff58b9942605abbf5496f82e5a8a757296600e8e76d",
+      "run": "md-shared-20261001-2210",
+      "tracked_input_cleanup": true
+    },
+    "completed_identity_exhausted_never_reuse": true
+  },
+  "parameters": {
+    "plan": [
+      "A1",
+      "B1",
+      "B2",
+      "A2",
+      "B3",
+      "A3",
+      "A4",
+      "B4"
+    ],
+    "scenes": 12,
+    "sections": 400,
+    "outline": false,
+    "warmup_frames": 8,
+    "measured_frames": 40,
+    "viewport_points": [
+      1180,
+      760
+    ],
+    "pixels_per_point": 1,
+    "theme": "production dark",
+    "fonts": "default egui fonts",
+    "scope": "forced CPU UI construction and tessellation, no GPU/presentation/native latency"
+  },
+  "statistics_boundary": "Per-run median/p95 summaries over40 steady frames, original sorted indexes19/37. Per-order aggregates are MEANS OF TWO RUN MEDIAN/P95 SCORES, not pooled raw-frame statistics. Only eight warmup vectors exported; do not invent40 raw UI vectors.",
+  "adverse_controls": [
+    "Source ABBA median+0.4675ms/+11.00%, p95+0.4158ms.",
+    "Editor syntax BAAB median+0.0783ms/+24.51%, p95+0.0853ms.",
+    "Real measured costs, not proven noise or ruled-out regressions; all96 cells/all24 order statistics retained.",
+    "All cold/preparation/warm/tessellation/fenced/syntax/long-Unicode results retained in original profiles, not only target wins."
+  ],
+  "limits": [
+    "Observed target signal supports focused review, not unconditional whole-app/native/hardware gain.",
+    "Original first8 comparison remains adverse/negative-unproven and physically confounded; not pooled or retroactively qualified.",
+    "Actual physical identity and final shape/vertex counts are not pixel or complete per-frame output equivalence.",
+    "No40 raw steady UI vectors exported; per-order means are means of run median/p95 scores at original sorted indexes19/37.",
+    "All eight frozen profile processes passed original highlighted JSON-entry assertions at200/2000/4000; explicit fallback-status field is not exported. Mixed-fence fallback status is not separately exported.",
+    "399 avoided memoized caption queries do not mean399 actual text layouts.",
+    "Native clipboard delivery, screen-reader traversal and usability remain manual.",
+    "Navigation prerequisite and identical common protocol are on both sides, never credited to caption gain."
+  ],
+  "public_text_serialization": "Generated public provenance/CSV use canonical LF for existing Git text policy. Original16 archived profile/proof JSON bytes unchanged; normalized table bytes have distinct packaging hashes and original-table hashes/identical parsed values."
+}

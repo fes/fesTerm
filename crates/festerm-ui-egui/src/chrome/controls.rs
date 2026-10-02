@@ -213,6 +213,7 @@ pub(super) fn paint_overflow_menu(
     }
 
     Popup::menu(&response).show(|ui| {
+        style_context_menu(ui);
         if let Some(version) = available_update {
             if ui.button(format!("Update to fesTerm {version}…")).clicked() {
                 actions.push(ChromeAction::OpenAbout);
@@ -264,4 +265,44 @@ pub(super) fn style_context_menu(ui: &mut Ui) {
     ui.set_min_width(176.0);
     ui.spacing_mut().interact_size.y = 30.0;
     ui.spacing_mut().item_spacing.y = 2.0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    #[test]
+    fn overflow_menu_uses_context_menu_density_and_semantic_actions() {
+        for size in [vec2(752.0, 516.0), vec2(360.0, 516.0), vec2(360.0, 240.0)] {
+            let mut harness = Harness::builder().with_size(size).build_ui_state(
+                |ui, actions: &mut Vec<ChromeAction>| {
+                    paint_overflow_menu(ui, false, false, None, actions);
+                },
+                Vec::new(),
+            );
+            harness.ctx.set_theme(egui::ThemePreference::Dark);
+            harness.ctx.set_visuals(crate::theme::default_visuals());
+            harness.run();
+            harness.get_by_label("More actions").click();
+            harness.run();
+            let root = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            for label in [
+                "Open File…",
+                "Open Profiles",
+                "Open Settings",
+                "About fesTerm",
+            ] {
+                let row = harness.get_by_label(label).rect();
+                assert!(root.contains_rect(row), "{size:?}: {label}: {row:?}");
+                assert!(row.height() >= 30.0);
+            }
+            harness.get_by_label("Open File…").click();
+            harness.run();
+            assert_eq!(
+                harness.state().as_slice(),
+                &[ChromeAction::OpenMarkdownFile]
+            );
+        }
+    }
 }

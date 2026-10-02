@@ -120,10 +120,20 @@ default: a document long enough to be opened in an editor is usually long
 enough to need navigating, and the rail collapses in one click when it is not
 wanted.
 
+The rail borrows the current preview snapshot's heading entries rather than
+copying their text and anchors on every frame. All entries remain available,
+including offscreen headings, and rebinding the view reads the replacement
+snapshot; no additional layout or document cache is introduced.
+
 In Split, the text and the preview follow each other by section. Scroll the
 text into a section and the preview comes with it; scroll the preview and the
 text follows. Whichever pane is moving leads, so the two never pull against
 each other.
+
+The shared Markdown Preview uses the same code-byte navigation as the viewer:
+the selected code row forwards its vertical target after the horizontal child
+closes. This keeps offscreen code reachable without changing per-view scroll,
+selection, source positions, or the original horizontal wrapping/targeting.
 
 **Syntax highlighting** is on by default and colours source by what it means —
 keyword, string, comment, type — from the same engine and the same palette the

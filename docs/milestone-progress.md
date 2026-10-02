@@ -3,6 +3,227 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Letting code navigation leave its horizontal child
+
+A 400-fence offscreen-tail interaction oracle exposed a navigation defect
+independent of the proposed render-local Copy-caption preparation. The code
+renderer consumed the source-byte request inside a horizontal scroller. That
+scroller consumed both target axes but applied only its horizontal axis, so
+Find and the shared editor Preview could acknowledge the target without
+bringing its code row into the vertical viewport.
+
+The renderer now forwards the existing row rectangle after that child closes,
+with the parent's viewport X extent so it requests no outer horizontal
+movement. The original child target and first matching row choice stay intact;
+no widgets, syntax highlighting, selection, source mapping or raw Copy payloads
+are skipped or replaced. Separate CPU regressions cover the initially
+offscreen 400th fence, viewer Find, shared Preview, wrapped-code geometry,
+selection, pointer Copy and keyboard activation. Native clipboard delivery,
+screen-reader traversal and usability remain manual evidence. Tables have no
+own byte-target handling, a separate unimplemented gap left outside this fix.
+
+This is a navigation prerequisite, not a performance result. Any subsequent
+Copy-caption comparison must include the identical navigation change on both
+its baseline and candidate; saved memoized caption lookups are not proof of
+saved text layouts or improved latency.
+
+## Preparing a repeated code-header caption without retaining document layout
+
+The residual Preview diagnostics showed 400 code headers in the actual mixed
+fixture, with the outline disabled. Each header asked egui's already memoized
+text factory for the same inactive **Copy** caption. The narrow follow-up
+shares only that galley within one fresh renderer invocation, starting at the
+actual header painter and refreshing if its context, viewport/pass, scale,
+font or colour differs. No pane, document or global layout cache is added.
+
+The ordinary-path oracle uses the same 400 mixed sections and real Preview
+pane, comparing all clipped shapes, accessibility nodes and live Copy IDs and
+rectangles through cold/warm, resize, font, theme, scale, Find and content
+changes. Selection, offscreen-tail source scrolling and distinct raw fence
+payloads remain covered. All three regressions, the shared fixture guards
+and the full workspace passed local Windows qualification. Native clipboard
+delivery, screen-reader behavior and usability remain manual. A count of 399
+avoided memoized factory calls is not evidence of 399 avoided text layouts.
+
+The first eight-process comparison was adverse, but also unqualified for
+causal attribution: different physical temporary paths were visible in the
+mixed Preview and four controls, changing their vertex counts. Its negative/
+unproven results and raw files remain unchanged. The correction was a narrowly
+scoped, optional test-only protocol: both builds read the same real owned
+files, checking source identity, content hashes, modification times, kinds,
+sizes and canonical paths without rewriting them or substituting labels.
+
+One fresh matched comparison then ran `A1 B1 B2 A2` and `B3 A3 A4 B4`,
+with no overlapping build or other measurement. Both sides used the identical
+navigation prerequisite `feed4bf` and fixture protocol; only B prepared the
+caption. The original 12 scenes, outline-disabled 400 mixed sections,
+1180-by-760 viewport, one pixel per point, dark/default fonts, eight warmups
+and 40 measured frames were retained. All eight processes passed the original
+highlight guards; actual input identities and final shape/vertex counts
+matched across all 12 scenes. These counts are not pixel or complete
+per-frame output equivalence.
+
+| Order | A mean of run median / p95 scores (ms) | B mean of run median / p95 scores (ms) | B minus A |
+| --- | ---: | ---: | ---: |
+| ABBA | 11.1831 / 12.9256 | 10.0743 / 12.0603 | -9.92% / -6.69% |
+| BAAB | 11.1127 / 12.4834 | 10.3090 / 11.7020 | -7.23% / -6.26% |
+
+All four B mixed medians (9.9986-10.3408ms) were below all four A medians
+(10.9254-11.2999ms). Code-only and Find-heavy Preview median scores also
+favored B in both orders. These are means of per-run summary scores, not
+pooled frame percentiles: the unchanged producer exports eight warmup vectors
+and median/p95 scores at sorted indexes 19/37, not 40 raw UI-frame vectors.
+
+Adverse controls are not dismissed as noise or ruled out as regressions.
+Source in ABBA increased by 0.4675ms (+11.00%) in mean median scores and
+0.4158ms in mean p95 scores; editor syntax in BAAB increased by 0.0783ms
+(+24.51%) and 0.0853ms respectively. Other control tails, tessellation and
+microprobe outliers remain in the record. Cold mixed calls overlapped
+(A 61.2623-64.5810ms; B 62.2185-63.6364ms), and ABBA preparation was slightly
+adverse; neither has an established saving. The JSON 200/2,000/4,000-entry
+highlight assertions passed, but mixed-fence fallback status is not exported.
+The target signal supports focused qualification/review, not an unconditional
+whole-application gain, native latency or representative-hardware acceptance.
+There was no third trial or speculative cache/virtualization follow-up.
+
+The matched reports, all 96 scene scores, 24 order/control comparisons and
+91 sealed raw/proof files are retained under
+`target/markdown-header-preparation-artifacts/r2-quiet-20261001-2314/`.
+The measurement-results SHA256 is
+`60527feb6fd57974538df93af55aff8dfcd16eeab9534e85c5bec9312126485f`;
+the raw-file manifest SHA256 is
+`75a44fef7b2cc626c7cecf697df362e97ac5f0f85562466eea880b444bb91e50`.
+The fresh fixture run was verified and its seven inventoried files cleaned
+up only after all planned processes completed; its claims and proofs remain
+and that identity cannot be reused.
+The bounded [public evidence subset](../validation/terminal-performance/README.md#render-local-code-header-caption-matched-evidence)
+contains the original eight profiles and eight fixture proofs, all 96 control
+scores, all 24 order/control statistics and source/executable/fixture hashes.
+It maps every selected raw member back to the immutable result/manifest above;
+the packaging has its own hash and does not rewrite the original JSON.
+## Fitting dialogs to the supported root instead of a preferred width
+
+Faithful production-theme captures separated actual layout defects from a
+misleading gallery palette. Open File and Save As still imposed a 420 px
+minimum inside nested popup frames, and the palette assumed a 420 px window
+even though the application supports a 360 px root.
+
+The bounded style slice measures the full frame before choosing content size,
+uses one picker frame, and allows short sheets to scroll. About and legacy
+safety actions reuse the existing semantic roles with explicit minimum targets;
+disclosures scroll without being shortened, and palette labels cannot paint
+over their shortcut column. Chrome overflow adopts the same 30 px row policy
+as the existing context menus. Confirmation target/generation checks,
+safe/default focus, cancellation, and semantic command dispatch stay in their
+original owners.
+
+The first full-root picker test also exposed Save As reserving an entire
+sheet-width breadcrumb after its navigation buttons. The private toolbar now
+passes only its remaining width, and the existing three-segment breadcrumb
+truncates within that budget while keeping exact navigation targets and full
+accessible/hover identities. Short sheets remain genuinely scrollable; the
+interaction regression scrolls the sheet and clicks Cancel only with its full
+label and minimum click target visible, instead of treating an off-viewport
+accessibility node as a usable action.
+
+Co-located full-root regressions use synthetic fake transports and
+worktree-owned picker fixtures, without new platform snapshot baselines.
+Headless geometry and production-widget captures remain distinct from native
+DPI, accessibility, and usability acceptance.
+
+The first retained 23-state matching pair (`style-pair-20261001-1700`,
+production-f0 baseline and candidate `daf9796`) also demonstrated the limit of
+rectangle-only tests. Observed popup areas now fit the root, but the short Save
+As capture paints table content below the bounded sheet, and deep Open File
+breadcrumbs consume the initial narrow ready/error viewport. These are
+automated visual acceptance blockers, not native-only follow-up or a completed
+style convergence claim. The completed pair remains immutable; its successful
+capture entry performed the inventoried input cleanup, so another iteration
+needs a fresh uniformly matched pair rather than a relabeled candidate.
+
+The follow-up stays in the owned picker seams: Save As pins its filename,
+complete overwrite notice and actions, gives navigation/rows the remaining
+viewport, and intersects nested-panel clips before registering child widgets.
+An initial paint-only correction was superseded because drawing containment
+alone cannot establish pointer safety. Tests now prove initial modal-owned
+Save/Cancel and filename at all three roots/both densities, and clipped pointer
+clicks cannot trigger either action. The local Open File
+toolbar keeps every ancestor and exact navigation target in one horizontally
+scrollable row rather than wrapping the whole path down the sheet; ready/error
+tests verify the fields and actual ancestor navigation. A stricter initial
+short-root test then exposed unreserved listing/footer space; the authorized
+local layout fix pins Cancel and gives complete errors/rows a bounded
+remaining viewport. Initial path/filter pointer focus, error paint and
+modal-owned actions now pass at all three roots/both densities, and cancellation
+restores viable terminal input. Hidden Save As row clicks cannot change
+selection, filename or navigation; the explicit Save response shares the
+filename's modal layer. Fresh drawing must still qualify the source fixes.
+The completed `daf9796` comparison is not retroactively qualified.
+
+The fresh second pair, `style-pair-20261002-r2`, retained the same f0 executable
+and rendered corrected source `426c458` against newly owned, identically
+matched physical inputs. All 23 AFTER pictures were inspected, including the
+short roots: filename/overwrite/actions no longer disappear in Save As, deep
+Open File paths no longer displace its initial fields/Cancel, and nested rows
+do not paint over the application. Eight observed off-root sheets and seven
+off-root action scenes became zero, without treating null or background-label
+matches as passes. Compact body rows/navigation/disclosures still scroll;
+native/usability acceptance is unchanged. The two completed pairs stay
+immutable, the original 48 gallery images remain intact, and no timing or
+anonymous-origin claim is made.
+
+## Expanding evidence without pretending every surface is measured
+
+The non-terminal performance audit also found a coverage gap: the original
+four WARP and twelve document/list scenes did not measure expanded menus,
+About, safety dialogs or file-picker states. A bounded shared fixture catalog
+now arranges 26 real production-widget states at normal and narrow widths,
+while preserving those controls. Actual directory workers must reach a ready
+entry or error before a picker can be sampled; fake transport recorders and
+existing updater test controllers avoid personal resources and live operations.
+
+The reconciled 33-family/163-GUI-reference matrix names every remaining state
+group and native prerequisite. Expanded reports separate preparation, first
+UI/tessellation, readiness, warmup and steady distributions; WARP completion
+includes drawing/synchronization/readback, not physical presentation. This
+first scaffolding batch awaits the exclusive validation slot and claims no new
+timings or native passes. See `validation/windows-warp/README.md`.
+
+Coordinated geometry review also needs combinations absent from those timing
+scenes: licenses beside a ready updater, long identities, deep paths, overwrite
+notices and the maximum paste disclosure. Gallery-only fixtures exercise these
+through actual commands/tasks and resize an already-verified application to
+normal, narrow and short roots. Optional manifest observations preserve clipping
+and action/focus bounds rather than calling a screenshot a pass. Both before/after
+generation and publication-safe physical display identities remain pending.
+
+Moving binaries between worktrees exposed another comparison boundary: real
+origins and picker breadcrumbs can change even when widget code does not.
+A test-only opt-in owned physical-root/run contract now scaffolds sequential
+baseline/candidate captures at the same actual scene paths. Fresh ownership,
+matching input/phase proofs and tracked cleanup are required; workers and real
+document generation remain intact. This is not canonical display metadata
+or anonymization, and its validation/matched visual claims remain pending.
+
+## Separating an outline allocation fix from the residual Preview cost
+
+The mixed Markdown Preview investigation found a genuine unnecessary copy:
+an enabled editor outline cloned every heading's text and anchor every frame
+although its renderer accepted a borrowed slice. Borrowing the current
+snapshot removes those copies, with cold/warm slice-identity, offscreen-tail
+navigation and document-rebind regressions.
+
+Fresh exact-source ABBA/BAAB release measurements also corrected an important
+assumption: the existing 400-section profile uses the constructor's disabled
+outline default, so it does not measure that fix. Its roughly 11–12ms
+unchanged-frame construction cost and inconsistent p95 remain. Separate
+component diagnostics attribute most work to variable-height table and fenced
+code widgets, not heading copies. The allocation fix is therefore reported
+only for enabled outlines; adverse controls, cold calls and the unresolved
+interaction/layout question remain visible in
+[`validation/terminal-performance/README.md`](../validation/terminal-performance/README.md).
+No speculative block virtualization or persistent layout cache was added.
+
 ## Removing repeated query compilation from document loading
 
 Steady-state measurements hid a much larger Markdown stall: the first Preview
@@ -2857,3 +3078,101 @@ assert that resolving a directory keeps the picker loading until its listing
 arrives. The ordinary picker-loading tests retain real background-thread
 coverage. No timeout was extended, failure was retried, gallery was regenerated,
 or runtime picker behavior changed.
+
+## Owned performance fixtures below home-hosted workspaces
+
+The shared physical-fixture prerequisite passed Windows but its first Linux
+and macOS CI runs rejected their actual checkout paths: the guard treated every
+`home`, `Users`, home-variable and username ancestor as private input, before
+checking the repository-owned workspace. The test-only policy now verifies the
+existing Git/Cargo markers and no-alias contract before allowing those
+ancestors above a proper workspace. Exact home roots, a workspace equal to
+home, unsafe owned suffixes and all temporary/system/application-data
+exclusions remain refused; source, inventory, claims and cleanup checks remain
+live. Deterministic policy inputs cover all three host path families without
+changing global environment variables, alongside real Git/Cargo and marker
+alias regressions.
+
+This repair changes only the post-measurement harness identity. Earlier
+compiled helper hashes, fixture proofs, executables and reports remain
+immutable, not retroactively assigned to the correction. It neither changes
+production Markdown rendering nor adds another performance trial.
+
+## Isolating the performance guards' ownership bootstrap
+
+The subsequent Windows job failed three positive fixture guards at their first
+prepare call with a missing-file error, while the home-policy and caption
+oracles passed. Source inspection found that unique run names still shared one
+workspace-wide control directory: the unowned negative case could create that
+parent without its owner record, and parallel bootstrap or cached state could
+expose it to the positive cases. The logs do not prove the exact missing path
+or which producer won.
+
+Each guard now holds its own freshly allocated real Git/Cargo workspace below
+the repository's controlled target evidence directory. RAII owns only that
+allocation; the template-free Git setup and existing no-alias/ownership checks
+are shared with the home-policy tests. New cold, ownerless-neighbor and finite
+parallel regressions exercise preparation, all twelve input identities, claims
+and guarded cleanup without earlier serial priming. The optional protocol still
+refuses an existing unowned parent: no adoption, retry, environment override or
+operator-namespace cleanup was added. This is another post-measurement helper
+identity, not a renderer change, a new timing trial or relabeled old evidence.
+
+## Owning the Markdown-open regression fixtures
+
+The next Windows failure was a stale-target Markdown-open test, while all
+performance-fixture guards and caption oracles passed. Its three route tests
+named scratch directories from a process ID and wall-clock timestamp, allowed
+an existing directory to be reused, and independently removed that path. The
+source exposed unsafe fixture ownership, but the logs do not prove an actual
+timestamp collision, deletion or file-open refusal in that run.
+
+The helper now retains an atomically allocated `TempDir` through each test and
+checks explicit cleanup; unwinding retains RAII cleanup. Each local-open route
+reports the document layer's actual refusal detail before its original tab and
+title assertions. A deterministic sibling-fixture regression reads both sets
+of files and checks that closing one leaves the other's contents usable. This
+changes test setup only, not production routing, measured renderer bytes,
+performance evidence, milestone status or native acceptance.
+## Reviewing the production palette, not the harness default
+
+The UI-state gallery mixed semantic fesTerm surfaces with generic-grey egui
+controls and popup frames. That was a capture defect, not evidence that the
+native application had the same appearance: the production constructor pins
+Dark and installs blue-graphite visuals, while the test constructor omits that
+context setup. All gallery harnesses now share one setup on their actual
+rendering context. A portable regression checks emitted fills from the real
+application and terminal popup, rather than merely checking a palette helper.
+
+The existing generator rebuilt all 48 images, their manifest, and the state
+document. Representative launcher, profile, inspector, terminal-menu, editor,
+and Save As images were visually inspected; fonts, layout and synthetic
+contents were retained. Editor/picker physical fixtures now stay inside the
+worktree rather than the personal OS temporary directory. Review caught that
+this alone does not anonymize their displayed identities: a personalized
+checkout root can still expose a username and make images vary across
+worktrees. Publication therefore requires a controlled non-personal checkout
+and path/metadata review until test-only document/picker metadata fixtures
+separate canonical synthetic labels from physical I/O.
+
+Native Windows capture also required opening directory timestamp handles with
+the proper access and backup flags, covered by a file/directory timestamp
+regression. This changes neither product styling nor renderer defaults, and
+does not establish native desktop, latency, or usability acceptance.
+
+### A local redraw without resetting a TUI
+
+The owner requested a palette command that repairs the local terminal display
+without borrowing common TUI shortcuts or asking the running program to redraw.
+Reset Terminal is not that operation: it resets emulated screen/cursor/mode
+state. Redraw Terminal instead invalidates the targeted view's presentation
+caches and carries a one-frame full-paint hint through the existing native
+painter snapshot. The retained Direct2D renderer discards only its last-frame
+reuse candidate, so even identical regions are freshly drawn while older
+published surfaces stay immutable. Ordinary reuse resumes on the next frame.
+
+The command is palette-only, preserves terminal state, selection, reading
+anchor and zoom, and does not send input, resize or daemon recovery controls.
+Deterministic coverage checks unchanged-row rebuilding, complete native
+pixel replacement, one-shot reuse recovery, command routing and Ctrl+L/Ctrl+R
+delivery. Native desktop feel remains separate manual evidence.
