@@ -48,7 +48,9 @@ pub struct TerminalViewOptions {
     /// input this frame. Confirmation dialogs set this false so input cannot
     /// leak through their backdrop into a shell or full-screen TUI. This is
     /// a full blackout: history navigation, selection, and the context menu
-    /// are also inert while it is false.
+    /// are also inert while it is false. Accessibility actions are deferred
+    /// until after this background view renders so foreground widgets can
+    /// still receive them.
     pub terminal_input_enabled: bool,
     /// The session backing this view can still accept typed keystrokes
     /// (i.e. it has not exited, failed, stopped, or disconnected). Unlike
@@ -767,13 +769,16 @@ impl TerminalView {
         };
         let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
 
+        let mut foreground_accessibility_events = Vec::new();
         if !options.terminal_input_enabled {
-            // The application owns a foreground modal. Preserve only focus
-            // state and clipboard-delivery events (the latter invalidates an
-            // already captured paste); history, selection, mouse reporting,
-            // and keyboard routing must all remain inert behind the backdrop.
+            // Defer accessibility actions until foreground widgets render,
+            // keeping the background terminal and its local controls inert.
+            // Clipboard delivery still invalidates an already captured paste.
             ui.input_mut(|input| {
                 input.events.retain(|event| {
+                    if matches!(event, egui::Event::AccessKitActionRequest(_)) {
+                        foreground_accessibility_events.push(event.clone());
+                    }
                     matches!(event, egui::Event::WindowFocused(_) | egui::Event::Paste(_))
                 });
             });
@@ -1433,6 +1438,9 @@ impl TerminalView {
         self.diagnostics.input_to_paint_submission = input_to_paint_submission;
         self.diagnostics.input_sink = sink.input_diagnostics();
         self.diagnostics.frame_time = Some(frame_started.elapsed());
+        if !foreground_accessibility_events.is_empty() {
+            ui.input_mut(|input| input.events.extend(foreground_accessibility_events));
+        }
     }
 
     /// Grid dimensions of the most recently rendered frame, formatted as
@@ -2076,6 +2084,64 @@ mod tests {
                 sink: Sink::default(),
             }
         }
+    }
+
+    #[test]
+    fn terminal_modal_blackout_defers_accessibility_without_activating_background_controls() {
+        let mut state = HeadlessViewState::new();
+        for _ in 0..100 {
+            state.terminal.ingest(b"history\r\n");
+        }
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, (state, foreground_actions): &mut (HeadlessViewState, usize)| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            terminal_input_enabled: false,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                    egui::Area::new(egui::Id::new("foreground-blackout-test"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(egui::pos2(10.0, 10.0))
+                        .show(ui.ctx(), |ui| {
+                            if ui.button("Foreground action").clicked() {
+                                *foreground_actions += 1;
+                            }
+                        });
+                },
+                (state, 0),
+            );
+        harness.run();
+        harness.state_mut().0.view.history.scroll_up(2);
+        harness.state_mut().0.view.history.unseen_output = true;
+        harness.run();
+        let offset = harness.state().0.view.history.offset_rows;
+        assert!(offset > 0);
+        harness.get_by_label("Jump to latest").click_accesskit();
+        harness.event(egui::Event::Text("must not reach the terminal".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().0.view.history.offset_rows, offset);
+        assert!(harness.state().0.view.selection.range().is_none());
+        assert!(harness.state().0.sink.0.is_empty());
+        assert_eq!(harness.state().1, 0);
+
+        harness.get_by_label("Foreground action").click_accesskit();
+        harness.run();
+        assert_eq!(harness.state().1, 1);
+        assert_eq!(harness.state().0.view.history.offset_rows, offset);
+        assert!(harness.state().0.sink.0.is_empty());
+
+        harness.get_by_label("Jump to latest").click_accesskit();
+        harness.get_by_label("Foreground action").click_accesskit();
+        harness.run();
+        assert_eq!(harness.state().1, 2);
+        assert_eq!(harness.state().0.view.history.offset_rows, offset);
+        assert!(harness.state().0.sink.0.is_empty());
     }
 
     /// Drags the pointer across the terminal viewport and reports whether a
