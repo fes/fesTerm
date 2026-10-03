@@ -1544,9 +1544,11 @@
         "textureless_bordered_panels_match_pixels_across_dpi",
         "textureless_panel_fill_preserves_opacity_and_srgb_fallback",
         "replay_warp_ui_surfaces",
-        "unread_pulse_schedules_a_bounded_frame_even_when_rendering_is_slow",
-        "unread_pulse_keeps_its_period_color_and_geometry",
-        "reduced_motion_and_unfocused_windows_keep_a_static_unread_marker",
+        "unread_status_marker_never_schedules_animation_frames",
+        "unread_status_marker_keeps_its_color_and_geometry_across_focus_and_time",
+        "chip_marks_only_a_background_session_with_unread_output",
+        "settings_omit_the_retired_unread_pulse_toggle",
+        "retired_pulse_setting_loads_without_affecting_or_serializing_settings",
         "clearing_unread_output_restores_the_static_connection_dot",
         "software_renderers_disable_animation_without_changing_gpu_defaults",
         "toggle_status_bar_flips_visibility_and_defaults_to_shown",
@@ -2384,7 +2386,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; separate read-only prepared receipts (#303) are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]

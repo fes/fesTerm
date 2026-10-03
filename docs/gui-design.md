@@ -1677,13 +1677,11 @@ quiet rows with subtle dividers:
   `compact_launcher_grid` configuration key is retained and repurposed
   instead of removed so existing configuration files remain valid under
   strict settings deserialization.
-- **Pulse status dot on new background output** is an on-by-default switch
-  that animates only background-session chip dots when unseen output arrives.
-  The 2.4-second fade schedules at most 30 animation frames per second, not an
-  immediate repaint loop. Unfocused windows and reduced-motion styles use a
-  static ring-and-dot unread marker in the same footprint. CPU/software
-  rendering adapters select reduced motion automatically; activating the tab
-  still clears the unread marker, and the setting is not changed on disk.
+- Background-session chips always show unread output as a static dot inside
+  a circle, preserving the connection color and existing footprint. The marker
+  schedules no animation repaints, regardless of focus or renderer. Activating
+  the tab clears it. There is no unread-output setting; older saved
+  `pulse_new_output_dot` booleans are accepted but ignored and not saved again.
 - **Resume unattached local sessions from New Session** is an on-by-default
   switch that surfaces locally running, unattached `festerm-sessiond`
   sessions as one-click Resume entries in the Launcher.

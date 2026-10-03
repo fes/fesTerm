@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Keeping unread output static without an animation preference
+
+Long-running sessions exposed a perpetual background-output attention loop
+on accelerated displays: unread flags remained latched while their dots kept
+requesting animation frames. Every session now uses the static dot-inside-circle
+marker, in its connection color, until activation. The pulse setting and command
+are removed; strict configuration loading still accepts old booleans, discards
+them, and omits the retired key on save.
+
+The marker preserves its connection color, footprint and hover status without
+scheduling animation frames, regardless of focus, motion preference or
+rendering adapter. Active tabs never show unread output, and activation clears
+the background flag. Deterministic checks cover static geometry/color,
+repaint quiescence, activation and compatible loading of both old boolean
+values. WARP-only atlas and recovery qualification remains in #297/#298/#244;
+no native renderer behavior or qualification status changes here.
+
 ## Letting supported terminal frames return after native refusal
 
 The long-lived WARP CPU investigation identified a concrete path transition:

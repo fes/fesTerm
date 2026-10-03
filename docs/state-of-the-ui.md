@@ -394,6 +394,10 @@ remote session, the multiplexer for a durable one, the file type for a
 document. Only the active chip shows a close control, so a row of chips
 presents one destructive affordance rather than one per session.
 
+Unread background-session output uses a static dot inside a circle, in the
+connection color, at both densities. It does not pulse or schedule animation
+frames; activating the session clears it. There is no unread-output setting.
+
 The two captures are the same five sessions under the two settings, which is
 the only useful way to view this choice. Verbose chips carry the second line;
 compact chips drop it and shrink to roughly half the height. The trade is
