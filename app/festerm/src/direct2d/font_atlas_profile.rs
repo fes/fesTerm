@@ -43,6 +43,7 @@ fn profile_native_font_atlas_capture() {
     state.target_format = wgpu::TextureFormat::Bgra8Unorm;
     *state.renderer.write() =
         egui_wgpu::Renderer::new(&state.device, state.target_format, Default::default());
+    let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
     let screen = egui_wgpu::ScreenDescriptor {
         size_in_pixels: [256, 128],
         pixels_per_point: 1.0,
@@ -75,7 +76,6 @@ fn profile_native_font_atlas_capture() {
                 let context = egui::Context::default();
                 context.set_visuals(festerm_ui_egui::theme::default_visuals());
                 crate::software_background::install(&context, &state);
-                let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
                 let status = native::install_with_painter_options(
                     &context,
                     &state,
