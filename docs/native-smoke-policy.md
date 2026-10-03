@@ -116,6 +116,70 @@ files alongside the existing native artifacts and any enabled daemon trace;
 runner loss or job-level cancellation can still prevent artifact collection.
 Neither deadline retries a failed smoke.
 
+`run-windows-os-input-smoke.ps1 -Configuration Release -SkipBuild` uses an
+already-staged release application; the default remains the existing debug
+smoke. Optional external captures and maximize/minimize/restore checks retain
+the same in-app deadline and exact controlled-input acknowledgment. This
+functional runner is separate from quiet CPU measurement and cannot qualify
+mixed-monitor DPI, physical latency or the full CP-18 matrix.
+
+Owned-window activation uses one shared bounded helper. Its fallback temporarily
+joins caller, foreground and target GUI queues and always detaches; no synthetic
+key is sent to an unrelated foreground window. Failure to obtain actual
+foreground remains fatal. OS-input failures retain source/binary diagnostics and
+PID-verified cleanup rather than overwriting a prior attempt.
+Activation and native CPU intervals also require an active, unlocked input
+desktop throughout; a disconnected RDP session must not become passing native
+evidence. Minimizing a maximized window restores first to its maximized state,
+then a separate restore recovers the original normal geometry.
+
+The OS-input smoke already generates mouse and keyboard input. After restoration
+it focuses its terminal through a real click at one of nine bounded client-area
+points, checking the process and root HWND under that physical pixel both before
+and after moving the pointer. A completely occluded client fails without a click.
+This avoids assuming that a background driver can steal foreground from the
+console, and never clicks through another window. Actual foreground ownership
+remains required before capture or keyboard delivery. This preparation is not
+used by the quiet CPU driver, whose no-input activation and interval guards stay
+unchanged; no Windows foreground policy or production rendering setting changes.
+
+The native CPU fixture keeps a live child, so one primary `WM_CLOSE` opens the
+normal aggregate Quit confirmation even when per-tab close confirmation is
+disabled. Its driver must explicitly invoke the unique test-owned **Quit
+fesTerm** button and verify normal process and descendant-tree exit. A forced
+kill is preserved cleanup evidence, not graceful-shutdown acceptance.
+
+An accessibility invocation returning successfully is not proof that the
+confirmation handled it. Terminal modal blackout defers accessibility requests
+until its background controls have rendered, then restores them for foreground
+widgets. Deterministic regressions cover both Quit and Cancel activation and
+prove that terminal-local history controls and terminal input remain inert.
+Native acceptance still requires actual normal process and descendant-tree exit
+within the unchanged cleanup deadline; a second close request is not evidence
+that the first explicit invocation succeeded.
+
+The 2026-10-02 clean `537bbcc` shipping-A (`0`,`0`) release passed that one-shot
+untimed proof on the connected 200% Windows DevBox: one unique owned UIA Quit
+invocation, exit code 0 in under one second, normal captured-descendant exit,
+and no follow-up close or forced kill. Both actual client captures were reviewed
+and all three PIDs independently absent. This does not establish a balanced CPU
+comparison or the full AS-08 native-platform/transport matrix.
+
+Native warmup saves `warmup-guard.json` before deciding whether to sample, with
+before/observed input ticks, expected/observed foreground HWND and full geometry
+metrics, plus separate mismatch flags. Mouse movement alone counts as input;
+no click is necessary to invalidate the observation. Any mismatch still stops
+before sampling without retry. Older combined-guard failures lacking this
+record cannot identify their exact trigger retrospectively.
+
+The controlled palette probe queries the exact production window accessibility
+name, **Command Palette**, not the differently capitalized action label.
+An untimed owned-window observer proved that a mismatched case-sensitive UIA
+query can reject an actually open palette. A portable regression keeps the
+query and production title aligned. The original shortcut, one-second wait,
+foreground checks and all later timing/cleanup guards remain unchanged; a
+failed control is preserved and never reclassified as a passing sample.
+
 ## Flaky failure policy
 
 **No silent retries.**

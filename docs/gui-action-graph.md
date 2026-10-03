@@ -98,6 +98,25 @@ time. Its diagnostic mesh omissions are not valid production optimizations.
 The chrome fill optimization must preserve every pixel, including fractional
 DPI, clipping and translucent fallback, without changing update cadence.
 
+The complete unmerged #281 stages eligible default-on host-copy and retained
+window-prefix policies under Proposed ADRs 0040/0041. Unset selects both only
+on Windows x64 DX12 CPU/BGRA gamma and compatible opaque-root targets.
+Host-copy `0` disables both by default; retention `0` keeps host-copy alone.
+Explicit `1` cannot force unsupported configurations, and invalid values warn
+and disable the affected path. Shipping defaults do not change until merge.
+Only exact, bounded, immutable paint signatures may reuse preceding UI pixels;
+the current terminal image is still copied every frame. Texture changes,
+unknown/stateful callbacks, external texture ownership, overlays and host
+lifecycle changes must invalidate or decline retention without skipping
+preparation or output. CP-18 compares host-copy alone against this additional
+path and the shipping shader baseline, requiring actual reuse/copy counters,
+current pixels and unchanged cadence. Staging does not approve architecture,
+native qualification, rollout or parity.
+The repository-owned balanced offscreen runner checks cross-run evidence without
+making CPU percentages CI assertions. Default-on gates for both copy experiments,
+including comparison with the shipping default, are explicit in
+[#282](https://github.com/fes/fesTerm/issues/282).
+
 The supported native path now retains immutable pixels for unchanged
 presentation regions. Small updates redraw only changed regions before normal
 egui-wgpu composition. Session pumping does not request an extra repaint for

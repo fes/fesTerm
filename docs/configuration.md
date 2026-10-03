@@ -308,6 +308,17 @@ terminal semantics or output/frame scheduling. See
 [the investigation](../validation/direct2d/README.md); native qualification
 remains open under CP-18 and issue #244.
 
+The complete unmerged #281 stages `FESTERM_EXPERIMENTAL_HOST_COPY` and
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION` as eligible default-on policies,
+not saved TOML settings. Unset requests both only on Windows x64 DX12 CPU/
+BGRA gamma with compatible opaque-root targets. Host-copy `0` disables both
+by default; retention `0` selects host-copy alone. Explicit `1` cannot bypass
+Direct2D eligibility, target/lifecycle safeguards or the host-copy prerequisite;
+invalid values warn and disable the affected path. Ineligible frames preserve
+ordinary composition. The owner authorized staging, not qualification or
+merge: shipping main remains unchanged until #282's WARP and architectural/
+rollout gates pass. See Proposed ADRs 0040/0041 for resource and ownership limits.
+
 By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.
 `customize_local_shell = true` instead opens the executable, arguments, and

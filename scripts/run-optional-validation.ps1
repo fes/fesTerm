@@ -336,6 +336,28 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=skipped reason=explicit-opt-in"
     }
+    if ($env:FESTERM_RUN_RETAINED_COMPARISON -eq '1') {
+        try {
+            if (-not $env:FESTERM_RETAINED_PROBE_EXE -or -not $env:FESTERM_RETAINED_COMPARE_OUT -or
+                -not $env:FESTERM_RETAINED_SOURCE_LABEL) {
+                throw 'Set FESTERM_RETAINED_PROBE_EXE, FESTERM_RETAINED_COMPARE_OUT, and FESTERM_RETAINED_SOURCE_LABEL.'
+            }
+            Invoke-NativeCommand {
+                python "$PSScriptRoot\..\validation\terminal-performance\compare_retained.py" run `
+                    --probe $env:FESTERM_RETAINED_PROBE_EXE `
+                    --directory $env:FESTERM_RETAINED_COMPARE_OUT `
+                    --source-label $env:FESTERM_RETAINED_SOURCE_LABEL
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Balanced retained-prefix comparison failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=skipped reason=explicit-opt-in"
+    }
     if ($env:FESTERM_RUN_FONT_ATLAS_PROFILE -eq '1') {
         try {
             if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'The font atlas profile requires Windows x64.' }
@@ -372,6 +394,30 @@ if ($env:OS -eq 'Windows_NT') {
         }
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=terminal-tui-native status=skipped reason=explicit-opt-in"
+    }
+    if ($env:FESTERM_RUN_COPY_QUALIFICATION -eq '1') {
+        try {
+            if (-not $env:FESTERM_COPY_QUALIFICATION_OUT) {
+                throw 'Set FESTERM_COPY_QUALIFICATION_OUT to a fresh native evidence directory.'
+            }
+            & "$PSScriptRoot\stage-conpty.ps1" -Configuration Release
+            if ($LASTEXITCODE -ne 0) { throw 'Release qualification staging failed.' }
+            & "$PSScriptRoot\..\validation\terminal-performance\compare-windows.ps1" `
+                -FesTermOnly -QualifyCopyModes -CaptureFinalFrame `
+                -ResultDirectory $env:FESTERM_COPY_QUALIFICATION_OUT
+            Invoke-NativeCommand {
+                python "$PSScriptRoot\..\validation\terminal-performance\check_windows.py" `
+                    $env:FESTERM_COPY_QUALIFICATION_OUT
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Saved native qualification evidence failed validation.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=copy-native-qualification status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=copy-native-qualification status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=copy-native-qualification status=skipped reason=explicit-opt-in"
     }
 }
 

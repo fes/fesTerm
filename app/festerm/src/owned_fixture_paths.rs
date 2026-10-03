@@ -251,6 +251,15 @@ pub(crate) struct TestWorkspace {
 #[cfg(test)]
 impl TestWorkspace {
     pub(crate) fn new(label: &str) -> Self {
+        Self::with_home_ancestry(label, true)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn new_flat(label: &str) -> Self {
+        Self::with_home_ancestry(label, false)
+    }
+
+    fn with_home_ancestry(label: &str, home_hosted: bool) -> Self {
         assert!(simple_identity(label));
         let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -266,11 +275,15 @@ impl TestWorkspace {
             .prefix(&format!("fixture-workspace-{label}-"))
             .tempdir_in(&parent)
             .unwrap();
-        let workspace = directory
-            .path()
-            .join("home")
-            .join("fixture_account")
-            .join("workspace");
+        let workspace = if home_hosted {
+            directory
+                .path()
+                .join("home")
+                .join("fixture_account")
+                .join("workspace")
+        } else {
+            directory.path().join("workspace")
+        };
         fs::create_dir_all(&workspace).unwrap();
         let git = std::process::Command::new("git")
             .args(["-c", "init.templateDir=", "init", "--quiet"])

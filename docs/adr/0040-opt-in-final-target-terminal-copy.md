@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-09-28
 - **Supersedes:** None; extends the experimental integration in ADR 0039
-- **Scope:** Owner-authorized prototype for issue #267, not default enablement
+- **Scope:** Owner-authorized default-on staging in unmerged #281; #282 gates merge/rollout
 
 ## Context
 
@@ -25,8 +25,13 @@ extension, using the same workspace patch pattern as egui-winit. The owner
 approved testing this in the real application rather than a standalone host.
 Architectural approval before merge remains distinct from prototype permission.
 
-`FESTERM_EXPERIMENTAL_HOST_COPY=1` requests the path. Unset or `0` retains
-existing shader composition; invalid values warn and do not enable it.
+The owner requested staging the default-on policy in #281 without merging it
+until WARP qualification passes. This is not completed native qualification
+or architectural/rollout approval; shipping main remains unchanged.
+
+Unset `FESTERM_EXPERIMENTAL_HOST_COPY` now requests the path in this PR;
+explicit `1` remains compatible and `0` retains existing shader composition.
+Invalid values warn and do not enable it.
 Selection additionally requires the existing Windows x64 DX12 CPU-adapter
 Direct2D policy and a BGRA gamma target. Hardware GPUs, Windows ARM64, other
 platforms, and disabled/failed Direct2D retain their existing rendering.
@@ -65,7 +70,7 @@ and presents normally. Existing native damage retention is unchanged.
 ## Consequences
 
 All builds share a locally patched dependency, so cross-platform regression
-checks remain necessary even though only an explicitly enabled WARP path uses
+checks remain necessary even though only the eligible WARP path uses
 the extension. The vendor patch adds review/upgrade maintenance; upstreaming
 or retiring it is preferable to growing a private renderer.
 
@@ -74,15 +79,22 @@ throttling, queued-frame policy or claim of Windows Terminal parity.
 CPU/frame cadence and exact pixels must be measured together. Lower offscreen
 CPU is not native presentation-latency or device-recovery qualification.
 
+The separate default-selection decision and its concrete evidence gates are
+tracked in [#282](https://github.com/fes/fesTerm/issues/282), including the
+dependent retained-prefix experiment in ADR 0041. The staged default-on change
+must not merge until those gates and the architectural/rollout decision pass.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** Optional host access to the final target;
   immutable, exact, final-only copy descriptors; same-frame shader fallback;
-  preserved UI, terminal ownership, paint ordering and default rendering.
+  preserved UI, terminal ownership and paint ordering; staged eligible default
+  with explicit opt-out and unchanged unsupported rendering.
 - **GUI/action edges affected:** `TERM-01`; existing terminal input/selection
   edges and overlay behavior remain unchanged.
 - **Automated tests required:**
-  `host_copy_is_explicitly_opt_in_and_rejects_invalid_values`,
+  `host_copy_defaults_on_and_rejects_invalid_values`,
+  `composition_defaults_and_opt_outs_never_force_unsupported_routing`,
   `host_copy_preserves_pixels_dpi_resize_overlays_and_fallback`,
   `host_copy_capture_tracks_usage_size_and_format`,
   existing Direct2D adapter/default-policy and retained-image regressions,
