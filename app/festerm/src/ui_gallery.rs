@@ -1302,7 +1302,6 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         scrollback_limit: ScrollbackLimitPreference::MiB64,
         quick_switch_overlay: true,
         compact_launcher_grid: false,
-        pulse_new_output_dot: true,
         show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
         automatic_update_checks: true,
@@ -2851,7 +2850,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
             has_explicit_alias: false,
             movable_across_windows: false,
             quick_switch_number: Some(1),
-            pulse_new_output: false,
+            has_unread_output: false,
         },
         ChipViewModel {
             id: ChipId(2),
@@ -2863,7 +2862,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
             has_explicit_alias: false,
             movable_across_windows: true,
             quick_switch_number: Some(2),
-            pulse_new_output: false,
+            has_unread_output: false,
         },
         ChipViewModel {
             id: ChipId(3),
@@ -2875,7 +2874,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
             has_explicit_alias: false,
             movable_across_windows: true,
             quick_switch_number: Some(3),
-            pulse_new_output: true,
+            has_unread_output: true,
         },
         ChipViewModel {
             id: ChipId(4),
@@ -2887,7 +2886,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
             has_explicit_alias: false,
             movable_across_windows: true,
             quick_switch_number: Some(4),
-            pulse_new_output: false,
+            has_unread_output: false,
         },
         ChipViewModel {
             id: ChipId(5),
@@ -2899,7 +2898,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
             has_explicit_alias: false,
             movable_across_windows: true,
             quick_switch_number: Some(5),
-            pulse_new_output: false,
+            has_unread_output: false,
         },
     ]
 }
@@ -2926,13 +2925,8 @@ fn render_chips(
         },
         (),
     );
-    // One chip deliberately demonstrates the "new output" pulse cue
-    // (`pulse_new_output: true`), which keeps requesting a repaint forever
-    // by design. `finish`'s `Harness::run()` would treat that as a hang and
-    // panic, so settle with a fixed number of steps instead of waiting for
-    // repaints to stop.
     harness.remove_cursor();
-    harness.run_steps(2);
+    harness.run();
     let image = harness.render().expect("headless render must succeed");
     trim_to_content(&image, GALLERY_MARGIN)
 }

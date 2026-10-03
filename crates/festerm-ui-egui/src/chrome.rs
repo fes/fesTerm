@@ -287,14 +287,10 @@ pub struct ChipViewModel {
     /// quick-switch number overlay (feature request #69) when the caller
     /// reports the modifier is currently held.
     pub quick_switch_number: Option<u8>,
-    /// Whether this chip's status dot should slow-pulse because its session
-    /// has produced output since the tab was last active (feature request
-    /// #68). Always `false` for `Neutral` chips (no dot to pulse) and for
-    /// the currently active chip; the caller (`FesTermApp::chip_view_models`)
-    /// is responsible for gating this on the "pulse on new output" setting
-    /// before constructing this value, so this crate does not need its own
-    /// copy of that preference.
-    pub pulse_new_output: bool,
+    /// Whether this background session has produced output since it was
+    /// last active. Renders a static ring-and-dot without scheduling repaints.
+    /// Always false for the active chip and for non-session chips.
+    pub has_unread_output: bool,
 }
 
 /// A user gesture translated from the chip row. The application layer maps
@@ -407,7 +403,7 @@ pub fn show(
                 has_explicit_alias: chip.has_explicit_alias,
                 movable_across_windows: chip.movable_across_windows,
                 quick_switch_number: chip.quick_switch_number,
-                pulse_new_output: chip.pulse_new_output,
+                has_unread_output: chip.has_unread_output,
             })
             .collect::<Vec<_>>();
         &suppressed_chips
@@ -1093,7 +1089,7 @@ mod tests {
             has_explicit_alias: false,
             movable_across_windows: true,
             quick_switch_number: None,
-            pulse_new_output: false,
+            has_unread_output: false,
         }
     }
 
@@ -2658,7 +2654,7 @@ mod tests {
                 has_explicit_alias: false,
                 movable_across_windows: false,
                 quick_switch_number: None,
-                pulse_new_output: false,
+                has_unread_output: false,
             }],
             active: ChipId(1),
             layout: ChipLayout::Wrap,
@@ -2744,7 +2740,7 @@ mod tests {
             has_explicit_alias: false,
             movable_across_windows: false,
             quick_switch_number: Some(1),
-            pulse_new_output: false,
+            has_unread_output: false,
         };
 
         let mut harness = Harness::builder()
@@ -2760,7 +2756,7 @@ mod tests {
                     has_explicit_alias: neutral_chip.has_explicit_alias,
                     movable_across_windows: neutral_chip.movable_across_windows,
                     quick_switch_number: neutral_chip.quick_switch_number,
-                    pulse_new_output: neutral_chip.pulse_new_output,
+                    has_unread_output: neutral_chip.has_unread_output,
                 };
                 show(
                     ui,
@@ -2779,15 +2775,10 @@ mod tests {
     }
 
     #[test]
-    fn pulsing_status_dot_renders_without_altering_the_chip_label_or_accessible_hover_text() {
-        // Feature request #68: the pulse is a pure animation cue layered on
-        // the existing status dot, so a pulsing chip must still expose the
-        // exact same primary label and hover/accessible status text as a
-        // non-pulsing one - the flag must never change `ChipStatus` or its
-        // accessible label.
-        fn pulsing_chip() -> ChipViewModel {
+    fn unread_status_dot_renders_without_altering_the_chip_label() {
+        fn unread_chip() -> ChipViewModel {
             let mut chip = chip(1, "one");
-            chip.pulse_new_output = true;
+            chip.has_unread_output = true;
             chip
         }
 
@@ -2796,7 +2787,7 @@ mod tests {
             .build_ui(|ui| {
                 show(
                     ui,
-                    &[pulsing_chip()],
+                    &[unread_chip()],
                     ChipId(1),
                     false,
                     true,

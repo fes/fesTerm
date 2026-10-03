@@ -21,7 +21,34 @@ byte-equal replacement snapshots without another upload. Deterministic tests
 cover scale/font changes, immutable older pixels, budget boundaries and teardown.
 An opt-in paced WARP control measures capture, uploads and process CPU separately
 from callback timing. These mechanisms do not attribute #297's CPU plateau or
-close native-window/resource/latency qualification; see Proposed ADR 0043.
+close native-window/resource/latency qualification. Independent source reviews
+accept ADR 0043's narrow snapshot ownership/vendoring contract only. The
+excluded atlas tests and formatting are explicit CI gates, and vendor edits
+trigger mobile CI. The authorized PR reconstruction removes accidental build
+artifacts from its history without changing the recorded historical CPU
+rejections or relabeling old measurements as current-head evidence.
+
+The companion Simulator infrastructure fix pins the toolchain and initializes
+cold service caches before compilation in a bounded read-only preparation step.
+Its `prepared` receipt is never application `pass` evidence; failure receipts
+and all native application/owned-device/cleanup checks remain intact (#303).
+
+## Keeping unread output static without an animation preference
+
+Long-running sessions exposed a perpetual background-output attention loop
+on accelerated displays: unread flags remained latched while their dots kept
+requesting animation frames. Every session now uses the static dot-inside-circle
+marker, in its connection color, until activation. The pulse setting and command
+are removed; strict configuration loading still accepts old booleans, discards
+them, and omits the retired key on save.
+
+The marker preserves its connection color, footprint and hover status without
+scheduling animation frames, regardless of focus, motion preference or
+rendering adapter. Active tabs never show unread output, and activation clears
+the background flag. Deterministic checks cover static geometry/color,
+repaint quiescence, activation and compatible loading of both old boolean
+values. WARP-only atlas and recovery qualification remains in #297/#298/#244;
+no native renderer behavior or qualification status changes here.
 
 ## Letting supported terminal frames return after native refusal
 
