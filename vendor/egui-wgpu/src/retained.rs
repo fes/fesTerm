@@ -175,7 +175,10 @@ impl RetainedUi {
             texture_bytes: self.cached.as_ref().map_or(0, |cached| {
                 u64::from(cached.texture.width()) * u64::from(cached.texture.height()) * 4
             }),
-            signature_bytes: self.cached.as_ref().map_or(0, |cached| cached.signature.bytes),
+            signature_bytes: self
+                .cached
+                .as_ref()
+                .map_or(0, |cached| cached.signature.bytes),
             decline_reason: self.decline_reason,
         }
     }

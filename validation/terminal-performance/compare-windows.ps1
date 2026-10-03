@@ -12,8 +12,40 @@ param(
     [switch] $OverlayControl,
     [switch] $CaptureFinalFrame,
     [ValidateRange(10, 580)][int] $SampleSeconds = 10,
-    [ValidateRange(200, 6000)][int] $ProducerFrames = 200
+    [ValidateRange(200, 6000)][int] $ProducerFrames = 200,
+    [string] $GuardStopFile
 )
+
+function Get-NativeCopyRequest {
+    param(
+        [AllowNull()][object] $HostCopySetting,
+        [AllowNull()][object] $RetainedCompositionSetting
+    )
+    if ($null -ne $HostCopySetting -and $HostCopySetting -notin @('0','1')) {
+        throw 'FESTERM_EXPERIMENTAL_HOST_COPY must be unset, 0, or 1.'
+    }
+    if ($null -ne $RetainedCompositionSetting -and $RetainedCompositionSetting -notin @('0','1')) {
+        throw 'FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION must be unset, 0, or 1.'
+    }
+    $hostCopy = $null -eq $HostCopySetting -or $HostCopySetting -eq '1'
+    $retainedComposition = if ($null -eq $RetainedCompositionSetting) {
+        $hostCopy
+    } else { $RetainedCompositionSetting -eq '1' }
+    if ($retainedComposition -and -not $hostCopy) {
+        throw 'Retained composition requires host-copy to be requested.'
+    }
+    [pscustomobject]@{
+        HostCopy = $hostCopy
+        RetainedComposition = $retainedComposition
+    }
+}
+
+function Assert-NativeGuardClear {
+    param([AllowNull()][string] $StopFile)
+    if ($StopFile -and (Test-Path -LiteralPath $StopFile)) {
+        throw 'External CPU guard failed; stop requested without retry.'
+    }
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -36,20 +68,15 @@ if ($ProducerFrames * 0.1 -lt $SampleSeconds + 7 -or
 if ($null -ne $env:FESTERM_EXPERIMENTAL_DIRECT2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
     throw 'The fesTerm comparison requires automatic Direct2D selection (unset or 1).'
 }
-$hostCopy = $env:FESTERM_EXPERIMENTAL_HOST_COPY -eq '1'
-if ($null -ne $env:FESTERM_EXPERIMENTAL_HOST_COPY -and
-    $env:FESTERM_EXPERIMENTAL_HOST_COPY -notin @('0','1')) {
-    throw 'FESTERM_EXPERIMENTAL_HOST_COPY must be unset, 0, or 1.'
-}
-$retainedComposition = $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION -eq '1'
-if ($null -ne $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION -and
-    $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION -notin @('0','1')) {
-    throw 'FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION must be unset, 0, or 1.'
-}
-if ($retainedComposition -and -not $hostCopy) {
-    throw 'Retained composition requires FESTERM_EXPERIMENTAL_HOST_COPY=1.'
-}
+$copyRequest = Get-NativeCopyRequest -HostCopySetting $env:FESTERM_EXPERIMENTAL_HOST_COPY `
+    -RetainedCompositionSetting $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
+$hostCopy = $copyRequest.HostCopy
+$retainedComposition = $copyRequest.RetainedComposition
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+if ($GuardStopFile) {
+    $GuardStopFile = [IO.Path]::GetFullPath($GuardStopFile)
+    Assert-NativeGuardClear $GuardStopFile
+}
 . "$root\scripts\windows-application-window.ps1"
 [FesTermApplicationWindow]::RequireInteractiveDesktop()
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64' -or
@@ -230,6 +257,8 @@ $producerHash = (Get-FileHash -LiteralPath $child -Algorithm SHA256).Hash
     FesTermSha256=$executableHash;ProducerSha256=$producerHash
     DriverSha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
     DeclaredUtc=[DateTime]::UtcNow.ToString('o');Modes=$modes;Runs=$runs
+    InitialHostCopySetting=$oldHostCopy;InitialRetainedCompositionSetting=$oldRetention
+    ExternalGuardStopFile=$GuardStopFile
     OverlayControl=[bool]$OverlayControl;SampleSeconds=$SampleSeconds;ProducerFrames=$ProducerFrames
     LogicalProcessors=[Environment]::ProcessorCount
     CpuAffinity=[Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity.ToInt64()
@@ -244,6 +273,7 @@ try {
         $fonts.Add($font)
     }
     foreach ($run in $runs) {
+        Assert-NativeGuardClear $GuardStopFile
         [FesTermApplicationWindow]::RequireInteractiveDesktop()
         if ((Get-FileHash -LiteralPath $FesTerm -Algorithm SHA256).Hash -ne $executableHash -or
             (Get-FileHash -LiteralPath $child -Algorithm SHA256).Hash -ne $producerHash) {
@@ -368,6 +398,7 @@ terminal_ligatures = false
             }
             $inputBefore = [FesTermApplicationWindow]::LastInputTick()
             Start-Sleep -Seconds 5
+            Assert-NativeGuardClear $GuardStopFile
             $metrics = [TuiComparisonNative]::Metrics($window)
             if ($metrics[5] -lt $metrics[7] -or $metrics[6] -lt $metrics[8] -or
                 $metrics[5]+$metrics[0] -gt $metrics[9] -or $metrics[6]+$metrics[1] -gt $metrics[10]) {
@@ -375,6 +406,7 @@ terminal_ligatures = false
             }
             New-Item -ItemType File -Path $start | Out-Null
             Start-Sleep -Seconds 5
+            Assert-NativeGuardClear $GuardStopFile
             [FesTermApplicationWindow]::RequireInteractiveDesktop()
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
             $warmupGuard = Get-NativeWarmupGuard -InputBefore $inputBefore `
@@ -407,6 +439,7 @@ terminal_ligatures = false
             $geometryChanged = $false
             do {
                 Start-Sleep -Milliseconds 1000
+                Assert-NativeGuardClear $GuardStopFile
                 $process.Refresh()
                 if ($process.HasExited) { throw "$name exited during measurement." }
                 [FesTermApplicationWindow]::RequireInteractiveDesktop()
@@ -437,6 +470,7 @@ terminal_ligatures = false
             $retainedAfter = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_reused_frames' } else { $null }
             $rebuiltAfter = if ($isFesTerm -and $retainedComposition) { Frame-Count $directory 'retained_ui_rebuilt_frames' } else { $null }
             $producerProcess.Refresh()
+            Assert-NativeGuardClear $GuardStopFile
             $producerCpu = $producerProcess.TotalProcessorTime.TotalSeconds-$producerBefore
             [FesTermApplicationWindow]::RequireInteractiveDesktop()
             [FesTermApplicationWindow]::RequireResponsive($window,$process.Id)
@@ -515,8 +549,10 @@ terminal_ligatures = false
                 GuiFramesPerSecond=$(if($isFesTerm){($afterFrames-$beforeFrames)/$elapsed}else{$null})
                 Direct2DFramesPerSecond=$(if($isFesTerm){($nativeAfter-$nativeBefore)/$elapsed}else{$null})
                 HostCopyRequested=($isFesTerm -and $hostCopy)
+                HostCopySetting=$(if($isFesTerm){$env:FESTERM_EXPERIMENTAL_HOST_COPY}else{$null})
                 HostCopyFramesPerSecond=$(if($isFesTerm -and $hostCopy){($copyAfter-$copyBefore)/$elapsed}else{$null})
                 RetainedCompositionRequested=($isFesTerm -and $retainedComposition)
+                RetainedCompositionSetting=$(if($isFesTerm){$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION}else{$null})
                 RetainedUiFramesPerSecond=$(if($isFesTerm -and $retainedComposition){($retainedAfter-$retainedBefore)/$elapsed}else{$null})
                 RetainedUiRebuildsPerSecond=$(if($isFesTerm -and $retainedComposition){($rebuiltAfter-$rebuiltBefore)/$elapsed}else{$null})
                 Producer=$producer;Intervals=$intervals
@@ -533,7 +569,9 @@ terminal_ligatures = false
             }
         } catch {
             [pscustomobject]@{
-                Status=$(if ($_.ToString() -match 'guard failed|observation was invalid') { 'invalid-input-or-window' } else { 'failed' })
+                Status=$(if ($_.ToString() -match 'External CPU guard failed') { 'invalid-external-cpu' }
+                    elseif ($_.ToString() -match 'guard failed|observation was invalid') { 'invalid-input-or-window' }
+                    else { 'failed' })
                 Error=$_.ToString();StartedUtc=$startedUtc;FinishedUtc=[DateTime]::UtcNow.ToString('o')
             } | ConvertTo-Json |
                 Set-Content -LiteralPath "$directory\failure.json"

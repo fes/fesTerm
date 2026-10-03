@@ -19,6 +19,14 @@ ordering and lifecycle fallback still apply. The PR stays unmerged and ADRs
 resource, recovery, visual/routing, independent latency and approval gates pass.
 This is source completion and policy staging, not qualification or rollout.
 
+The native qualification driver still treated unset copy settings as the older
+default-off policy, even after staging changed production defaults. Its pure
+request resolver now follows the candidate, with a complete valid-setting and
+rejection matrix, and records raw settings separately from resolved requests.
+Explicit balanced A/B/C runs and their guards are unchanged. This repairs the
+unset/default evidence seam; it does not make the candidate merge-ready or
+relabel historical measurements.
+
 ## Completing the guarded native comparison without hiding its control failure
 
 Keeping the remote desktop connected and quiet allowed the source-pinned

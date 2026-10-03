@@ -737,8 +737,8 @@ impl Painter {
                         },
                         depth_slice: None,
                     })],
-                    depth_stencil_attachment: self.depth_texture_view.get(&viewport_id).map(|view| {
-                        wgpu::RenderPassDepthStencilAttachment {
+                    depth_stencil_attachment: self.depth_texture_view.get(&viewport_id).map(
+                        |view| wgpu::RenderPassDepthStencilAttachment {
                             view,
                             depth_ops: self
                                 .options
@@ -760,8 +760,8 @@ impl Painter {
                                     load: wgpu::LoadOp::Clear(0),
                                     store: wgpu::StoreOp::Discard,
                                 }),
-                        }
-                    }),
+                        },
+                    ),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,

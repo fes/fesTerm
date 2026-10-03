@@ -1178,6 +1178,23 @@ requires actual rebuilds. `-OverlayControl -Workloads localized` adds a
 separate command-palette fallback series, with test-owned input only before
 quiet warmup. Unsupported overlay copies/reuse must stay zero.
 
+Without `-QualifyCopyModes`, unset copy flags follow this candidate's staged
+defaults: host-copy is requested, and unset retention follows that request.
+Host-copy `0` opts out of both by default; retention `0` requests host-copy alone.
+The driver records the raw initial and per-process environment settings
+separately from resolved requests and requires actual copies/reuse when requested.
+This allows a fresh unset/default run to verify the proposed policy rather than
+mislabeling it as shipping A. Malformed settings and contradictory explicit
+requests remain rejected before launch. A/B/C still writes explicit `0`/`1`
+settings in the same predeclared order; no measurement or cleanup guard changes.
+
+An external quiet-host controller may provide a fresh `-GuardStopFile` path.
+If it writes that file, the driver rejects the attempt before another launch
+or during warmup/sampling and still runs its unchanged normal owned-tree
+cleanup. A stopped sample is `invalid-external-cpu`, not a completed series.
+The controller's CPU observations and rejection must be retained with the
+native attempt; this hook does not itself establish a quiet-host pass.
+
 Every run records source and executable/producer hashes, release configuration,
 CPU affinity/capacity, OS/architecture, matched font/grid/client pixels/DPI,
 ordered start/finish times, producer completion/bytes/timestamps, guards and
