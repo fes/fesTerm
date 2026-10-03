@@ -395,9 +395,14 @@ qualification under issue #244. Passing this replay experiment does not mark
 those acceptance criteria complete.
 ## Native font atlas snapshot control
 
-Issue #298 and Proposed [ADR 0043](../../docs/adr/0043-immutable-native-font-atlas-snapshots.md)
-cover immutable font snapshot reuse. The source/provenance patch is documented
-in `vendor/epaint/FESTERM-PATCH.md`; run its independently excluded tests too.
+Issue #298 and [ADR 0043](../../docs/adr/0043-immutable-native-font-atlas-snapshots.md)
+cover immutable font snapshot reuse. The accepted decision covers source
+ownership and pinned vendoring only, not native performance/resource/latency
+qualification. The source/provenance patch is documented in
+`vendor/epaint/FESTERM-PATCH.md`; its independently excluded tests and formatting
+are explicit CI gates. The recorded offscreen receipt remains pinned to its
+historical source/binary; cleaning PR history does not turn it into evidence
+for a new candidate build.
 
 With `FESTERM_RUN_OPTIONAL_VALIDATION=1`, set
 `FESTERM_FONT_ATLAS_PROFILE_OUT` to a **new** directory and run:
