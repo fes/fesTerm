@@ -69,6 +69,13 @@ and a signed static update manifest are published through **GitHub Releases**.
   installation succeeds, fesTerm requests one authorized application close so
   ordinary quit interception cannot prevent the updater from replacing and
   relaunching the running application.
+  Download and consented install actions first refresh the fixed release
+  endpoint. A newer eligible version supersedes a stale offer or cached
+  download and must pass the same artifact verification. Install may fetch
+  that newer artifact under the explicit install consent; a same-version
+  refresh reuses already verified bytes. Refresh/verification failure,
+  withdrawal, invalid versions, or an older refreshed offer abort rather than
+  installing stale cached bytes. No background check downloads or installs.
 - **Installation eligibility:** in-place updates apply only to package formats
   supported by the updater (`app`, `appimage`, `nsis`, or `wix`). A Debian or
   package-manager installation reports availability and directs the user to
@@ -160,10 +167,17 @@ evidence remains validation pending under
   network action.
 - **Automated tests required:** Release CI must validate package contents,
   checksums, signatures, feed completeness, and version agreement. Application
-  tests must prove that checking cannot download, downloading cannot install,
+  tests must prove that checking cannot download, the Download action cannot install,
   live-session restart confirmation gates installation and remains safely
   cancellable, successful installation closes exactly once without a second
   quit prompt, and ineligible package types are never replaced.
+  `downloading_rechecks_and_selects_the_latest_release_without_installing_it`,
+  `installing_rechecks_and_verifies_a_newer_release_instead_of_installing_cached_bytes`,
+  `freshness_failures_never_download_or_install_a_stale_release`,
+  `newer_release_verification_failure_never_installs_the_cached_release`, and
+  `refresh_worker_disconnect_or_stale_completion_discards_cached_install_authority`
+  cover freshness, stale-byte rejection, busy-state serialization, and
+  preservation of explicit install consent.
 - **Native/manual evidence required:** Verify clean install, upgrade,
   cancellation, restart, uninstall, interrupted-download recovery, and
   signature rejection on each platform. Windows evidence must include
