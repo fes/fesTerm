@@ -2887,6 +2887,11 @@ not stop a freshly reconnected process or transport through a stale prompt. If
 the consequence disappears while open, the dialog closes safely or updates
 before accepting action.
 
+Accessibility invocation of a foreground confirmation action follows the same
+Cancel or deliberate-confirm path as pointer and keyboard activation. Terminal
+input blackout must not consume those requests before the dialog renders, nor
+allow terminal-local accessibility controls to activate behind its backdrop.
+
 Cleanup follows bounded backend shutdown policy and cannot hang indefinitely.
 Workspace definitions survive runtime closure; history does not. No
 always-close-without-asking, close-protection, or “don't ask again” preference

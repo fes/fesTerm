@@ -964,6 +964,8 @@
         "direct2d_invalid_overrides_do_not_enable_the_default",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
+        "unsupported_native_palette_returns_to_native_painting",
+        "unsupported_frames_are_distinct_from_native_failures",
         "replay_terminal_tui_workloads",
         "localized_tui_updates_leave_other_rows_unchanged",
         "tui_workloads_preserve_final_state_when_bytes_are_fragmented",
@@ -2083,14 +2085,18 @@
       "decisions": [
         "ADR-0014"
       ],
-      "automated_tests": [],
+      "automated_tests": [
+        "closing_with_a_live_session_shows_aggregate_quit_confirmation",
+        "aggregate_quit_confirmation_is_safe_by_default_and_confirmed_deliberately",
+        "escape_cancels_the_aggregate_quit_confirmation_without_quitting",
+        "aggregate_quit_confirmation_accepts_accessibility_activation",
+        "aggregate_quit_confirmation_accepts_accessibility_cancel",
+        "terminal_modal_blackout_defers_accessibility_without_activating_background_controls"
+      ],
       "manual_scenarios": [
         "AS-08"
       ],
-      "status": "deferred",
-      "prerequisites": [
-        "Aggregate window/application quit confirmation"
-      ]
+      "status": "partial"
     },
     {
       "id": "accessibility",

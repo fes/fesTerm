@@ -23,6 +23,25 @@ An opt-in paced WARP control measures capture, uploads and process CPU separatel
 from callback timing. These mechanisms do not attribute #297's CPU plateau or
 close native-window/resource/latency qualification; see Proposed ADR 0043.
 
+## Letting supported terminal frames return after native refusal
+
+The long-lived WARP CPU investigation identified a concrete path transition:
+one unsupported terminal frame permanently removed Direct2D, even when normal
+content returned. A palette-budget regression reproduced that transition
+without user sessions. Capability refusal is now typed separately from actual
+native failure across the Rust/SDK boundary; sharing an HRESULT is not enough
+to make a device or runtime error recoverable.
+
+Unsupported content retains the exact ordinary frame, drops retained native
+pixels, and permits a later supported frame to draw natively again. Diagnostics
+report entering fallback and resuming, rather than warning on every refused
+frame. Real native failures retain the existing until-restart retirement
+policy. Integrated pixels and executed-frame counters cover refusal followed
+by recovery; strict CPU probes reject refusals instead of accepting mixed-path
+measurements. This repairs a source-backed recovery gap, not a demonstrated
+cause or closure of issue #297's multi-day CPU plateau. Device-loss, sustained
+resource and broader CP-18 evidence remain open.
+
 ## Saving frontend session names without renaming their backends
 
 Chip rename used to change only a live label: it neither dirtied the workspace

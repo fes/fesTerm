@@ -225,7 +225,7 @@ pulse_new_output_dot = true
                 throw 'The foreground fixture did not build Direct2D frames during measurement.'
             }
             if ($RequireDirect2D -and
-                (Select-String -LiteralPath $stdout, $stderr -Pattern 'disabling experimental Direct2D|Direct2D initialization failed|Direct2D state poisoned' -List)) {
+                (Select-String -LiteralPath $stdout, $stderr -Pattern 'unsupported Direct2D frame|disabling experimental Direct2D|Direct2D initialization failed|Direct2D state poisoned' -List)) {
                 throw 'The Direct2D fixture fell back; inspect its logs.'
             }
             $budget = if ($sustained) { $MaximumOutputCpuPercent } else { $MaximumCpuPercent }
