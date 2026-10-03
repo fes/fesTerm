@@ -414,6 +414,9 @@ updates per case at 20 Hz. It requires stable atlas bytes, the exact requested
 native capture count, zero steady-state texture uploads, no missed deadlines,
 and equal final pixels within the existing renderer tolerance. All attempts
 remain in distinct directories; an invalid sample is written before rejection.
+The 256 x 128 target and 30 x 6 grid contain all three synthetic output lines.
+This bounds unrelated WARP composition cost without lowering cadence or dropping
+updates; it does not represent full-size native-window performance.
 
 `results.json` separates atlas capture milliseconds/bytes from whole-process
 CPU per completed frame. `FESTERM_DIRECT2D_TIMINGS` now also records

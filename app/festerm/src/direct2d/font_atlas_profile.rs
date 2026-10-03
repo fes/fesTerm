@@ -44,14 +44,14 @@ fn profile_native_font_atlas_capture() {
     *state.renderer.write() =
         egui_wgpu::Renderer::new(&state.device, state.target_format, Default::default());
     let screen = egui_wgpu::ScreenDescriptor {
-        size_in_pixels: [800, 480],
+        size_in_pixels: [256, 128],
         pixels_per_point: 1.0,
     };
     let target = state.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("font atlas profile"),
         size: wgpu::Extent3d {
-            width: 800,
-            height: 480,
+            width: 256,
+            height: 128,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -74,6 +74,7 @@ fn profile_native_font_atlas_capture() {
             } {
                 let context = egui::Context::default();
                 context.set_visuals(festerm_ui_egui::theme::default_visuals());
+                crate::software_background::install(&context, &state);
                 let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
                 let status = native::install_with_painter_options(
                     &context,
@@ -85,7 +86,7 @@ fn profile_native_font_atlas_capture() {
                     },
                 )
                 .unwrap();
-                let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+                let mut terminal = Terminal::new(Dimensions::new(30, 6).unwrap()).unwrap();
                 terminal.ingest(
                     b"Controlled atlas capture\r\nABCDEFGHIJKLMNOPQRSTUVWXYZ\r\nChanging: 0",
                 );
@@ -93,7 +94,7 @@ fn profile_native_font_atlas_capture() {
                 let input = egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
-                        egui::vec2(800.0, 480.0),
+                        egui::vec2(256.0, 128.0),
                     )),
                     max_texture_side: Some(8192),
                     ..Default::default()
@@ -170,6 +171,7 @@ fn profile_native_font_atlas_capture() {
                 results.push(serde_json::json!({
                     "case":name,"valid":false,"mechanism_sample_valid":valid,"pixels_checked":false,
                     "frames":frames,"late_frames":late_frames,
+                    "viewport_pixels":[256,128],"terminal_grid":[30,6],
                     "atlas_bytes":bytes,"cloned_bytes":copies,"uploaded_textures":uploads,
                     "capture_ms_per_frame":capture_ms/f64::from(frames),
                     "cpu_ms_per_frame":cpu.as_secs_f64()*1000.0/f64::from(frames),
