@@ -93,16 +93,14 @@ pub struct InterfaceSettings {
         skip_serializing_if = "is_true"
     )]
     compact_launcher_grid: bool,
-    /// Whether a background session tab's chip status dot slow-pulses when
-    /// that session has emitted output since the tab was last active
-    /// (feature request #68). On by default: a background session that has
-    /// produced something is the one fact a tab strip cannot otherwise
-    /// convey, and the pulse is slow enough not to compete for attention.
+    // Accept the retired boolean without retaining or writing its value.
     #[serde(
-        default = "default_pulse_new_output_dot",
-        skip_serializing_if = "is_true"
+        default,
+        rename = "pulse_new_output_dot",
+        deserialize_with = "deserialize_retired_pulse",
+        skip_serializing
     )]
-    pulse_new_output_dot: bool,
+    legacy_pulse_new_output_dot: (),
     /// Whether the New Session/Launcher screen surfaces locally running,
     /// unattached `festerm-sessiond` persistence sessions as one-click
     /// "Resume" entries (feature request #70). On by default: a session that
@@ -168,7 +166,7 @@ impl InterfaceSettings {
         scrollback_limit: ScrollbackLimitPreference::MiB64,
         quick_switch_overlay: true,
         compact_launcher_grid: true,
-        pulse_new_output_dot: true,
+        legacy_pulse_new_output_dot: (),
         show_resumable_sessions: true,
         show_durable_session_in_status_bar: false,
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
@@ -248,13 +246,6 @@ impl InterfaceSettings {
     /// multi-column layout for saved profiles (feature request #64).
     pub const fn with_compact_launcher_grid(mut self, compact_launcher_grid: bool) -> Self {
         self.compact_launcher_grid = compact_launcher_grid;
-        self
-    }
-
-    /// Sets whether a background tab's chip status dot slow-pulses when new
-    /// output has arrived since it was last active (feature request #68).
-    pub const fn with_pulse_new_output_dot(mut self, pulse_new_output_dot: bool) -> Self {
-        self.pulse_new_output_dot = pulse_new_output_dot;
         self
     }
 
@@ -345,10 +336,6 @@ impl InterfaceSettings {
 
     pub const fn compact_launcher_grid(&self) -> bool {
         self.compact_launcher_grid
-    }
-
-    pub const fn pulse_new_output_dot(&self) -> bool {
-        self.pulse_new_output_dot
     }
 
     pub const fn show_resumable_sessions(&self) -> bool {
@@ -617,8 +604,11 @@ fn default_compact_launcher_grid() -> bool {
     InterfaceSettings::DEFAULT.compact_launcher_grid
 }
 
-fn default_pulse_new_output_dot() -> bool {
-    InterfaceSettings::DEFAULT.pulse_new_output_dot
+fn deserialize_retired_pulse<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<(), D::Error> {
+    bool::deserialize(deserializer)?;
+    Ok(())
 }
 
 fn default_show_resumable_sessions() -> bool {

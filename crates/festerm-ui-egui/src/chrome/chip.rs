@@ -513,7 +513,7 @@ fn paint_chip_primary_contents(
     if show_number {
         paint_quick_switch_number(ui, chip.quick_switch_number.expect("checked above"));
     } else if !matches!(chip.status, ChipStatus::Neutral) {
-        paint_status_dot(ui, chip.status, chip.pulse_new_output);
+        paint_status_dot(ui, chip.status, chip.has_unread_output);
     }
 
     let rename_id = rename_buffer_id(chip.id);
@@ -593,7 +593,7 @@ fn paint_chip_primary(
 /// Compact, non-color-exclusive connection-state dot, painted directly
 /// rather than relying on a glyph the active font may not have coverage for
 /// (the previous `\u{25cf}` rendered as tofu/an empty box on this machine).
-fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
+fn paint_status_dot(ui: &mut Ui, status: ChipStatus, unread: bool) {
     let diameter = 8.0;
     // Allocate at the primary label's own line height (rather than just
     // the dot's diameter) so this row's cross-axis `Align::Center`
@@ -602,31 +602,11 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
     // sit slightly off from the text's own optical center.
     let text_height = ui.text_style_height(&egui::TextStyle::Body);
     let (rect, response) = ui.allocate_exact_size(vec2(diameter, text_height), Sense::hover());
-    let animate = pulse
-        && ui.style().animation_time > 0.0
-        && ui.input(|input| input.viewport().focused != Some(false));
-    let color = if animate {
-        // Feature request #68: a slow (~2.4s period), smooth fade between
-        // full and low opacity - deliberately slower and gentler than the
-        // fixed-solid connection-state dot so it reads as an ambient "new
-        // output" cue rather than an alarm, and never changes the dot's
-        // hue, which stays reserved for connection-state semantics.
-        let phase = (ui.input(|i| i.time) * std::f64::consts::TAU / 2.4).sin();
-        let alpha = (0.35 + 0.65 * (phase * 0.5 + 0.5)) as f32;
-        let predicted_frame = std::time::Duration::from_secs_f32(ui.input(|i| i.predicted_dt));
-        // egui subtracts predicted_dt; retain a real 30 Hz wait even for slow frames.
-        ui.ctx().request_repaint_after(
-            std::time::Duration::from_secs_f64(1.0 / 30.0) + predicted_frame,
-        );
-        status.color().gamma_multiply(alpha)
-    } else {
-        status.color()
-    };
+    let color = status.color();
     let radius = diameter / 2.0;
     match status.marker() {
         ChipMarker::Filled => {
-            if pulse && !animate {
-                // Preserve a visible unread cue when continuous motion is disabled.
+            if unread {
                 ui.painter().circle_stroke(
                     rect.center(),
                     radius - 0.5,
@@ -666,7 +646,11 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
             ));
         }
     }
-    response.on_hover_text(status.accessible_label());
+    response.on_hover_text(if unread {
+        format!("{} · Unread output", status.accessible_label())
+    } else {
+        status.accessible_label().to_owned()
+    });
 }
 
 /// Overlay painted in the status-dot's slot (or, for `Neutral` chips that
@@ -731,7 +715,7 @@ mod tests {
     use std::time::Duration;
 
     fn dot_frame(
-        pulse: bool,
+        unread: bool,
         animation_time: f32,
         focused: bool,
         time: f64,
@@ -752,12 +736,12 @@ mod tests {
             .focused = Some(focused);
         for _ in 0..3 {
             let mut output = context.run_ui(input.clone(), |ui| {
-                paint_status_dot(ui, ChipStatus::Connected, pulse);
+                paint_status_dot(ui, ChipStatus::Connected, unread);
             });
             output.textures_delta.clear();
         }
         let mut output = context.run_ui(input, |ui| {
-            paint_status_dot(ui, ChipStatus::Connected, pulse);
+            paint_status_dot(ui, ChipStatus::Connected, unread);
         });
         output.textures_delta.clear();
         output
@@ -775,36 +759,23 @@ mod tests {
     }
 
     #[test]
-    fn unread_pulse_schedules_a_bounded_frame_even_when_rendering_is_slow() {
-        for predicted_dt in [0.0, 1.0 / 60.0, 0.2] {
-            let output = dot_frame(true, 0.5, true, 0.6, predicted_dt);
-            assert_eq!(
-                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
-                Duration::from_secs_f64(1.0 / 30.0)
-            );
+    fn unread_status_marker_never_schedules_animation_frames() {
+        for animation_time in [0.0, 0.5] {
+            for focused in [false, true] {
+                for predicted_dt in [0.0, 1.0 / 60.0, 0.2] {
+                    let output = dot_frame(true, animation_time, focused, 0.6, predicted_dt);
+                    assert_eq!(
+                        output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                        Duration::MAX
+                    );
+                }
+            }
         }
     }
 
     #[test]
-    fn unread_pulse_keeps_its_period_color_and_geometry() {
-        let bright = circles(&dot_frame(true, 0.5, true, 0.6, 0.0));
-        let dim = circles(&dot_frame(true, 0.5, true, 1.8, 0.0));
-        let next_period = circles(&dot_frame(true, 0.5, true, 3.0, 0.0));
-        assert_eq!(bright.len(), 1);
-        assert_eq!(dim.len(), 1);
-        assert_eq!(bright, next_period);
-        assert_eq!(bright[0].center, dim[0].center);
-        assert_eq!(bright[0].radius, dim[0].radius);
-        assert_eq!(bright[0].fill, ChipStatus::Connected.color());
-        assert_eq!(
-            dim[0].fill,
-            ChipStatus::Connected.color().gamma_multiply(0.35)
-        );
-    }
-
-    #[test]
-    fn reduced_motion_and_unfocused_windows_keep_a_static_unread_marker() {
-        for (animation_time, focused) in [(0.0, true), (0.5, false)] {
+    fn unread_status_marker_keeps_its_color_and_geometry_across_focus_and_time() {
+        for (animation_time, focused) in [(0.0, true), (0.5, false), (0.5, true)] {
             let early = dot_frame(true, animation_time, focused, 0.6, 0.0);
             let later = dot_frame(true, animation_time, focused, 1.8, 0.0);
             assert_eq!(

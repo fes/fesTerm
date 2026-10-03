@@ -4755,12 +4755,7 @@ impl FesTermApp {
                 // Launcher/Settings/Profiles, so moving one between windows
                 // would only take a surface away from its source window.
                 let movable_across_windows = tab.content.movable_across_windows();
-                // Feature request #68: only a background session tab with
-                // unseen output pulses, and only when the preference is on.
-                // The active tab's own chip never pulses - there is nothing
-                // to notify the user of while they're already looking at it.
-                let pulse_new_output = self.state.pulse_new_output_dot()
-                    && tab.id != self.state.active()
+                let has_unread_output = tab.id != self.state.active()
                     && matches!(
                         &tab.content,
                         TabContent::Session(session) if session.has_new_output_since_active
@@ -4784,7 +4779,7 @@ impl FesTermApp {
                                 == action.default_chord(cfg!(target_os = "macos"))
                         })
                         .map(|_| (index + 1) as u8),
-                    pulse_new_output,
+                    has_unread_output,
                 }
             })
             .collect();
@@ -5711,7 +5706,6 @@ impl FesTermApp {
                             scrollback_limit: self.state.scrollback_limit(),
                             quick_switch_overlay: self.state.quick_switch_overlay(),
                             compact_launcher_grid: self.state.compact_launcher_grid(),
-                            pulse_new_output_dot: self.state.pulse_new_output_dot(),
                             show_resumable_sessions: self.state.show_resumable_sessions(),
                             show_durable_session_in_status_bar: self
                                 .state
@@ -6025,7 +6019,6 @@ impl FesTermApp {
                 | AppCommand::TogglePreferPowershell
                 | AppCommand::ToggleQuickSwitchOverlay
                 | AppCommand::ToggleCompactLauncherGrid
-                | AppCommand::TogglePulseNewOutputDot
                 | AppCommand::ToggleShowResumableSessions
                 | AppCommand::ToggleDurableSessionInStatusBar
                 | AppCommand::ToggleCustomizeLocalShell
@@ -10602,36 +10595,15 @@ mod tests {
     }
 
     #[test]
-    fn chip_pulses_only_for_a_background_session_with_new_output_and_the_preference_on() {
-        // Feature request #68: `chip_view_models` gates the pulse flag on
-        // (a) the "pulse on new output" preference being on, (b) the tab
-        // being a session with unseen output, and (c) that tab NOT being
-        // the currently active one - the active tab's own chip must never
-        // pulse even if its flag happens to be set.
+    fn chip_marks_only_a_background_session_with_unread_output() {
         let context = egui::Context::default();
         let (mut app, first) = FesTermApp::for_test_with_live_session(&context);
         app.state.dispatch(AppCommand::StartLocalSession, &context);
         let second = app.state.active();
 
-        // Preference off: even a flagged background tab does not pulse.
-        app.state
-            .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
-        assert!(!app.state.interface_settings().pulse_new_output_dot());
         if let Some(session) = app.state.session_tab_mut(first) {
             session.has_new_output_since_active = true;
         }
-        let (chips, _) = app.chip_view_models();
-        assert!(
-            chips.iter().all(|chip| !chip.pulse_new_output),
-            "no chip should pulse while the preference is off"
-        );
-
-        // Preference on: the flagged background tab (`first`) pulses, but
-        // the active tab (`second`) never does, even if its own flag were
-        // also set.
-        app.state
-            .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
-        assert!(app.state.interface_settings().pulse_new_output_dot());
         if let Some(session) = app.state.session_tab_mut(second) {
             session.has_new_output_since_active = true;
         }
@@ -10645,20 +10617,24 @@ mod tests {
             .find(|chip| chip.id == active_chip)
             .expect("expected the active chip");
         assert!(
-            first_chip.pulse_new_output,
-            "a flagged background tab must pulse when the preference is on"
+            first_chip.has_unread_output,
+            "a flagged background tab must show its unread marker"
         );
         assert!(
-            !second_chip.pulse_new_output,
-            "the active tab's own chip must never pulse"
+            !second_chip.has_unread_output,
+            "the active tab's own chip must never show unread output"
         );
+        app.state.dispatch(AppCommand::ActivateTab(first), &context);
+        let (chips, _) = app.chip_view_models();
+        assert!(chips
+            .iter()
+            .find(|chip| chip.id == ChipId(first.chip_id()))
+            .is_some_and(|chip| !chip.has_unread_output));
     }
 
     #[test]
     fn modest_background_session_output_sets_the_new_output_flag_via_real_pump() {
-        // Regression test for a bug (user-reported: the pulse never showed
-        // despite the preference being on and background tabs producing
-        // output) where `pump_all_sessions` gated `has_new_output_since_active`
+        // Regression test for a bug where `pump_all_sessions` gated `has_new_output_since_active`
         // on `SessionController::pump_events`'s own `bool` return value -
         // which only reports whether the bounded per-frame drain hit
         // `MAX_SESSION_EVENTS_PER_FRAME` (a backpressure signal), not "did
@@ -10670,10 +10646,6 @@ mod tests {
         // than racing a shell's startup prompt or manually setting the flag.
         let context = egui::Context::default();
         let (mut app, first, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
-        assert!(
-            app.state.interface_settings().pulse_new_output_dot(),
-            "this test needs the preference on"
-        );
         app.state.dispatch(AppCommand::OpenLauncher, &context);
         let second_transport = crate::session_controller::fake::FakeSshSession::new([]);
         let second = app.state.replace_active_with_test_ssh_session(
@@ -10693,8 +10665,8 @@ mod tests {
             chips
                 .iter()
                 .find(|chip| chip.id == ChipId(first.chip_id()))
-                .is_some_and(|chip| chip.pulse_new_output),
-            "a background tab's modest output must set the pulse flag"
+                .is_some_and(|chip| chip.has_unread_output),
+            "a background tab's modest output must set the unread flag"
         );
     }
 
@@ -12750,7 +12722,7 @@ mod tests {
 
     #[test]
     fn every_interface_toggle_survives_a_restart() {
-        // Five Interface toggles used to fall through the generic dispatch
+        // Interface toggles used to fall through the generic dispatch
         // arm, which changes the running app but never writes the choice out,
         // so the setting quietly came back on the next launch. Each one is
         // clicked here through the real control and read back from disk.
@@ -12782,7 +12754,6 @@ mod tests {
         for label in [
             "Show quick-switch numbers",
             "Compact New Session layout",
-            "Pulse status dot on new background output",
             "Resume unattached local sessions from New Session",
             "Show durable session name in status bar",
         ] {
@@ -12798,7 +12769,6 @@ mod tests {
         let settings = saved.interface_settings();
         assert!(!settings.quick_switch_overlay());
         assert!(!settings.compact_launcher_grid());
-        assert!(!settings.pulse_new_output_dot());
         assert!(!settings.show_resumable_sessions());
         assert!(settings.show_durable_session_in_status_bar());
         fs::remove_dir_all(directory).unwrap();

@@ -10,18 +10,18 @@
       "width": 1000,
       "height": 52,
       "tier": "headless",
-      "sha256": "da2a280335752dd6a116a04bc4bfa5e5c126ee2be08a3d446264917cd6f31641"
+      "sha256": "7452372a74d0a0e0fe1cd5e9ec6d16442f95df1eae8f4c8e2fc879aac6be2088"
     },
     {
       "id": "chips-update-badge",
       "section": "chips",
       "title": "Update-available badge on the overflow control",
-      "caption": "After a background check finds a newer release, the 'More actions' control carries a single accent dot until the user opens About; its menu gains an 'Update to fesTerm 0.3.0…' entry above the usual items.",
+      "caption": "After a background check finds a newer release, the 'More actions' control carries a single accent dot until the user opens About; its menu gains an 'Update to fesTerm 0.3.0\u2026' entry above the usual items.",
       "image": "chips-update-badge.png",
       "width": 1000,
       "height": 58,
       "tier": "headless",
-      "sha256": "ae8310242189455dc75500b49d47a524648d36e955832c1d60479211d9ca591f"
+      "sha256": "88eacd7952b7a0df489a3d624b6341771d274676280bf45ec805f695116e3ce8"
     },
     {
       "id": "chips-verbose",
@@ -32,7 +32,7 @@
       "width": 1000,
       "height": 58,
       "tier": "headless",
-      "sha256": "860a0a87c5c827dd0b4eb9031404ef826e82f12119c18d3527b1e4d37cf01c3f"
+      "sha256": "bfb4a6c5c41f6271c8c4133e5067fbfdfaac618154f5c6df75d2dd932128213c"
     },
     {
       "id": "serial-connect-form",
@@ -437,9 +437,9 @@
       "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
       "image": "settings-interface-scrolling.png",
       "width": 874,
-      "height": 1328,
+      "height": 1172,
       "tier": "headless",
-      "sha256": "e0aa097f21384888a8330f7bf6f16db5502fd750152515e52ca245bb2b72ae03"
+      "sha256": "67fd475ec41b61ebe56ce19f523bfd4de0030dcc183322ba10a4539a2a366d24"
     },
     {
       "id": "settings-quick-switch",
@@ -450,7 +450,7 @@
       "width": 874,
       "height": 105,
       "tier": "headless",
-      "sha256": "97fd163333bed6d91366352fdc110c21c16ba91a8d60334c49f8327d48a928bc"
+      "sha256": "7271a9e994a1da49283eda52ddea9dc76ff190515db01345dd665502ba59b8eb"
     },
     {
       "id": "settings-sftp-card",
@@ -461,7 +461,7 @@
       "width": 874,
       "height": 178,
       "tier": "headless",
-      "sha256": "d70e7fd98514f7b33c6ab38ee05ecbbf64df11805d9f8f4fc0154c2c832dff8b"
+      "sha256": "a0ab1da46c6036c7df8faa7333f5cbbf3b4476fdfd3647b1ad4ab9af1c8d9733"
     },
     {
       "id": "settings-terminal-typography",
@@ -472,7 +472,7 @@
       "width": 874,
       "height": 233,
       "tier": "headless",
-      "sha256": "c3459217702966149d1e4bfc3b7cc8b61275327c307d07eb28a07e25beeec6d9"
+      "sha256": "835d50b9304b60a587e2382355e33124912e86ab110e65bdb482bcc7007d15ed"
     },
     {
       "id": "sftp-workspace-browser",

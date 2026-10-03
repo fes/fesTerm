@@ -37,7 +37,6 @@ pub(crate) struct SettingsViewModel {
     pub scrollback_limit: ScrollbackLimitPreference,
     pub quick_switch_overlay: bool,
     pub compact_launcher_grid: bool,
-    pub pulse_new_output_dot: bool,
     pub show_resumable_sessions: bool,
     pub show_durable_session_in_status_bar: bool,
     pub automatic_update_checks: bool,
@@ -74,7 +73,6 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         scrollback_limit,
         quick_switch_overlay,
         compact_launcher_grid,
-        pulse_new_output_dot,
         show_resumable_sessions,
         show_durable_session_in_status_bar,
         automatic_update_checks,
@@ -260,21 +258,6 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 compact_launcher_grid,
                             ) {
                                 command = Some(AppCommand::ToggleCompactLauncherGrid);
-                            }
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            if settings_toggle_row(
-                                ui,
-                                "Pulse status dot on new background output",
-                                "Slow-pulse a background tab's chip status dot when that \
-                                 session has produced output since you last looked at it, \
-                                 so it can quietly draw your eye without changing its \
-                                 connection-state color. The active tab's own chip never \
-                                 pulses. Off by default.",
-                                pulse_new_output_dot,
-                            ) {
-                                command = Some(AppCommand::TogglePulseNewOutputDot);
                             }
                             ui.add_space(10.0);
                             ui.separator();
@@ -989,7 +972,6 @@ mod tests {
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
-                            pulse_new_output_dot: false,
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,
@@ -1273,10 +1255,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_toggle_pulse_new_output_dot_control_returns_the_toggle_command() {
-        // Regression test for the "Pulse status dot on new background
-        // output" preference (feature request #68): off by default, with
-        // its own explicit toggle in the Interface card.
+    fn settings_omit_the_retired_unread_pulse_toggle() {
         let mut harness = settings_harness();
         harness.run();
 
@@ -1285,20 +1264,7 @@ mod tests {
                 accesskit::Role::CheckBox,
                 "Pulse status dot on new background output"
             )
-            .is_some());
-
-        harness
-            .get_by_role_and_label(
-                accesskit::Role::CheckBox,
-                "Pulse status dot on new background output",
-            )
-            .click();
-        harness.run();
-
-        assert!(matches!(
-            harness.state().command,
-            Some(AppCommand::TogglePulseNewOutputDot)
-        ));
+            .is_none());
     }
 
     /// The default window is `DEFAULT_WINDOW_WIDTH` wide (see `main.rs`), and
@@ -1652,7 +1618,6 @@ mod tests {
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
-                            pulse_new_output_dot: false,
                             show_resumable_sessions: false,
                             show_durable_session_in_status_bar: false,
                             automatic_update_checks: false,

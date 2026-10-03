@@ -444,7 +444,7 @@ pub struct SessionController<S: Session> {
     /// only reports whether the bounded per-frame drain was exhausted -
     /// true for backpressure, not for "any output arrived"). Callers that
     /// want to know whether new session output landed this frame (e.g. the
-    /// background-tab "new output" chip pulse, feature request #68) must
+    /// background-tab "new output" chip marker, feature request #68) must
     /// read this rather than `pump_events`'s own return value.
     last_pump_output_received: bool,
 }
@@ -657,7 +657,7 @@ impl<S: Session> SessionController<S> {
     /// well under [`MAX_SESSION_EVENTS_PER_FRAME`] and reports `false` here
     /// even though real output was ingested. Callers that need to know
     /// whether output arrived this call (e.g. the background-tab "new
-    /// output" chip pulse) must read [`Self::last_pump_output_received`]
+    /// output" chip marker) must read [`Self::last_pump_output_received`]
     /// instead of this return value.
     pub fn pump_events(&mut self, terminal: &mut Terminal) -> bool {
         self.pump_events_with_resize(terminal, |terminal, dimensions| {
@@ -2433,7 +2433,7 @@ mod tests {
         // cap and reports `false` here even though real output was
         // ingested. `last_pump_output_received()` is the correct signal for
         // "did output arrive this call" (e.g. the background-tab "new
-        // output" chip pulse, feature request #68 - see the regression test
+        // output" chip marker, feature request #68 - see the regression test
         // below for the bug this previously caused).
         assert!(!hit_limit);
         assert!(controller.last_pump_output_received());
@@ -2444,11 +2444,11 @@ mod tests {
 
     #[test]
     fn modest_background_output_is_not_lost_behind_the_backpressure_signal() {
-        // Regression test for a bug where the chip "new output" pulse
+        // Regression test for a bug where the chip "new output" marker
         // (feature request #68) was gated on `pump_events`'s own `bool`
         // return, which only reports whether the bounded per-frame drain
         // hit `MAX_SESSION_EVENTS_PER_FRAME` - so any burst under that cap
-        // (i.e. almost all ordinary output) never set the pulse flag.
+        // (i.e. almost all ordinary output) never set the unread flag.
         // `last_pump_output_received()` must report the output regardless
         // of whether the per-frame cap was hit.
         let session = FakeSession::new([SessionEvent::Output(b"a few lines\r\n".to_vec())]);

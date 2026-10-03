@@ -570,8 +570,8 @@ pub struct SessionTab {
     /// Whether this session has emitted output since the tab was last the
     /// active/focused tab (feature request #68). Set whenever output is
     /// pumped into a *non-active* tab's terminal; cleared whenever the tab
-    /// becomes active. Purely a presentation cue for the chip's slow-pulse
-    /// animation — it never changes `ChipStatus`/connection-state semantics.
+    /// becomes active. Purely a presentation cue for the chip's static unread
+    /// marker — it never changes `ChipStatus`/connection-state semantics.
     pub has_new_output_since_active: bool,
     /// Terminal-content find-bar state (`docs/gui-design.md`
     /// "Terminal-content search"). Never logged or persisted.
@@ -2214,10 +2214,6 @@ pub enum AppCommand {
     /// multi-column layout for saved profiles when the window is wide
     /// enough (feature request #64).
     ToggleCompactLauncherGrid,
-    /// Toggles whether a background session tab's chip status dot
-    /// slow-pulses when that session has emitted output since the tab was
-    /// last active (feature request #68).
-    TogglePulseNewOutputDot,
     /// Toggles whether the New Session/Launcher screen surfaces locally
     /// running, unattached `festerm-sessiond` sessions as one-click
     /// "Resume" entries (feature request #70).
@@ -2498,7 +2494,6 @@ pub struct AppState {
     editor: festerm_config::EditorSettings,
     quick_switch_overlay: bool,
     compact_launcher_grid: bool,
-    pulse_new_output_dot: bool,
     /// Whether the New Session/Launcher screen surfaces locally running,
     /// unattached `festerm-sessiond` sessions as one-click "Resume" entries
     /// (feature request #70).
@@ -2597,7 +2592,6 @@ impl AppState {
             editor: settings.editor(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
-            pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
             show_durable_session_in_status_bar: settings.show_durable_session_in_status_bar(),
             automatic_update_checks: settings.automatic_update_checks(),
@@ -2868,7 +2862,6 @@ impl AppState {
         self.editor = settings.editor();
         self.quick_switch_overlay = settings.quick_switch_overlay();
         self.compact_launcher_grid = settings.compact_launcher_grid();
-        self.pulse_new_output_dot = settings.pulse_new_output_dot();
         self.show_resumable_sessions = settings.show_resumable_sessions();
         self.show_durable_session_in_status_bar = settings.show_durable_session_in_status_bar();
         self.automatic_update_checks = settings.automatic_update_checks();
@@ -3066,10 +3059,6 @@ impl AppState {
         self.compact_launcher_grid
     }
 
-    pub const fn pulse_new_output_dot(&self) -> bool {
-        self.pulse_new_output_dot
-    }
-
     pub const fn show_resumable_sessions(&self) -> bool {
         self.show_resumable_sessions
     }
@@ -3118,7 +3107,6 @@ impl AppState {
         .with_scrollback_limit(self.scrollback_limit)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
-        .with_pulse_new_output_dot(self.pulse_new_output_dot)
         .with_show_resumable_sessions(self.show_resumable_sessions)
         .with_show_durable_session_in_status_bar(self.show_durable_session_in_status_bar)
         .with_automatic_update_checks(self.automatic_update_checks)
@@ -3549,9 +3537,6 @@ impl AppState {
             AppCommand::ToggleCompactLauncherGrid => {
                 self.compact_launcher_grid = !self.compact_launcher_grid;
             }
-            AppCommand::TogglePulseNewOutputDot => {
-                self.pulse_new_output_dot = !self.pulse_new_output_dot;
-            }
             AppCommand::ToggleShowResumableSessions => {
                 self.show_resumable_sessions = !self.show_resumable_sessions;
             }
@@ -3652,7 +3637,6 @@ impl AppState {
                 self.editor = InterfaceSettings::DEFAULT.editor();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
-                self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
                 self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
                 self.show_durable_session_in_status_bar =
                     InterfaceSettings::DEFAULT.show_durable_session_in_status_bar();
@@ -7982,21 +7966,6 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert_eq!(state.scrollback_limit(), ScrollbackLimitPreference::MiB64);
-    }
-
-    #[test]
-    fn toggle_pulse_new_output_dot_flips_state_and_resets_to_on() {
-        // Feature request #68.
-        let context = egui::Context::default();
-        let mut state = AppState::for_test();
-        assert!(state.pulse_new_output_dot());
-
-        state.dispatch(AppCommand::TogglePulseNewOutputDot, &context);
-        assert!(!state.pulse_new_output_dot());
-        assert!(!state.interface_settings().pulse_new_output_dot());
-
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
-        assert!(state.pulse_new_output_dot());
     }
 
     #[test]

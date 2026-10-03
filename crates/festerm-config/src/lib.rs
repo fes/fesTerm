@@ -3062,40 +3062,24 @@ schema_version = 99
     }
 
     #[test]
-    fn pulse_new_output_dot_preference_round_trips_through_toml_and_defaults_to_on() {
-        // Feature request #68.
-        let settings = InterfaceSettings::DEFAULT.with_pulse_new_output_dot(false);
-        let configuration = Configuration::empty()
-            .with_interface_settings(settings.clone())
-            .unwrap();
-
-        let serialized = configuration.to_toml().unwrap();
-
-        assert!(serialized.contains("pulse_new_output_dot = false"));
-        assert_eq!(
-            Configuration::parse(&serialized)
-                .unwrap()
-                .interface_settings()
-                .clone(),
-            settings
-        );
-
-        // A settings table with no `pulse_new_output_dot` key takes the
-        // current default rather than a historical one.
-        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
-        assert!(Configuration::parse(older_document)
-            .unwrap()
-            .interface_settings()
-            .pulse_new_output_dot());
-
-        // The default is omitted from serialization entirely, so only a
-        // user who turned this off leaves a key behind.
-        let default_serialized = Configuration::empty()
-            .with_interface_settings(InterfaceSettings::DEFAULT)
-            .unwrap()
-            .to_toml()
-            .unwrap();
-        assert!(!default_serialized.contains("pulse_new_output_dot"));
+    fn retired_pulse_setting_loads_without_affecting_or_serializing_settings() {
+        for value in ["true", "false"] {
+            let document =
+                format!("schema_version = 1\n\n[settings]\npulse_new_output_dot = {value}\n");
+            let configuration = Configuration::parse(&document).unwrap();
+            assert_eq!(
+                configuration.interface_settings(),
+                &InterfaceSettings::DEFAULT
+            );
+            let serialized = configuration.to_toml().unwrap();
+            assert!(!serialized.contains("pulse_new_output_dot"));
+            assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        }
+        for value in ["\"false\"", "123"] {
+            let document =
+                format!("schema_version = 1\n\n[settings]\npulse_new_output_dot = {value}\n");
+            assert!(Configuration::parse(&document).is_err());
+        }
     }
 
     #[test]
