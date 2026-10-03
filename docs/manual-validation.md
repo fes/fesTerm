@@ -103,7 +103,14 @@ capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
 cover ownership, failure reporting and cleanup; actual execution is an iOS CI
 gate. The manifest and PNGs are review evidence, not automatic rendering,
 keyboard or lifecycle acceptance. Physical-device and most interaction
-evidence above remains pending. A local iPhone 17/iOS 26.5/Xcode 27 run
+evidence above remains pending. CI pins Xcode 16.4 and runs read-only
+`--prepare-only` before compilation to initialize cold CoreSimulator caches
+(runner-images #12862; local tracker #303). Preparation has a separate 180-second
+bound, produces `prepared` rather than app `pass` evidence, and never retries or
+mutates existing devices. The subsequent inventory, application and capture
+deadlines and all ownership/UI/cleanup checks remain unchanged. Failed
+preparation and command durations are retained in the same evidence artifact.
+A local iPhone 17/iOS 26.5/Xcode 27 run
 visually covered Terminal, Compact stacked Files, Markdown wrapping and
 Contents/heading activation; it does not qualify iPad, rotation, Dynamic Type,
 VoiceOver or a physical device. The `c7ecb14` run diagnosed a renderer initialization
@@ -629,7 +636,7 @@ these tests. A replacement handshake can pause daemon processing for up to
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
-| CP-16 | On a Windows software-rendered desktop, leave a maximized Launcher with unchanged Running Sessions idle, then leave a second maximized window on Launcher with an idle background PowerShell tab that has unread startup output. Confirm low CPU, preserved session discovery, and a visible static ring-and-dot unread cue. On an accelerated display, confirm the slow pulse, focus-loss static cue, and immediate clearing on tab activation. Compare chrome, text, and window geometry before/after at ordinary and high DPI. | Native performance + visual + usability | `scripts/check-windows-idle-rendering.ps1` (also in the opt-in Windows suite) measures both cases with isolated configurations and a default 5% total-machine CPU ceiling; `-RequireSoftwareRenderer` rejects hardware-only evidence. Deterministic tests assert pulse cadence, fixed-time color/geometry, and reduced-motion/static markers. Native readability, smoothness, mixed-DPI appearance, and accelerated-device behavior still require visual review. Sustained-output rendering cost is covered separately by CP-17, not this idle budget. |
+| CP-16 | On a Windows software-rendered desktop, leave a maximized Launcher with unchanged Running Sessions idle, then leave a second maximized window on Launcher with an idle background PowerShell tab that has unread startup output. Confirm low CPU, preserved session discovery, and a visible static ring-and-dot unread cue. On accelerated displays, including macOS, confirm the same static cue regardless of focus and immediate clearing on tab activation. Confirm Settings has no unread-pulse control. Compare chrome, text, and window geometry before/after at ordinary and high DPI. | Native performance + visual + usability | `scripts/check-windows-idle-rendering.ps1` (also in the opt-in Windows suite) measures both cases with isolated configurations and a default 5% total-machine CPU ceiling; `-RequireSoftwareRenderer` rejects hardware-only evidence. Deterministic tests assert no animation repaint scheduling, fixed color/geometry across time and focus, activation clearing, and retired-setting migration. Native readability, mixed-DPI appearance, and accelerated-device behavior still require visual review. Sustained-output rendering cost is covered separately by CP-17, not this idle budget. |
 | CP-17 | On a Windows software-rendered desktop, run the controlled 10 Hz foreground-output fixture in a maximized window without interacting with it. Confirm reduced CPU while output keeps updating and the terminal background, text, cursor, clipping, overlays and window transparency remain correct. Repeat moving between DPI scales and opening another window. | Native performance + visual | `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -RequireSoftwareRenderer` measures CPU and GUI frame construction (defaults: at most 30% total CPU and at least 5 GUI frames/s). Headless GPU readback compares native and ordinary painting pixel-for-pixel, with a visible colored-text oracle, at 100%, 125% and 200% scale, clipped/unclipped and enabled/disabled, including a translucent overlay. sRGB/other formats retain the ordinary path. Native multi-window/mixed-DPI interaction and dense-output workloads remain additional evidence; the frame counter is not an OS presentation-latency measurement. |
 
 The #242 hot-stack follow-up identified WARP pixel-rasterization work continuing
@@ -672,6 +679,24 @@ mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remai
 unchanged; no new latency budgets are implied.
 
 ### Experimental Direct2D qualification
+
+Issue #298's font-atlas copy mechanism has deterministic coverage for trusted
+revision invalidation, same-frame glyph pixels, DPI/font changes, unchanged
+snapshot identity, preserved ordinary font deltas, 64 MiB retention and painter
+teardown. Native upload/retained-frame tests cover equal-Arc adoption and changed
+alpha pixels without changing older surfaces. The opt-in
+`profile_native_font_atlas_capture` compares cache-disabled and cached capture
+at identical 20 Hz cadence with small/grown atlases, actual native frames,
+capture bytes/time, uploads and process CPU. It is offscreen mechanism evidence,
+not a native-window comparison, sustained resource acceptance, physical latency
+or attribution of #297. CP-18 and those remaining native/manual checks stay open;
+see ADR 0043's accepted snapshot ownership/vendoring contract and
+`validation/direct2d/README.md`; that disposition accepts no native
+performance/resource/presentation gate.
+The 2026-10-03 source-bound eight-case offscreen control passed copy/upload,
+pixel and unchanged-cadence checks, but failed the external quiet-host guard.
+Only its deterministic mechanism evidence is recorded; process-CPU improvement
+remains unqualified pending an exclusively quiet host.
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes
 share `scripts/windows-application-window.ps1`. A native Win32 regression

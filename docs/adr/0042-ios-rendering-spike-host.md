@@ -208,6 +208,9 @@ accessibility and physical-device acceptance remain open on iPad.
   `transfer_progress_is_monotonic_and_completes`,
   `markdown_fixture_uses_shared_parser_and_has_navigable_contents`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link;
+  portable Simulator policy regressions
+  `test_ios_smoke_read_only_preparation_is_not_application_evidence` and
+  `test_ios_smoke_preparation_cannot_build_or_run_an_application`;
   `scripts/tests/test_ios_simulator_smoke.py` for isolated device ownership,
   runtime selection, failure/cleanup behavior and live-process-without-UI rejection; `scripts/smoke-ios-simulator.py
   --run` for iPhone/iPad launch-survival, first UI callback, terminate/relaunch

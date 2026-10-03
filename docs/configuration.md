@@ -271,14 +271,16 @@ default `"jetbrains-mono"`), `terminal_ligatures` (default `true`),
 default `"64-mib"`),
 `scroll_speed` (`"very-slow"`, `"slow"`, `"normal"`, `"fast"`, or
 `"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `true`),
-`compact_launcher_grid` (default `true`), `pulse_new_output_dot`
-(default `true`), and `show_resumable_sessions` (default `true`). They
+`compact_launcher_grid` (default `true`), and `show_resumable_sessions`
+(default `true`). They
 mirror the current Settings controls for chip layout, chip details, the
 status bar, live-session close confirmation, workspace restoration, compact
-Launcher layout, background-output chip pulsing, resumable local-session
+Launcher layout, resumable local-session
 surfacing, terminal-only typography, keyboard quick-switch overlays, and
-scrollback scroll speed. Unread-output pulses are rate-limited; an unfocused
-window or reduced-motion style uses a static ring-and-dot marker instead.
+scrollback scroll speed. Unread background output always uses a static
+ring-and-dot marker, independent of focus, renderer, and reduced motion. Tab
+activation clears it. The retired `pulse_new_output_dot` boolean is accepted
+when loading older files, ignored, and omitted from subsequent saves.
 Software rendering adapters automatically select reduced motion for the
 current process without changing the saved preference. They also use a
 solid-color fast path for opaque default terminal backgrounds on supported

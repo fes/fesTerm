@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Sink;
+pub(super) struct Sink;
 impl EncodedInputSink for Sink {
     fn record_encoded_input(&mut self, _: &[u8]) {}
     fn terminal_resizes_owned_by_backend(&self) -> bool {
