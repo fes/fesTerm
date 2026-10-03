@@ -89,6 +89,15 @@ identity; original measured proofs, reports and public evidence retain their
 original hashes. The failed Windows logs do not uniquely identify the missing
 file or whether cache state or test ordering produced the ownerless parent.
 
+The Windows owned-style capture protocol likewise uses a private, RAII-owned
+real Git/Cargo workspace, with a flat layout to preserve that protocol's
+unchanged stricter path policy. It asserts cold namespace creation and refusal
+of a pre-existing control directory without an ownership record before running
+the existing identity, junction, retained-input and cleanup checks. Shared or
+restored Cargo output cannot supply that test's control ownership. Missing
+style-fixture diagnostics include the actual owned path; the protocol never
+repairs or adopts an unowned directory.
+
 ### Render-local code-header caption: matched evidence
 
 The focused caption follow-up retains the original 12-scene profile and the
