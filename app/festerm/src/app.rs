@@ -9230,6 +9230,39 @@ mod tests {
         assert!(harness.state().quit_confirmed);
     }
 
+    #[test]
+    fn aggregate_quit_confirmation_accepts_accessibility_activation() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.evaluate_close_request(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness.get_by_label("Quit fesTerm").click_accesskit();
+        harness.run();
+        assert!(harness.state().overlays.pending_quit.is_none());
+        assert!(harness.state().quit_confirmed);
+    }
+
+    #[test]
+    fn aggregate_quit_confirmation_accepts_accessibility_cancel() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.evaluate_close_request(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness.get_by_label("Cancel").click_accesskit();
+        harness.run();
+        assert!(harness.state().overlays.pending_quit.is_none());
+        assert!(!harness.state().quit_confirmed);
+        assert!(harness.state().state.session_tab(tab).is_some());
+    }
+
     /// A directory with one Markdown file in it, opened in an editor tab, with
     /// the application ready to render.
     fn app_with_open_editor(

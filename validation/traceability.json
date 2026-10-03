@@ -2076,14 +2076,18 @@
       "decisions": [
         "ADR-0014"
       ],
-      "automated_tests": [],
+      "automated_tests": [
+        "closing_with_a_live_session_shows_aggregate_quit_confirmation",
+        "aggregate_quit_confirmation_is_safe_by_default_and_confirmed_deliberately",
+        "escape_cancels_the_aggregate_quit_confirmation_without_quitting",
+        "aggregate_quit_confirmation_accepts_accessibility_activation",
+        "aggregate_quit_confirmation_accepts_accessibility_cancel",
+        "terminal_modal_blackout_defers_accessibility_without_activating_background_controls"
+      ],
       "manual_scenarios": [
         "AS-08"
       ],
-      "status": "deferred",
-      "prerequisites": [
-        "Aggregate window/application quit confirmation"
-      ]
+      "status": "partial"
     },
     {
       "id": "accessibility",
