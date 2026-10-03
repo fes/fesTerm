@@ -1,0 +1,12 @@
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\unicode_general_category-e53c55988bba2f95.d: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\category.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\tables.rs Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\unicode-general-category-a438dd5a98bb9e22\out/category.rs
+
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\libunicode_general_category-e53c55988bba2f95.rlib: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\category.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\tables.rs Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\unicode-general-category-a438dd5a98bb9e22\out/category.rs
+
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\libunicode_general_category-e53c55988bba2f95.rmeta: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\category.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\tables.rs Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\unicode-general-category-a438dd5a98bb9e22\out/category.rs
+
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\lib.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\category.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\unicode-general-category-1.1.0\src\tables.rs:
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\unicode-general-category-a438dd5a98bb9e22\out/category.rs:
+
+# env-dep:OUT_DIR=Q:\\src\\OSS\\fesTerm-ui-fleet\\warp-atlas\\vendor\\epaint\\target\\debug\\build\\unicode-general-category-a438dd5a98bb9e22\\out

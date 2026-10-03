@@ -673,6 +673,18 @@ unchanged; no new latency budgets are implied.
 
 ### Experimental Direct2D qualification
 
+Issue #298's font-atlas copy mechanism has deterministic coverage for trusted
+revision invalidation, same-frame glyph pixels, DPI/font changes, unchanged
+snapshot identity, preserved ordinary font deltas, 64 MiB retention and painter
+teardown. Native upload/retained-frame tests cover equal-Arc adoption and changed
+alpha pixels without changing older surfaces. The opt-in
+`profile_native_font_atlas_capture` compares cache-disabled and cached capture
+at identical 20 Hz cadence with small/grown atlases, actual native frames,
+capture bytes/time, uploads and process CPU. It is offscreen mechanism evidence,
+not a native-window comparison, sustained resource acceptance, physical latency
+or attribution of #297. CP-18 and those remaining native/manual checks stay open;
+see Proposed ADR 0043 and `validation/direct2d/README.md`.
+
 **Window-identity correction (#242):** The Windows CPU and OS-input probes
 share `scripts/windows-application-window.ps1`. A native Win32 regression
 (`test_windows_application_window.py`, run by Windows CI) covers visible helper,

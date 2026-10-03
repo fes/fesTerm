@@ -1,0 +1,14 @@
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\serde-b3f473e9d68e81c7.d: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\serde-8035933a94e7618c\out/private.rs
+
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\libserde-b3f473e9d68e81c7.rlib: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\serde-8035933a94e7618c\out/private.rs
+
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\libserde-b3f473e9d68e81c7.rmeta: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\serde-8035933a94e7618c\out/private.rs
+
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\build\serde-8035933a94e7618c\out/private.rs:
+
+# env-dep:OUT_DIR=Q:\\src\\OSS\\fesTerm-ui-fleet\\warp-atlas\\vendor\\epaint\\target\\debug\\build\\serde-8035933a94e7618c\\out

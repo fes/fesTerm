@@ -1,0 +1,11 @@
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\ciborium_ll-b4cf4b889797d53c.d: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\dec.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\enc.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\hdr.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\seg.rs
+
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\libciborium_ll-b4cf4b889797d53c.rlib: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\dec.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\enc.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\hdr.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\seg.rs
+
+Q:\src\OSS\fesTerm-ui-fleet\warp-atlas\vendor\epaint\target\debug\deps\libciborium_ll-b4cf4b889797d53c.rmeta: C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\lib.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\dec.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\enc.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\hdr.rs C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\seg.rs
+
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\lib.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\dec.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\enc.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\hdr.rs:
+C:\Users\fswiderski\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ciborium-ll-0.2.2\src\seg.rs:

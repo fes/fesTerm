@@ -336,6 +336,23 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=skipped reason=explicit-opt-in"
     }
+    if ($env:FESTERM_RUN_FONT_ATLAS_PROFILE -eq '1') {
+        try {
+            if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'The font atlas profile requires Windows x64.' }
+            if (-not $env:FESTERM_FONT_ATLAS_PROFILE_OUT) { throw 'Set FESTERM_FONT_ATLAS_PROFILE_OUT to a new directory.' }
+            Invoke-NativeCommand {
+                cargo test --release -p festerm profile_native_font_atlas_capture -- --ignored --nocapture --test-threads=1
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Native font atlas profile failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=native-font-atlas-profile status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=native-font-atlas-profile status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=native-font-atlas-profile status=skipped reason=explicit-opt-in"
+    }
     if ($env:FESTERM_RUN_TUI_NATIVE_COMPARISON -eq '1') {
         try {
             if (-not $env:FESTERM_WINDOWS_TERMINAL_PORTABLE -or -not $env:FESTERM_TUI_NATIVE_OUT) {
