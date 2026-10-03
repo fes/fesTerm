@@ -17,8 +17,27 @@ scheduling animation frames, regardless of focus, motion preference or
 rendering adapter. Active tabs never show unread output, and activation clears
 the background flag. Deterministic checks cover static geometry/color,
 repaint quiescence, activation and compatible loading of both old boolean
-values. WARP-only atlas and recovery work remains in issues #297/#298/#244;
+values. WARP-only atlas and recovery qualification remains in #297/#298/#244;
 no native renderer behavior or qualification status changes here.
+
+## Letting supported terminal frames return after native refusal
+
+The long-lived WARP CPU investigation identified a concrete path transition:
+one unsupported terminal frame permanently removed Direct2D, even when normal
+content returned. A palette-budget regression reproduced that transition
+without user sessions. Capability refusal is now typed separately from actual
+native failure across the Rust/SDK boundary; sharing an HRESULT is not enough
+to make a device or runtime error recoverable.
+
+Unsupported content retains the exact ordinary frame, drops retained native
+pixels, and permits a later supported frame to draw natively again. Diagnostics
+report entering fallback and resuming, rather than warning on every refused
+frame. Real native failures retain the existing until-restart retirement
+policy. Integrated pixels and executed-frame counters cover refusal followed
+by recovery; strict CPU probes reject refusals instead of accepting mixed-path
+measurements. This repairs a source-backed recovery gap, not a demonstrated
+cause or closure of issue #297's multi-day CPU plateau. Device-loss, sustained
+resource and broader CP-18 evidence remain open.
 
 ## Saving frontend session names without renaming their backends
 

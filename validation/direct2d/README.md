@@ -59,8 +59,13 @@ same supported path but cannot force hardware adapters, unsupported formats, or
 unsupported platforms. Invalid or non-Unicode override values warn and retain
 ordinary egui-wgpu. Automatic unset mode quietly keeps ordinary egui-wgpu on
 unsupported adapters, platforms, or formats; explicit `1` still reports why
-selection was ineligible. Native errors are logged and disable the optional
-painter until restart. Secondary viewports, translucent/transformed painters,
+selection was ineligible. Unsupported content logs a per-frame refusal
+transition, preserves ordinary pixels, and invalidates retained native pixels;
+the installed painter resumes when supported content returns. Real native,
+device, allocation and submission failures still disable the painter until
+restart. HRESULTs alone do not distinguish these cases. Strict native CPU
+qualification rejects either refusal or permanent failure rather than
+accepting mixed-path measurements. Secondary viewports, translucent/transformed painters,
 hardware adapters and unsupported backends/formats retain the current
 renderer. This remains **experimental**, under proposed ADR-0039 and CP-18.
 
