@@ -766,7 +766,18 @@ comparisons at 100%, 125% and 200%, including fractional clipping and translucen
 before/after qualification still uses the isolated `-FesTermOnly` driver and a
 fresh quiet-desktop interval; no installed application is changed by these tests.
 
-**Default-off host-copy prototype (ADR-0040):** with owner authorization,
+**Current unmerged #281 policy staging:** the owner requested a complete
+default-on candidate for WARP qualification. Unset requests host-copy and
+retention only on eligible Windows x64 DX12 CPU/BGRA gamma and compatible
+opaque-root targets. Host-copy `0` disables both by default; retention `0`
+retains host-copy alone. Explicit `1` never forces unsupported routes.
+The new deterministic policy matrix covers default/opt-out/explicit options,
+Direct2D disablement, platform, adapter, backend and target format.
+Shipping main is unchanged; #282 still gates merge, native acceptance,
+architecture and rollout. Existing target/lifecycle fallback tests remain
+required. The historical receipts below are not current-source qualification.
+
+**Historical default-off host-copy prototype (ADR-0040):** with owner authorization,
 `FESTERM_EXPERIMENTAL_HOST_COPY=1` adds a final-target copy on the eligible
 Windows x64 WARP/BGRA path only. Unset/`0` and all unsupported app routes retain
 existing behavior. Deterministic exact-pixel coverage exercises DPI changes,
@@ -794,7 +805,7 @@ normally, unlike the separate CPU workload windows. This adds native
 focus/resize evidence, not native screenshot, independent OS-input or general
 shutdown acceptance.
 
-**Default-off retained-prefix prototype (ADR-0041):** the owner separately
+**Historical default-off retained-prefix prototype (ADR-0041):** the owner separately
 authorized retaining unchanged preceding window/chrome pixels. Enable both
 `FESTERM_EXPERIMENTAL_HOST_COPY=1` and
 `FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`; isolated prefix experiments compare

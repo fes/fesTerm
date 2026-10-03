@@ -37,12 +37,14 @@ Local changes are deliberately limited to:
   composition rather than silently substituting shader painting. Recreate the
   capture pipeline too if the target format changes.
 
-The app enables the seam only for an explicit
-`FESTERM_EXPERIMENTAL_HOST_COPY=1` on the supported Windows x64 DX12 WARP/BGRA
-Direct2D path. Retaining the preceding window additionally requires
-`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`. Only the application's immutable
+The complete unmerged #281 stages default-on application selection only on the
+supported Windows x64 DX12 WARP/BGRA gamma Direct2D path. Explicit host-copy
+`0` disables both paths by default, while retained-composition `0` retains
+host-copy alone. Explicit `1` cannot force unsupported targets; invalid values
+disable the affected path. The vendor renderer itself still defaults retention
+off; the eligible app policy selects it. Only the application's immutable
 textureless panel and solid-background painters provide callback keys.
-No new default, backend, partial presentation, frame dropping,
+No new backend, partial presentation, frame dropping,
 mutable published textures, terminal ownership or input routing is introduced.
 
 CI runs `cargo test -p egui-wgpu --lib retained::tests` on each desktop OS.
@@ -52,3 +54,5 @@ the vendored crate is deliberately excluded from workspace test membership.
 See proposed ADRs 0040 and 0041. Keep the local diff against this exact upstream version
 reviewable; revalidate or remove it on dependency upgrades. A successful
 prototype does not by itself approve maintaining a fork or enabling it by default.
+The owner authorized staging, not merge; #282 requires native qualification
+and architectural/rollout approval before the staged defaults can ship.

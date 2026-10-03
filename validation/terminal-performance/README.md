@@ -1,5 +1,19 @@
 # Terminal TUI performance
 
+## Current unmerged composition candidate
+
+PR #281 consolidates the stacked follow-on and reviewed shipping main. At the
+owner's request it stages default-on host-copy and retained-prefix eligibility
+for Windows x64 DX12 CPU/BGRA gamma and compatible opaque-root targets only.
+Host-copy `0` disables both by default; retention `0` selects host-copy alone.
+Explicit `1` cannot force unsupported paths, and invalid values disable the
+affected path. Shipping main remains unchanged until merge.
+
+The existing source-pinned observations below remain historical evidence,
+not a rerun on this integrated source. Issue #282 lists the WARP gates required
+before merge/default rollout. Qualification must exercise the unset/default
+policy as well as explicit A `0,0`, B `1,0`, C `1,1` controls and opt-outs.
+
 This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.

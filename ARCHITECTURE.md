@@ -68,9 +68,13 @@ snapshots. Small changes redraw damaged regions and copy them into a new
 immutable frame; unchanged frames share their existing texture. This does not
 move terminal ownership or introduce a partial-present/window backend.
 
-An independently default-off host-copy prototype vendors pinned egui-wgpu
-0.36.1. With `FESTERM_EXPERIMENTAL_HOST_COPY=1`, the supported Windows x64
-WARP/BGRA app may advertise an immutable terminal image as an exact substitute
+The complete unmerged #281 vendors pinned egui-wgpu 0.36.1 and stages eligible
+default-on host-copy and retained-prefix selection at the owner's request.
+Both unset flags request the supported Windows x64 DX12 CPU/BGRA gamma path;
+host-copy `0` disables both by default, retention `0` keeps host-copy alone,
+and explicit `1` cannot force unsupported routing. Shipping main remains
+unchanged until native/architecture/rollout gates in #282 pass.
+The eligible app may advertise an immutable terminal image as an exact substitute
 for its final callback. The host validates the actual opaque root target,
 ends the preceding UI pass, and copies that image before its normal submission
 and presentation. Unsupported surfaces, overlays, clipping or geometry
@@ -78,6 +82,8 @@ mismatches retain ordinary callback painting in the same frame. Layout, input,
 terminal ownership and hardware-GPU selection are unchanged; this is not
 partial presentation or a replacement window backend. See proposed
 [ADR 0040](docs/adr/0040-opt-in-final-target-terminal-copy.md) and
+[ADR 0041](docs/adr/0041-opt-in-retained-window-prefix.md), with exact bounded
+immutable signatures for the preceding UI and ordinary same-frame fallback, and
 [`vendor/egui-wgpu/FESTERM-PATCH.md`](vendor/egui-wgpu/FESTERM-PATCH.md).
 
 The app-owned textureless panel pipeline also handles the full-width chrome

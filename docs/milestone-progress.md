@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Completing the composition candidate without claiming rollout
+
+The complete #281 now contains its stacked qualification automation/evidence
+and the latest independently reviewed shipping main, including shared modal
+accessibility and native refusal recovery. Historical v0.7.1 CPU/capture
+receipts remain pinned to their original application bytes; integration does
+not turn them into measurements of this source.
+
+The owner chose to stage default-on host-copy and prefix retention for eligible
+Windows x64 DX12 CPU/BGRA gamma, with explicit opt-outs and unchanged negative
+routing. A deterministic policy matrix covers those choices; native target,
+ordering and lifecycle fallback still apply. The PR stays unmerged and ADRs
+0040/0041 remain Proposed until #282's current-source WARP performance,
+resource, recovery, visual/routing, independent latency and approval gates pass.
+This is source completion and policy staging, not qualification or rollout.
+
 ## Completing the guarded native comparison without hiding its control failure
 
 Keeping the remote desktop connected and quiet allowed the source-pinned

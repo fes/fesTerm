@@ -32,16 +32,18 @@ pub(crate) fn install_from_environment(
     context: &egui::Context,
     state: Option<&egui_wgpu::RenderState>,
 ) {
-    let host_copy =
-        match host_copy_requested(std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY").as_deref()) {
-            Ok(requested) => requested,
-            Err(message) => {
-                tracing::warn!(target: "festerm::rendering", "{message}");
-                false
-            }
-        };
+    let host_copy_value = std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY");
+    let host_copy_explicit = host_copy_value.as_deref() == Some(std::ffi::OsStr::new("1"));
+    let host_copy = match host_copy_requested(host_copy_value.as_deref()) {
+        Ok(requested) => requested,
+        Err(message) => {
+            tracing::warn!(target: "festerm::rendering", "{message}");
+            false
+        }
+    };
     let retained_composition = match retained_composition_requested(
         std::env::var_os("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION").as_deref(),
+        host_copy,
     ) {
         Ok(requested) => requested,
         Err(message) => {
@@ -57,7 +59,7 @@ pub(crate) fn install_from_environment(
         std::env::var_os("FESTERM_EXPERIMENTAL_DIRECT2D").as_deref(),
     ) {
         Ok(Preference::Disabled) => {
-            if host_copy {
+            if host_copy_explicit {
                 tracing::info!(target: "festerm::rendering",
                     "host copy requires Direct2D; retaining ordinary rendering");
             }
@@ -70,7 +72,7 @@ pub(crate) fn install_from_environment(
         }
     };
     let Some(state) = state else {
-        if preference == Preference::Enabled || host_copy {
+        if preference == Preference::Enabled || host_copy_explicit {
             tracing::warn!(target: "festerm::rendering", "Direct2D requires wgpu; retaining the current renderer");
         }
         return;
@@ -82,7 +84,7 @@ pub(crate) fn install_from_environment(
         info.backend,
         state.target_format,
     ) {
-        if preference == Preference::Enabled || host_copy {
+        if preference == Preference::Enabled || host_copy_explicit {
             tracing::info!(target: "festerm::rendering",
                 "Direct2D requires Windows x64, a DX12 CPU adapter and 8-bit gamma target; retaining egui-wgpu");
         }
@@ -92,16 +94,21 @@ pub(crate) fn install_from_environment(
         tracing::info!(target: "festerm::rendering",
             "host copy requires a BGRA target; retaining shader composition");
     }
+    let composition = CompositionSelection {
+        host_copy,
+        retained_composition,
+    }
+    .selects(
+        preference,
+        cfg!(all(windows, target_arch = "x86_64")),
+        info.device_type,
+        info.backend,
+        state.target_format,
+    );
     #[cfg(all(windows, target_arch = "x86_64"))]
-    match native::install_with_host_copy(
-        context,
-        state,
-        host_copy && state.target_format == wgpu::TextureFormat::Bgra8Unorm,
-    ) {
+    match native::install_with_host_copy(context, state, composition.host_copy) {
         Ok(_) => {
-            let retained = retained_composition
-                && host_copy
-                && state.target_format == wgpu::TextureFormat::Bgra8Unorm;
+            let retained = composition.retained_composition;
             state.renderer.write().retained_composition_enabled = retained;
             if retained {
                 tracing::info!(target: "festerm::rendering",
@@ -113,24 +120,52 @@ pub(crate) fn install_from_environment(
             "Direct2D initialization failed; retaining egui-wgpu"),
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
-    let _ = context;
+    let _ = (context, composition);
 }
 
 fn host_copy_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static str> {
     match value {
-        None => Ok(false),
+        None => Ok(true),
         Some(value) if value == "0" => Ok(false),
         Some(value) if value == "1" => Ok(true),
         _ => Err("FESTERM_EXPERIMENTAL_HOST_COPY expects 0 or 1; retaining shader composition"),
     }
 }
 
-fn retained_composition_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static str> {
+fn retained_composition_requested(
+    value: Option<&std::ffi::OsStr>,
+    host_copy: bool,
+) -> Result<bool, &'static str> {
     match value {
-        None => Ok(false),
+        None => Ok(host_copy),
         Some(value) if value == "0" => Ok(false),
         Some(value) if value == "1" => Ok(true),
         _ => Err("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION expects 0 or 1; retaining existing composition"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompositionSelection {
+    host_copy: bool,
+    retained_composition: bool,
+}
+
+impl CompositionSelection {
+    fn selects(
+        self,
+        preference: Preference,
+        windows_x64: bool,
+        device: wgpu::DeviceType,
+        backend: wgpu::Backend,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let host_copy = self.host_copy
+            && preference.selects(windows_x64, device, backend, format)
+            && format == wgpu::TextureFormat::Bgra8Unorm;
+        Self {
+            host_copy,
+            retained_composition: host_copy && self.retained_composition,
+        }
     }
 }
 
@@ -512,8 +547,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_copy_is_explicitly_opt_in_and_rejects_invalid_values() {
-        for (value, expected) in [(None, false), (Some("0"), false), (Some("1"), true)] {
+    fn host_copy_defaults_on_and_rejects_invalid_values() {
+        for (value, expected) in [(None, true), (Some("0"), false), (Some("1"), true)] {
             assert_eq!(
                 host_copy_requested(value.map(std::ffi::OsStr::new)).unwrap(),
                 expected
@@ -525,15 +560,87 @@ mod tests {
     }
 
     #[test]
-    fn retained_composition_is_explicitly_opt_in_and_rejects_invalid_values() {
-        for (value, expected) in [(None, false), (Some("0"), false), (Some("1"), true)] {
-            assert_eq!(
-                retained_composition_requested(value.map(std::ffi::OsStr::new)).unwrap(),
-                expected
-            );
+    fn retained_composition_defaults_follow_host_copy_and_preserve_explicit_overrides() {
+        for host_copy in [false, true] {
+            for (value, expected) in [(None, host_copy), (Some("0"), false), (Some("1"), true)] {
+                assert_eq!(
+                    retained_composition_requested(value.map(std::ffi::OsStr::new), host_copy)
+                        .unwrap(),
+                    expected
+                );
+            }
+            for value in ["", "true", "2", " 1"] {
+                assert!(retained_composition_requested(
+                    Some(std::ffi::OsStr::new(value)),
+                    host_copy
+                )
+                .is_err());
+            }
         }
-        for value in ["", "true", "2", " 1"] {
-            assert!(retained_composition_requested(Some(std::ffi::OsStr::new(value))).is_err());
+    }
+
+    #[test]
+    fn composition_defaults_and_opt_outs_never_force_unsupported_routing() {
+        for host_value in [None, Some("0"), Some("1")] {
+            let host_copy = host_copy_requested(host_value.map(std::ffi::OsStr::new)).unwrap();
+            for retained_value in [None, Some("0"), Some("1")] {
+                let requested = CompositionSelection {
+                    host_copy,
+                    retained_composition: retained_composition_requested(
+                        retained_value.map(std::ffi::OsStr::new),
+                        host_copy,
+                    )
+                    .unwrap(),
+                };
+                for preference in [
+                    Preference::Automatic,
+                    Preference::Disabled,
+                    Preference::Enabled,
+                ] {
+                    for windows_x64 in [false, true] {
+                        for device in [
+                            wgpu::DeviceType::Cpu,
+                            wgpu::DeviceType::DiscreteGpu,
+                            wgpu::DeviceType::IntegratedGpu,
+                            wgpu::DeviceType::VirtualGpu,
+                            wgpu::DeviceType::Other,
+                        ] {
+                            for backend in [
+                                wgpu::Backend::Dx12,
+                                wgpu::Backend::Metal,
+                                wgpu::Backend::Vulkan,
+                                wgpu::Backend::Gl,
+                            ] {
+                                for format in [
+                                    wgpu::TextureFormat::Bgra8Unorm,
+                                    wgpu::TextureFormat::Rgba8Unorm,
+                                    wgpu::TextureFormat::Bgra8UnormSrgb,
+                                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                                    wgpu::TextureFormat::Rgba16Float,
+                                ] {
+                                    let selected = requested.selects(
+                                        preference,
+                                        windows_x64,
+                                        device,
+                                        backend,
+                                        format,
+                                    );
+                                    let eligible = preference != Preference::Disabled
+                                        && windows_x64
+                                        && device == wgpu::DeviceType::Cpu
+                                        && backend == wgpu::Backend::Dx12
+                                        && format == wgpu::TextureFormat::Bgra8Unorm;
+                                    assert_eq!(selected.host_copy, host_copy && eligible);
+                                    assert_eq!(
+                                        selected.retained_composition,
+                                        requested.retained_composition && selected.host_copy
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

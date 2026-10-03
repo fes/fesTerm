@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-09-29
 - **Supersedes:** None; extends the experimental host seam in ADR 0040
-- **Scope:** Owner-authorized prototype, not default enablement or merge approval
+- **Scope:** Owner-authorized default-on staging in unmerged #281; #282 gates merge/rollout
 
 ## Context
 
@@ -19,11 +19,18 @@ change terminal ownership, or relax native measurement guards.
 
 ## Decision
 
-Add `FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`, requiring the existing
-`FESTERM_EXPERIMENTAL_HOST_COPY=1` and its Windows x64 DX12 CPU-adapter/BGRA
-policy. Unset, `0`, invalid options, and unsupported configurations retain
-existing rendering. The native host restricts retention to its opaque root
-viewport without MSAA or depth.
+The owner requested completing #281 with default-on eligibility/tests staged
+for WARP qualification, not merging or granting rollout approval now.
+Shipping main is unchanged until the remaining #282 gates pass.
+
+Unset `FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION` follows the selected
+host-copy request, which also defaults on in this PR. Explicit `0` disables
+prefix retention while retaining eligible host-copy; host-copy `0` disables
+both by default. Explicit `1` cannot bypass the Windows x64 DX12 CPU-adapter/
+BGRA gamma policy or its host-copy prerequisite. Invalid values warn and
+disable the affected path. The native host restricts both paths to compatible
+opaque-root targets without MSAA or depth; unsupported routes retain ordinary
+rendering. Policy staging is not architectural or default-selection acceptance.
 
 The host may retain only the complete paint prefix preceding an eligible
 final image-copy callback. On a miss it clears and paints that prefix into a
@@ -71,8 +78,8 @@ the prototype does not introduce a hidden success fallback or a completion wait.
 
 ## Alternatives considered
 
-- **Enable host-copy by default:** outside the authorization and insufficient
-  to answer whether unchanged surrounding UI can be retained.
+- **Enable host-copy alone:** insufficient to answer whether unchanged
+  surrounding UI can be retained; retain it as comparison mode B.
 - **Retain arbitrary callback pointers:** object identity does not establish
   immutable resources or absence of paint side effects.
 - **Hash paint data:** unnecessary collision risk for small chrome signatures.
@@ -90,21 +97,23 @@ assumed for changing chrome or ineligible scenes. UI construction, native glyph
 drawing, callback preparation, terminal image copying and presentation remain.
 
 All platforms still compile the vendor extension, so cross-platform checks are
-required despite default-off Windows-only application selection. The added
+required despite Windows-only application selection. The added
 callback contract and maintenance burden require architectural review before
 merge. A successful CPU experiment does not establish presentation/input
 latency, device recovery, hardware-GPU benefit, or Windows Terminal parity.
 
 Default enablement is a separate decision tracked in
 [#282](https://github.com/fes/fesTerm/issues/282). It requires comparison with
-the shipping default, not only host-copy alone, and does not implicitly approve
-default enablement of the ADR 0040 prerequisite.
+the shipping default, not only host-copy alone. Both policies are now staged
+together at the owner's request, but neither may merge before the recorded
+native, architecture and rollout gates pass.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** Explicit immutable callback signatures;
   one bounded private prefix image; exact texture/geometry/lifecycle
-  invalidation; unchanged defaults, preparation, output cadence and ownership.
+  invalidation; staged tightly eligible default-on policy with opt-outs;
+  unchanged preparation, output cadence and ownership.
 - **GUI/action edges affected:** `TERM-01`; existing overlay, selection and
   terminal-input behavior remains unchanged.
 - **Automated tests required:** Exact reference pixels on hits and misses;
@@ -112,6 +121,9 @@ default enablement of the ADR 0040 prerequisite.
   inputs, managed textures and renderer identity; unknown callbacks and user
   textures; exported or rebound managed textures; size/signature thresholds;
   retained-image immutability; screenshot and ordinary-renderer fallback.
+  Selection additionally requires
+  `retained_composition_defaults_follow_host_copy_and_preserve_explicit_overrides`
+  and `composition_defaults_and_opt_outs_never_force_unsupported_routing`.
 - **Native/manual evidence required:** `CP-18`; matching host-copy-only versus
   retained-prefix CPU/cadence comparisons, actual reuse counters, focus/resize
   and screenshots. Mixed-monitor, recovery, hardware-negative-routing and
