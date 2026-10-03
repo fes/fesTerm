@@ -104,6 +104,9 @@ The iOS workflow's isolated Simulator smoke automates install, launch survival,
 first UI callback, terminate/relaunch and PNG capture for `MOB-01`/`MOB-03`.
 A live process without the UI callback fails; app stderr is retained. Screenshots still
 require visual review; it does not qualify gestures or background/resume.
+Read-only cold-service preparation (#303) runs before compilation under a
+pinned toolchain. Its `prepared` receipt is not a passed `MOB-01`/`MOB-03`
+application run; inventory, launch/capture and cleanup checks remain unchanged.
 The mobile device descriptor requests downlevel GPU limits to accommodate the
 observed Simulator Metal limit; issue #261 remains the native startup gate.
 

@@ -2386,7 +2386,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; separate read-only prepared receipts (#303) are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]
