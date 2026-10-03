@@ -393,3 +393,51 @@ mixed-DPI monitor transitions; multiple and transparent windows; actual
 presentation latency; memory characterization; and representative hardware
 qualification under issue #244. Passing this replay experiment does not mark
 those acceptance criteria complete.
+## Native font atlas snapshot control
+
+Issue #298 and Proposed [ADR 0043](../../docs/adr/0043-immutable-native-font-atlas-snapshots.md)
+cover immutable font snapshot reuse. The source/provenance patch is documented
+in `vendor/epaint/FESTERM-PATCH.md`; run its independently excluded tests too.
+
+With `FESTERM_RUN_OPTIONAL_VALIDATION=1`, set
+`FESTERM_FONT_ATLAS_PROFILE_OUT` to a **new** directory and run:
+
+```powershell
+cargo test --release -p festerm profile_native_font_atlas_capture -- --ignored --nocapture --test-threads=1
+```
+
+The aggregate `scripts/run-optional-validation.ps1` includes this check when
+`FESTERM_RUN_FONT_ATLAS_PROFILE=1`. Build before measuring and use a quiet host.
+The controlled fixture uses small and at-least-8-MiB grown atlases, cached and
+cache-disabled capture, two reversed-order repetitions, and 200 completed
+updates per case at 20 Hz. It requires stable atlas bytes, the exact requested
+native capture count, zero steady-state texture uploads, no missed deadlines,
+and equal final pixels within the existing renderer tolerance. All attempts
+remain in distinct directories; an invalid sample is written before rejection.
+The 256 x 128 target and 30 x 6 grid contain all three synthetic output lines.
+This bounds unrelated WARP composition cost without lowering cadence or dropping
+updates; it does not represent full-size native-window performance.
+
+`results.json` separates atlas capture milliseconds/bytes from whole-process
+CPU per completed frame. `FESTERM_DIRECT2D_TIMINGS` now also records
+`font_atlas_capture_ms`, `font_atlas_bytes`, `font_atlas_cloned_bytes` and
+`font_atlas_reused`; existing callback `total_ms` still excludes capture.
+Ordinary captures retain no more than one 64-MiB image; oversized images use
+uncached temporary capture and the same existing renderer capability checks.
+
+This is a **cache-disabled mechanism control in the candidate pipeline**, not
+a historical shipping-binary A/B, native application-window measurement,
+presentation/input latency, sustained memory acceptance or #297 attribution.
+The supported adapter/default policy and experimental host-copy default are
+unchanged. CP-18 and broader #244/#282 gates remain open.
+
+The [2026-10-03 control receipt](font-atlas-cache-control-2026-10-03.json)
+binds the clean measured source and optimized binary. All eight copy/upload,
+pixel and cadence checks passed: each 200-frame disabled control copied
+200 MiB with the 1-MiB atlas or 1,600 MiB with the 8-MiB atlas; cached controls
+copied zero bytes after warm-up. **Process-CPU improvement is not qualified**:
+44 of 82 monitored intervals exceeded the unchanged 5% external CPU guard.
+Raw timing/capture/monitor attempts are retained in development evidence;
+no rejected attempt is pooled into a CPU claim. Earlier idle, missed-deadline
+and fixture-lifecycle failures are preserved separately. Repeat the frozen
+control on an exclusively quiet host before making a CPU improvement claim.

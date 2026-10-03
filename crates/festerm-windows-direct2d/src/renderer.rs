@@ -191,6 +191,18 @@ const MAX_RETAINED_TEXTURE_UPLOAD_PIXELS: usize = MAX_TEXTURE_PIXELS;
 const MAX_RETAINED_FRAME_VERTICES: usize = MAX_FRAME_VERTICES;
 const MAX_RETAINED_MESH_INPUTS: usize = MAX_PRIMITIVES;
 
+fn textures_equal(
+    left: &HashMap<u64, Arc<ColorImage>>,
+    right: &HashMap<u64, Arc<ColorImage>>,
+) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|(id, image)| {
+            right
+                .get(id)
+                .is_some_and(|other| Arc::ptr_eq(image, other) || image.as_ref() == other.as_ref())
+        })
+}
+
 /// Serial ownership of a multithread-capable Direct2D/D3D11-on-12 context.
 pub struct Renderer {
     native: NonNull<c_void>,
@@ -355,12 +367,14 @@ impl Renderer {
             if texture_bytes > MAX_TEXTURE_BYTES {
                 return Err(Error::unsupported("native frame texture budget exceeded"));
             }
-            if self
-                .textures
-                .get(&id)
-                .is_some_and(|previous| previous.as_ref() == image.as_ref())
-            {
-                continue;
+            if let Some(previous) = self.textures.get_mut(&id) {
+                if Arc::ptr_eq(previous, image) {
+                    continue;
+                }
+                if previous.as_ref() == image.as_ref() {
+                    previous.clone_from(image);
+                    continue;
+                }
             }
             let [w, h] = image.size;
             if w == 0
@@ -684,7 +698,7 @@ impl CachedRenderer {
                 && previous.surface.origin == [bounds.min.x as u32, bounds.min.y as u32]
                 && previous.surface.texture.width() == bounds.width() as u32
                 && previous.surface.texture.height() == bounds.height() as u32
-                && previous.textures == current_textures
+                && textures_equal(&previous.textures, &current_textures)
                 && previous.regions.len() == regions.len()
         });
         let changed: Vec<_> = regions
@@ -701,11 +715,16 @@ impl CachedRenderer {
             })
             .collect();
         if changed.is_empty() {
+            let surface = compatible
+                .expect("unchanged compatible frame")
+                .surface
+                .clone();
+            self.previous
+                .as_mut()
+                .expect("unchanged compatible frame")
+                .textures = current_textures;
             return Ok(Some(CachedSurface {
-                surface: compatible
-                    .expect("unchanged compatible frame")
-                    .surface
-                    .clone(),
+                surface,
                 updated_regions: 0,
                 updated_pixels: 0,
             }));
@@ -1301,6 +1320,77 @@ mod tests {
         drop(mapped);
         buffer.unmap();
         result
+    }
+
+    #[test]
+    fn texture_identity_and_equal_replacement_preserve_uploads_and_pixels() {
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let mut renderer = CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
+        let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+        let original = Arc::new(ColorImage::filled([1, 1], Color32::WHITE));
+        let replacement = Arc::new(original.as_ref().clone());
+        let changed = Arc::new(ColorImage::filled([1, 1], Color32::TRANSPARENT));
+        let mut mesh = egui::Mesh::default();
+        mesh.add_rect_with_uv(
+            Rect::from_min_size(Pos2::ZERO, egui::vec2(16.0, 16.0)),
+            Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        let scene = [ClippedPrimitive {
+            clip_rect: canvas,
+            primitive: Primitive::Mesh(mesh),
+        }];
+        let mut surfaces = Vec::new();
+        for (image, uploads, updated) in [
+            (&original, 1, true),
+            (&original, 0, false),
+            (&replacement, 0, false),
+            (&replacement, 0, false),
+            (&changed, 1, true),
+        ] {
+            let mut timings = RenderTimings::default();
+            let surface = renderer
+                .render(
+                    canvas,
+                    1.0,
+                    Color32::BLACK,
+                    &scene,
+                    &[(TextureId::Managed(0), image.clone())],
+                    Some(&mut timings),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(timings.uploaded_texture_count, uploads);
+            assert_eq!(surface.updated_pixels > 0, updated);
+            assert!(Arc::ptr_eq(
+                renderer.renderer.textures.get(&0).unwrap(),
+                image
+            ));
+            assert!(Arc::ptr_eq(
+                renderer
+                    .previous
+                    .as_ref()
+                    .unwrap()
+                    .textures
+                    .get(&0)
+                    .unwrap(),
+                image
+            ));
+            surfaces.push(surface.surface);
+        }
+        assert_eq!(
+            first_pixel(&state.device, &state.queue, &surfaces[0].texture),
+            [255, 255, 255, 255]
+        );
+        assert_eq!(
+            first_pixel(&state.device, &state.queue, &surfaces[4].texture),
+            [0, 0, 0, 255]
+        );
     }
 
     #[test]

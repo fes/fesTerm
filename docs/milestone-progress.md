@@ -3,6 +3,35 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reusing native font snapshots without borrowing renderer-owned deltas
+
+Issue #298 exposed an avoidable long-lived cost: native terminal capture cloned
+the complete font atlas even when only one cell changed and the atlas did not.
+The dependency had no trustworthy non-consuming revision at that boundary.
+With owner approval, a narrow pinned epaint patch now invalidates an opaque
+identity before mutable image exposure. It is lazy, so ordinary rendering does
+not allocate a new identity for every glyph, and independent atlas clones cannot
+accidentally acquire equal revisions after diverging.
+
+The native-painter context keeps one immutable, at-most-64-MiB snapshot and
+releases it on painter replacement/removal. Same-frame glyph additions refresh
+it after tessellation; regular egui font deltas remain owned by egui-wgpu.
+Both upload and retained-frame comparisons use Arc identity first, adopting
+byte-equal replacement snapshots without another upload. Deterministic tests
+cover scale/font changes, immutable older pixels, budget boundaries and teardown.
+An opt-in paced WARP control measures capture, uploads and process CPU separately
+from callback timing. These mechanisms do not attribute #297's CPU plateau or
+close native-window/resource/latency qualification; see Proposed ADR 0043.
+
+Publication review caught a standalone Cargo build cache accidentally staged
+with the excluded vendor package. A source-only replacement branch preserves
+the original investigation without carrying those generated binaries into
+merge history. Nested vendor targets are now ignored, a regression check
+rejects tracked Cargo outputs, and CI executes the vendor invariants on all
+three desktop platforms. The shared dependency also triggers the iOS smoke;
+its earlier failure was a Simulator inventory timeout before app launch, not
+evidence of an atlas build regression or successful mobile presentation.
+
 ## Letting supported terminal frames return after native refusal
 
 The long-lived WARP CPU investigation identified a concrete path transition:

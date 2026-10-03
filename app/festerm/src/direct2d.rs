@@ -153,6 +153,9 @@ impl TimingConfig {
 mod profile;
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
+mod font_atlas_profile;
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
 mod host_copy;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
@@ -177,6 +180,8 @@ mod native {
         pub(super) last_surface_pixels: AtomicU64,
         #[cfg(test)]
         pub(super) last_surface: Mutex<Option<festerm_windows_direct2d::Surface>>,
+        #[cfg(test)]
+        pub(super) font_atlas_samples: Mutex<Vec<(festerm_ui_egui::FontAtlasCapture, usize)>>,
     }
 
     struct Paint {
@@ -230,6 +235,20 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         context: &egui::Context,
         state: &egui_wgpu::RenderState,
         host_copy: bool,
+    ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
+        install_with_painter_options(
+            context,
+            state,
+            host_copy,
+            festerm_ui_egui::NativePainterOptions::default(),
+        )
+    }
+
+    pub(super) fn install_with_painter_options(
+        context: &egui::Context,
+        state: &egui_wgpu::RenderState,
+        host_copy: bool,
+        mut painter_options: festerm_ui_egui::NativePainterOptions,
     ) -> Result<Arc<Status>, festerm_windows_direct2d::Error> {
         let timings = match TimingConfig::from_environment(
             std::env::var("FESTERM_DIRECT2D_TIMINGS").ok().as_deref(),
@@ -318,13 +337,16 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             last_surface_pixels: AtomicU64::new(0),
             #[cfg(test)]
             last_surface: Mutex::new(None),
+            #[cfg(test)]
+            font_atlas_samples: Mutex::new(Vec::new()),
         });
         let observed = status.clone();
-        festerm_ui_egui::install_root_terminal_painter(context, move |context, frame| {
+        painter_options.capture_font_atlas_timings |= timings.enabled();
+        let capture_timings = painter_options.capture_font_atlas_timings;
+        let paint = move |context: &egui::Context, frame: festerm_ui_egui::TerminalPaintFrame| {
             let total_started = timings.enabled().then(Instant::now);
-            let mut render_timings = timings
-                .enabled()
-                .then(festerm_windows_direct2d::RenderTimings::default);
+            let mut render_timings =
+                capture_timings.then(festerm_windows_direct2d::RenderTimings::default);
             let result = match renderer.lock() {
                 Ok(mut renderer) => {
                     if frame.full_redraw {
@@ -383,6 +405,15 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let surface = rendered.surface;
             #[cfg(test)]
             {
+                if capture_timings {
+                    observed.font_atlas_samples.lock().unwrap().push((
+                        frame.font_atlas_capture,
+                        render_timings
+                            .as_ref()
+                            .expect("capture timing enabled")
+                            .uploaded_texture_count,
+                    ));
+                }
                 *observed.last_surface.lock().unwrap() = Some(surface.clone());
                 observed
                     .last_updated_pixels
@@ -439,6 +470,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     index_count = render_timings.index_count,
                     texture_count = render_timings.texture_count,
                     uploaded_texture_count = render_timings.uploaded_texture_count,
+                    font_atlas_capture_ms = frame.font_atlas_capture.elapsed.as_secs_f64() * 1000.0,
+                    font_atlas_bytes = frame.font_atlas_capture.atlas_bytes,
+                    font_atlas_cloned_bytes = frame.font_atlas_capture.cloned_bytes,
+                    font_atlas_reused = frame.font_atlas_capture.reused,
                     analysis_ms = render_timings.analysis.as_secs_f64() * 1000.0,
                     texture_upload_ms = render_timings.texture_upload.as_secs_f64() * 1000.0,
                     geometry_prepare_ms = render_timings.geometry_prepare.as_secs_f64() * 1000.0,
@@ -467,7 +502,12 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     },
                 },
             ))
-        });
+        };
+        festerm_ui_egui::install_root_terminal_painter_with_options(
+            context,
+            painter_options,
+            paint,
+        );
         state.renderer.write().final_callback_copy_enabled = host_copy;
         if host_copy {
             tracing::info!(target: "festerm::rendering",
