@@ -179,6 +179,80 @@ class NativePaletteProbeTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required for pure native-guard predicate")
 class NativeWarmupPredicateTests(unittest.TestCase):
+    def test_native_run_declarations_keep_single_and_balanced_modes_as_arrays(self):
+        script = r"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $env:FESTERM_COMPARISON_DRIVER, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Comparison driver does not parse.' }
+$statements = $ast.EndBlock.Statements
+$modes = @($statements | Where-Object {
+    $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+    $_.Left.Extent.Text -eq '$modes'
+})
+$source = @($statements | Where-Object {
+    $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+    $_.Left.Extent.Text -eq '$source'
+})
+if ($modes.Count -ne 1 -or $source.Count -ne 1) { throw 'Expected one run declaration.' }
+$declaration = $ast.Extent.Text.Substring($modes[0].Extent.StartOffset,
+    $source[0].Extent.StartOffset - $modes[0].Extent.StartOffset)
+$probe = [scriptblock]::Create(@'
+param(
+    [switch] $QualifyCopyModes,
+    [switch] $FesTermOnly,
+    [switch] $IncludeFullRepaintControl,
+    [string[]] $Workloads = @('quiet','localized','streaming','full-redraw')
+)
+Set-StrictMode -Version Latest
+'@ + "`n" + $declaration + @'
+[pscustomobject]@{Modes=$modes;Runs=$runs}
+'@)
+$results = @(
+    & $probe -FesTermOnly -Workloads localized
+    & $probe -FesTermOnly
+    & $probe -FesTermOnly -QualifyCopyModes
+    & $probe -FesTermOnly -QualifyCopyModes -Workloads localized
+    & $probe -Workloads quiet,localized -IncludeFullRepaintControl
+)
+ConvertTo-Json -InputObject $results -Depth 6
+"""
+        environment = os.environ.copy()
+        environment["FESTERM_COMPARISON_DRIVER"] = str(Path(__file__).with_name("compare-windows.ps1"))
+        result = subprocess.run(
+            [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
+            env=environment, capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        observed = json.loads(result.stdout)
+        self.assertEqual(len(observed), 5)
+        workloads = ("quiet", "localized", "streaming", "full-redraw")
+        scenarios = (
+            (["current"], ("localized",), ("festerm",), False),
+            (["current"], workloads, ("festerm",), False),
+            (list(checker.MODES), (*workloads, "changing-chrome"), ("festerm",), False),
+            (list(checker.MODES), ("localized",), ("festerm",), False),
+            (["current"], ("quiet", "localized"), ("festerm", "windows-terminal"), True),
+        )
+        for declaration, (modes, selected, hosts, control) in zip(observed, scenarios):
+            with self.subTest(modes=modes, workloads=selected, hosts=hosts):
+                self.assertEqual(declaration["Modes"], modes)
+                expected = [
+                    {"Host": host, "Workload": workload, "FullRepaint": False,
+                     "Mode": mode, "Sequence": sequence}
+                    for sequence, mode in enumerate(modes, 1)
+                    for workload in selected
+                    for host in hosts
+                ]
+                if control:
+                    expected.append({
+                        "Host": "windows-terminal-full-repaint", "Workload": "localized",
+                        "FullRepaint": True, "Mode": "current", "Sequence": 1,
+                    })
+                self.assertEqual(declaration["Runs"], expected)
+
     def test_external_guard_stop_is_explicit_and_never_changes_cleanup(self):
         script = r"""
 $ErrorActionPreference = 'Stop'

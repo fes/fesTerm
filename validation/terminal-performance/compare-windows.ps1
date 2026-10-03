@@ -217,9 +217,9 @@ $oldHostCopy = $env:FESTERM_EXPERIMENTAL_HOST_COPY
 $oldRetention = $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
 $fonts = [Collections.Generic.List[string]]::new()
 $results = [Collections.Generic.List[object]]::new()
-$modes = if ($QualifyCopyModes) {
+$modes = @(if ($QualifyCopyModes) {
     @('A','B','C','C','B','A','C','B','A','A','B','C')
-} else { @('current') }
+} else { 'current' })
 if ($QualifyCopyModes -and -not $PSBoundParameters.ContainsKey('Workloads')) {
     $Workloads += 'changing-chrome'
 }

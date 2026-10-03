@@ -3,6 +3,34 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Recording shared-host WARP evidence without calling it qualification
+
+The repaired integrated #281 application completed 60 balanced native cases
+and 12 separate palette controls. Earlier quiet-host attempts had stopped
+before any app case; after the owner explained intermittent background work,
+the new controller recorded CPU noise instead of aborting for that alone.
+Input, desktop, geometry, producer delivery and normal cleanup remained hard
+guards. Every completed case encountered a flagged CPU interval during sampling,
+so these observations remain exploratory, not strict performance acceptance.
+
+Combined retention used less process CPU than explicit A in all four ordered
+blocks of every active workload. Changing chrome still offered no consistent
+advantage over host-copy alone; quiet differences were near counter granularity.
+Palette fallback correctly disabled copying/retention but remained expensive,
+with no optimization win. All 72 captured trees exited normally, and all 216
+old app/producer/ConPTY identities were independently absent.
+
+The final unset/default declaration then failed before launching an app:
+PowerShell unwrapped its one mode to a string and strict `.Count` access failed.
+Capturing the branch as an array fixes that seam. A regression first reproduced
+the failure, then exercised the actual declarations for single/multiple
+workloads, balanced orders, overlay and Windows Terminal controls without a
+desktop. The zero-case failure and completed series remain separate; explicit C
+is not substituted for unset/default evidence. The
+[performance record](../validation/terminal-performance/README.md#2026-10-03-shared-host-exploratory-evidence)
+retains all case scores and noise exposure. No #282 gate or #297 attribution
+claim is closed by this run.
+
 ## Completing the composition candidate without claiming rollout
 
 The complete #281 now contains its stacked qualification automation/evidence

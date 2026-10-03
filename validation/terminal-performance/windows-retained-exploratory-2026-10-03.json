@@ -1,0 +1,2151 @@
+{
+  "schema_version": 1,
+  "classification": "exploratory-shared-host-not-strict-cpu-qualified",
+  "measurement_date_utc": "2026-10-03",
+  "source_sha": "f93570c22ebc34992c1d11300f0c66c27559f194",
+  "application_sha256": "D2753A597FFA46F96052100DC3C4BC8BDB6593EC065A2047B676764E71232887",
+  "producer_sha256": "C1008B6A6CF2F5FE7CA47AFD388800CF4DAD27CE6B4F852A1C0981C83B8FD188",
+  "logical_processors": 16,
+  "dpi": 192,
+  "client_pixels": [
+    2058,
+    1658
+  ],
+  "terminal_grid": [
+    120,
+    40
+  ],
+  "producer_frames_per_case": 200,
+  "producer_interval_ms": 100,
+  "minimum_sample_seconds": 10,
+  "order": [
+    "A",
+    "B",
+    "C",
+    "C",
+    "B",
+    "A",
+    "C",
+    "B",
+    "A",
+    "A",
+    "B",
+    "C"
+  ],
+  "modes": {
+    "A": [
+      "0",
+      "0"
+    ],
+    "B": [
+      "1",
+      "0"
+    ],
+    "C": [
+      "1",
+      "1"
+    ]
+  },
+  "noise_threshold_percent": 5,
+  "cpu_policy": "record",
+  "strict_cpu_qualified": false,
+  "phases": {
+    "balanced": {
+      "counts": {
+        "cases": 60,
+        "captures": 60,
+        "normal_shutdowns": 60
+      },
+      "controller_sha256": "AE20B20C48D8D1F29EA3A3900FB3962C66AD5A42AF6F40FAE61BA786B9B1D0B8",
+      "driver_sha256": "89FC6CB2ACAB0213700FF4E4818F933A609D344DD7908CBD69B240E7194A7B0D",
+      "cpu_observations": 1417,
+      "noisy_cpu_observations": 906,
+      "cases_with_sample_noise": 60,
+      "external_cpu_median": 6.845238095238096,
+      "external_cpu_max": 94.89841986455983,
+      "cases": [
+        {
+          "case": "01-A-festerm-quiet",
+          "mode": "A",
+          "workload": "quiet",
+          "cpu_percent": 0.028799797125566066,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.196783781051636,
+          "sample_seconds": 10.1725977,
+          "max_external_cpu": 14.825581395348838,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "B34B1FE2DEA56D7F1F3660ED16DACB1263CA121CC5E249BFAF7BA5191262F605"
+        },
+        {
+          "case": "01-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 6.768917918595622,
+          "noise_intervals": 6,
+          "noise_exposed_seconds": 6.111601114273071,
+          "sample_seconds": 10.2288552,
+          "max_external_cpu": 10.733695652173912,
+          "gui_frames_per_second": 9.971790391558187,
+          "direct2d_frames_per_second": 9.971790391558187,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "859F2CB0377DE1C602C851CF8D14E55B2292620B3FB3A6A244F19232A5765DB4"
+        },
+        {
+          "case": "01-A-festerm-streaming",
+          "mode": "A",
+          "workload": "streaming",
+          "cpu_percent": 5.1443869839477765,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.6912758350372314,
+          "sample_seconds": 10.2128908,
+          "max_external_cpu": 13.347763347763346,
+          "gui_frames_per_second": 10.379039791554414,
+          "direct2d_frames_per_second": 9.987377912627833,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "01-A-festerm-full-redraw",
+          "mode": "A",
+          "workload": "full-redraw",
+          "cpu_percent": 10.212952911275256,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.684661388397217,
+          "sample_seconds": 10.2122154,
+          "max_external_cpu": 11.079545454545455,
+          "gui_frames_per_second": 9.988038442667396,
+          "direct2d_frames_per_second": 9.988038442667396,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "01-A-festerm-changing-chrome",
+          "mode": "A",
+          "workload": "changing-chrome",
+          "cpu_percent": 7.151690797842048,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.463864803314209,
+          "sample_seconds": 10.2275858,
+          "max_external_cpu": 14.255617977528091,
+          "gui_frames_per_second": 9.973028043431325,
+          "direct2d_frames_per_second": 9.973028043431325,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "02-B-festerm-quiet",
+          "mode": "B",
+          "workload": "quiet",
+          "cpu_percent": 0.0,
+          "noise_intervals": 7,
+          "noise_exposed_seconds": 9.150982141494751,
+          "sample_seconds": 10.1922548,
+          "max_external_cpu": 13.094367227505487,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "02-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 3.0496437951192177,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 4.05820107460022,
+          "sample_seconds": 10.2150762,
+          "max_external_cpu": 12.375533428165006,
+          "gui_frames_per_second": 10.083135747925208,
+          "direct2d_frames_per_second": 9.985241226100692,
+          "host_copy_frames_per_second": 9.985241226100692,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "02-B-festerm-streaming",
+          "mode": "B",
+          "workload": "streaming",
+          "cpu_percent": 2.850407839900907,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.6893081665039062,
+          "sample_seconds": 10.1753531,
+          "max_external_cpu": 12.427325581395348,
+          "gui_frames_per_second": 10.712158971662614,
+          "direct2d_frames_per_second": 10.024222156968685,
+          "host_copy_frames_per_second": 10.712158971662614,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "02-B-festerm-full-redraw",
+          "mode": "B",
+          "workload": "full-redraw",
+          "cpu_percent": 8.675949191342218,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.140465497970581,
+          "sample_seconds": 10.2204235,
+          "max_external_cpu": 15.696022727272728,
+          "gui_frames_per_second": 9.980016972877884,
+          "direct2d_frames_per_second": 9.980016972877884,
+          "host_copy_frames_per_second": 9.980016972877884,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "02-B-festerm-changing-chrome",
+          "mode": "B",
+          "workload": "changing-chrome",
+          "cpu_percent": 5.076022882925077,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.6356709003448486,
+          "sample_seconds": 10.1965286,
+          "max_external_cpu": 9.191176470588236,
+          "gui_frames_per_second": 10.003404491995441,
+          "direct2d_frames_per_second": 10.003404491995441,
+          "host_copy_frames_per_second": 10.003404491995441,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "03-C-festerm-quiet",
+          "mode": "C",
+          "workload": "quiet",
+          "cpu_percent": 0.019219544921915535,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.9200870990753174,
+          "sample_seconds": 10.1621813,
+          "max_external_cpu": 10.342261904761905,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "03-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 1.4354396585668463,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 5.1144914627075195,
+          "sample_seconds": 10.2048438,
+          "max_external_cpu": 8.014705882352942,
+          "gui_frames_per_second": 9.995253430532664,
+          "direct2d_frames_per_second": 9.995253430532664,
+          "host_copy_frames_per_second": 9.995253430532664,
+          "retained_frames_per_second": 9.995253430532664,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "03-C-festerm-streaming",
+          "mode": "C",
+          "workload": "streaming",
+          "cpu_percent": 1.712981392190057,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.6675431728363037,
+          "sample_seconds": 10.2047044,
+          "max_external_cpu": 11.191860465116278,
+          "gui_frames_per_second": 10.877336143122381,
+          "direct2d_frames_per_second": 10.09338398866311,
+          "host_copy_frames_per_second": 10.877336143122381,
+          "retained_frames_per_second": 10.877336143122381,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "03-C-festerm-full-redraw",
+          "mode": "C",
+          "workload": "full-redraw",
+          "cpu_percent": 5.942440092646537,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.878925085067749,
+          "sample_seconds": 10.2053248,
+          "max_external_cpu": 10.808823529411764,
+          "gui_frames_per_second": 9.99478233167062,
+          "direct2d_frames_per_second": 9.99478233167062,
+          "host_copy_frames_per_second": 9.99478233167062,
+          "retained_frames_per_second": 9.99478233167062,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "03-C-festerm-changing-chrome",
+          "mode": "C",
+          "workload": "changing-chrome",
+          "cpu_percent": 4.536561148753131,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.9680418968200684,
+          "sample_seconds": 10.182031,
+          "max_external_cpu": 7.657992565055761,
+          "gui_frames_per_second": 10.017647756130383,
+          "direct2d_frames_per_second": 10.017647756130383,
+          "host_copy_frames_per_second": 10.017647756130383,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 10.017647756130383,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "04-C-festerm-quiet",
+          "mode": "C",
+          "workload": "quiet",
+          "cpu_percent": 0.019219848099113358,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.9442780017852783,
+          "sample_seconds": 10.162021,
+          "max_external_cpu": 13.823529411764707,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "04-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 1.399660340828156,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 4.0086658000946045,
+          "sample_seconds": 10.1866232,
+          "max_external_cpu": 9.668109668109668,
+          "gui_frames_per_second": 10.013131731425975,
+          "direct2d_frames_per_second": 10.013131731425975,
+          "host_copy_frames_per_second": 10.013131731425975,
+          "retained_frames_per_second": 10.013131731425975,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "04-C-festerm-streaming",
+          "mode": "C",
+          "workload": "streaming",
+          "cpu_percent": 1.5368012768700154,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.597597122192383,
+          "sample_seconds": 10.2307673,
+          "max_external_cpu": 20.10869565217391,
+          "gui_frames_per_second": 10.55639296966514,
+          "direct2d_frames_per_second": 9.969926693572631,
+          "host_copy_frames_per_second": 10.55639296966514,
+          "retained_frames_per_second": 10.55639296966514,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "04-C-festerm-full-redraw",
+          "mode": "C",
+          "workload": "full-redraw",
+          "cpu_percent": 6.098425134020075,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.841172218322754,
+          "sample_seconds": 10.2325342,
+          "max_external_cpu": 9.94318181818182,
+          "gui_frames_per_second": 9.968205139250841,
+          "direct2d_frames_per_second": 9.968205139250841,
+          "host_copy_frames_per_second": 9.968205139250841,
+          "retained_frames_per_second": 9.968205139250841,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "04-C-festerm-changing-chrome",
+          "mode": "C",
+          "workload": "changing-chrome",
+          "cpu_percent": 4.736481482912046,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.665682077407837,
+          "sample_seconds": 10.226473,
+          "max_external_cpu": 12.354651162790697,
+          "gui_frames_per_second": 9.974113264661238,
+          "direct2d_frames_per_second": 9.974113264661238,
+          "host_copy_frames_per_second": 9.974113264661238,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 9.974113264661238,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "05-B-festerm-quiet",
+          "mode": "B",
+          "workload": "quiet",
+          "cpu_percent": 0.009606854343566206,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.455224990844727,
+          "sample_seconds": 10.1652681,
+          "max_external_cpu": 13.936249073387694,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "05-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 2.446168107991316,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 5.114831209182739,
+          "sample_seconds": 10.2200662,
+          "max_external_cpu": 11.566091954022987,
+          "gui_frames_per_second": 9.98036588060457,
+          "direct2d_frames_per_second": 9.98036588060457,
+          "host_copy_frames_per_second": 9.98036588060457,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "05-B-festerm-streaming",
+          "mode": "B",
+          "workload": "streaming",
+          "cpu_percent": 2.8500691766026844,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.33436918258667,
+          "sample_seconds": 10.1765622,
+          "max_external_cpu": 14.919354838709676,
+          "gui_frames_per_second": 10.907416258901263,
+          "direct2d_frames_per_second": 10.023031156828187,
+          "host_copy_frames_per_second": 10.907416258901263,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "05-B-festerm-full-redraw",
+          "mode": "B",
+          "workload": "full-redraw",
+          "cpu_percent": 7.977532457447479,
+          "noise_intervals": 6,
+          "noise_exposed_seconds": 7.546967267990112,
+          "sample_seconds": 10.2093364,
+          "max_external_cpu": 8.451704545454545,
+          "gui_frames_per_second": 9.990855037355807,
+          "direct2d_frames_per_second": 9.990855037355807,
+          "host_copy_frames_per_second": 9.990855037355807,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "05-B-festerm-changing-chrome",
+          "mode": "B",
+          "workload": "changing-chrome",
+          "cpu_percent": 4.171011866110893,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.693431854248047,
+          "sample_seconds": 10.2081045,
+          "max_external_cpu": 10.99137931034483,
+          "gui_frames_per_second": 9.992060719989691,
+          "direct2d_frames_per_second": 9.992060719989691,
+          "host_copy_frames_per_second": 9.992060719989691,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "06-A-festerm-quiet",
+          "mode": "A",
+          "workload": "quiet",
+          "cpu_percent": 0.019217458686707038,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.615304946899414,
+          "sample_seconds": 10.1632845,
+          "max_external_cpu": 10.391566265060241,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "06-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 6.8625079247207825,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.7127740383148193,
+          "sample_seconds": 10.2031986,
+          "max_external_cpu": 8.522727272727272,
+          "gui_frames_per_second": 10.094873582094149,
+          "direct2d_frames_per_second": 10.094873582094149,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "06-A-festerm-streaming",
+          "mode": "A",
+          "workload": "streaming",
+          "cpu_percent": 4.74450595115635,
+          "noise_intervals": 6,
+          "noise_exposed_seconds": 6.242159605026245,
+          "sample_seconds": 10.2297598,
+          "max_external_cpu": 26.29076086956522,
+          "gui_frames_per_second": 10.655186644753869,
+          "direct2d_frames_per_second": 9.970908603347656,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "06-A-festerm-full-redraw",
+          "mode": "A",
+          "workload": "full-redraw",
+          "cpu_percent": 10.66771595486753,
+          "noise_intervals": 8,
+          "noise_exposed_seconds": 9.921878099441528,
+          "sample_seconds": 10.2071258,
+          "max_external_cpu": 15.247252747252748,
+          "gui_frames_per_second": 9.993018798690617,
+          "direct2d_frames_per_second": 9.993018798690617,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "06-A-festerm-changing-chrome",
+          "mode": "A",
+          "workload": "changing-chrome",
+          "cpu_percent": 6.543694169606385,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 5.424750804901123,
+          "sample_seconds": 10.2227472,
+          "max_external_cpu": 9.446022727272727,
+          "gui_frames_per_second": 9.977748447110185,
+          "direct2d_frames_per_second": 9.977748447110185,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "07-C-festerm-quiet",
+          "mode": "C",
+          "workload": "quiet",
+          "cpu_percent": 0.019194143073262854,
+          "noise_intervals": 1,
+          "noise_exposed_seconds": 1.3254611492156982,
+          "sample_seconds": 10.1756301,
+          "max_external_cpu": 9.779411764705882,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "07-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 1.7024964098612696,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.8721392154693604,
+          "sample_seconds": 10.2101904,
+          "max_external_cpu": 13.36206896551724,
+          "gui_frames_per_second": 9.990019382988196,
+          "direct2d_frames_per_second": 9.990019382988196,
+          "host_copy_frames_per_second": 9.990019382988196,
+          "retained_frames_per_second": 9.990019382988196,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "07-C-festerm-streaming",
+          "mode": "C",
+          "workload": "streaming",
+          "cpu_percent": 1.575358577001177,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.6702489852905273,
+          "sample_seconds": 10.2283261,
+          "max_external_cpu": 15.411931818181817,
+          "gui_frames_per_second": 10.656680177609902,
+          "direct2d_frames_per_second": 9.972306221249633,
+          "host_copy_frames_per_second": 10.656680177609902,
+          "retained_frames_per_second": 10.656680177609902,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "07-C-festerm-full-redraw",
+          "mode": "C",
+          "workload": "full-redraw",
+          "cpu_percent": 5.916450925739305,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.604145765304565,
+          "sample_seconds": 10.2336478,
+          "max_external_cpu": 10.69277108433735,
+          "gui_frames_per_second": 9.96712042405837,
+          "direct2d_frames_per_second": 9.96712042405837,
+          "host_copy_frames_per_second": 9.96712042405837,
+          "retained_frames_per_second": 9.96712042405837,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "07-C-festerm-changing-chrome",
+          "mode": "C",
+          "workload": "changing-chrome",
+          "cpu_percent": 3.854047936935702,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.669658660888672,
+          "sample_seconds": 10.1861246,
+          "max_external_cpu": 11.482558139534884,
+          "gui_frames_per_second": 10.013621863608462,
+          "direct2d_frames_per_second": 10.013621863608462,
+          "host_copy_frames_per_second": 10.013621863608462,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 10.013621863608462,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "08-B-festerm-quiet",
+          "mode": "B",
+          "workload": "quiet",
+          "cpu_percent": 0.0,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.548725128173828,
+          "sample_seconds": 10.1631813,
+          "max_external_cpu": 8.384146341463415,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "08-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 3.3120603098865855,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.955824851989746,
+          "sample_seconds": 10.2313109,
+          "max_external_cpu": 21.148255813953487,
+          "gui_frames_per_second": 10.067136167272563,
+          "direct2d_frames_per_second": 10.067136167272563,
+          "host_copy_frames_per_second": 10.067136167272563,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "08-B-festerm-streaming",
+          "mode": "B",
+          "workload": "streaming",
+          "cpu_percent": 3.2545208518047266,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.845683336257935,
+          "sample_seconds": 10.1721483,
+          "max_external_cpu": 15.378900445765233,
+          "gui_frames_per_second": 11.30537980851105,
+          "direct2d_frames_per_second": 10.12568800240555,
+          "host_copy_frames_per_second": 11.30537980851105,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "08-B-festerm-full-redraw",
+          "mode": "B",
+          "workload": "full-redraw",
+          "cpu_percent": 8.212191535108742,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 5.532124996185303,
+          "sample_seconds": 10.2030088,
+          "max_external_cpu": 9.411764705882353,
+          "gui_frames_per_second": 10.09506137052435,
+          "direct2d_frames_per_second": 10.09506137052435,
+          "host_copy_frames_per_second": 10.09506137052435,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "08-B-festerm-changing-chrome",
+          "mode": "B",
+          "workload": "changing-chrome",
+          "cpu_percent": 4.286080124520669,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 3.9844210147857666,
+          "sample_seconds": 10.207462,
+          "max_external_cpu": 10.448859455481971,
+          "gui_frames_per_second": 9.992689661739618,
+          "direct2d_frames_per_second": 9.992689661739618,
+          "host_copy_frames_per_second": 9.992689661739618,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "09-A-festerm-quiet",
+          "mode": "A",
+          "workload": "quiet",
+          "cpu_percent": 0.0,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 2.9276976585388184,
+          "sample_seconds": 10.1749048,
+          "max_external_cpu": 17.601683029453017,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "09-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 6.250355609818707,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.874934673309326,
+          "sample_seconds": 10.2025445,
+          "max_external_cpu": 8.593749999999998,
+          "gui_frames_per_second": 10.09552077915465,
+          "direct2d_frames_per_second": 10.09552077915465,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "09-A-festerm-streaming",
+          "mode": "A",
+          "workload": "streaming",
+          "cpu_percent": 5.02828616181159,
+          "noise_intervals": 6,
+          "noise_exposed_seconds": 7.561644554138184,
+          "sample_seconds": 10.2350666,
+          "max_external_cpu": 9.907997169143666,
+          "gui_frames_per_second": 11.23588194335736,
+          "direct2d_frames_per_second": 10.161145409644917,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "09-A-festerm-full-redraw",
+          "mode": "A",
+          "workload": "full-redraw",
+          "cpu_percent": 10.744593656944236,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.6820640563964844,
+          "sample_seconds": 10.1977158,
+          "max_external_cpu": 9.934735315445975,
+          "gui_frames_per_second": 10.002239913373543,
+          "direct2d_frames_per_second": 10.002239913373543,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "09-A-festerm-changing-chrome",
+          "mode": "A",
+          "workload": "changing-chrome",
+          "cpu_percent": 6.231284720174779,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.819310665130615,
+          "sample_seconds": 10.2024256,
+          "max_external_cpu": 9.847936278059375,
+          "gui_frames_per_second": 10.095638433276102,
+          "direct2d_frames_per_second": 10.095638433276102,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "10-A-festerm-quiet",
+          "mode": "A",
+          "workload": "quiet",
+          "cpu_percent": 0.038466851952896466,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 2.7150111198425293,
+          "sample_seconds": 10.1548471,
+          "max_external_cpu": 8.779761904761903,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "10-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 4.907354630106856,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.85558557510376,
+          "sample_seconds": 10.2086888,
+          "max_external_cpu": 13.849431818181818,
+          "gui_frames_per_second": 9.99148881881873,
+          "direct2d_frames_per_second": 9.99148881881873,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "10-A-festerm-streaming",
+          "mode": "A",
+          "workload": "streaming",
+          "cpu_percent": 5.37630016962603,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.668916940689087,
+          "sample_seconds": 10.1901223,
+          "max_external_cpu": 10.147058823529413,
+          "gui_frames_per_second": 10.794767399405991,
+          "direct2d_frames_per_second": 10.009693406721919,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "10-A-festerm-full-redraw",
+          "mode": "A",
+          "workload": "full-redraw",
+          "cpu_percent": 10.569045963431734,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 4.819382905960083,
+          "sample_seconds": 10.2007788,
+          "max_external_cpu": 10.392441860465118,
+          "gui_frames_per_second": 10.09726825955681,
+          "direct2d_frames_per_second": 10.09726825955681,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "10-A-festerm-changing-chrome",
+          "mode": "A",
+          "workload": "changing-chrome",
+          "cpu_percent": 6.9120554639501774,
+          "noise_intervals": 6,
+          "noise_exposed_seconds": 7.537110805511475,
+          "sample_seconds": 10.2148296,
+          "max_external_cpu": 8.497191011235953,
+          "gui_frames_per_second": 10.083379168654952,
+          "direct2d_frames_per_second": 10.083379168654952,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "11-B-festerm-quiet",
+          "mode": "B",
+          "workload": "quiet",
+          "cpu_percent": 0.019179837214356926,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 5.598910093307495,
+          "sample_seconds": 10.1832199,
+          "max_external_cpu": 11.086309523809524,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "11-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 3.603133251706537,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 4.910638093948364,
+          "sample_seconds": 10.2178864,
+          "max_external_cpu": 13.139204545454547,
+          "gui_frames_per_second": 10.080362608063446,
+          "direct2d_frames_per_second": 10.080362608063446,
+          "host_copy_frames_per_second": 9.982495009926907,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "11-B-festerm-streaming",
+          "mode": "B",
+          "workload": "streaming",
+          "cpu_percent": 2.927139310440485,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.2442240715026855,
+          "sample_seconds": 10.2088795,
+          "max_external_cpu": 9.077380952380953,
+          "gui_frames_per_second": 11.068795551950632,
+          "direct2d_frames_per_second": 10.08925612257447,
+          "host_copy_frames_per_second": 11.068795551950632,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "11-B-festerm-full-redraw",
+          "mode": "B",
+          "workload": "full-redraw",
+          "cpu_percent": 8.14483823182086,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 4.028600692749023,
+          "sample_seconds": 10.2154423,
+          "max_external_cpu": 18.53448275862069,
+          "gui_frames_per_second": 10.082774389514197,
+          "direct2d_frames_per_second": 10.082774389514197,
+          "host_copy_frames_per_second": 10.082774389514197,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "11-B-festerm-changing-chrome",
+          "mode": "B",
+          "workload": "changing-chrome",
+          "cpu_percent": 4.059408029324488,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.3619983196258545,
+          "sample_seconds": 10.1760142,
+          "max_external_cpu": 9.943181818181818,
+          "gui_frames_per_second": 10.023570918366055,
+          "direct2d_frames_per_second": 10.023570918366055,
+          "host_copy_frames_per_second": 10.023570918366055,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        },
+        {
+          "case": "12-C-festerm-quiet",
+          "mode": "C",
+          "workload": "quiet",
+          "cpu_percent": 0.01924972261426909,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 2.328925132751465,
+          "sample_seconds": 10.1462501,
+          "max_external_cpu": 11.979166666666666,
+          "gui_frames_per_second": 0.0,
+          "direct2d_frames_per_second": 0.0,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "E8057588754F4A9373655A716E89422937D05BC97BF8F1CF2A3EBE278A48564B"
+        },
+        {
+          "case": "12-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 1.4769901138810722,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 2.426727294921875,
+          "sample_seconds": 10.1822364,
+          "max_external_cpu": 9.058988764044944,
+          "gui_frames_per_second": 10.017445676275988,
+          "direct2d_frames_per_second": 10.017445676275988,
+          "host_copy_frames_per_second": 10.017445676275988,
+          "retained_frames_per_second": 10.017445676275988,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "F903EB5C59FA8BB715907AE4D435339D4A8B0ED300D67D5DBDEA146BCD64FA2F"
+        },
+        {
+          "case": "12-C-festerm-streaming",
+          "mode": "C",
+          "workload": "streaming",
+          "cpu_percent": 1.484016345993276,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 5.060574769973755,
+          "sample_seconds": 10.1998329,
+          "max_external_cpu": 10.440340909090908,
+          "gui_frames_per_second": 10.588408757166992,
+          "direct2d_frames_per_second": 10.00016382621327,
+          "host_copy_frames_per_second": 10.588408757166992,
+          "retained_frames_per_second": 10.588408757166992,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "8AD4EBA751CC6D224AB939CE84B22B62D28C603316F38EA3C4CE45E79442C31E"
+        },
+        {
+          "case": "12-C-festerm-full-redraw",
+          "mode": "C",
+          "workload": "full-redraw",
+          "cpu_percent": 6.484351990959775,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 6.226985931396484,
+          "sample_seconds": 10.2259399,
+          "max_external_cpu": 12.643678160919542,
+          "gui_frames_per_second": 9.974633236403042,
+          "direct2d_frames_per_second": 9.974633236403042,
+          "host_copy_frames_per_second": 9.974633236403042,
+          "retained_frames_per_second": 9.974633236403042,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "4C3A706250EE338417CE0C7E1436CE2CB7480F9F098D35AB779870ADEAD2490F"
+        },
+        {
+          "case": "12-C-festerm-changing-chrome",
+          "mode": "C",
+          "workload": "changing-chrome",
+          "cpu_percent": 4.568376956259845,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 5.291794300079346,
+          "sample_seconds": 10.196626,
+          "max_external_cpu": 8.035714285714286,
+          "gui_frames_per_second": 10.101380593933719,
+          "direct2d_frames_per_second": 10.101380593933719,
+          "host_copy_frames_per_second": 10.101380593933719,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 10.101380593933719,
+          "capture_sha256": "2DBC820AE8EA95844D56292A56913916B2D8D9F3ABEA598DC731C9FF76E339DA"
+        }
+      ],
+      "distributions_and_order_blocks": {
+        "quiet": {
+          "A": {
+            "cpu_percent": {
+              "samples": [
+                0.028799797125566066,
+                0.019217458686707038,
+                0.0,
+                0.038466851952896466
+              ],
+              "mean": 0.021621026941292393,
+              "median": 0.024008627906136552,
+              "p95": 0.038466851952896466,
+              "min": 0.0,
+              "max": 0.038466851952896466
+            },
+            "producer_fps": {
+              "samples": [
+                9.99993410043428,
+                9.999849852254469,
+                9.99976500552237,
+                9.99980845366907
+              ],
+              "mean": 9.999839352970048,
+              "median": 9.99982915296177,
+              "p95": 9.99993410043428,
+              "min": 9.99976500552237,
+              "max": 9.99993410043428
+            },
+            "private_bytes": {
+              "samples": [
+                413642752,
+                416321536,
+                414990336,
+                413495296
+              ],
+              "mean": 414612480,
+              "median": 414316544.0,
+              "p95": 416321536,
+              "min": 413495296,
+              "max": 416321536
+            }
+          },
+          "B": {
+            "cpu_percent": {
+              "samples": [
+                0.0,
+                0.009606854343566206,
+                0.0,
+                0.019179837214356926
+              ],
+              "mean": 0.007196672889480784,
+              "median": 0.004803427171783103,
+              "p95": 0.019179837214356926,
+              "min": 0.0,
+              "max": 0.019179837214356926
+            },
+            "producer_fps": {
+              "samples": [
+                9.999899601008007,
+                9.999953800213442,
+                9.9998511522156,
+                9.99973650694304
+              ],
+              "mean": 9.999860265095023,
+              "median": 9.999875376611804,
+              "p95": 9.999953800213442,
+              "min": 9.99973650694304,
+              "max": 9.999953800213442
+            },
+            "private_bytes": {
+              "samples": [
+                415412224,
+                413278208,
+                414785536,
+                414810112
+              ],
+              "mean": 414571520,
+              "median": 414797824.0,
+              "p95": 415412224,
+              "min": 413278208,
+              "max": 415412224
+            }
+          },
+          "C": {
+            "cpu_percent": {
+              "samples": [
+                0.019219544921915535,
+                0.019219848099113358,
+                0.019194143073262854,
+                0.01924972261426909
+              ],
+              "mean": 0.019220814677140208,
+              "median": 0.019219696510514445,
+              "p95": 0.01924972261426909,
+              "min": 0.019194143073262854,
+              "max": 0.01924972261426909
+            },
+            "producer_fps": {
+              "samples": [
+                9.999785704592352,
+                9.999947750273005,
+                9.999836602669912,
+                9.999915100720795
+              ],
+              "mean": 9.999871289564016,
+              "median": 9.999875851695354,
+              "p95": 9.999947750273005,
+              "min": 9.999785704592352,
+              "max": 9.999947750273005
+            },
+            "private_bytes": {
+              "samples": [
+                411508736,
+                411639808,
+                415490048,
+                413192192
+              ],
+              "mean": 412957696,
+              "median": 412416000.0,
+              "p95": 415490048,
+              "min": 411508736,
+              "max": 415490048
+            }
+          },
+          "C_vs_A_percent": -11.10128705111688,
+          "B_vs_A_percent": -66.71447240215778,
+          "ordered_blocks": [
+            {
+              "A": 0.028799797125566066,
+              "B": 0.0,
+              "C": 0.019219544921915535
+            },
+            {
+              "A": 0.019217458686707038,
+              "B": 0.009606854343566206,
+              "C": 0.019219848099113358
+            },
+            {
+              "A": 0.0,
+              "B": 0.0,
+              "C": 0.019194143073262854
+            },
+            {
+              "A": 0.038466851952896466,
+              "B": 0.019179837214356926,
+              "C": 0.01924972261426909
+            }
+          ]
+        },
+        "localized": {
+          "A": {
+            "cpu_percent": {
+              "samples": [
+                6.768917918595622,
+                6.8625079247207825,
+                6.250355609818707,
+                4.907354630106856
+              ],
+              "mean": 6.197284020810492,
+              "median": 6.509636764207165,
+              "p95": 6.8625079247207825,
+              "min": 4.907354630106856,
+              "max": 6.8625079247207825
+            },
+            "producer_fps": {
+              "samples": [
+                9.999779854846494,
+                9.999753656068684,
+                9.99970615863453,
+                9.999755905958336
+              ],
+              "mean": 9.999748893877012,
+              "median": 9.999754781013511,
+              "p95": 9.999779854846494,
+              "min": 9.99970615863453,
+              "max": 9.999779854846494
+            },
+            "private_bytes": {
+              "samples": [
+                482594816,
+                477589504,
+                482652160,
+                483020800
+              ],
+              "mean": 481464320,
+              "median": 482623488.0,
+              "p95": 483020800,
+              "min": 477589504,
+              "max": 483020800
+            }
+          },
+          "B": {
+            "cpu_percent": {
+              "samples": [
+                3.0496437951192177,
+                2.446168107991316,
+                3.3120603098865855,
+                3.603133251706537
+              ],
+              "mean": 3.102751366175914,
+              "median": 3.1808520525029014,
+              "p95": 3.603133251706537,
+              "min": 2.446168107991316,
+              "max": 3.603133251706537
+            },
+            "producer_fps": {
+              "samples": [
+                9.999842302486888,
+                9.99971145832587,
+                9.999799454021948,
+                9.999712458268263
+              ],
+              "mean": 9.999766418275742,
+              "median": 9.999755956145105,
+              "p95": 9.999842302486888,
+              "min": 9.99971145832587,
+              "max": 9.999842302486888
+            },
+            "private_bytes": {
+              "samples": [
+                480051200,
+                479395840,
+                480673792,
+                483155968
+              ],
+              "mean": 480819200,
+              "median": 480362496.0,
+              "p95": 483155968,
+              "min": 479395840,
+              "max": 483155968
+            }
+          },
+          "C": {
+            "cpu_percent": {
+              "samples": [
+                1.4354396585668463,
+                1.399660340828156,
+                1.7024964098612696,
+                1.4769901138810722
+              ],
+              "mean": 1.5036466307843361,
+              "median": 1.4562148862239592,
+              "p95": 1.7024964098612696,
+              "min": 1.399660340828156,
+              "max": 1.7024964098612696
+            },
+            "producer_fps": {
+              "samples": [
+                9.999749556272363,
+                9.999878901466502,
+                9.999730457265523,
+                9.99971935787622
+              ],
+              "mean": 9.999769568220152,
+              "median": 9.999740006768942,
+              "p95": 9.999878901466502,
+              "min": 9.99971935787622,
+              "max": 9.999878901466502
+            },
+            "private_bytes": {
+              "samples": [
+                480190464,
+                479203328,
+                479956992,
+                480722944
+              ],
+              "mean": 480018432,
+              "median": 480073728.0,
+              "p95": 480722944,
+              "min": 479203328,
+              "max": 480722944
+            }
+          },
+          "C_vs_A_percent": -75.73700631219921,
+          "B_vs_A_percent": -49.93369102082672,
+          "ordered_blocks": [
+            {
+              "A": 6.768917918595622,
+              "B": 3.0496437951192177,
+              "C": 1.4354396585668463
+            },
+            {
+              "A": 6.8625079247207825,
+              "B": 2.446168107991316,
+              "C": 1.399660340828156
+            },
+            {
+              "A": 6.250355609818707,
+              "B": 3.3120603098865855,
+              "C": 1.7024964098612696
+            },
+            {
+              "A": 4.907354630106856,
+              "B": 3.603133251706537,
+              "C": 1.4769901138810722
+            }
+          ]
+        },
+        "streaming": {
+          "A": {
+            "cpu_percent": {
+              "samples": [
+                5.1443869839477765,
+                4.74450595115635,
+                5.02828616181159,
+                5.37630016962603
+              ],
+              "mean": 5.073369816635437,
+              "median": 5.086336572879683,
+              "p95": 5.37630016962603,
+              "min": 4.74450595115635,
+              "max": 5.37630016962603
+            },
+            "producer_fps": {
+              "samples": [
+                9.999553669921943,
+                9.999739256798877,
+                9.999735257009071,
+                9.999452579968512
+              ],
+              "mean": 9.9996201909246,
+              "median": 9.999644463465508,
+              "p95": 9.999739256798877,
+              "min": 9.999452579968512,
+              "max": 9.999739256798877
+            },
+            "private_bytes": {
+              "samples": [
+                493875200,
+                494981120,
+                489537536,
+                494723072
+              ],
+              "mean": 493279232,
+              "median": 494299136.0,
+              "p95": 494981120,
+              "min": 489537536,
+              "max": 494981120
+            }
+          },
+          "B": {
+            "cpu_percent": {
+              "samples": [
+                2.850407839900907,
+                2.8500691766026844,
+                3.2545208518047266,
+                2.927139310440485
+              ],
+              "mean": 2.9705342946872006,
+              "median": 2.888773575170696,
+              "p95": 3.2545208518047266,
+              "min": 2.8500691766026844,
+              "max": 3.2545208518047266
+            },
+            "producer_fps": {
+              "samples": [
+                9.999569418540839,
+                9.999549720276095,
+                9.999784154659022,
+                9.999784254654704
+              ],
+              "mean": 9.999671887032665,
+              "median": 9.999676786599931,
+              "p95": 9.999784254654704,
+              "min": 9.999549720276095,
+              "max": 9.999784254654704
+            },
+            "private_bytes": {
+              "samples": [
+                492433408,
+                498941952,
+                494710784,
+                492273664
+              ],
+              "mean": 494589952,
+              "median": 493572096.0,
+              "p95": 498941952,
+              "min": 492273664,
+              "max": 498941952
+            }
+          },
+          "C": {
+            "cpu_percent": {
+              "samples": [
+                1.712981392190057,
+                1.5368012768700154,
+                1.575358577001177,
+                1.484016345993276
+              ],
+              "mean": 1.5772893980136313,
+              "median": 1.5560799269355963,
+              "p95": 1.712981392190057,
+              "min": 1.484016345993276,
+              "max": 1.712981392190057
+            },
+            "producer_fps": {
+              "samples": [
+                9.99963646321638,
+                9.999772655168686,
+                9.99970290882658,
+                9.999816653361659
+              ],
+              "mean": 9.999732170143325,
+              "median": 9.999737781997633,
+              "p95": 9.999816653361659,
+              "min": 9.99963646321638,
+              "max": 9.999816653361659
+            },
+            "private_bytes": {
+              "samples": [
+                488841216,
+                489639936,
+                488247296,
+                489046016
+              ],
+              "mean": 488943616,
+              "median": 488943616.0,
+              "p95": 489639936,
+              "min": 488247296,
+              "max": 489639936
+            }
+          },
+          "C_vs_A_percent": -68.91041940522956,
+          "B_vs_A_percent": -41.448496718159554,
+          "ordered_blocks": [
+            {
+              "A": 5.1443869839477765,
+              "B": 2.850407839900907,
+              "C": 1.712981392190057
+            },
+            {
+              "A": 4.74450595115635,
+              "B": 2.8500691766026844,
+              "C": 1.5368012768700154
+            },
+            {
+              "A": 5.02828616181159,
+              "B": 3.2545208518047266,
+              "C": 1.575358577001177
+            },
+            {
+              "A": 5.37630016962603,
+              "B": 2.927139310440485,
+              "C": 1.484016345993276
+            }
+          ]
+        },
+        "full-redraw": {
+          "A": {
+            "cpu_percent": {
+              "samples": [
+                10.212952911275256,
+                10.66771595486753,
+                10.744593656944236,
+                10.569045963431734
+              ],
+              "mean": 10.54857712162969,
+              "median": 10.618380959149633,
+              "p95": 10.744593656944236,
+              "min": 10.212952911275256,
+              "max": 10.744593656944236
+            },
+            "producer_fps": {
+              "samples": [
+                9.999681710131165,
+                9.999677910374507,
+                9.999721557753224,
+                9.999816053383697
+              ],
+              "mean": 9.999724307910649,
+              "median": 9.999701633942195,
+              "p95": 9.999816053383697,
+              "min": 9.999677910374507,
+              "max": 9.999816053383697
+            },
+            "private_bytes": {
+              "samples": [
+                542355456,
+                547618816,
+                538411008,
+                519737344
+              ],
+              "mean": 537030656,
+              "median": 540383232.0,
+              "p95": 547618816,
+              "min": 519737344,
+              "max": 547618816
+            }
+          },
+          "B": {
+            "cpu_percent": {
+              "samples": [
+                8.675949191342218,
+                7.977532457447479,
+                8.212191535108742,
+                8.14483823182086
+              ],
+              "mean": 8.252627853929825,
+              "median": 8.1785148834648,
+              "p95": 8.675949191342218,
+              "min": 7.977532457447479,
+              "max": 8.675949191342218
+            },
+            "producer_fps": {
+              "samples": [
+                9.999793004284811,
+                9.99973650694304,
+                9.99962406413331,
+                9.999742656622733
+              ],
+              "mean": 9.999724057995973,
+              "median": 9.999739581782887,
+              "p95": 9.999793004284811,
+              "min": 9.99962406413331,
+              "max": 9.999793004284811
+            },
+            "private_bytes": {
+              "samples": [
+                541016064,
+                544944128,
+                543424512,
+                546729984
+              ],
+              "mean": 544028672,
+              "median": 544184320.0,
+              "p95": 546729984,
+              "min": 541016064,
+              "max": 546729984
+            }
+          },
+          "C": {
+            "cpu_percent": {
+              "samples": [
+                5.942440092646537,
+                6.098425134020075,
+                5.916450925739305,
+                6.484351990959775
+              ],
+              "mean": 6.110417035841423,
+              "median": 6.0204326133333055,
+              "p95": 6.484351990959775,
+              "min": 5.916450925739305,
+              "max": 6.484351990959775
+            },
+            "producer_fps": {
+              "samples": [
+                9.99968061020131,
+                9.999812703508063,
+                9.99975270611558,
+                9.99961151509264
+              ],
+              "mean": 9.999714383729398,
+              "median": 9.999716658158444,
+              "p95": 9.999812703508063,
+              "min": 9.99961151509264,
+              "max": 9.999812703508063
+            },
+            "private_bytes": {
+              "samples": [
+                521175040,
+                525549568,
+                523845632,
+                524070912
+              ],
+              "mean": 523660288,
+              "median": 523958272.0,
+              "p95": 525549568,
+              "min": 521175040,
+              "max": 525549568
+            }
+          },
+          "C_vs_A_percent": -42.07354256990632,
+          "B_vs_A_percent": -21.765487811546237,
+          "ordered_blocks": [
+            {
+              "A": 10.212952911275256,
+              "B": 8.675949191342218,
+              "C": 5.942440092646537
+            },
+            {
+              "A": 10.66771595486753,
+              "B": 7.977532457447479,
+              "C": 6.098425134020075
+            },
+            {
+              "A": 10.744593656944236,
+              "B": 8.212191535108742,
+              "C": 5.916450925739305
+            },
+            {
+              "A": 10.569045963431734,
+              "B": 8.14483823182086,
+              "C": 6.484351990959775
+            }
+          ]
+        },
+        "changing-chrome": {
+          "A": {
+            "cpu_percent": {
+              "samples": [
+                7.151690797842048,
+                6.543694169606385,
+                6.231284720174779,
+                6.9120554639501774
+              ],
+              "mean": 6.709681287893347,
+              "median": 6.727874816778281,
+              "p95": 7.151690797842048,
+              "min": 6.231284720174779,
+              "max": 7.151690797842048
+            },
+            "producer_fps": {
+              "samples": [
+                9.999787004536804,
+                9.999690359588014,
+                9.999647262442817,
+                9.999730607257439
+              ],
+              "mean": 9.999713808456269,
+              "median": 9.999710483422726,
+              "p95": 9.999787004536804,
+              "min": 9.999647262442817,
+              "max": 9.999787004536804
+            },
+            "private_bytes": {
+              "samples": [
+                496783360,
+                508985344,
+                508395520,
+                514232320
+              ],
+              "mean": 507099136,
+              "median": 508690432.0,
+              "p95": 514232320,
+              "min": 496783360,
+              "max": 514232320
+            }
+          },
+          "B": {
+            "cpu_percent": {
+              "samples": [
+                5.076022882925077,
+                4.171011866110893,
+                4.286080124520669,
+                4.059408029324488
+              ],
+              "mean": 4.398130725720282,
+              "median": 4.228545995315781,
+              "p95": 5.076022882925077,
+              "min": 4.059408029324488,
+              "max": 5.076022882925077
+            },
+            "producer_fps": {
+              "samples": [
+                9.999576217959882,
+                9.999633813409753,
+                9.999818353299611,
+                9.999659161617476
+              ],
+              "mean": 9.999671886571681,
+              "median": 9.999646487513616,
+              "p95": 9.999818353299611,
+              "min": 9.999576217959882,
+              "max": 9.999818353299611
+            },
+            "private_bytes": {
+              "samples": [
+                510001152,
+                505368576,
+                509374464,
+                509239296
+              ],
+              "mean": 508495872,
+              "median": 509306880.0,
+              "p95": 510001152,
+              "min": 505368576,
+              "max": 510001152
+            }
+          },
+          "C": {
+            "cpu_percent": {
+              "samples": [
+                4.536561148753131,
+                4.736481482912046,
+                3.854047936935702,
+                4.568376956259845
+              ],
+              "mean": 4.423866881215181,
+              "median": 4.552469052506488,
+              "p95": 4.736481482912046,
+              "min": 3.854047936935702,
+              "max": 4.736481482912046
+            },
+            "producer_fps": {
+              "samples": [
+                9.99973300712871,
+                9.99968945964383,
+                9.99985165220074,
+                9.9998087036595
+              ],
+              "mean": 9.999770705658195,
+              "median": 9.999770855394104,
+              "p95": 9.99985165220074,
+              "min": 9.99968945964383,
+              "max": 9.99985165220074
+            },
+            "private_bytes": {
+              "samples": [
+                504389632,
+                513613824,
+                508903424,
+                506400768
+              ],
+              "mean": 508326912,
+              "median": 507652096.0,
+              "p95": 513613824,
+              "min": 504389632,
+              "max": 513613824
+            }
+          },
+          "C_vs_A_percent": -34.06740661143755,
+          "B_vs_A_percent": -34.45097409237492,
+          "ordered_blocks": [
+            {
+              "A": 7.151690797842048,
+              "B": 5.076022882925077,
+              "C": 4.536561148753131
+            },
+            {
+              "A": 6.543694169606385,
+              "B": 4.171011866110893,
+              "C": 4.736481482912046
+            },
+            {
+              "A": 6.231284720174779,
+              "B": 4.286080124520669,
+              "C": 3.854047936935702
+            },
+            {
+              "A": 6.9120554639501774,
+              "B": 4.059408029324488,
+              "C": 4.568376956259845
+            }
+          ]
+        }
+      }
+    },
+    "overlay": {
+      "counts": {
+        "cases": 12,
+        "captures": 12,
+        "normal_shutdowns": 12
+      },
+      "controller_sha256": "AE20B20C48D8D1F29EA3A3900FB3962C66AD5A42AF6F40FAE61BA786B9B1D0B8",
+      "driver_sha256": "89FC6CB2ACAB0213700FF4E4818F933A609D344DD7908CBD69B240E7194A7B0D",
+      "cpu_observations": 214,
+      "noisy_cpu_observations": 171,
+      "cases_with_sample_noise": 12,
+      "external_cpu_median": 7.872744539411208,
+      "external_cpu_max": 93.03057553956835,
+      "cases": [
+        {
+          "case": "01-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 76.68817512963999,
+          "noise_intervals": 6,
+          "noise_exposed_seconds": 10.789686918258667,
+          "sample_seconds": 10.789687,
+          "max_external_cpu": 13.15789473684211,
+          "gui_frames_per_second": 6.209633328566436,
+          "direct2d_frames_per_second": 6.209633328566436,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "6941F9BA27B40CD9CE7ED08EF0138CE20A67CE8FE02D3CCEF2974F56FAFCF960"
+        },
+        {
+          "case": "02-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 78.82217605032164,
+          "noise_intervals": 1,
+          "noise_exposed_seconds": 2.3567070960998535,
+          "sample_seconds": 10.7317316,
+          "max_external_cpu": 9.395695364238406,
+          "gui_frames_per_second": 6.056804476921506,
+          "direct2d_frames_per_second": 6.056804476921506,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "9E0488172369C9044A9AC74BEB1756ADC821D002462DBA37BEDD35B0DACF2A23"
+        },
+        {
+          "case": "03-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 80.21893230894118,
+          "noise_intervals": 5,
+          "noise_exposed_seconds": 8.751158237457275,
+          "sample_seconds": 11.0379083,
+          "max_external_cpu": 11.863057324840753,
+          "gui_frames_per_second": 5.617006258332478,
+          "direct2d_frames_per_second": 5.617006258332478,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "6941F9BA27B40CD9CE7ED08EF0138CE20A67CE8FE02D3CCEF2974F56FAFCF960"
+        },
+        {
+          "case": "04-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 76.8689988742966,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 4.30939793586731,
+          "sample_seconds": 10.7045958,
+          "max_external_cpu": 14.230769230769226,
+          "gui_frames_per_second": 6.258993917360242,
+          "direct2d_frames_per_second": 6.258993917360242,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "6941F9BA27B40CD9CE7ED08EF0138CE20A67CE8FE02D3CCEF2974F56FAFCF960"
+        },
+        {
+          "case": "05-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 79.0280116032703,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 6.1481828689575195,
+          "sample_seconds": 10.576501,
+          "max_external_cpu": 9.232954545454547,
+          "gui_frames_per_second": 6.051150564822903,
+          "direct2d_frames_per_second": 6.051150564822903,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "3B046163BCB2F89083442EF5132BF0D3665ED0FA4A2347160A487B56C5BEA296"
+        },
+        {
+          "case": "06-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 80.28015792668853,
+          "noise_intervals": 4,
+          "noise_exposed_seconds": 7.554264068603516,
+          "sample_seconds": 11.0197587,
+          "max_external_cpu": 11.834319526627212,
+          "gui_frames_per_second": 5.354019230929258,
+          "direct2d_frames_per_second": 5.354019230929258,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "9E0488172369C9044A9AC74BEB1756ADC821D002462DBA37BEDD35B0DACF2A23"
+        },
+        {
+          "case": "07-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 79.66444018662965,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 6.506346940994263,
+          "sample_seconds": 10.7445308,
+          "max_external_cpu": 9.275477707006374,
+          "gui_frames_per_second": 6.142660040585485,
+          "direct2d_frames_per_second": 6.235730647261024,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "3B046163BCB2F89083442EF5132BF0D3665ED0FA4A2347160A487B56C5BEA296"
+        },
+        {
+          "case": "08-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 79.40925786302941,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 6.279804944992065,
+          "sample_seconds": 10.6966629,
+          "max_external_cpu": 11.536842105263148,
+          "gui_frames_per_second": 6.076661535253205,
+          "direct2d_frames_per_second": 6.076661535253205,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "D87A6A44ED57E4F8AAF46189738921B724D973433102819B6E923225D2F9BE01"
+        },
+        {
+          "case": "09-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 80.51978786602784,
+          "noise_intervals": 3,
+          "noise_exposed_seconds": 4.8211588859558105,
+          "sample_seconds": 10.9299608,
+          "max_external_cpu": 8.23863636363636,
+          "gui_frames_per_second": 5.489498187404295,
+          "direct2d_frames_per_second": 5.489498187404295,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "3B046163BCB2F89083442EF5132BF0D3665ED0FA4A2347160A487B56C5BEA296"
+        },
+        {
+          "case": "10-A-festerm-localized",
+          "mode": "A",
+          "workload": "localized",
+          "cpu_percent": 80.03968732340068,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 4.125561952590942,
+          "sample_seconds": 10.6429135,
+          "max_external_cpu": 10.331632653061234,
+          "gui_frames_per_second": 6.107350210071706,
+          "direct2d_frames_per_second": 6.107350210071706,
+          "host_copy_frames_per_second": null,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "3B046163BCB2F89083442EF5132BF0D3665ED0FA4A2347160A487B56C5BEA296"
+        },
+        {
+          "case": "11-B-festerm-localized",
+          "mode": "B",
+          "workload": "localized",
+          "cpu_percent": 79.7044481243208,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 4.361953020095825,
+          "sample_seconds": 10.6876779,
+          "max_external_cpu": 9.228187919463096,
+          "gui_frames_per_second": 6.268901498238453,
+          "direct2d_frames_per_second": 6.268901498238453,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": null,
+          "retained_rebuilds_per_second": null,
+          "capture_sha256": "6941F9BA27B40CD9CE7ED08EF0138CE20A67CE8FE02D3CCEF2974F56FAFCF960"
+        },
+        {
+          "case": "12-C-festerm-localized",
+          "mode": "C",
+          "workload": "localized",
+          "cpu_percent": 80.66374414371826,
+          "noise_intervals": 2,
+          "noise_exposed_seconds": 4.043439149856567,
+          "sample_seconds": 10.813602,
+          "max_external_cpu": 17.452830188679243,
+          "gui_frames_per_second": 5.5485674431147,
+          "direct2d_frames_per_second": 5.5485674431147,
+          "host_copy_frames_per_second": 0.0,
+          "retained_frames_per_second": 0.0,
+          "retained_rebuilds_per_second": 0.0,
+          "capture_sha256": "3B046163BCB2F89083442EF5132BF0D3665ED0FA4A2347160A487B56C5BEA296"
+        }
+      ],
+      "distributions_and_order_blocks": {
+        "localized": {
+          "A": {
+            "cpu_percent": {
+              "samples": [
+                76.68817512963999,
+                80.28015792668853,
+                80.51978786602784,
+                80.03968732340068
+              ],
+              "mean": 79.38195206143926,
+              "median": 80.1599226250446,
+              "p95": 80.51978786602784,
+              "min": 76.68817512963999,
+              "max": 80.51978786602784
+            },
+            "producer_fps": {
+              "samples": [
+                9.999596516280569,
+                9.999655911840073,
+                9.941628572872807,
+                9.994672689536385
+              ],
+              "mean": 9.983888422632457,
+              "median": 9.997134602908478,
+              "p95": 9.999655911840073,
+              "min": 9.941628572872807,
+              "max": 9.999655911840073
+            },
+            "private_bytes": {
+              "samples": [
+                515502080,
+                515502080,
+                513396736,
+                514060288
+              ],
+              "mean": 514615296,
+              "median": 514781184.0,
+              "p95": 515502080,
+              "min": 513396736,
+              "max": 515502080
+            }
+          },
+          "B": {
+            "cpu_percent": {
+              "samples": [
+                78.82217605032164,
+                79.0280116032703,
+                79.40925786302941,
+                79.7044481243208
+              ],
+              "mean": 79.24097341023554,
+              "median": 79.21863473314986,
+              "p95": 79.7044481243208,
+              "min": 78.82217605032164,
+              "max": 79.7044481243208
+            },
+            "producer_fps": {
+              "samples": [
+                9.999806803732552,
+                9.973911886981494,
+                9.999677610393842,
+                9.943957891832996
+              ],
+              "mean": 9.979338548235221,
+              "median": 9.986794748687668,
+              "p95": 9.999806803732552,
+              "min": 9.943957891832996,
+              "max": 9.999806803732552
+            },
+            "private_bytes": {
+              "samples": [
+                513937408,
+                502878208,
+                509726720,
+                513343488
+              ],
+              "mean": 509971456,
+              "median": 511535104.0,
+              "p95": 513937408,
+              "min": 502878208,
+              "max": 513937408
+            }
+          },
+          "C": {
+            "cpu_percent": {
+              "samples": [
+                80.21893230894118,
+                76.8689988742966,
+                79.66444018662965,
+                80.66374414371826
+              ],
+              "mean": 79.35402887839642,
+              "median": 79.94168624778541,
+              "p95": 80.66374414371826,
+              "min": 76.8689988742966,
+              "max": 80.66374414371826
+            },
+            "producer_fps": {
+              "samples": [
+                9.999753406081005,
+                9.961548522319333,
+                9.99979245430761,
+                9.950658564933336
+              ],
+              "mean": 9.97793823691032,
+              "median": 9.98065096420017,
+              "p95": 9.99979245430761,
+              "min": 9.950658564933336,
+              "max": 9.99979245430761
+            },
+            "private_bytes": {
+              "samples": [
+                509329408,
+                515592192,
+                516214784,
+                515817472
+              ],
+              "mean": 514238464,
+              "median": 515704832.0,
+              "p95": 516214784,
+              "min": 509329408,
+              "max": 516214784
+            }
+          },
+          "C_vs_A_percent": -0.0351757324148827,
+          "B_vs_A_percent": -0.1775953444614342,
+          "ordered_blocks": [
+            {
+              "A": 76.68817512963999,
+              "B": 78.82217605032164,
+              "C": 80.21893230894118
+            },
+            {
+              "A": 80.28015792668853,
+              "B": 79.0280116032703,
+              "C": 76.8689988742966
+            },
+            {
+              "A": 80.51978786602784,
+              "B": 79.40925786302941,
+              "C": 79.66444018662965
+            },
+            {
+              "A": 80.03968732340068,
+              "B": 79.7044481243208,
+              "C": 80.66374414371826
+            }
+          ]
+        }
+      }
+    }
+  },
+  "default": {
+    "completed_cases": 0,
+    "cause": "single current mode unwrapped to a string"
+  },
+  "normal_shutdowns": 72,
+  "old_process_identities_checked": 216,
+  "old_process_identities_remaining": 0,
+  "system_and_display_inhibitors_released": true,
+  "local_completed_evidence_manifest_sha256": "3CC7E693CB77F9C48EAABCA3690DDB46DDC2D69F8FB86DEDF37125ABE060C69C",
+  "boundaries": [
+    "CPU noise is retained for every case; no clean-case subset or reweighting",
+    "Conservative external CPU estimates are annotations, not causal attribution",
+    "No sustained resource, physical latency, broad visual or default acceptance"
+  ],
+  "publication_boundary": "Synthetic scores, ordered blocks, counters, capture hashes and CPU annotations only; no screenshots, physical paths, process identifiers or environments."
+}

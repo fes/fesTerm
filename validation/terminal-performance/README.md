@@ -1197,6 +1197,14 @@ mislabeling it as shipping A. Malformed settings and contradictory explicit
 requests remain rejected before launch. A/B/C still writes explicit `0`/`1`
 settings in the same predeclared order; no measurement or cleanup guard changes.
 
+The run declaration captures the mode branch as an array, including the single
+`current` mode. PowerShell otherwise unwraps that branch to a string and strict
+mode fails on `.Count` before any application launches. The pure declaration
+regression executes the actual script statements without a desktop, covering
+one/multiple workloads, the 60-case balanced series, the 12-case overlay series
+and Windows Terminal/full-repaint controls. A failed default declaration is
+preserved as a zero-case failure, not replaced by explicit-C measurements.
+
 An external quiet-host controller may provide a fresh `-GuardStopFile` path.
 If it writes that file, the driver rejects the attempt before another launch
 or during warmup/sampling and still runs its unchanged normal owned-tree
@@ -1309,6 +1317,53 @@ one second, no second close or forced kill, and independently absent app/child
 PIDs. Its two actual captures were reviewed. This local-process functional proof
 does not replace a fresh, complete native A/B/C series, palette control or the
 broader #282 qualification matrix.
+
+#### 2026-10-03 shared-host exploratory evidence
+
+Clean source `f93570c22ebc34992c1d11300f0c66c27559f194`, release application
+`D2753A597FFA46F96052100DC3C4BC8BDB6593EC065A2047B676764E71232887`
+and producer `C1008B6A6CF2F5FE7CA47AFD388800CF4DAD27CE6B4F852A1C0981C83B8FD188`
+completed 60 balanced and 12 separate palette cases on Windows x64 at 200% DPI,
+2058x1658 client pixels and a 120x40 grid. Each used 200 producer frames at
+100ms cadence and at least ten seconds of sampling. With explicit owner
+approval, the external controller recorded CPU noise instead of aborting for
+that alone. All other guards, deadlines and normal-cleanup requirements stayed
+hard; **this is exploratory, not strict CPU qualification**.
+
+| Workload | Mean A CPU % | Mean B CPU % | Mean C CPU % | C versus A |
+| --- | ---: | ---: | ---: | ---: |
+| Quiet | 0.0216 | 0.0072 | 0.0192 | Near counter granularity |
+| Localized | 6.197 | 3.103 | 1.504 | -75.7% |
+| Streaming | 5.073 | 2.971 | 1.577 | -68.9% |
+| Full redraw | 10.549 | 8.253 | 6.110 | -42.1% |
+| Changing chrome | 6.710 | 4.398 | 4.424 | -34.1% |
+| Separate palette control | 79.382 | 79.241 | 79.354 | No useful gain |
+
+These are means of four whole-process scores per setting, normalized across
+16 logical processors, not pooled frame percentiles. Every active workload's C
+score was lower than A in all four predeclared order blocks. Changing chrome
+was mixed versus B, with C about 0.6% higher on average. Palette B/C copy and C
+reuse/rebuild counters were zero; GUI/native repaint counters were only
+5.35-6.27/s while producer completion stayed about 10/s. Neither counter nor
+the final post-sample capture proves displayed cadence or independent latency.
+
+The conservative controller flagged external estimates above 5% in 906/1417
+balanced intervals and 171/214 palette intervals. Every case had some flagged
+sampling exposure. Raw cumulative counters and complete sampling coverage were
+checked independently; all cases and order blocks remain in the
+[sanitized scores and noise record](windows-retained-exploratory-2026-10-03.json),
+without dropping or reweighting noisy trials. These estimates do not identify
+the cause of background work or the multi-day plateau in #297.
+
+Saved validation, all 72 capture hashes and normal whole-tree exits passed;
+all 216 old app/producer/ConPTY identities were independently absent. Full
+visual/native-lifecycle acceptance is not inferred from capture hashes.
+The subsequent unset/default phase failed in its mode declaration before any
+app case, leaving zero default results. That failure is preserved separately,
+the single-mode array repair has a deterministic regression, and explicit C
+does not replace default evidence. Both system/display keep-awake requests were
+released. Earlier rejected attempts and historical v0.7.1 evidence remain
+unchanged. #282's broader qualification and rollout gates stay open.
 
 #### 2026-10-02 connected single-host balanced evidence
 
