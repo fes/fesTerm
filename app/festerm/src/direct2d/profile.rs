@@ -470,11 +470,16 @@ fn profile_terminal_residual_cpu() {
         Some(value) if value == "1" => true,
         _ => panic!("FESTERM_TUI_PROFILE_COPY expects 1 or unset"),
     };
-    let host_copy =
-        super::host_copy_requested(std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY").as_deref())
-            .expect("valid host-copy preference");
+    let host_copy_value = std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY");
+    // The legacy direct-copy probe is a separate diagnostic, not the app default.
+    let host_copy = if direct_copy && host_copy_value.is_none() {
+        false
+    } else {
+        super::host_copy_requested(host_copy_value.as_deref()).expect("valid host-copy preference")
+    };
     let retained_composition = super::retained_composition_requested(
         std::env::var_os("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION").as_deref(),
+        host_copy,
     )
     .expect("valid retained-composition preference");
     assert!(
