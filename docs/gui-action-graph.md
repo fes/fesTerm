@@ -81,6 +81,8 @@ improvement nor native-window/resource/latency qualification; #298 and CP-18
 retain those evidence gates.
 ADR 0043's accepted disposition covers the source-reviewed snapshot ownership
 and vendoring contract only, not acceptance of the broader native renderer.
+Vendor mutation tests run on all three desktop platforms; portable repository
+hygiene tests reject tracked Cargo build output and protect nested vendor ignores.
 
 `TERM-01` also has a controlled TUI performance corpus: quiet populated content,
 localized status updates, streaming primary-screen output, full alternate-screen

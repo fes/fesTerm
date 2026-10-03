@@ -87,9 +87,11 @@ process attribution remain separate qualification.
   `retired_capture_cannot_repopulate_a_removed_or_replaced_painter_cache`,
   `texture_identity_and_equal_replacement_preserve_uploads_and_pixels`.
   The excluded vendored `texture_atlas::tests` are an explicit
-  platform-independent CI gate and additionally cover same-size/zero-sized
+  Windows/Linux/macOS CI gate and additionally cover same-size/zero-sized
   exposure, growth, overflow/reset and clone divergence. Vendored formatting
   is checked separately; generated build output is ignored, not source.
+  Portable repository-hygiene tests reject tracked Cargo output and verify
+  nested vendor targets are ignored.
 - **Native/manual evidence required:** CP-18 retains native-window, resources,
   physical latency and platform gates. Opt-in `profile_native_font_atlas_capture`
   provides paced offscreen WARP process-CPU/capture/upload and pixel evidence,

@@ -27,6 +27,8 @@ excluded atlas tests and formatting are explicit CI gates, and vendor edits
 trigger mobile CI. The authorized PR reconstruction removes accidental build
 artifacts from its history without changing the recorded historical CPU
 rejections or relabeling old measurements as current-head evidence.
+The owner's final consolidation into #306 also preserves #305's cross-platform
+vendor gates and deterministic hygiene guard against tracked Cargo output.
 
 The companion Simulator infrastructure fix pins the toolchain and initializes
 cold service caches before compilation in a bounded read-only preparation step.

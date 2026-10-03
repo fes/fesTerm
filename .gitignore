@@ -1,5 +1,5 @@
 /target
-/vendor/epaint/target/
+/vendor/*/target/
 /fuzz/target
 /fuzz/corpus/
 /fuzz/artifacts/

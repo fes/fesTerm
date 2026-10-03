@@ -27,9 +27,10 @@ and either rebasing this narrowly scoped patch or removing it after equivalent
 upstream support. This does not make epaint a terminal-state owner.
 
 Run the vendored tests independently, since the package is excluded from the
-workspace. Platform-independent CI explicitly runs both commands; the workspace
-tests are not a substitute for this mutation-path gate. Generated `target`
-output is ignored and must never be included in the vendor source:
+workspace. Windows, Linux and macOS CI explicitly run the locked atlas tests;
+platform-independent CI checks vendored formatting. Workspace tests are not a
+substitute for this mutation-path gate. Generated vendor `target` output is
+ignored and a repository-hygiene regression rejects tracked Cargo outputs:
 
 ```powershell
 cargo test --manifest-path vendor\epaint\Cargo.toml --lib texture_atlas::tests
