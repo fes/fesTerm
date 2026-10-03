@@ -161,10 +161,11 @@ one of these exact strict shapes:
 | --- | --- | --- |
 | `launcher` | `id` | The Launcher application surface; no session. |
 | `settings` | `id` | The Settings application surface; no session. |
-| `local_session` | `id`, `profile_id` | A session launched from an existing `local` profile; ordinary profiles start fresh while durable providers may attach or create by name. |
-| `ssh_session` | `id`, `profile_id` | An authentication-required shell surface for an existing ordinary SSH profile. |
-| `sftp_session` | `id`, `profile_id` | An authentication-required terminal SFTP surface for an existing SSH or SFTP profile. |
+| `local_session` | `id`, `profile_id`, optional `alias` | A saved frontend tab launched from an existing `local` profile, including native sessiond, tmux and Screen profiles. Its alias survives recreation of the backend. |
+| `ssh_session` | `id`, `profile_id`, optional `alias` | An authentication-required shell surface for an existing SSH profile, including tmux and Screen. |
+| `sftp_session` | `id`, `profile_id`, optional `alias` | An authentication-required terminal SFTP surface for an existing SSH or SFTP profile. |
 | `sftp_file_manager` | `id`, `profile_id` | An authentication-required graphical SFTP surface for an existing SSH or SFTP profile. |
+| `serial_session` | `id`, `profile_id`, optional `alias` | A serial terminal recreated from an existing serial profile. |
 
 `profile_id` must name an existing profile, and the tab kind must match that
 profile's kind. Tab IDs must be unique. If `focused_tab_id` is present, it
@@ -174,12 +175,75 @@ must replace a final closed tab with a Launcher tab before taking a later
 snapshot, consistent with ADR 0014.
 
 This model stores only tab identities, tab order, optional focus, surface
-kind, and profile references. It does not store terminal screen content,
+kind, profile references, and explicit instance display aliases. It does not store terminal screen content,
 scrollback, local processes, SSH channels, remote process memory, transport
 attempts, window integration state, authentication, keys, host trust, or
 credentials. Ad-hoc sessions and mutable launch definitions have no schema
 representation yet: they are omitted rather than serialized. Unknown tab
 kinds and fields are rejected.
+
+### Session display aliases
+
+`alias` belongs to the saved logical frontend tab, not its backend's physical
+session, profile definition or launch fields. It survives backend recreation
+for all restorable terminal kinds, including local/SSH tmux and Screen.
+Newly opened attachments do not inherit another view's alias merely because
+they use the same profile or provider target. It is omitted for defaults.
+**Use default name** removes the current view's override rather than saving
+today's default as a fixed name. Serialized aliases must be nonempty,
+trimmed, single-line, control/bidi-direction-character-free and at most 200
+Unicode scalar values (at most 800 UTF-8 bytes); invalid metadata is rejected, not repaired on
+load. User edits are sanitized to those bounds before display and save.
+Empty or sanitized-empty edits cancel without changing the prior name.
+A nonempty rejected edit produces a bounded, content-free app notice and
+leaves the prior name, configuration and native seed unchanged; it does not
+attempt a save. The existing rejection of secret-bearing values is unchanged.
+
+The optional top-level `[[durable_session_aliases]]` array is independent of
+`workspace_enabled` and **Restore workspace**. It is a seed for newly opened
+native `festerm-sessiond` views only, not a backend-global naming authority over
+existing tabs. An entry contains `alias` and an `identity`
+table with `provider = "festerm_sessiond"`, `name`, nonzero `pid`,
+`created_at_unix_ms` (canonical positive decimal string preserving the daemon's
+u128 value), and `endpoint`. The endpoint must be bounded to 4096 bytes and end
+in that exact PID/generation (optionally `.sock`). It is a local provider
+namespace/key, never an initial directory, executable or attach instruction.
+Legacy reusable-name-only endpoints cannot safely retain durable aliases.
+
+Matching compares the whole identity from the actual successful connection.
+It does not inspect terminal output, infer identity from profile/display names,
+or change provider attachment semantics. A fresh native Running Sessions view
+may use this seed after its existing attach-only checks succeed. A new generation
+does not inherit the old seed. A saved or already-open logical view keeps its own
+alias across reconnect/replacement; native registry updates never override it.
+Explicit native edits update the exact verified seed; the latest explicit edit
+wins for future attachments only. Reset clears the current view and its associated
+native seed, including a known prior seed after reconnect. Other current views'
+aliases remain theirs. A saved workspace alias, including no override, is
+authoritative for that saved tab rather than being replaced by the native seed.
+
+At most 1024 distinct durable aliases are retained. Reset removes an entry.
+Transient discovery absence, provider downtime, and missing workspace tabs
+never prune it. At capacity, new metadata is refused with visible save-failure
+feedback instead of evicting another alias. Old entries can be explicitly
+removed in the configuration file followed by restart; there is no new
+organization or provider-management UI.
+
+Old documents have no aliases and retain their previous defaults. Empty alias
+arrays/fields are omitted; schema version remains 1. New builds read legacy
+documents, but an older strict build may reject these additive fields on
+downgrade. Naming metadata is local and follows the existing no-secrets and
+atomic-save boundaries; it is unrelated to terminal-content persistence.
+
+Workspace persistence remains opt-in. With **Restore workspace** off, ordinary
+and multiplexer rename/reset is live-only and gives a visible notice; it neither
+enables restoration nor rewrites a disabled workspace snapshot. Ad-hoc sessions
+without an existing restorable profile descriptor also remain live-only unless
+their verified native generation can provide a reattachment seed. There is no
+ordinary Saved Sessions inventory or arbitrary tmux/Screen alias lookup.
+No remote Python, control file, pre-exec wrapper, kernel/platform minimum,
+process FFI dependency or provider protocol/option change is required.
+See [the rename contract](gui-design.md#session-chip-context-menu-and-rename).
 
 ## Interface settings
 
@@ -305,7 +369,7 @@ connection/channel or process state is persisted or recreated by workspace
 restoration itself.
 
 Workspace state saves automatically the moment the open tab list, its order,
-or the active tab changes - there is no manual "Save workspace" action. Each
+the active tab, or an explicit instance alias changes - there is no manual "Save workspace" action. Each
 save snapshots only the restorable metadata described above in current tab
 order: Launcher, Settings, authentication-required restored SSH profile
 surfaces, and sessions launched from configured local profiles. It omits
@@ -406,3 +470,19 @@ files, reads, parse/validation, serialization, temporary-file writes, and
 replacement steps. It deliberately retains neither TOML content nor
 caller-supplied paths; parse and validation details are available separately
 as the existing content-free `ConfigError`.
+
+Session naming edits across windows are gathered by the composition root and
+saved as one complete replacement, preserving profiles, trust, credentials,
+settings and update bookkeeping. Verified native reattachment seeds save even
+with workspace restoration off; every restorable tab kind saves its own alias
+only with opted-in workspace metadata.
+A failed rename/reset save leaves the saved configuration and sibling documents
+unchanged while the local display edit remains usable. Every open window gets
+a visible bounded notice that the changes are not saved; repeating Rename or
+Use default name retries through the same atomic path.
+After a failed reset, Use default name remains available until removal actually
+commits. The next naming transaction also includes other still-live unsaved
+native seed edits; failures do not cause frame-by-frame write retries.
+An ensuing workspace save also includes those pending seed edits, so a failed
+reset cannot appear committed while leaving its old native seed behind.
+Successful document broadcasts do not rename other current logical views.

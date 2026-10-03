@@ -21,6 +21,7 @@ mod errors;
 mod file_io;
 mod keyboard;
 mod profiles;
+mod session_names;
 mod settings;
 mod workspace;
 pub use errors::{
@@ -34,6 +35,9 @@ pub use profiles::{
     PersistenceProviderKind, Profile, ProfileUsageEntry, RemoteProfileKind, SerialDataBits,
     SerialFlowControl, SerialParity, SerialProfileConfiguration, SerialStopBits,
     SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
+};
+pub use session_names::{
+    DurableSessionAlias, DurableSessionIdentity, SessionAlias, MAX_DURABLE_SESSION_ALIASES,
 };
 pub use settings::{
     ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
@@ -75,6 +79,8 @@ pub struct Configuration {
     profile_usage: Vec<ProfileUsageEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     update_check: Option<UpdateCheckRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    durable_session_aliases: Vec<DurableSessionAlias>,
 }
 
 /// What the last automatic update check learned.
@@ -116,6 +122,7 @@ impl Configuration {
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
             update_check: None,
+            durable_session_aliases: Vec::new(),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -135,6 +142,7 @@ impl Configuration {
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
             update_check: None,
+            durable_session_aliases: Vec::new(),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -146,10 +154,41 @@ impl Configuration {
     /// This is intended for explicit workspace snapshots: callers cannot
     /// accidentally discard profiles while enabling workspace persistence.
     pub fn with_workspace(&self, workspace: WorkspaceConfiguration) -> Result<Self, ConfigError> {
-        let mut replacement = Self::new_with_workspace(self.profiles.clone(), workspace)?;
-        replacement.settings = self.settings.clone();
-        replacement.known_hosts = self.known_hosts.clone();
-        replacement.profile_usage = self.profile_usage.clone();
+        let mut replacement = self.clone();
+        replacement.workspace_enabled = true;
+        replacement.workspace = Some(workspace);
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns a seed for a newly opened native view, not an existing tab's name.
+    pub fn durable_session_alias(
+        &self,
+        identity: &DurableSessionIdentity,
+    ) -> Option<&SessionAlias> {
+        self.durable_session_aliases
+            .iter()
+            .find(|entry| &entry.identity == identity)
+            .map(|entry| &entry.alias)
+    }
+
+    /// Explicit reset removes the entry. Provider absence never prunes it:
+    /// discovery may be transiently unavailable while its generation lives.
+    pub fn with_durable_session_alias(
+        &self,
+        identity: DurableSessionIdentity,
+        alias: Option<SessionAlias>,
+    ) -> Result<Self, ConfigError> {
+        identity.validate()?;
+        let mut replacement = self.clone();
+        replacement
+            .durable_session_aliases
+            .retain(|entry| entry.identity != identity);
+        if let Some(alias) = alias {
+            replacement
+                .durable_session_aliases
+                .push(DurableSessionAlias { identity, alias });
+        }
         replacement.validate()?;
         Ok(replacement)
     }
@@ -379,6 +418,7 @@ impl Configuration {
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
             update_check: None,
+            durable_session_aliases: Vec::new(),
         }
     }
 
@@ -395,6 +435,7 @@ impl Configuration {
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
             update_check: raw.update_check,
+            durable_session_aliases: raw.durable_session_aliases,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -573,6 +614,20 @@ impl Configuration {
             }
         }
         self.settings.validate()?;
+        if self.durable_session_aliases.len() > MAX_DURABLE_SESSION_ALIASES {
+            return Err(ConfigError::new(
+                ConfigErrorKind::TooManyDurableSessionAliases,
+            ));
+        }
+        let mut alias_identities = HashSet::new();
+        for entry in &self.durable_session_aliases {
+            entry.identity.validate()?;
+            if !alias_identities.insert(&entry.identity) {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::DuplicateDurableSessionAlias,
+                ));
+            }
+        }
         match (self.workspace_enabled, &self.workspace) {
             (false, None) => Ok(()),
             (false, Some(_)) => Err(ConfigError::new(
@@ -603,6 +658,8 @@ struct RawConfiguration {
     profile_usage: Vec<ProfileUsageEntry>,
     #[serde(default)]
     update_check: Option<UpdateCheckRecord>,
+    #[serde(default)]
+    durable_session_aliases: Vec<DurableSessionAlias>,
 }
 
 impl<'de> Deserialize<'de> for Configuration {
@@ -620,6 +677,7 @@ impl<'de> Deserialize<'de> for Configuration {
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
             update_check: raw.update_check,
+            durable_session_aliases: raw.durable_session_aliases,
         };
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)

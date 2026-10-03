@@ -39,6 +39,11 @@ public:
         : std::runtime_error("DirectX HRESULT " + std::to_string(static_cast<uint32_t>(value))), code(value) {}
 };
 
+class UnsupportedFrame : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 static void check(HRESULT result) {
     if (FAILED(result)) {
         throw GraphicsFailure(result);
@@ -289,7 +294,7 @@ public:
             return result;
         for (const auto& vertex : vertices) {
             if (vertex.color.a != 0 && !(vertex.color == result.color))
-                throw std::runtime_error("Unsupported multi-color triangle");
+                throw UnsupportedFrame("Unsupported multi-color triangle");
         }
         const float ap = float(p.color.a) / result.color.a;
         const float aq = float(q.color.a) / result.color.a;
@@ -320,7 +325,7 @@ public:
             const auto retired = std::find_if(color_brushes.begin(), color_brushes.end(),
                 [&](const auto& entry) { return !used_colors.contains(entry.first); });
             if (retired == color_brushes.end())
-                throw std::runtime_error("A frame supports at most 256 feathered colors");
+                throw UnsupportedFrame("A frame supports at most 256 feathered colors");
             color_brushes.erase(retired);
         }
         auto [color_entry, new_color] = color_brushes.try_emplace(color_key);
@@ -471,7 +476,7 @@ static bool quad(const std::array<Vertex, 6>& vertices, Draw& result, const Text
     result.bitmap = texture.bitmap;
     if (!texture.mask && (result.color.r != result.color.a ||
         result.color.g != result.color.a || result.color.b != result.color.a))
-        throw std::runtime_error("Unsupported tinted color bitmap");
+        throw UnsupportedFrame("Unsupported tinted color bitmap");
     return true;
 }
 
@@ -503,7 +508,7 @@ static Group prepare_group(Renderer& renderer, const Texture& texture, D2D1_RECT
             if (vertex.u < 0 || vertex.u > 1 || vertex.v < 0 || vertex.v > 1 ||
                 vertex.color.r > vertex.color.a || vertex.color.g > vertex.color.a ||
                 vertex.color.b > vertex.color.a)
-                throw std::runtime_error("Unsupported texture coordinates or additive color");
+                throw UnsupportedFrame("Unsupported texture coordinates or additive color");
             if (vertex.x != raster_position(vertex.x) || vertex.y != raster_position(vertex.y))
                 throw std::runtime_error("Vertices must be raster-normalized before crossing the Direct2D boundary");
         }
@@ -516,7 +521,7 @@ static Group prepare_group(Renderer& renderer, const Texture& texture, D2D1_RECT
             if (vertex.u < 0 || vertex.u > 1 || vertex.v < 0 || vertex.v > 1 ||
                 vertex.color.r > vertex.color.a || vertex.color.g > vertex.color.a ||
                 vertex.color.b > vertex.color.a)
-                throw std::runtime_error("Unsupported texture coordinates or additive color");
+                throw UnsupportedFrame("Unsupported texture coordinates or additive color");
             vertex.x = raster_position(vertex.x);
             vertex.y = raster_position(vertex.y);
         }
@@ -535,7 +540,7 @@ static Group prepare_group(Renderer& renderer, const Texture& texture, D2D1_RECT
             std::array<Vertex, 3> triangle{vertices[indices[i]],
                 vertices[indices[i+1]], vertices[indices[i+2]]};
             for (auto v : triangle) if (v.u != 0 || v.v != 0)
-                throw std::runtime_error("Unsupported nonrectangular textured mesh");
+                throw UnsupportedFrame("Unsupported nonrectangular textured mesh");
             const auto& a = triangle[0];
             const auto& b = triangle[1];
             const auto& c = triangle[2];
@@ -567,6 +572,7 @@ struct Bridge {
     std::vector<Vertex> scratch_vertices;
     Color clear{};
     char error[512]{};
+    bool unsupported_frame{};
 };
 
 template<class Function> static HRESULT boundary(Bridge* bridge, Function&& function) {
@@ -574,9 +580,16 @@ template<class Function> static HRESULT boundary(Bridge* bridge, Function&& func
         if (bridge) strncpy_s(bridge->error, text, _TRUNCATE);
     };
     try {
-        if (bridge) bridge->error[0] = '\0';
+        if (bridge) {
+            bridge->error[0] = '\0';
+            bridge->unsupported_frame = false;
+        }
         function();
         return S_OK;
+    } catch (const UnsupportedFrame& error) {
+        message(error.what());
+        if (bridge) bridge->unsupported_frame = true;
+        return E_NOTIMPL;
     } catch (const GraphicsFailure& error) {
         message(error.what());
         return error.code;
@@ -610,6 +623,10 @@ extern "C" void festerm_d2d_destroy(Bridge* bridge) {
 
 extern "C" const char* festerm_d2d_error(const Bridge* bridge) {
     return bridge ? bridge->error : "";
+}
+
+extern "C" bool festerm_d2d_error_is_unsupported_frame(const Bridge* bridge) {
+    return bridge && bridge->unsupported_frame;
 }
 
 extern "C" HRESULT festerm_d2d_texture(Bridge* bridge, uint64_t id, uint32_t w, uint32_t h,
@@ -746,6 +763,20 @@ static double cpu_ms() {
 }
 
 static void self_test() {
+    Bridge bridge;
+    if (boundary(&bridge, [] { throw UnsupportedFrame("unsupported frame"); }) != E_NOTIMPL ||
+        !festerm_d2d_error_is_unsupported_frame(&bridge))
+        throw std::runtime_error("Unsupported frame classification failed");
+    if (boundary(&bridge, [] { throw GraphicsFailure(E_NOTIMPL); }) != E_NOTIMPL ||
+        festerm_d2d_error_is_unsupported_frame(&bridge))
+        throw std::runtime_error("Native HRESULT misclassified as unsupported content");
+    if (boundary(&bridge, [] { throw std::runtime_error("native operation failed"); }) != E_NOTIMPL ||
+        festerm_d2d_error_is_unsupported_frame(&bridge))
+        throw std::runtime_error("Native runtime failure misclassified as unsupported content");
+    boundary(&bridge, [] { throw UnsupportedFrame("unsupported frame"); });
+    if (boundary(&bridge, [] {}) != S_OK ||
+        festerm_d2d_error_is_unsupported_frame(&bridge))
+        throw std::runtime_error("Successful operation retained stale failure classification");
     if (raster_position(1314.0001220703125f) != 1314.0f ||
         raster_position(955.703125f) != 955.703125f)
         throw std::runtime_error("Raster-grid normalization failed");
@@ -786,7 +817,7 @@ static void self_test() {
     rejected = false;
     try { count(oversized, 128); } catch (const std::runtime_error&) { rejected = true; }
     if (!rejected) throw std::runtime_error("Unbounded allocation accepted");
-    std::cout << "7 native probe checks passed\n";
+    std::cout << "11 native probe checks passed\n";
 }
 
 } // namespace festerm_direct2d

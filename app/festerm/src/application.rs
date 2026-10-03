@@ -292,11 +292,35 @@ impl FesTermApplication {
     /// Runs after every window has finished its pass, so nothing here has to
     /// mutate a window that is still borrowed by a viewport callback.
     fn settle_windows(&mut self, context: &egui::Context) {
+        // Drain before a move/close can remove the originating window.
+        let name_changes: Vec<_> = self
+            .windows
+            .iter_mut()
+            .map(|window| window.app.take_session_name_changes())
+            .collect();
+        let name_failures: Vec<_> = self
+            .windows
+            .iter()
+            .zip(&name_changes)
+            .filter_map(|(window, changes)| {
+                changes
+                    .validation_failure
+                    .map(|failure| (window.id, failure))
+            })
+            .collect();
         self.broadcast_committed_configuration();
         self.move_requested_tabs(context);
         self.open_requested_windows(context);
         self.close_finished_windows(context);
-        self.save_workspace_if_requested();
+        self.save_workspace_if_requested(context, name_changes);
+        self.broadcast_committed_configuration();
+        for (id, failure) in name_failures {
+            if let Some(index) = self.window_index(id) {
+                self.windows[index]
+                    .app
+                    .show_session_name_validation_notice(context, failure);
+            }
+        }
         self.publish_window_footprints(context);
     }
 
@@ -440,27 +464,73 @@ impl FesTermApplication {
     /// The primary window performs the single write, through the same choke
     /// point as every other configuration write, so a failure is reported and
     /// committed exactly as before (ADR 0015).
-    fn save_workspace_if_requested(&mut self) {
+    fn save_workspace_if_requested(
+        &mut self,
+        context: &egui::Context,
+        name_changes: Vec<crate::tabs::SessionNameChanges>,
+    ) {
         let requested = self
             .windows
             .iter_mut()
             .map(|window| usize::from(window.app.take_workspace_save_request()))
             .sum::<usize>();
-        if requested == 0 || !self.windows[0].app.restores_workspace() {
+        let explicit_names_changed = name_changes.iter().any(|changes| changes.changed);
+        let persistence_unavailable = name_changes
+            .iter()
+            .any(|changes| changes.persistence_unavailable);
+        let capacity_exceeded = name_changes.iter().any(|changes| changes.capacity_exceeded);
+        let durable_aliases: Vec<_> = name_changes
+            .into_iter()
+            .flat_map(|changes| changes.durable_aliases)
+            .collect();
+        let include_workspace = self.windows[0].app.restores_workspace();
+        let names_changed = explicit_names_changed
+            || (requested != 0 && include_workspace && !durable_aliases.is_empty());
+        if !names_changed && (requested == 0 || !include_workspace) {
             return;
         }
         // Tab identifiers must be unique across the whole workspace, so one
         // counter runs through every window in order.
         let mut next_identifier = 1;
         let mut additional = Vec::new();
-        for window in self.windows.iter().skip(1) {
+        for window in self.windows.iter().skip(1).filter(|_| include_workspace) {
             if let Some(captured) = window.app.capture_additional_window(&mut next_identifier) {
                 additional.push(captured);
             }
         }
-        self.windows[0]
-            .app
-            .save_workspace(additional, &mut next_identifier);
+        if names_changed {
+            let needs_save = include_workspace || !durable_aliases.is_empty();
+            let saved = !capacity_exceeded
+                && (!needs_save
+                    || self.windows[0].app.save_session_names(
+                        durable_aliases,
+                        additional,
+                        &mut next_identifier,
+                        include_workspace,
+                    ));
+            let committed = self.windows[0].app.shared_application_services().0;
+            for window in &mut self.windows {
+                window.app.settle_session_name_save(saved, &committed);
+            }
+            if !saved || persistence_unavailable {
+                for window in &mut self.windows {
+                    window.app.show_session_name_persistence_notice(
+                        context,
+                        saved && persistence_unavailable,
+                    );
+                }
+            }
+        } else {
+            self.windows[0]
+                .app
+                .save_workspace(additional, &mut next_identifier);
+            let (committed, status, ..) = self.windows[0].app.shared_application_services();
+            for window in &mut self.windows {
+                window
+                    .app
+                    .settle_session_name_save(status.was_saved(), &committed);
+            }
+        }
     }
 
     /// Hands a configuration one window has just committed to disk to every
@@ -580,6 +650,639 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    #[test]
+    fn session_alias_multi_window_move_save_restore_and_reset_use_one_configuration() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(festerm_config::PersistenceProviderKind::Screen, "build")
+        .unwrap()])
+        .unwrap();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.adopt_broadcast_configuration(configuration.clone());
+        app.set_session_metadata_for_test(tab, Some("remote"), None);
+        app.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        let mut application = FesTermApplication::new(app);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(tab, "Window two name".into()),
+            &context,
+        );
+        let target = application.windows[1].id.viewport_id();
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::MoveTabToWindow {
+                moved: tab,
+                target: Some(target),
+                before: None,
+                screen_position: egui::pos2(900.0, 40.0),
+            },
+            &context,
+        );
+        application.settle_windows(&context);
+        assert_eq!(
+            application.window_mut(1).session_label_for_test(tab),
+            "Window two name"
+        );
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        assert_eq!(saved.profiles(), configuration.profiles());
+        for window in &application.windows {
+            assert_eq!(window.app.shared_application_services().0, saved);
+        }
+        let restored_app = FesTermApp::with_restored_workspace_for_test(&context, saved.clone());
+        let mut restored = FesTermApplication::new(restored_app);
+        restored.restore_windows(&context);
+        assert_eq!(restored.window_count(), 2);
+        let restored_tab = restored.window_mut(1).active_tab_id_for_test();
+        assert_eq!(
+            restored.window_mut(1).chip_primary_for_test(restored_tab),
+            "Window two name"
+        );
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::UseDefaultSessionName(tab), &context);
+        application.settle_windows(&context);
+        assert!(application
+            .window_mut(1)
+            .session_alias_for_test(tab)
+            .is_none());
+        let reset = Configuration::load_from_path(&fixture.path).unwrap();
+        assert!(!reset.to_toml().unwrap().contains("alias"));
+        assert_eq!(reset.profiles(), configuration.profiles());
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_native_metadata_saves_without_workspace_restore_or_terminal_contents() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                false,
+                false,
+                false,
+            ))
+            .unwrap();
+        let identity =
+            festerm_config::DurableSessionIdentity::native("build", 42, 100, "owned-native-42-100")
+                .unwrap();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.adopt_broadcast_configuration(configuration);
+        app.set_session_metadata_for_test(tab, None, Some(identity.clone()));
+        app.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        let mut application = FesTermApplication::new(app);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::RenameTab(tab, "Durable name".into()), &context);
+        application.settle_windows(&context);
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        assert!(saved.workspace().is_none());
+        assert_eq!(
+            saved.durable_session_alias(&identity).unwrap().as_str(),
+            "Durable name"
+        );
+        assert!(saved.profiles().is_empty());
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::UseDefaultSessionName(tab), &context);
+        application.settle_windows(&context);
+        assert!(Configuration::load_from_path(&fixture.path)
+            .unwrap()
+            .durable_session_alias(&identity)
+            .is_none());
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_native_seed_broadcast_keeps_window_views_independent_and_latest_edit_wins() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                false,
+                false,
+                false,
+            ))
+            .unwrap();
+        let identity =
+            festerm_config::DurableSessionIdentity::native("build", 42, 100, "owned-native-42-100")
+                .unwrap();
+        let (mut primary, first, first_transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        primary.adopt_broadcast_configuration(configuration.clone());
+        primary.set_session_metadata_for_test(first, None, Some(identity.clone()));
+        primary.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        let (mut secondary, second, second_transport) =
+            FesTermApp::for_test_with_fake_ssh_session([]);
+        secondary.adopt_broadcast_configuration(configuration);
+        secondary.set_session_metadata_for_test(second, None, Some(identity.clone()));
+        let mut application = FesTermApplication::new(primary);
+        application.windows.push(Window {
+            id: WindowId(1),
+            app: secondary,
+            placement: None,
+        });
+        application.next_window_id = 2;
+        application.window_mut(1).dispatch_for_test(
+            AppCommand::RenameTab(second, "Second window".into()),
+            &context,
+        );
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(first, "Latest first window".into()),
+            &context,
+        );
+        application.settle_windows(&context);
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        assert!(saved.workspace().is_none());
+        assert_eq!(
+            saved.durable_session_alias(&identity).unwrap().as_str(),
+            "Latest first window"
+        );
+        assert_eq!(
+            application.window_mut(0).session_label_for_test(first),
+            "Latest first window"
+        );
+        assert_eq!(
+            application.window_mut(1).session_label_for_test(second),
+            "Second window"
+        );
+        for window in &application.windows {
+            assert_eq!(window.app.shared_application_services().0, saved);
+        }
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::UseDefaultSessionName(first), &context);
+        application.settle_windows(&context);
+        assert!(Configuration::load_from_path(&fixture.path)
+            .unwrap()
+            .durable_session_alias(&identity)
+            .is_none());
+        assert!(application
+            .window_mut(0)
+            .session_alias_for_test(first)
+            .is_none());
+        assert_eq!(
+            application.window_mut(1).session_label_for_test(second),
+            "Second window"
+        );
+        assert!(first_transport.sent().is_empty());
+        assert!(first_transport.operations().is_empty());
+        assert!(second_transport.sent().is_empty());
+        assert!(second_transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_workspace_opt_out_keeps_mux_name_live_only_without_writing_metadata() {
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let profile = Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(festerm_config::PersistenceProviderKind::Tmux, "build")
+        .unwrap();
+        let configuration = Configuration::new(vec![profile])
+            .unwrap()
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                false,
+                false,
+                false,
+            ))
+            .unwrap();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.adopt_broadcast_configuration(configuration.clone());
+        app.set_session_metadata_for_test(tab, Some("remote"), None);
+        app.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        let mut application = FesTermApplication::new(app);
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(tab, "Only this view".into()),
+            &context,
+        );
+        application.settle_windows(&context);
+        assert_eq!(
+            application.window_mut(0).session_label_for_test(tab),
+            "Only this view"
+        );
+        assert_eq!(
+            application.window_mut(0).shared_application_services().0,
+            configuration
+        );
+        assert!(!application.window_mut(0).restores_workspace());
+        assert!(!fixture.path.exists());
+        assert!(application
+            .window_mut(0)
+            .take_configuration_broadcast()
+            .is_none());
+        assert!(application
+            .window_mut(0)
+            .session_name_notice_for_test()
+            .unwrap()
+            .contains("open tab only"));
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::UseDefaultSessionName(tab), &context);
+        application.settle_windows(&context);
+        assert!(application
+            .window_mut(0)
+            .session_alias_for_test(tab)
+            .is_none());
+        assert!(!fixture.path.exists());
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_actual_save_failure_is_visible_and_never_broadcasts_unsaved_metadata() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()])
+        .unwrap();
+        let (mut app, tab, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.adopt_broadcast_configuration(configuration.clone());
+        app.set_session_metadata_for_test(tab, Some("remote"), None);
+        // A directory is not a valid target file. The real atomic-save path
+        // refuses it before creating anything, without touching user data.
+        app.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                std::env::current_dir().unwrap(),
+            ),
+        );
+        let mut application = FesTermApplication::new(app);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::RenameTab(tab, "Applies now".into()), &context);
+        application.settle_windows(&context);
+        assert_eq!(
+            application.window_mut(0).session_label_for_test(tab),
+            "Applies now"
+        );
+        for window in &mut application.windows {
+            assert_eq!(window.app.shared_application_services().0, configuration);
+            assert!(window.app.take_configuration_broadcast().is_none());
+            assert!(window
+                .app
+                .session_name_notice_for_test()
+                .unwrap()
+                .contains("could not be saved"));
+        }
+        assert!(matches!(
+            application.window_mut(0).shared_application_services().1,
+            crate::configuration_startup::ConfigurationStartupStatus::SessionNamesSaveFailure(_)
+        ));
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        application.window_mut(0).set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::RenameTab(tab, "Applies now".into()), &context);
+        application.settle_windows(&context);
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        assert_eq!(saved.profiles(), configuration.profiles());
+        let festerm_config::WorkspaceTab::SshSession(saved_tab) =
+            &saved.workspace().unwrap().tabs()[0]
+        else {
+            panic!("saved SSH view");
+        };
+        assert_eq!(saved_tab.alias().unwrap().as_str(), "Applies now");
+        for window in &application.windows {
+            assert_eq!(window.app.shared_application_services().0, saved);
+        }
+    }
+
+    #[test]
+    fn session_alias_rejected_secret_edit_is_visible_without_mutating_or_saving() {
+        const REJECTED_ALIAS: &str = "-----BEGIN PRIVATE KEY-----";
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()])
+        .unwrap();
+        let identity =
+            festerm_config::DurableSessionIdentity::native("build", 42, 100, "owned-native-42-100")
+                .unwrap();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.adopt_broadcast_configuration(configuration);
+        app.set_session_metadata_for_test(tab, Some("remote"), Some(identity.clone()));
+        app.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        let mut application = FesTermApplication::new(app);
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(tab, "Previous alias".into()),
+            &context,
+        );
+        application.settle_windows(&context);
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        let saved_bytes = std::fs::read(&fixture.path).unwrap();
+        let saved_status = application.window_mut(0).shared_application_services().1;
+        assert_eq!(
+            saved.durable_session_alias(&identity).unwrap().as_str(),
+            "Previous alias"
+        );
+        let notice = application
+            .window_mut(0)
+            .session_name_notice_for_test()
+            .map(str::to_owned);
+        let refused_target = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        std::fs::create_dir(&refused_target.path).unwrap();
+        application.window_mut(0).set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                refused_target.path.clone(),
+            ),
+        );
+        for cancelled in ["", " \r\n ", "\u{202e}\u{2028}\0"] {
+            application
+                .window_mut(0)
+                .dispatch_for_test(AppCommand::RenameTab(tab, cancelled.into()), &context);
+            application.settle_windows(&context);
+            assert_eq!(
+                application.window_mut(0).session_name_notice_for_test(),
+                notice.as_deref()
+            );
+            let (current, status, ..) = application.window_mut(0).shared_application_services();
+            assert_eq!(current, saved);
+            assert_eq!(status, saved_status);
+        }
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::RenameTab(tab, REJECTED_ALIAS.into()), &context);
+        application.settle_windows(&context);
+        let refusal = application
+            .window_mut(0)
+            .session_name_notice_for_test()
+            .unwrap();
+        assert!(refusal.contains("Session name was not changed"));
+        assert!(refusal.len() <= 200);
+        assert!(!refusal.contains(REJECTED_ALIAS));
+        assert_eq!(
+            application.window_mut(0).session_label_for_test(tab),
+            "Previous alias"
+        );
+        assert_eq!(
+            application.window_mut(0).session_alias_for_test(tab),
+            Some("Previous alias")
+        );
+        let (current, status, ..) = application.window_mut(0).shared_application_services();
+        assert_eq!(current, saved);
+        assert_eq!(status, saved_status);
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), saved_bytes);
+        assert_eq!(Configuration::load_from_path(&fixture.path).unwrap(), saved);
+        assert!(application
+            .window_mut(0)
+            .take_configuration_broadcast()
+            .is_none());
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+        application.window_mut(0).set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(tab, " \nBuild\u{202e}\t bench\r ".into()),
+            &context,
+        );
+        application.settle_windows(&context);
+        let sanitized = Configuration::load_from_path(&fixture.path).unwrap();
+        assert_eq!(sanitized.profiles(), saved.profiles());
+        assert_eq!(
+            sanitized.durable_session_alias(&identity).unwrap().as_str(),
+            "Build bench"
+        );
+        let festerm_config::WorkspaceTab::SshSession(saved_tab) =
+            &sanitized.workspace().unwrap().tabs()[0]
+        else {
+            panic!("saved SSH view");
+        };
+        assert_eq!(saved_tab.alias().unwrap().as_str(), "Build bench");
+        assert_eq!(
+            application.window_mut(0).session_label_for_test(tab),
+            "Build bench"
+        );
+        assert!(transport.sent().is_empty());
+        assert!(transport.operations().is_empty());
+    }
+
+    #[test]
+    fn session_alias_restored_authentication_chips_display_saved_view_aliases() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()])
+        .unwrap();
+        for sftp in [false, true] {
+            for explicit in [false, true] {
+                let alias = if sftp { "Saved SFTP" } else { "Saved SSH" };
+                let descriptor = if sftp {
+                    festerm_config::WorkspaceTab::sftp_session("saved", "remote")
+                } else {
+                    festerm_config::WorkspaceTab::ssh_session("saved", "remote")
+                }
+                .unwrap()
+                .with_session_alias(
+                    explicit.then(|| festerm_config::SessionAlias::new(alias).unwrap()),
+                )
+                .unwrap();
+                let saved = configuration
+                    .clone()
+                    .with_workspace(
+                        festerm_config::WorkspaceConfiguration::new(vec![descriptor], None)
+                            .unwrap(),
+                    )
+                    .unwrap();
+                let saved = Configuration::parse(&saved.to_toml().unwrap()).unwrap();
+                let app = FesTermApp::with_restored_workspace_for_test(&context, saved);
+                let tab = app.active_tab_id_for_test();
+                assert_eq!(
+                    app.chip_primary_for_test(tab),
+                    if explicit { alias } else { "remote" }
+                );
+                assert_eq!(
+                    app.shared_application_services().0.profiles(),
+                    configuration.profiles()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn session_alias_failed_reset_remains_retryable_until_metadata_is_really_removed() {
+        let context = egui::Context::default();
+        let identity =
+            festerm_config::DurableSessionIdentity::native("build", 42, 100, "owned-native-42-100")
+                .unwrap();
+        for native in [false, true] {
+            let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+            let configuration = if native {
+                Configuration::empty()
+            } else {
+                Configuration::new(vec![Profile::ssh(
+                    "remote",
+                    "ssh.example.test",
+                    22,
+                    "deploy",
+                    "xterm-256color",
+                    80,
+                    24,
+                )
+                .unwrap()])
+                .unwrap()
+            };
+            let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+            app.adopt_broadcast_configuration(configuration);
+            app.set_session_metadata_for_test(
+                tab,
+                if native { None } else { Some("remote") },
+                native.then(|| identity.clone()),
+            );
+            app.set_reloader_for_test(
+                crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                    fixture.path.clone(),
+                ),
+            );
+            let mut application = FesTermApplication::new(app);
+            application
+                .window_mut(0)
+                .dispatch_for_test(AppCommand::RenameTab(tab, "Saved alias".into()), &context);
+            application.settle_windows(&context);
+            let saved = Configuration::load_from_path(&fixture.path).unwrap();
+            if native {
+                assert_eq!(
+                    saved.durable_session_alias(&identity).unwrap().as_str(),
+                    "Saved alias"
+                );
+            } else {
+                let festerm_config::WorkspaceTab::SshSession(saved_tab) =
+                    &saved.workspace().unwrap().tabs()[0]
+                else {
+                    panic!("saved workspace view");
+                };
+                assert_eq!(saved_tab.alias().unwrap().as_str(), "Saved alias");
+            }
+            application.window_mut(0).set_reloader_for_test(
+                crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                    std::env::current_dir().unwrap(),
+                ),
+            );
+            application
+                .window_mut(0)
+                .dispatch_for_test(AppCommand::UseDefaultSessionName(tab), &context);
+            application.settle_windows(&context);
+            assert!(application
+                .window_mut(0)
+                .session_alias_for_test(tab)
+                .is_none());
+            assert!(application.window_mut(0).can_use_default_name_for_test(tab));
+            assert!(application
+                .window_mut(0)
+                .session_name_notice_for_test()
+                .unwrap()
+                .contains("could not be saved"));
+            assert_eq!(Configuration::load_from_path(&fixture.path).unwrap(), saved);
+            assert_eq!(
+                application.window_mut(0).shared_application_services().0,
+                saved
+            );
+            application.settle_windows(&context);
+            assert!(application.window_mut(0).can_use_default_name_for_test(tab));
+            application.window_mut(0).set_reloader_for_test(
+                crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                    fixture.path.clone(),
+                ),
+            );
+            application
+                .window_mut(0)
+                .dispatch_for_test(AppCommand::UseDefaultSessionName(tab), &context);
+            application.settle_windows(&context);
+            assert!(!application.window_mut(0).can_use_default_name_for_test(tab));
+            let reset = Configuration::load_from_path(&fixture.path).unwrap();
+            if native {
+                assert!(reset.durable_session_alias(&identity).is_none());
+            } else {
+                let festerm_config::WorkspaceTab::SshSession(saved_tab) =
+                    &reset.workspace().unwrap().tabs()[0]
+                else {
+                    panic!("reset workspace view");
+                };
+                assert!(saved_tab.alias().is_none());
+            }
+            assert!(transport.sent().is_empty());
+            assert!(transport.operations().is_empty());
+        }
     }
 
     #[test]

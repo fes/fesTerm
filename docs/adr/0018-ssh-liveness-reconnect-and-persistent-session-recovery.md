@@ -298,6 +298,16 @@ providers demonstrate the need.
   SSH Launcher defaulted reconnect to enabled have been updated. See
   `validation/traceability.json` (`launcher`, `ssh-lifecycle`) for the current
   automated-test references.
+- **Additive naming evidence:** `CHIP-13` requires explicit aliases to survive
+  SSH/SFTP authentication/password retry and reconnect without changing
+  transport policy, provider attachment names or reusable profiles. `CHIP-14`
+  retains a saved frontend tab's alias for local/SSH tmux/Screen, even after
+  backend recreation; a separately opened attachment starts at its default.
+  It is not a physical-provider identity or backend-global naming service.
+  No remote runtime, wrapper, control file, provider option or protocol seam is
+  introduced. See
+  `validation/traceability.json` (`session-chips`,
+  `session-alias-view-ownership`) and native/usability scenario `AS-10`.
 
 ## Implementation status
 

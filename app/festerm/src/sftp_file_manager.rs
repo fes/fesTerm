@@ -136,6 +136,18 @@ impl LocalDirectoryLoader {
             .as_ref()
             .map(|request| request.path.clone())
     }
+
+    #[cfg(test)]
+    fn run_pending_for_test(&self) {
+        let task = self
+            .shared
+            .pending
+            .lock()
+            .expect("local directory loader lock is not poisoned")
+            .take()
+            .expect("a local directory task must be pending");
+        (task.run)(&task.path);
+    }
 }
 
 impl Drop for LocalDirectoryLoader {
@@ -2174,19 +2186,20 @@ impl SftpFileManagerTab {
         let list_height =
             (available_list_height / SFTP_TABLE_ROW_HEIGHT).floor() * SFTP_TABLE_ROW_HEIGHT;
         let list_bottom_slack = available_list_height - list_height;
-        let frame = egui::Frame::new()
-            .fill(theme::SURFACE_WINDOW)
-            // The mockup uses the same subtle border for every pane
-            // regardless of focus (`.fsftp-pane { border-left: 1px solid
-            // var(--fsftp-border); }`); highlighting the focused pane with
-            // an accent border made LOCAL/REMOTE look inconsistently
-            // outlined depending on which pane last had focus, so both
-            // panes now always use the subtle border.
-            .stroke(egui::Stroke::new(SFTP_HAIRLINE, theme::BORDER_SUBTLE))
-            .corner_radius(egui::CornerRadius::same(SFTP_PANE_CORNER_RADIUS))
-            .inner_margin(egui::Margin::same(SFTP_PANE_INNER_PADDING));
-        let pane_frame_response = frame
-            .show(ui, |ui| {
+        let pane_frame_response = crate::software_background::show_frame(
+            ui,
+            egui::Frame::new()
+                .fill(theme::SURFACE_WINDOW)
+                // The mockup uses the same subtle border for every pane
+                // regardless of focus (`.fsftp-pane { border-left: 1px solid
+                // var(--fsftp-border); }`); highlighting the focused pane with
+                // an accent border made LOCAL/REMOTE look inconsistently
+                // outlined depending on which pane last had focus, so both
+                // panes now always use the subtle border.
+                .stroke(egui::Stroke::new(SFTP_HAIRLINE, theme::BORDER_SUBTLE))
+                .corner_radius(egui::CornerRadius::same(SFTP_PANE_CORNER_RADIUS))
+                .inner_margin(egui::Margin::same(SFTP_PANE_INNER_PADDING)),
+            |ui| {
                 ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
                 let pane = pane_mut(self, focus);
                 let interactions_enabled = !(focus == PaneFocus::Remote && pane.stale);
@@ -2533,17 +2546,19 @@ impl SftpFileManagerTab {
                                 });
                             });
                     }
-                    egui::Frame::new()
-                        .fill(theme::SURFACE_WINDOW)
-                        // No border here. The pane's own frame already outlines
-                        // this region, so a second stroke painted a doubled
-                        // hairline down the pane's left/right edges *and* stole
-                        // 2px from the table's width budget (egui folds
-                        // `stroke.width` into `Frame::total_margin`).
-                        .stroke(egui::Stroke::NONE)
-                        .corner_radius(0.0)
-                        .inner_margin(egui::Margin::ZERO)
-                        .show(ui, |ui| {
+                    crate::software_background::show_frame(
+                        ui,
+                        egui::Frame::new()
+                            .fill(theme::SURFACE_WINDOW)
+                            // No border here. The pane's own frame already outlines
+                            // this region, so a second stroke painted a doubled
+                            // hairline down the pane's left/right edges *and* stole
+                            // 2px from the table's width budget (egui folds
+                            // `stroke.width` into `Frame::total_margin`).
+                            .stroke(egui::Stroke::NONE)
+                            .corner_radius(0.0)
+                            .inner_margin(egui::Margin::ZERO),
+                        |ui| {
                             ui.set_min_width(pane_width);
                             ui.set_max_width(pane_width);
                             let columns = sftp_table_columns(pane_width);
@@ -2877,7 +2892,8 @@ impl SftpFileManagerTab {
                             // ScrollArea now claims its full viewport via
                             // `auto_shrink([false, false])`, so no residual space
                             // needs reserving here.
-                        });
+                        },
+                    );
                     ui.add_space(list_bottom_slack);
                     // A full bordered "chip" here (as previously drawn with
                     // `.stroke(...)` on all sides plus rounded corners) reads as
@@ -2929,8 +2945,9 @@ impl SftpFileManagerTab {
                         egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
                     );
                 });
-            })
-            .response;
+            },
+        )
+        .response;
         // A pane-to-pane drag (issue #137) lands here: any item drag started
         // in `focus`'s row loop above sets an `SftpPaneDragPayload` via
         // `dnd_set_drag_payload`; releasing it anywhere inside the *other*
@@ -5809,9 +5826,17 @@ pub(crate) struct MarkdownFilePicker {
 impl MarkdownFilePicker {
     /// Opens the picker rooted at `start_dir`.
     pub(crate) fn new(start_dir: PathBuf, repaint: egui::Context) -> Self {
-        let (event_sender, event_receiver) = mpsc::channel();
         let local_loader =
             LocalDirectoryLoader::new("festerm-gui-markdown-picker-local".to_owned());
+        Self::with_local_loader(start_dir, repaint, local_loader)
+    }
+
+    fn with_local_loader(
+        start_dir: PathBuf,
+        repaint: egui::Context,
+        local_loader: LocalDirectoryLoader,
+    ) -> Self {
+        let (event_sender, event_receiver) = mpsc::channel();
         let mut picker = Self {
             pane: SftpPaneState::new(SftpPath::local(start_dir)),
             event_sender,
@@ -6035,11 +6060,41 @@ impl MarkdownFilePicker {
     pub(crate) fn ui(&mut self, ui: &mut Ui) -> MarkdownPickerOutcome {
         let mut outcome = MarkdownPickerOutcome::Pending;
         let width = ui.available_width();
+        let inherited_clip = ui.clip_rect();
+        let gap = if ui.available_height() < 200.0 {
+            0.0
+        } else {
+            6.0
+        };
         // These rows are a list to be clicked, not prose to be selected. Left
         // selectable, every label under the pointer turns the cursor into an
         // I-beam and the sheet reads as a document rather than as a chooser.
         ui.style_mut().interaction.selectable_labels = false;
 
+        egui::Panel::bottom(egui::Id::new("markdown_file_picker_footer"))
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new())
+            .show(ui, |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(inherited_clip));
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("{} items", self.pane.visible_entries().len()))
+                            .font(font_for_text_role(SftpTextRole::Footer))
+                            .color(theme::TEXT_MUTED),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.cancel_path_request();
+                            outcome = MarkdownPickerOutcome::Cancelled;
+                        }
+                    });
+                });
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new())
+            .show(ui, |ui| {
+        ui.set_clip_rect(ui.clip_rect().intersect(inherited_clip));
         ui.horizontal(|ui| {
             if toolbar_icon_button(ui, SftpGlyph::Back, "Back").clicked() {
                 self.navigate_back();
@@ -6055,45 +6110,58 @@ impl MarkdownFilePicker {
             }
             ui.add_space(SFTP_TOOLBAR_NAV_GAP);
             let mut breadcrumb_target = None;
-            ui.horizontal_wrapped(|ui| {
-                for (index, segment) in breadcrumb_segments(&self.pane.current_path)
-                    .into_iter()
-                    .enumerate()
-                {
-                    if index > 0 && segment.label != "/" {
-                        ui.label(
-                            RichText::new("/")
+            let breadcrumb_width = ui.available_width();
+            egui::ScrollArea::horizontal()
+                .id_salt((
+                    "markdown_picker_breadcrumbs",
+                    path_key(&self.pane.current_path),
+                ))
+                .max_width(breadcrumb_width)
+                .max_height(32.0)
+                .auto_shrink([false, true])
+                .stick_to_right(true)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (index, segment) in breadcrumb_segments(&self.pane.current_path)
+                            .into_iter()
+                            .enumerate()
+                        {
+                            if index > 0 && segment.label != "/" {
+                                ui.label(
+                                    RichText::new("/")
+                                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            }
+                            let text = RichText::new(segment.label.clone())
                                 .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
-                    let text = RichText::new(segment.label.clone())
-                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                        .color(if segment.current {
-                            theme::TEXT_PRIMARY
-                        } else {
-                            theme::TEXT_SECONDARY
-                        });
-                    if segment.current {
-                        ui.label(text);
-                    } else if ui
-                        .add(
-                            egui::Button::new(text)
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::NONE)
-                                .min_size(egui::vec2(0.0, 18.0)),
-                        )
-                        .clicked()
-                    {
-                        breadcrumb_target = Some(segment.path);
-                    }
-                }
-            });
+                                .color(if segment.current {
+                                    theme::TEXT_PRIMARY
+                                } else {
+                                    theme::TEXT_SECONDARY
+                                });
+                            if segment.current {
+                                ui.label(text).on_hover_text(segment.path.display());
+                            } else if ui
+                                .add(
+                                    egui::Button::new(text)
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::NONE)
+                                        .min_size(egui::vec2(0.0, 24.0)),
+                                )
+                                .on_hover_text(segment.path.display())
+                                .clicked()
+                            {
+                                breadcrumb_target = Some(segment.path);
+                            }
+                        }
+                    });
+                });
             if let Some(path) = breadcrumb_target {
                 self.navigate_to_breadcrumb(path);
             }
         });
-        ui.add_space(6.0);
+        ui.add_space(gap);
 
         let path_id = ui.make_persistent_id("markdown_picker_path");
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::L)) {
@@ -6120,15 +6188,20 @@ impl MarkdownFilePicker {
                 self.submit_path();
             }
         });
-        ui.add_space(6.0);
+        ui.add_space(gap);
 
         let mut filter_text = self.pane.filter.clone();
         let filter_response = show_filter_field(ui, &mut filter_text, PaneFocus::Local, width);
         if filter_response.changed() {
             self.pane.set_filter(filter_text);
         }
-        ui.add_space(6.0);
+        ui.add_space(gap);
 
+        ScrollArea::vertical()
+            .id_salt("markdown_picker_listing")
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, false])
+            .show_viewport(ui, |ui, viewport| {
         if let Some(summary) = self.pane.error.clone() {
             ui.colored_label(theme::STATUS_ERROR, summary);
             if let Some(details) = &self.pane.details {
@@ -6201,9 +6274,11 @@ impl MarkdownFilePicker {
 
         let mut picked_item: Option<SftpDirectoryItem> = None;
         let entries = self.pane.visible_entries();
+        let rows_height = (viewport.height() - ui.min_rect().height())
+            .max(SFTP_TABLE_ROW_HEIGHT);
         let scroll_output = ScrollArea::vertical()
             .id_salt("markdown_file_picker_rows")
-            .max_height(280.0)
+            .max_height(280.0_f32.min(rows_height))
             .vertical_scroll_offset(self.pane.scroll_offset)
             .show_rows(ui, SFTP_TABLE_ROW_HEIGHT, entries.len(), |ui, range| {
                 for item in &entries[range] {
@@ -6324,19 +6399,6 @@ impl MarkdownFilePicker {
             self.cancel_path_request();
             outcome = self.open_item(&item);
         }
-
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{} items", entries.len()))
-                    .font(font_for_text_role(SftpTextRole::Footer))
-                    .color(theme::TEXT_MUTED),
-            );
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Cancel").clicked() {
-                    self.cancel_path_request();
-                    outcome = MarkdownPickerOutcome::Cancelled;
-                }
             });
         });
 
@@ -6350,7 +6412,7 @@ impl MarkdownFilePicker {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
     use std::ffi::OsString;
@@ -6396,6 +6458,147 @@ mod tests {
             pending_markdown_command: None,
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
+        }
+    }
+
+    pub(crate) fn paint_fixture(context: &egui::Context, rows: usize) -> SftpFileManagerTab {
+        assert!(rows <= 5000);
+        let mut tab = test_tab();
+        tab.repaint = context.clone();
+        tab.connection_state = SftpConnectionState::Ready;
+        tab.has_connected_once = true;
+        for (pane, location, path) in [
+            (
+                &mut tab.local_pane,
+                SftpLocation::Local,
+                SftpPath::local("paint-fixture"),
+            ),
+            (
+                &mut tab.remote_pane,
+                SftpLocation::Remote,
+                SftpPath::remote("/paint-fixture"),
+            ),
+        ] {
+            pane.set_snapshot(
+                SftpDirectorySnapshot {
+                    location,
+                    path: path.clone(),
+                    loaded_at: SystemTime::UNIX_EPOCH,
+                    entries: (0..rows)
+                        .map(|index| {
+                            let name = format!("entry-{index:06}.txt");
+                            SftpDirectoryItem {
+                                path: path.join_child(&name),
+                                name,
+                                file_type: SftpEntryType::File,
+                                size: Some(index as u64 * 128),
+                                modified_at: None,
+                                permissions: Some(0o644),
+                            }
+                        })
+                        .collect(),
+                },
+                None,
+            );
+            if rows > 0 {
+                pane.select_single(&path.join_child("entry-000000.txt"));
+            }
+        }
+        tab
+    }
+
+    #[test]
+    fn textureless_sftp_panes_preserve_pixels_geometry_and_selection() {
+        use crate::software_background::PanelTestProbe;
+        use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+
+        for scale in [1.0, 1.25, 2.0] {
+            for width in [980.3, 460.3] {
+                for clipped in [false, true] {
+                    let render = |native| {
+                        let state = create_render_state(default_wgpu_setup(), Default::default());
+                        let probe = std::cell::OnceCell::new();
+                        let focused_widget = std::cell::Cell::new(None);
+                        let context = egui::Context::default();
+                        let tab_id = crate::tabs::AppState::for_test().active();
+                        let mut harness = Harness::builder()
+                            .with_size(egui::vec2(width, 680.7))
+                            .with_pixels_per_point(scale)
+                            .renderer(WgpuTestRenderer::from_render_state(state.clone()))
+                            .build_ui_state(
+                                |ui, tab: &mut SftpFileManagerTab| {
+                                    ui.ctx().set_theme(egui::ThemePreference::Dark);
+                                    ui.ctx().set_visuals(theme::default_visuals());
+                                    ui.style_mut().animation_time = 0.0;
+                                    if native {
+                                        probe.get_or_init(|| {
+                                            PanelTestProbe::install(ui.ctx(), &state)
+                                        });
+                                    }
+                                    if clipped {
+                                        ui.set_clip_rect(egui::Rect::from_min_max(
+                                            egui::pos2(11.25, 13.5),
+                                            egui::pos2(width - 16.75, 661.25),
+                                        ));
+                                    }
+                                    assert!(tab.show(ui, tab_id).is_none());
+                                    focused_widget.set(ui.ctx().memory(|memory| memory.focused()));
+                                },
+                                paint_fixture(&context, 100),
+                            );
+                        harness.run();
+                        let geometry = (
+                            harness.state().last_local_pane_rect,
+                            harness.state().last_remote_pane_rect,
+                            harness.get_by_label("Local entry-000000.txt").rect(),
+                        );
+                        let image = harness.render().expect("full SFTP widget framebuffer");
+                        assert!(
+                            image
+                                .pixels()
+                                .filter(|pixel| pixel.0 == theme::TEXT_PRIMARY.to_array())
+                                .count()
+                                > 20
+                        );
+                        if native {
+                            assert_eq!(
+                                probe.get().unwrap().paints(),
+                                if width < SFTP_SPLIT_VIEW_MIN_WIDTH {
+                                    2
+                                } else {
+                                    4
+                                },
+                                "only pane and table frames are routed"
+                            );
+                        }
+                        harness.get_by_label("Local entry-000001.txt").click();
+                        harness.run();
+                        let tab = harness.state();
+                        assert_eq!(
+                            tab.local_pane.selected_paths,
+                            BTreeSet::from([path_key(
+                                &SftpPath::local("paint-fixture").join_child("entry-000001.txt")
+                            )])
+                        );
+                        assert_eq!(tab.remote_pane.selected_count(), 1);
+                        assert_eq!(tab.local_pane.item_count(), 100);
+                        assert_eq!(tab.remote_pane.item_count(), 100);
+                        assert_eq!(tab.focused_pane, PaneFocus::Local);
+                        harness.state_mut().local_pane.filter_focus_requested = true;
+                        harness.run();
+                        assert_eq!(
+                            focused_widget.get(),
+                            Some(filter_field_id(PaneFocus::Local))
+                        );
+                        (image, geometry)
+                    };
+                    assert_eq!(
+                        render(false),
+                        render(true),
+                        "scale={scale}, width={width}, clipped={clipped}"
+                    );
+                }
+            }
         }
     }
 
@@ -7325,6 +7528,31 @@ mod tests {
         panic!("markdown file picker did not finish loading in time");
     }
 
+    fn paused_picker(start_dir: PathBuf) -> MarkdownFilePicker {
+        MarkdownFilePicker::with_local_loader(
+            start_dir,
+            egui::Context::default(),
+            LocalDirectoryLoader::paused_for_test(),
+        )
+    }
+
+    // Path resolution can enqueue one directory listing. Run both tasks through
+    // the real event channel without depending on background-thread scheduling.
+    fn finish_paused_picker_load(picker: &mut MarkdownFilePicker) {
+        for _ in 0..2 {
+            picker.poll();
+            if !picker.pane.loading {
+                return;
+            }
+            picker.local_loader.run_pending_for_test();
+        }
+        picker.poll();
+        assert!(
+            !picker.pane.loading,
+            "path resolution and its directory listing must finish the load"
+        );
+    }
+
     #[test]
     fn virtualized_open_picker_reaches_the_final_row_and_activates_its_selection() {
         let directory = tempfile::tempdir().unwrap();
@@ -7624,40 +7852,55 @@ mod tests {
 
     #[test]
     fn markdown_file_picker_typed_paths_open_files_navigate_folders_and_preserve_errors() {
-        let dir = std::env::temp_dir().join(format!("festerm-picker-paths-{}", std::process::id()));
+        let fixture = tempfile::tempdir().unwrap();
+        let dir = fixture.path();
         fs::create_dir_all(dir.join("child")).unwrap();
         let dir = fs::canonicalize(dir).unwrap();
         fs::write(dir.join("child/two words.txt"), b"hello").unwrap();
-        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
-        wait_for_picker_load(&mut picker);
+        let mut picker = paused_picker(dir.clone());
+        finish_paused_picker_load(&mut picker);
         picker.entered_path = "child".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        assert!(picker.resolving_path);
+        assert!(picker.pane.loading);
+        picker.local_loader.run_pending_for_test();
+        assert_eq!(picker.current_directory(), Some(dir.clone()));
+        picker.poll();
+        assert!(!picker.resolving_path);
+        assert!(
+            picker.pane.loading,
+            "resolving a directory must still wait for its listing"
+        );
+        assert_eq!(
+            picker.local_loader.pending_path_for_test(),
+            Some(SftpPath::local(dir.join("child")))
+        );
+        finish_paused_picker_load(&mut picker);
         assert_eq!(picker.current_directory(), Some(dir.join("child")));
         picker.entered_path = "\"two words.txt\"".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(
             picker.pending_file.take(),
             Some(dir.join("child/two words.txt"))
         );
         picker.entered_path = dir.join("child/two words.txt").display().to_string();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(
             picker.pending_file.take(),
             Some(dir.join("child/two words.txt"))
         );
         picker.entered_path = "missing.txt".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(picker.entered_path, "missing.txt");
         assert!(picker.pane.error.is_some());
         assert!(picker.pane.details.is_some());
         assert!(picker.pending_file.is_none());
         picker.entered_path = "../child/..".to_owned();
         picker.submit_path();
-        wait_for_picker_load(&mut picker);
+        finish_paused_picker_load(&mut picker);
         assert_eq!(picker.current_directory(), Some(dir.clone()));
         assert!(picker
             .current_directory()
@@ -7668,14 +7911,13 @@ mod tests {
                 std::path::Component::CurDir | std::path::Component::ParentDir
             )));
         drop(picker);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn markdown_file_picker_stale_path_results_cannot_open_after_edit_or_navigation() {
-        let mut picker = MarkdownFilePicker::new(std::env::temp_dir(), egui::Context::default());
-        wait_for_picker_load(&mut picker);
-        picker.local_loader = LocalDirectoryLoader::paused_for_test();
+        let fixture = tempfile::tempdir().unwrap();
+        let mut picker = paused_picker(fixture.path().to_path_buf());
+        finish_paused_picker_load(&mut picker);
         picker.entered_path = "old.txt".to_owned();
         picker.submit_path();
         let stale = picker.pane.pending_request_id;
@@ -7685,7 +7927,7 @@ mod tests {
             .event_sender
             .send(MarkdownPickerEvent::PathResolved {
                 request_id: stale,
-                result: Ok((std::env::temp_dir().join("old.txt"), false)),
+                result: Ok((fixture.path().join("old.txt"), false)),
             })
             .unwrap();
         picker.poll();
@@ -7697,7 +7939,7 @@ mod tests {
             .event_sender
             .send(MarkdownPickerEvent::PathResolved {
                 request_id: stale,
-                result: Ok((std::env::temp_dir().join("new.txt"), false)),
+                result: Ok((fixture.path().join("new.txt"), false)),
             })
             .unwrap();
         picker.poll();

@@ -288,6 +288,14 @@ pub(super) fn show_chip(
                 });
                 ui.close();
             }
+            if chip.renamable && chip.has_explicit_alias && ui.button("Use default name").clicked()
+            {
+                actions.push(ChromeAction::UseDefaultName {
+                    id: chip.id,
+                    restore_focus: ui.data(|data| data.get_temp(menu_restore_focus_id)),
+                });
+                ui.close();
+            }
             if can_move_left && ui.button("Move left").clicked() {
                 actions.push(ChromeAction::MoveLeft(chip.id));
                 ui.close();

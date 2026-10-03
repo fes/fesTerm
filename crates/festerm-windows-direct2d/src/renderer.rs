@@ -40,6 +40,7 @@ unsafe extern "C" {
         -> i32;
     fn festerm_d2d_destroy(bridge: *mut c_void);
     fn festerm_d2d_error(bridge: *const c_void) -> *const c_char;
+    fn festerm_d2d_error_is_unsupported_frame(bridge: *const c_void) -> bool;
     fn festerm_d2d_texture(
         bridge: *mut c_void,
         id: u64,
@@ -73,6 +74,13 @@ pub struct Error {
     operation: &'static str,
     code: i32,
     message: String,
+    kind: ErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ErrorKind {
+    UnsupportedFrame,
+    NativeFailure,
 }
 
 impl Error {
@@ -81,7 +89,23 @@ impl Error {
             operation: "frame validation",
             code: 0x80004001u32 as i32,
             message: message.into(),
+            kind: ErrorKind::UnsupportedFrame,
         }
+    }
+
+    fn native_failure(operation: &'static str, message: String) -> Self {
+        Self {
+            operation,
+            code: 0x80004005u32 as i32,
+            message,
+            kind: ErrorKind::NativeFailure,
+        }
+    }
+
+    /// Capability refusals can decline this frame without disabling later native painting.
+    /// Device, allocation, synchronization and submission failures are not capability refusals.
+    pub fn is_unsupported_frame(&self) -> bool {
+        self.kind == ErrorKind::UnsupportedFrame
     }
 }
 
@@ -108,6 +132,7 @@ pub fn process_cpu_time() -> Result<Duration, Error> {
             operation: "process CPU timing",
             code,
             message: "GetProcessTimes failed".into(),
+            kind: ErrorKind::NativeFailure,
         });
     }
     Ok(Duration::from_secs(ticks / 10_000_000) + Duration::from_nanos((ticks % 10_000_000) * 100))
@@ -188,12 +213,12 @@ impl Renderer {
         // Borrowed native interfaces stay alive through creation; the SDK retains
         // its own references and verifies the queue belongs to this device.
         let code = unsafe {
-            let native_device = device
-                .as_hal::<wgpu::hal::api::Dx12>()
-                .ok_or_else(|| Error::unsupported("DX12 device required"))?;
-            let native_queue = queue
-                .as_hal::<wgpu::hal::api::Dx12>()
-                .ok_or_else(|| Error::unsupported("DX12 queue required"))?;
+            let native_device = device.as_hal::<wgpu::hal::api::Dx12>().ok_or_else(|| {
+                Error::native_failure("initialization", "DX12 device required".into())
+            })?;
+            let native_queue = queue.as_hal::<wgpu::hal::api::Dx12>().ok_or_else(|| {
+                Error::native_failure("initialization", "DX12 queue required".into())
+            })?;
             festerm_d2d_create(
                 native_device.raw_device().as_raw(),
                 native_queue.as_raw().as_raw(),
@@ -205,10 +230,12 @@ impl Renderer {
                 operation: "initialization",
                 code,
                 message: "Direct2D/D3D11-on-12 initialization failed".into(),
+                kind: ErrorKind::NativeFailure,
             });
         }
-        let native =
-            NonNull::new(pointer).ok_or_else(|| Error::unsupported("native renderer missing"))?;
+        let native = NonNull::new(pointer).ok_or_else(|| {
+            Error::native_failure("initialization", "native renderer missing".into())
+        })?;
         Ok(Self {
             native,
             device,
@@ -233,6 +260,13 @@ impl Renderer {
             operation,
             code,
             message,
+            kind: if code == 0x80004001u32 as i32
+                && unsafe { festerm_d2d_error_is_unsupported_frame(self.native.as_ptr()) }
+            {
+                ErrorKind::UnsupportedFrame
+            } else {
+                ErrorKind::NativeFailure
+            },
         })
     }
 
@@ -449,7 +483,10 @@ impl Renderer {
     ) -> Result<Surface, Error> {
         let clip = clip.unwrap_or(bounds);
         if !clip.is_finite() || !clip.is_positive() || !bounds.contains_rect(clip) {
-            return Err(Error::unsupported("invalid prepared-frame draw clip"));
+            return Err(Error::native_failure(
+                "native drawing",
+                "invalid prepared-frame draw clip".into(),
+            ));
         }
         // Reuse the complete prepared frame at its original raster origin.
         // Only the draw clip and padded target extent change between patches.
@@ -496,8 +533,9 @@ impl Renderer {
         if let (Some(timings), Some(started)) = (timings, native_draw_started) {
             timings.native_draw = started.elapsed();
         }
-        let pointer =
-            NonNull::new(pointer).ok_or_else(|| Error::unsupported("native surface missing"))?;
+        let pointer = NonNull::new(pointer).ok_or_else(|| {
+            Error::native_failure("native drawing", "native surface missing".into())
+        })?;
         // Transfer the owned COM reference into wgpu without transferring a
         // suballocator allocation. The descriptor matches native creation.
         // The initialized state prevents wgpu from clearing the imported pixels.
@@ -543,9 +581,10 @@ impl Renderer {
             timeout: Some(std::time::Duration::ZERO),
         }) {
             Ok(_) | Err(wgpu::PollError::Timeout) => Ok(()),
-            Err(error) => Err(Error::unsupported(&format!(
-                "wgpu rejected native submission: {error}"
-            ))),
+            Err(error) => Err(Error::native_failure(
+                "wgpu submission",
+                format!("wgpu rejected native submission: {error}"),
+            )),
         }
     }
 }
@@ -586,6 +625,12 @@ impl CachedRenderer {
             renderer: Renderer::new(device, queue)?,
             previous: None,
         })
+    }
+
+    /// Discards retained pixels so the next frame is drawn in full.
+    /// Previously published surfaces remain immutable and independently owned.
+    pub fn invalidate(&mut self) {
+        self.previous = None;
     }
 
     pub fn render(
@@ -1041,6 +1086,21 @@ mod tests {
     use super::*;
     use egui_kittest::wgpu::{create_render_state, default_wgpu_setup};
     use std::time::Duration;
+
+    #[test]
+    fn unsupported_frames_are_distinct_from_native_failures() {
+        assert!(Error::unsupported("native frame exceeds supported bounds").is_unsupported_frame());
+        assert!(
+            !Error::native_failure("wgpu submission", "device lost".into()).is_unsupported_frame()
+        );
+        assert!(!Error {
+            operation: "native drawing",
+            code: 0x80004001u32 as i32,
+            message: "native failure with the same HRESULT".into(),
+            kind: ErrorKind::NativeFailure,
+        }
+        .is_unsupported_frame());
+    }
 
     fn frame(color: Color32) -> Vec<ClippedPrimitive> {
         let mut mesh = egui::Mesh::default();
@@ -1727,6 +1787,39 @@ mod tests {
             .unwrap();
         assert_eq!(unchanged.updated_regions, 0);
         assert_eq!(unchanged.updated_pixels, 0);
+        renderer.invalidate();
+        let forced = renderer
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &scene(Some(Color32::BLUE)),
+                &textures,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            forced.updated_pixels,
+            u64::from(forced.surface.texture.width()) * u64::from(forced.surface.texture.height()),
+            "explicit invalidation must redraw even unchanged regions"
+        );
+        assert_ne!(forced.surface.texture, unchanged.surface.texture);
+        let settled = renderer
+            .render(
+                canvas,
+                1.0,
+                Color32::BLACK,
+                &scene(Some(Color32::BLUE)),
+                &textures,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            settled.updated_pixels, 0,
+            "ordinary reuse resumes afterwards"
+        );
         let changed = renderer
             .render(
                 canvas,
@@ -1749,6 +1842,7 @@ mod tests {
         for (frame, expected) in [
             (&original, [255, 0, 0, 255]),
             (&unchanged, [255, 0, 0, 255]),
+            (&forced, [255, 0, 0, 255]),
             (&changed, [0, 255, 0, 255]),
             (&erased, [0, 0, 0, 255]),
         ] {

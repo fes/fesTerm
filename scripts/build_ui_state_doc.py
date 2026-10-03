@@ -28,6 +28,9 @@ DEFAULT_MANIFESTS = [REPOSITORY_ROOT / "docs" / "images" / "ui-state" / "manifes
 DEFAULT_NARRATIVE = REPOSITORY_ROOT / "docs" / "ui-state-narrative.md"
 DEFAULT_TITLE = "State of the UI"
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "docs" / "state-of-the-ui.md"
+DEFAULT_SURFACE_MATRIX = (
+    REPOSITORY_ROOT / "validation" / "windows-warp" / "surface-matrix.json"
+)
 
 SCHEMA_VERSION = 1
 SECTION_MARKER = re.compile(
@@ -213,6 +216,130 @@ def render(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def surface_matrix_report(
+    matrix_path: Path = DEFAULT_SURFACE_MATRIX,
+    *,
+    profile_path: Path | None = None,
+    warp_directory: Path | None = None,
+) -> dict:
+    """Expand the reconciled audit, without treating fixtures as measurements."""
+    try:
+        matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+        if matrix["schema"] != "festerm-ui-surface-matrix-v1":
+            raise BuildError("unexpected surface matrix schema")
+        families = matrix["families"]
+        identifiers = [family["id"] for family in families]
+        gui = [edge for family in families for edge in family["gui"]]
+        if (
+            len(identifiers) != matrix["audit"]["families"]
+            or len(set(identifiers)) != len(identifiers)
+            or len(set(gui)) != matrix["audit"]["unique_gui_references"]
+            or len(gui) != matrix["audit"]["family_gui_references"]
+        ):
+            raise BuildError("surface matrix no longer matches the reconciled audit")
+        measured: dict[str, dict] = {}
+        verified: set[str] = set()
+        if profile_path is not None:
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            if profile["schema"] != "festerm-interactive-surface-profile-v2":
+                raise BuildError("surface profile must use the expanded v2 metric boundary")
+            for sample in profile["samples"]:
+                if sample["last_shape_count"] <= 0 or sample["last_vertex_count"] <= 0:
+                    raise BuildError(f"empty measured surface: {sample['name']}")
+                measured[sample["name"]] = profile.get("provenance", {})
+                if sample.get("fixture_state_verified"):
+                    verified.add(sample["name"])
+
+        batch = matrix["bounded_batch"]
+        fixture_states = []
+        for state in batch["states"]:
+            if state["family"] not in identifiers:
+                raise BuildError(f"unknown fixture family: {state['family']}")
+            if next(family for family in families if family["id"] == state["family"]).get("native_only"):
+                raise BuildError(f"headless fixture cannot qualify native family: {state['family']}")
+            variants = []
+            for suffix in batch["variant_suffixes"]:
+                scene = state["scene"] + suffix
+                if scene in measured and scene not in verified:
+                    raise BuildError(f"expanded profile has no semantic fixture guard: {scene}")
+                warp = None
+                attempt = None
+                if warp_directory is not None:
+                    path = warp_directory / scene / "report.json"
+                    status_path = warp_directory / scene / "status.json"
+                    if status_path.exists():
+                        attempt = json.loads(status_path.read_text(encoding="utf-8"))["status"]
+                    if path.exists():
+                        warp = json.loads(path.read_text(encoding="utf-8"))
+                        if warp["schema"] != "festerm-warp-ui-replay-v2" or warp["scene"] != scene:
+                            raise BuildError(f"mismatched WARP report: {path}")
+                        if attempt != "complete":
+                            raise BuildError(f"WARP attempt not completed: {status_path}")
+                        if not warp["steady_completed_draw_readback"]["samples_ms"]:
+                            raise BuildError(f"WARP report has no completed draws: {path}")
+                        if not warp.get("fixture_state_verified"):
+                            raise BuildError(f"WARP report has no semantic fixture guard: {path}")
+                variants.append({
+                    "scene": scene,
+                    "construction": "covered" if scene in measured else "currently_unmeasured",
+                    "completed_draw_sync_readback": "covered" if warp else "currently_unmeasured",
+                    "construction_provenance": measured.get(scene),
+                    "warp_provenance": warp.get("provenance") if warp else None,
+                    "warp_attempt": attempt,
+                    "native_acceptance": "pending",
+                    "prerequisites": [] if scene in measured and warp else [batch["measurement_prerequisite"]],
+                })
+            fixture_states.append({**state, "variants": variants})
+
+        expanded = []
+        for family in families:
+            native = family.get("native_only", False)
+            status = "native_only" if native else "currently_unmeasured"
+            prerequisites = family["prerequisites"]
+            if not prerequisites:
+                raise BuildError(f"unnamed prerequisite: {family['id']}")
+            expanded.append({
+                "id": family["id"],
+                "gui": family["gui"],
+                "audited_state_groups": [
+                    {"state": group.strip(), "status": status, "prerequisites": prerequisites}
+                    for group in family["states"].split(",")
+                ],
+                "profile_dimensions": [
+                    {"profile": profile, "state": state, "status": status, "prerequisites": prerequisites}
+                    for profile in family["profile"]
+                    for state in matrix["state_profiles"][profile]
+                ],
+                "existing_control_scenes": family.get("existing_controls", []),
+                "fixture_states": [state for state in fixture_states if state["family"] == family["id"]],
+                "gallery_only_states": [
+                    state for state in matrix.get("gallery_only_states", [])
+                    if state["family"] == family["id"]
+                ],
+            })
+        return {
+            "schema": "festerm-ui-surface-coverage-report-v1",
+            "audit": matrix["audit"],
+            "definitions": matrix["status_definitions"],
+            "state_group_rule": matrix["state_group_rule"],
+            "original_controls": matrix["original_controls"],
+            "gallery_fixture_identity": matrix.get("gallery_fixture_identity"),
+            "fixture_execution_status": (
+                "matched-retained-reports"
+                if any(
+                    variant["construction"] == "covered"
+                    or variant["completed_draw_sync_readback"] == "covered"
+                    for state in fixture_states for variant in state["variants"]
+                )
+                else batch["execution_status"]
+            ),
+            "families": expanded,
+            "boundary": "Exact retained scene metrics only. General audited groups remain unqualified; no offscreen evidence establishes idle scheduling, cold-process start, OS input-to-display, presentation or native acceptance.",
+        }
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise BuildError(f"invalid surface evidence: {error}") from error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -224,6 +351,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--narrative", type=Path, default=DEFAULT_NARRATIVE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--surface-matrix-report", type=Path, help="write an expanded JSON coverage report instead of rebuilding the gallery document")
+    parser.add_argument("--surface-matrix", type=Path, default=DEFAULT_SURFACE_MATRIX)
+    parser.add_argument("--surface-profile", type=Path, help="optional retained v2 construction profile.json; never native evidence")
+    parser.add_argument("--warp-replay", type=Path, help="optional retained v2 WARP replay directory; drawing/sync/readback only")
     parser.add_argument(
         "--check",
         action="store_true",
@@ -236,6 +367,24 @@ def main(argv: list[str] | None = None) -> int:
         help="skip verifying that image bytes match the manifest digests.",
     )
     arguments = parser.parse_args(argv)
+
+    if arguments.surface_matrix_report is not None:
+        try:
+            report = surface_matrix_report(
+                arguments.surface_matrix,
+                profile_path=arguments.surface_profile,
+                warp_directory=arguments.warp_replay,
+            )
+            destination = arguments.surface_matrix_report
+            if destination.exists():
+                raise BuildError("use a fresh coverage-report path; retain previous attempts")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except BuildError as error:
+            print(f"build_ui_state_doc: {error}", file=sys.stderr)
+            return 1
+        print(f"build_ui_state_doc: wrote {destination} ({len(report['families'])} audited families)")
+        return 0
 
     manifests = arguments.manifest or DEFAULT_MANIFESTS
     try:

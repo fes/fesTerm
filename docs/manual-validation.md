@@ -77,6 +77,41 @@ remain active rolling qualification but do not independently keep M6 open.
 | Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
 
+## iOS Phase 1 feasibility (ADR 0042)
+
+The isolated spike is implemented for review. The following evidence is
+**manual pending**, not passed by portable tests or a linked Simulator app.
+Record OS/SDK, device, orientation, scale and commit with each result; fixture
+content is repository-owned. Physical-device runs require a provisioned build.
+The persistent-keyboard, arrow and pinch input probes plus offline Files and
+Markdown workflow previews are included in this host. Live mobile product work
+remains blocked on this gate and a hosting go/no-go decision.
+
+| ID | Environment / scenario | Acceptance / evidence |
+| --- | --- | --- |
+| MOB-01 | iPhone and iPad Simulator plus physical iOS device; cold launch, portrait/landscape, safe areas, touch selection/scrolling and software-keyboard feasibility | ANSI/Unicode/emoji fixture paints and resizes; no clipped/inaccessible controls or stale grid; record touch/keyboard gaps explicitly and assess whether public hosting APIs suffice. Visual/usability evidence required. |
+| MOB-02 | iPhone/iPad portrait, landscape, Split View; native keyboard, accessory row, IME and hardware keyboard | With simulated hardware keyboard disconnected for software-keyboard evidence, keyboard remains visible without repeated hide/show animation during idle frames, toolbar taps, scrolling and terminal keys; final platform output must not repeatedly interrupt IME composition; terminal stays above keyboard using measured geometry; Ctrl/Alt apply once; long-press/drag shows a temporary direction helper with three repeat speeds, neutral pauses, no permanent arrow row; release, second touch, focus loss, rotation, keyboard resize and backgrounding stop repeats immediately; early drags retain ordinary behavior and arrow gestures never send duplicate mouse reports; verify helper visibility and gesture thresholds on real fingers; hardware keyboard reclaims space while retaining the row; counters match encoded key events without duplicate routing; terminal fixture does not echo input; reset clears counters; capture only fixture and content-free diagnostics. |
+| MOB-03 | Background/foreground repeated ten times; Simulator memory warning; real-device suspension; terminate and relaunch | No background draw/crash/spin, foreground surface repaints, counters advance once per transition, view-cache reset retains the grid/history and chosen text size, process death starts the fixture rather than claiming restoration. Profile memory/CPU and record unsupported callbacks. |
+| MOB-04 | iPhone/iPad portrait, landscape and Split View; pinch from rest and from a held arrow gesture; pinch at minimum/maximum text size | Only terminal text scales within 8–32 points; native keyboard/accessory controls remain stable; grid resizes coherently without losing the viewed content. Check precision/jitter with real fingers and immediate reversal at limits. Arrow helper/repeats stop when the second finger takes over; no mouse reports or text are emitted. Either finger lifting, a third contact, blur, rotation/keyboard geometry change and backgrounding cancel; remaining fingers cannot restart input until all lift. An already-started ordinary drag retains ownership; toolbar-origin touches do not pinch. Memory warning preserves text size; Reset fixture restores default. Portable arbitration/layout/bounds tests pass; native feel, visual stability and history anchoring remain manual pending. |
+| MOB-05 | iPhone/iPad portrait, landscape and narrow Split View; switch Terminal/Files/README repeatedly; exercise both transfer directions, README collision choices, progress, Preview/Source/Contents and each heading | Keyboard dismisses outside Terminal and returns without a restart loop; terminal gestures cannot affect Files/README. No category loses in-memory state. Wide Files panes are horizontal; Compact panes are both visible with Remote on top and Local below, so upload moves up and download moves down; Minimal has a reachable pane toggle and transfer queue. Collision actions and progress are bounded and never claim real I/O. Markdown controls never collide, prose wraps, contents is reachable and heading activation changes the selected/visible section. Every screen says synthetic/offline. Record clipping, Dynamic Type and VoiceOver gaps; this does not accept live SSH/SFTP, credentials, file access, full tab lifecycle or restoration. |
+
+Automated policy/input/headless-grid tests are in `festerm-mobile`; iOS CI
+checks device compilation and Simulator linking, while the build script checks
+normal/build graph exclusions. `scripts/smoke-ios-simulator.py --run` adds
+isolated iPhone/iPad install, launch-survival, first UI callback, terminate/relaunch and screenshot
+capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
+cover ownership, failure reporting and cleanup; actual execution is an iOS CI
+gate. The manifest and PNGs are review evidence, not automatic rendering,
+keyboard or lifecycle acceptance. Physical-device and most interaction
+evidence above remains pending. A local iPhone 17/iOS 26.5/Xcode 27 run
+visually covered Terminal, Compact stacked Files, Markdown wrapping and
+Contents/heading activation; it does not qualify iPad, rotation, Dynamic Type,
+VoiceOver or a physical device. The `c7ecb14` run diagnosed a renderer initialization
+limit mismatch on both Simulators (16 requested inter-stage variables, 15
+supported). The mobile downlevel-limit fix requires native rerun and image
+review; issue #261 tracks this MOB-01 startup blocker. SSH recovery and Keychain are **deferred** behind
+the Phase 1 decision, not missing evidence for an implemented connection.
+
 ## Deferred desktop Store qualification
 
 The [desktop Store distribution plan](app-store-distribution-plan.md) defines
@@ -113,6 +148,53 @@ possible.
 | AS-07 | With live-close confirmation open, initial Enter does not confirm, Escape cancels without PTY bytes, outside click does not dismiss, and deliberate focus + activation closes exactly the bound session. | Native functional | Yes: UI automation plus controlled PTY/lifecycle oracle |
 | AS-08 | Request application/window quit with multiple live sessions (close button, native Quit menu, and Cmd+Q — fesTerm's single window means all three arrive as the same close request); aggregate consequence is accurate, Cancel returns exact window state without acting, and deliberate confirmation exits the process exactly once. Repeat Cancel and confirm through accessibility invocation, then with zero live sessions and confirm no dialog appears. | Native functional | Headless safe-default, Cancel/confirm and accessibility activation are automated, including terminal-blackout isolation. Native multi-transport counts, platform routes and whole-window/descendant teardown remain qualification evidence |
 | AS-09 | With multiple local/SSH sessions and long/changing titles, toggle **Show session details in chips** at ordinary and narrow widths, with the status bar on and off. Verify one coherent resize per transition; `34→28` px chip and `42→36` px chrome geometry; stable chip identity/type/state/Close targets; only the active detail relocates to the footer; title-first/factual-fallback precedence; ellipsis priority; empty Launcher/Settings footer; and palette/hover/accessibility/Inspector access when both displays are off. Repeat with wrapped rows and on macOS traffic-light chrome. | Native functional + visual + usability + accessibility | Automate preference/state, grid-resize count, geometry, active-value, and narrow screenshots; retain native hit-target, title-churn readability, macOS optical alignment, and screen-reader review |
+| AS-10 | Rename/reset one of two same-profile terminal views, move it between windows, restart an opted-in disposable workspace and authenticate restored SSH/SFTP. Include local/SSH tmux and Screen: a saved tab retains its alias after backend recreation, while a separate new attachment starts at default. Native views of the same generation may have different aliases; rename/reset of one must not rename another. With workspace restoration off, fresh exact native Running Sessions reattachment may use its saved seed, but a recycled native generation cannot. Ordinary/mux edits with restoration off remain live-only and do not enable it. Force an owned save failure and retry; a nonempty rejected edit must show a content-free refusal without changing anything, while an empty/sanitized-empty edit cancels quietly. Profiles, provider targets and OSC titles remain independent. | Deterministic view/config/auth/reconnect/window/native-seed/opt-out/failure/rejection/fixture-cleanup tests and Windows local CI-equivalent qualification passed on 2026-10-02. Required remote CI and native functional + accessibility + usability evidence remain pending on Windows/macOS/Linux. Physical mux identity naming is outside the chosen scope, not a pending prerequisite for saved-tab aliases. | Use owned fake transports/files for deterministic tests; keep native focus/click-away/menu accessibility, notice readability, owned provider workspace/recreation flows and packaged native daemon lifecycle in the human/native matrix. No new snapshot baselines or user sessions are required. |
+
+The dialog-style regressions cover full-root `752 × 516`, `360 × 516`, and
+`360 × 240` layouts with the production Dark/default visuals: About with license
+and update disclosures; long-target close, bounded paste, update-consent, and
+reset decisions; Open File/Save As with project-owned long paths and missing
+folders in both chrome densities; and palette/overflow row bounds. They assert
+minimum action targets, Cancel/default focus, non-destructive cancellation,
+Escape/generation invalidation, and terminal focus restoration. These extend
+AS-07, CP-05/06/09, and TI-15 automated geometry/semantic coverage, not native
+platform or usability acceptance. Native DPI/edge placement, short-sheet
+scrolling feel, screen-reader traversal, and visual comparison remain in NP-02
+and the corresponding existing scenarios.
+
+The retained matching 23-state run `style-pair-20261001-1700` is not a completed
+style acceptance: actual candidate `daf9796` drawing shows short Save As table
+content outside its sheet and narrow deep Open File breadcrumbs occupying the
+initial ready/error viewport. Rectangle containment and safe wheel-reachable
+Cancel tests pass but do not prove these painting/presentation properties.
+Keep those deterministic visual blockers separate from the native follow-up
+above; no capability/status is promoted by successful capture completion.
+
+Follow-up deterministic tests reproduce the nested-panel paint escape, enforce
+inherited paint/pointer clipping and initially visible modal-owned Save As
+filename/Save/Cancel at all three roots with both chrome densities, and verify
+deep-path/filter placement plus exact ancestor navigation after horizontal
+scrolling. The stricter Open File short-root initial-control test now passes
+after reserving its footer and budgeting its error/list viewport; initial
+path/filter pointer focus and error paint are checked at all three sizes/both
+densities. Cancel restores terminal input without an extra click. Save As
+hidden row/action pointer tests also pass, with an explicit Save response ID
+on the filename's modal layer. Fixes still require a fresh uniformly matched
+drawing pair; the completed old run remains failed visual evidence.
+
+The authorized fresh `style-pair-20261002-r2` pair is now retained separately:
+production-f0 BEFORE executable `510af3f…`, corrected `426c458` AFTER executable
+`5dc2f785…`, exactly 23 scenes, 242 real file SHA/mtime/kind matches, Microsoft
+Basic Render Driver CPU/DX12 and PPP 1.0. All 23 AFTER images were inspected;
+initial principal fields/actions and clipped paint converge, while compact
+body navigation/rows/disclosures scroll. Successful candidate completion
+performed only inventoried input cleanup, so neither completed pair may be
+reused. Original 48 gallery assets and failed first-pair evidence are unchanged.
+About-short's update action is outside its initial body viewport, overflow
+popup areas remain unobserved, and collapsed-palette/update-announcement states
+remain unqualified. Duplicate global Save labels are not ownership evidence;
+the direct response/default-focus tests supply that proof. Native platform,
+hardware and usability scenarios above remain pending.
 
 ### Terminal interaction, history, and overlays
 
@@ -133,6 +215,7 @@ possible.
 | TI-13 | In Session Inspector Diagnostics start/stop/clear input recording and explicitly copy its report. Exercise local selection, terminal-owned/unreported mouse motion, reported mouse events, local context/history gestures and subsequent Copy. Inspect a report for absence of fake token/URL/clipboard contents. | Native functional + privacy/usability | Core/queue/selection classification, bounded storage and redaction automated; physical-event attribution and remote-program interpretation remain unknown, not invented |
 | TI-14 | In local, SSH, and text-mode SFTP sessions, right-click visible absolute paths, `~/` paths, relative paths, wrapped/Unicode names, and an OSC 8 link near path-like text. Verify **Open in viewer** appears only for the frozen clicked target, opens local files locally, opens remote files only through the same live verified SSH/SFTP transport, keeps OSC 8 actions intact, and explains unknown cwd / disconnected transport / missing subsystem / host-trust limits honestly instead of guessing or invoking a shell. Include long Windows/UNC/remote paths, real repeated filename spaces, combining/emoji names, display controls, and a wide character wrapping with one spare column, both live and in retained history. Preview spacing stays natural and single-line, elision keeps useful filename/root context, the complete escaped target is available on hover/accessibility, and Copy/Open preserve real filename bytes without synthetic wrap padding. | Native functional + security + usability/accessibility | Partly: parser, bounded display/grapheme layout, exact menu-action values, core-owned wrap extents, live/history detection, remote-text-tab routing, live-transport/fingerprint pinning, and unavailable-state coverage are automated. A real loopback SSH/SFTP server covers typed-password/session-only trust, exact file bytes, size limits, missing/non-file targets, stalled/refused subsystems, shell responsiveness, and shutdown. Native GUI end-to-end remote open, edge/DPI placement, screen-reader delivery and refusal-overlay/readability usability remain manual |
 | TI-15 | From a live session, an alternate-screen TUI, and an exited/disconnected history, use the command palette and the terminal context menu (with and without a selection) to choose **Open Terminal History in Editor** and **Save Terminal History As…**. Confirm the new editor shows `UNTITLED`, starts dirty, contains logical plain text without ANSI/control sequences, omits synthetic soft-wrap newlines, uses retained primary history plus the applicable visible screen, and stays unchanged while later terminal output arrives or while the saved copy is edited. Confirm plain **Save** / `:w` / `:wq` on the untitled snapshot go through Save As until a destination exists, Save As cancellation/failure is non-destructive, oversize retained history is refused without partial export, and no PTY input is sent. | Native functional + usability | Mostly: core extraction, palette/context routing, disconnected access, immutable snapshot behavior, honest bounds refusal, untitled-save routing, and save-error handling are automated; native menu placement, edge positioning, alternate-screen usability, and cross-platform Save As feel remain human review |
+| TI-16 | In primary/alternate screens and disconnected history, choose **Redraw Terminal** from the palette. Confirm content, cursor, modes, selection, reading anchor and zoom remain unchanged, terminal focus returns, and Ctrl+L/Ctrl+R still belong to the TUI. On eligible Windows Direct2D, unchanged regions are repainted once and ordinary reuse resumes. Do not substitute **Reset Terminal**, which changes terminal state. | Native functional + usability | Row-cache, native full-surface invalidation, palette/typed-command routing, core-state preservation, no input/resize and TUI-key coverage are automated; native desktop appearance and cross-platform focus/usability remain manual pending |
 
 Windows ConPTY prompt timing qualification is automated by
 `python scripts/check_windows_conpty_prompt.py --cycles 20` and the fixed
@@ -276,6 +359,15 @@ complete constrained-layout oracle checks table-galley reuse across fractional
 wrap widths, DPI, Unicode, empty cells, styles and Find; ordinary table width
 and wrapping regressions remain in place. Separate production-widget gallery
 comparisons cover visible presentation, not native latency.
+The render-local code-header Copy caption has an ordinary/prepared oracle over
+the actual outline-disabled 400-section fixture: complete clipped shapes,
+accessibility nodes and live response IDs/rectangles, cold/warm and
+width/font/theme/scale/content changes, selection, tail navigation and exact
+distinct-fence Copy payloads. This extends CPU evidence for MD-04 and EDIT-09.
+The matched synthetic comparison and adverse controls are recorded in
+[`milestone-progress.md`](milestone-progress.md#preparing-a-repeated-code-header-caption-without-retaining-document-layout);
+actual input identity and final shape/vertex parity are not pixel or native
+input/clipboard/screen-reader qualification.
 This extends automated evidence for SFTPG-01, EDIT-04/05/06 and MD-04/06;
 it does not qualify native scroll/input latency, GPU presentation, transfer
 throughput, screen-reader navigation or the FD-05/FD-06 native drag/reveal
@@ -333,8 +425,8 @@ latency.
 | CP-02 | Save/restore workspace metadata; tab order/focus/profile identity restore, SSH requires authentication, and no runtime state, terminal content, or secret is persisted. | Functional + privacy | Yes: artifact inspection |
 | CP-03 | Exercise native secret store available/locked/unavailable/failure states; saved-password and saved-private-key flows store only opaque references and expose actionable non-secret feedback. | Native functional + usability | Disposable put/get/update/delete lifecycles are scheduled for Keychain, Credential Manager, and Secret Service; locked/unavailable presentation and saved-profile usability remain manual |
 | CP-04 | Configure/discover/open/close/reopen Serial devices including missing, busy, and permission-denied adapters; history, inspector line settings, and exclusive ownership follow session rules. | Native functional + hardware/permission validation (config parsing, app-layer failure paths, and Linux `socat` loopback are automated) | Linux virtual tests cover ordered bidirectional traffic, bounded shutdown/reopen, disconnect, busy/non-TTY/missing failures; Windows/macOS hardware and native permission states remain manual |
-| CP-05 | In signed packaged builds, review Check for Updates, current/available/failure states, explicit download and install/restart transitions, restart consent with live sessions, signature rejection, and package-managed guidance. Cancelling restart consent must leave the verified update installable; confirming must install, exit once without a second quit prompt, replace, and relaunch. Developer/incompletely configured builds must expose no network action. Track native release/update evidence in [#62](https://github.com/fes/fesTerm/issues/62). | Native functional + visual + security | State-machine, live-session consent/cancellation, one-shot authorized close, and eligibility rules automated; signed cross-platform replacement/relaunch and failure evidence pending |
-| CP-06 | Validate the native Markdown viewer against `docs/markdown-viewer-design.md`: More-actions local open/cancel; paste an absolute, home-relative, and folder-relative path into Open File (Ctrl+L/Command+L focuses it); correct an invalid path without retyping; Preview/Source toggle, Find, outline, local reload/stale states, inert raw HTML/resource policy, explicit bounded local image loads, accessibility/focus, and return-to-prior-surface behavior. From GUI SFTP, open a bounded remote Markdown snapshot tied to the verified host identity and confirm that reload after reconnect is truthfully unsupported. | Native functional + visual + accessibility + security | Repository-owned local/remote fixtures, bounds, identity, picker path resolution/paste/Enter/stale-result handling, and error-state probes are automated; retain human review for native clipboard delivery, readability, focus, picker usability, and screen-reader behavior |
+| CP-05 | In signed packaged builds, review Check for Updates, current/available/failure states, explicit download and install/restart transitions, restart consent with live sessions, signature rejection, and package-managed guidance. Publish a newer release after discovery and again after download: each action must refresh, display and directly select the latest eligible version, verifying new bytes before install. Same-version refresh reuses verified bytes. Offline/withdrawn/older/invalid releases or verification failures must leave sessions running, with a retryable error and no cached-version install. Cancelling restart consent must leave the verified update installable; confirming must install, exit once without a second quit prompt, replace, and relaunch. Developer/incompletely configured builds must expose no network action. Track native release/update evidence in [#62](https://github.com/fes/fesTerm/issues/62). | Native functional + visual + security | State-machine freshness, same-version reuse, fail-closed refresh/verification, live-session consent/cancellation, one-shot authorized close, and eligibility rules automated; signed cross-platform replacement/relaunch and failure evidence pending |
+| CP-06 | Validate the native Markdown viewer against `docs/markdown-viewer-design.md`: More-actions local open/cancel; paste an absolute, home-relative, and folder-relative path into Open File (Ctrl+L/Command+L focuses it); correct an invalid path without retyping; Preview/Source toggle, Find (including offscreen fenced code), outline, local reload/stale states, inert raw HTML/resource policy, explicit bounded local image loads, accessibility/focus, and return-to-prior-surface behavior. From GUI SFTP, open a bounded remote Markdown snapshot tied to the verified host identity and confirm that reload after reconnect is truthfully unsupported. | Native functional + visual + accessibility + security | Repository-owned local/remote fixtures, bounds, identity, picker path resolution/paste/Enter/stale-result handling, and error-state probes are automated. CPU regressions cover 400-fence offscreen code-byte/Find navigation in viewer/shared Preview, wrapped-code geometry/offset, selection, raw Copy payload and keyboard activation; retain human review for native clipboard delivery, readability, focus, picker usability, and screen-reader behavior. Table-cell byte navigation remains a separate unimplemented gap |
 | CP-07 | In two live sessions, zoom each to a different size through shortcuts and palette, switch repeatedly, reset one, move across DPI scales, and confirm only the active terminal grid changes while chrome, profile configuration, bottom/history anchoring, and the other session remain stable. | Native functional + visual + usability | Automate point-size/session-state assertions and resize-probe sequence; retain multi-DPI visual review |
 | CP-08 | Enter and exit Focus Mode from the palette with a live session; confirm chrome/footer hide and restore without changing the active session or zoom, the hint is readable, Escape reaches the terminal without exiting, exceptional overlays remain available, and switching to a non-session surface exits safely. | Native functional + visual + usability | Automate state/focus/grid assertions and screenshots; retain native window-control/accessibility review |
 | CP-09 | Open About from Launcher, Settings, and a live session at ordinary/narrow sizes; verify exact version/build/OS/architecture copy text, source link, license disclosure, no session/path/host/settings leakage, installation-appropriate update controls, keyboard reachability, and Close/Escape focus restoration. On each platform, quit normally and relaunch to verify the reason. With two isolated test-owned packaged instances, finish one, forcibly terminate only the other, and relaunch: the abandoned run remains unclean/unknown despite the unrelated clean exit; still-live instances are not classified as failed. | Native functional + visual + accessibility | Automated semantic content, redaction, update eligibility, journal transitions, same-process and concurrent owned-child lifetime locks, killed/abrupt child recovery, active retention/log protection, panic preservation, nonblocking hooks, atomic-write failure and unavailable-diagnostics initialization, narrow geometry, and screenshot. Cross-platform child regressions run in CI; they do not launch packaged GUIs. Retain native packaged teardown/relaunch and About presentation, power-loss/native-fault boundaries, link handoff, and screen-reader review |
@@ -557,6 +649,27 @@ baseline. `textureless_bordered_panels_match_pixels_across_dpi` covers border
 geometry in normal CI. Native Settings scrolling, profile interaction, window
 drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
+
+The bounded Inspector/SFTP pane-and-table coverage adds complete widget
+pixel comparisons and an opt-in completed-render replay. Windows correctness
+and all 20 paired framebuffer comparisons passed; matched draw/readback
+improved while UI construction increased slightly in absolute cost. Raw
+repeats, adverse control samples and limits are in
+`validation/windows-warp/README.md`. This changes no native/manual
+classification: TI-06 still owns native Inspector focus/selection behavior,
+FD-05/FD-06 still own OS drag/reveal, and CP-16's mixed-DPI, accelerated-device
+and usability evidence remains open. Transfer/collision painting and styling
+are not part of this change. The offscreen same-executable renderer
+differential is not shipping before/after or native presentation evidence.
+The bounded non-terminal expansion adds production-widget menu/About/safety/
+picker fixtures to those same opt-in probes and gallery, not to the native CPU
+oracle. Its [reconciled matrix](../validation/windows-warp/surface-matrix.json)
+retains 33 families, all audited state groups and named native prerequisites.
+The initial scaffolding awaits exclusive validation; no new headless evidence
+has been accepted. Even completed offscreen reports cannot qualify About/menu
+idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
+mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
+unchanged; no new latency budgets are implied.
 
 ### Experimental Direct2D qualification
 
@@ -807,6 +920,17 @@ settled presentation or displayed-frame cadence. See the
 [single-host record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence)
 for raw-series boundaries and adverse results. CP-18/#282 remain open for
 broader equipment, recovery, resources, latency and maintainer decisions.
+
+**Unsupported-frame recovery (2026-10-02):** deterministic native integration
+covers palette-budget refusal with unchanged ordinary-frame pixels, followed
+by executed native painting when supported terminal content returns. Typed
+SDK/Rust classification distinguishes a refusal from a real native failure
+even when both use the same HRESULT; device/allocation/submission failures
+still retire the painter. Retained native pixels are invalidated on refusal.
+Strict CPU probes reject any refusal instead of accepting mixed paths.
+Repeated native-window transitions and sustained unsupported-content resource
+and CPU behavior remain CP-18 work, as do real device-loss recovery and
+issue #297's degraded-process attribution. No broader acceptance is advanced.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

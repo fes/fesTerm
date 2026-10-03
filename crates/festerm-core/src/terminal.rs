@@ -9,8 +9,9 @@ use crate::{
     colors::ColorScheme,
     history::{LogicalLine, Scrollback, ScrollbackStats, DEFAULT_SCROLLBACK_LIMIT_BYTES},
     input::{
-        encode_key, encode_legacy_mouse, encode_paste, encode_sgr_mouse, mouse_event_is_reported,
-        paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome, MouseEvent,
+        encode_key, encode_legacy_mouse, encode_modified_key, encode_paste, encode_sgr_mouse,
+        mouse_event_is_reported, paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome,
+        MouseEvent,
     },
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{
@@ -1210,6 +1211,9 @@ impl Terminal {
     pub fn handle_input(&mut self, event: InputEvent) -> InputEventOutcome {
         let encoded = match event {
             InputEvent::Key(key) => encode_key(key, self.modes),
+            InputEvent::ModifiedKey { key, modifiers } => {
+                encode_modified_key(key, modifiers, self.modes)
+            }
             InputEvent::Paste(text) => return self.handle_paste(text),
             InputEvent::Focus(focus) => self.modes.focus_reporting.then(|| match focus {
                 FocusEvent::In => b"\x1b[I".to_vec(),

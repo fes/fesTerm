@@ -10,7 +10,7 @@
       "width": 1000,
       "height": 52,
       "tier": "headless",
-      "sha256": "ee189a9221fae915e6685f02878a1286aff1ec5b284de5d5f555e577abcfcf8a"
+      "sha256": "da2a280335752dd6a116a04bc4bfa5e5c126ee2be08a3d446264917cd6f31641"
     },
     {
       "id": "chips-update-badge",
@@ -21,7 +21,7 @@
       "width": 1000,
       "height": 58,
       "tier": "headless",
-      "sha256": "b64cb8ac14b6fdbc7945e4aee2c76af31730960ac9616a833607fefaca59c465"
+      "sha256": "ae8310242189455dc75500b49d47a524648d36e955832c1d60479211d9ca591f"
     },
     {
       "id": "chips-verbose",
@@ -32,7 +32,7 @@
       "width": 1000,
       "height": 58,
       "tier": "headless",
-      "sha256": "4b959ad73a5732612aed24e7d2700f9327d7b5668eee67d0a60eeac0e9cb5eba"
+      "sha256": "860a0a87c5c827dd0b4eb9031404ef826e82f12119c18d3527b1e4d37cf01c3f"
     },
     {
       "id": "serial-connect-form",
@@ -40,10 +40,10 @@
       "title": "Serial connect form",
       "caption": "Serial launches ask only for a device path and line settings; there is no host/credential concept for a local serial device.",
       "image": "serial-connect-form.png",
-      "width": 363,
-      "height": 503,
+      "width": 330,
+      "height": 399,
       "tier": "headless",
-      "sha256": "f86bdede4b6b4a996a86bbda57087da5071386d2df5e554f06ac3d931742ec3e"
+      "sha256": "a9b008595fe901a70d3fe0a5cb11a10b14fd87a8d5a2bf312e3a26c4e1fab3f4"
     },
     {
       "id": "sftp-connect-form",
@@ -54,7 +54,7 @@
       "width": 424,
       "height": 349,
       "tier": "headless",
-      "sha256": "b096d75233245c901086018f133902629206cb42431b5610a49a99e2faaac112"
+      "sha256": "93bebeaad8b0e07d30389641e29e5630fd0690306053da3f670303bff7f04c33"
     },
     {
       "id": "ssh-connect-advanced",
@@ -65,7 +65,7 @@
       "width": 804,
       "height": 680,
       "tier": "headless",
-      "sha256": "e98fbb9089d5743168673a9559f56996a6307bda00e58127039e942278230d55"
+      "sha256": "dc6e2e04ed7d2ca1ddafc7e664d7c3142a8acbfab2b05d462afab54f5a600aea"
     },
     {
       "id": "ssh-connect-collapsed",
@@ -76,7 +76,7 @@
       "width": 804,
       "height": 589,
       "tier": "headless",
-      "sha256": "5f615b93e8d07489f6894ea44d9e9fbb76d1bb02f645c8c0eecee3975248a0b8"
+      "sha256": "b3889f1c3e2582f94de7f5dd7dc618806e589ce9cc641c12a2405d1a8e655331"
     },
     {
       "id": "diagnostics-durable-session",
@@ -87,7 +87,7 @@
       "width": 980,
       "height": 900,
       "tier": "headless",
-      "sha256": "df2053b5459500bd070e0610c00499bd1dc9b63f75b0ccf22035d87eb749512f"
+      "sha256": "1387a92db20c791d0a61e687d7bf5b4da2557ca7127bf87baf28c3c1e724c411"
     },
     {
       "id": "diagnostics-ssh-session",
@@ -98,7 +98,7 @@
       "width": 980,
       "height": 900,
       "tier": "headless",
-      "sha256": "73c5b1557c52e5d666c910681cb85eff4d073ea12d89b69f5125d17b95eda93c"
+      "sha256": "60c8e27dd91d70ba7b7b2d1046058681be0198318fe3590de7c6a1f26cabea16"
     },
     {
       "id": "text-editor-compare",
@@ -109,7 +109,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8821b36b4357a04dab30fa6e1ca8a4d9a89368a03bdb8677b154f6bce85733d5"
+      "sha256": "a01f15d0750bd4501172ad69e31d97e957a08761c5b6206358e0e31789c1e3ed"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "84ae0bfe9656ed8e9c495482ee6a9d6f18b3850f0d4a788bfdbc04012ead062e"
+      "sha256": "e04c3f79169f3569581d3bbf37107d19cb0a78084c2356f7fdc7a71f968a443b"
     },
     {
       "id": "text-editor-dirty-close",
@@ -131,7 +131,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "769e51bb3208a40a30751d2fe8843562a53a74e9b1713718d3b3a4585295a849"
+      "sha256": "041327b6fa228da0cfa5a0ee5285c9723f76f796826023c8f8de0a3992d173fc"
     },
     {
       "id": "text-editor-find",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "62b9f545f9507397e858d18e2e2131e47050e4e100d815f8bf8576e51339a67c"
+      "sha256": "492e4a83f53a8f46adda9768330271e71119c87161e76790a474d988bc25c954"
     },
     {
       "id": "text-editor-options",
@@ -153,7 +153,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "0ea32539d42082f4321332e98255f6ad63ad807e4cc0f63b35efa2769e165f15"
+      "sha256": "375d177ad7c7523e9a4abd027d6152e1c01c5a33ac84e8c4264a0b995e725e7b"
     },
     {
       "id": "text-editor-outline",
@@ -164,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "e1a8fe5334cc4a1866b208c903b0bbbf3a6d67b4163d4fa26ecac127fb7eb3b0"
+      "sha256": "cb048db1deb105bd3e91414b8716a87aaa92fd79c312b3f1ed96d1d007f223b5"
     },
     {
       "id": "text-editor-preview",
@@ -175,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "d03a59051f0b991987872b18bbecc095008b8d95e57e64856c6a3c7058cef9dd"
+      "sha256": "09f33dcbe8acfb3621405f917d0acae2dcd04dc8e919e6a3dc7d6af3c0914ef6"
     },
     {
       "id": "text-editor-save-as",
@@ -186,7 +186,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "23c2e611394de7764fb367842f3afe258f5aaeb600dbb4082e6e50f35d3506d3"
+      "sha256": "0e961415b4028598f15a25365a33ee8848de1ba628dfb0d2f605385ece79aedb"
     },
     {
       "id": "text-editor-saved",
@@ -197,7 +197,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "fc9d170620c58867eb9bd1f9134dc1c76e3dae4ee68f769224193c30d0b367a5"
+      "sha256": "daf9df71f6bec7fa3f73b33e461164a8a38b41e226300b8eb7703d8244de46e8"
     },
     {
       "id": "text-editor-split",
@@ -208,7 +208,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8999490c5ce3791a7d1cfcad2cfbba90078071e6f4be04c5f55b11b3aec0df53"
+      "sha256": "7247725e3784eeb6ee207c6f5a24d9c02bf27ffbd20ccb08b5a9cfb3e085da42"
     },
     {
       "id": "text-editor-syntax",
@@ -219,7 +219,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "1dab3e5ca18eef318ceb8ab5817062a643afd004a311370bbba61e67540b014a"
+      "sha256": "cd155dc465cb868a273fb7492d3f344d95d1ba6279872f868141543d6e213424"
     },
     {
       "id": "text-editor-unsaved",
@@ -230,7 +230,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "f3af6f81ca8678fcbf71dd24c4b476d591129fd2fa809e1bece2bf36ce993699"
+      "sha256": "3c623b84a4ba67a0450dd8886be07a1f98bcc5e0fe66e360aaa8695eae1c0f33"
     },
     {
       "id": "text-editor-vi-command",
@@ -241,7 +241,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "f16827f4c9e8c1dc11930612da2ae51f5cae012fcf42c51ed96459c2f6c4d3ca"
+      "sha256": "aaac40d9e1f4fce277a0ebceee525095b4e20973be937bd1018bc02d44074e46"
     },
     {
       "id": "text-editor-vi-mode",
@@ -252,7 +252,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "6ab2ae08fc8a67776f6e48a59e9384d4f9eb4f84fdb21cba59be6a72252e6bfe"
+      "sha256": "4f1b75ac24f0bd18a3be22099ec49560086296a1e25bd5f77cdf5813153fa516"
     },
     {
       "id": "text-editor-vi-search",
@@ -263,7 +263,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "8b31ab9a335e72b037cb95495529b54d16bfda5e3ad3441d4056bbf3b6c65589"
+      "sha256": "8e158462b999df6e2d4e94c5893f892bcefefcb407ac31946c61b763417bcce0"
     },
     {
       "id": "keyboard-editor-collapsed",
@@ -274,7 +274,7 @@
       "width": 640,
       "height": 1300,
       "tier": "headless",
-      "sha256": "33ff2048dc17ec16a6005df19809a8f4ffd9f7ccdb38511d39a14a0fe5c4fd52"
+      "sha256": "5f4e652dc2629c5a7b7f29b94ace637641bbf1644b75cdfd683aebb8ac8a7484"
     },
     {
       "id": "keyboard-editor-filtered",
@@ -285,7 +285,7 @@
       "width": 960,
       "height": 592,
       "tier": "headless",
-      "sha256": "6bfca942c37c5544cfa5cde63314b9e16d5bb1b678ef0c8dde5383a625f51df5"
+      "sha256": "99705dab7fc7b502e2477e470b6b2109f3701df837e8647fb58d007809f990a3"
     },
     {
       "id": "keyboard-editor-press-keys",
@@ -296,7 +296,7 @@
       "width": 960,
       "height": 1300,
       "tier": "headless",
-      "sha256": "e687339411c82de5e06b5440b9d580387289f237fbb85435524b552b76cc85e0"
+      "sha256": "714e13ac27bd32c3957225c24a6d0d417c64130409eeea4fa44a8c7d6e5b7dbf"
     },
     {
       "id": "keyboard-editor-selected",
@@ -307,7 +307,7 @@
       "width": 960,
       "height": 1300,
       "tier": "headless",
-      "sha256": "5b2e159279c685bc2a8bcc4936ef14e462fccfaa4b29eafec3d6b075a40cac8d"
+      "sha256": "5b3c94de339fb0479ccfcbfd311eabdbe28c728a77bff14df336015b82e0989c"
     },
     {
       "id": "markdown-outline",
@@ -318,7 +318,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4718998fa305c24e983acb5ad8c8650abb27b063c5d50732ac37805a374edd7b"
+      "sha256": "8c1a17a017278330def6ee84b1366cab3a071f5fb75674b12c920ce4ce0d6a1c"
     },
     {
       "id": "markdown-preview",
@@ -329,7 +329,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "189f1ad843f158d00e496f6440478abbd561c4861458292b52da4e5ff582f20c"
+      "sha256": "ca6d51c41bdc9a78aa67c2ea83e026dac4252c58ef3023aee91edb32019526df"
     },
     {
       "id": "markdown-source",
@@ -340,7 +340,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "d451b47ef76b9ed80003451fd21ce1e795466fce2b6cb8fb0ca973cbc037c56f"
+      "sha256": "48ab65abc49e63f80ee166341567b655240a33c4285f3fb635cd628dbfbda7d0"
     },
     {
       "id": "launcher-compact",
@@ -351,7 +351,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "ee0aa95b5c685fb24cf8b5fea8f87039d61747305e2eb0221e145dbd22cf5db8"
+      "sha256": "36afdaca1babf219df485b14447332bf0b97d99e8a4c9e98c94daa2f0711d308"
     },
     {
       "id": "launcher-empty",
@@ -362,7 +362,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "cff01dc9c29fa859c418104ab89b33a69d69a41ff82d8788d4572c64caa2e4bd"
+      "sha256": "fe6261c1687b0c1c83a2b580e3b4077915cc02516972f9575a4277044bcc21bc"
     },
     {
       "id": "launcher-narrow",
@@ -373,7 +373,7 @@
       "width": 522,
       "height": 920,
       "tier": "headless",
-      "sha256": "d61aa08412c759c3318d84af361d34c5c6ed09d5523962f52490076dc2cf1dfa"
+      "sha256": "d24c253d81f1eba6da78f17762d0d5a4a2ce29568572e8258ee1131e10cd468c"
     },
     {
       "id": "launcher-populated",
@@ -384,7 +384,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "6daca02042179866656e563ffb1b04f1fc53ff04cdae0ef08316cb1418546171"
+      "sha256": "57e9a083283d45100c0d5840e859f3ac5c1d2f2b7269843d3749a27840935edf"
     },
     {
       "id": "profiles-list",
@@ -395,7 +395,7 @@
       "width": 710,
       "height": 748,
       "tier": "headless",
-      "sha256": "290dd6da84b3904f9b661e75423b2f5902e537e0552ce2de45f66a0fef2ad75b"
+      "sha256": "099815b178edfac5df23c4fa91d61fcdeb0e8131c5d0c72c7606314934c380b5"
     },
     {
       "id": "profiles-serial-editor",
@@ -406,7 +406,7 @@
       "width": 362,
       "height": 291,
       "tier": "headless",
-      "sha256": "a7e876f5aea0b92f40a34fae1b6717ea319161803cf6d46cee37f36c387b8fe8"
+      "sha256": "3b8e92904dfce8e9eac5450172beac3b3b94598832c8e704e46d6782df6fe876"
     },
     {
       "id": "profiles-sftp-editor",
@@ -417,7 +417,7 @@
       "width": 416,
       "height": 430,
       "tier": "headless",
-      "sha256": "df4fd5662d96247abed73c302c71988af00fcacd0c208c46fe833ead5b379fd2"
+      "sha256": "11be007a0c00f2d040dc5c062486670cc5dce636f2281d190daa8afee71bff92"
     },
     {
       "id": "profiles-ssh-editor",
@@ -428,7 +428,7 @@
       "width": 520,
       "height": 501,
       "tier": "headless",
-      "sha256": "ec17d8f9e38047416036c1a7632ea3bc08b8b101be325f7af07a7bcfcc248fea"
+      "sha256": "044125191d81bd63670e9a5ba43923243178a58b51903d9a74552ec5a5c3a8ad"
     },
     {
       "id": "settings-interface-scrolling",
@@ -437,9 +437,9 @@
       "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
       "image": "settings-interface-scrolling.png",
       "width": 874,
-      "height": 1131,
+      "height": 1328,
       "tier": "headless",
-      "sha256": "774e039f6bc4128b30ae7018da44eb9324c73fa350bf5759d6a7b8d578c638b6"
+      "sha256": "e0aa097f21384888a8330f7bf6f16db5502fd750152515e52ca245bb2b72ae03"
     },
     {
       "id": "settings-quick-switch",
@@ -450,7 +450,7 @@
       "width": 874,
       "height": 105,
       "tier": "headless",
-      "sha256": "8b4ae37e17d0a5ef3275dbd8c83db34813abc732fee5e5fc9d10b896d79d9345"
+      "sha256": "97fd163333bed6d91366352fdc110c21c16ba91a8d60334c49f8327d48a928bc"
     },
     {
       "id": "settings-sftp-card",
@@ -461,7 +461,7 @@
       "width": 874,
       "height": 178,
       "tier": "headless",
-      "sha256": "2941371e2ee3eca12f643c45d9cb2d28a3846c03bddb31cb29ff631a193f7ffe"
+      "sha256": "d70e7fd98514f7b33c6ab38ee05ecbbf64df11805d9f8f4fc0154c2c832dff8b"
     },
     {
       "id": "settings-terminal-typography",
@@ -472,7 +472,7 @@
       "width": 874,
       "height": 233,
       "tier": "headless",
-      "sha256": "e6d070608a56e48aa9877631a3a514af380909c8e615c72872c7b96a586a432b"
+      "sha256": "c3459217702966149d1e4bfc3b7cc8b61275327c307d07eb28a07e25beeec6d9"
     },
     {
       "id": "sftp-workspace-browser",
@@ -483,7 +483,29 @@
       "width": 1176,
       "height": 756,
       "tier": "headless",
-      "sha256": "f4e4783acc0090be31270678878ba7408fac16521921d468be476a206bc42fa7"
+      "sha256": "926c309c535cf7b695de819dcc6b0c3131dbc6644901afb6c00aedfcd9374959"
+    },
+    {
+      "id": "terminal-copy-paste-menu",
+      "section": "terminal-sessions",
+      "title": "Copy and Paste in the terminal context menu",
+      "caption": "A selection remains visible while the terminal's context menu offers Copy and Paste alongside Find, without sending the secondary click to the remote program.",
+      "image": "terminal-copy-paste-menu.png",
+      "width": 940,
+      "height": 320,
+      "tier": "headless",
+      "sha256": "a931a05642b9e751d52ccac8cae655b7f79efbd6001c5894ddac55ca1b3a4fed"
+    },
+    {
+      "id": "terminal-path-menu",
+      "section": "terminal-sessions",
+      "title": "Actions for a detected terminal path",
+      "caption": "Secondary-clicking a filesystem path freezes the detected target in the menu, where it can be opened in the editor or copied exactly as a path.",
+      "image": "terminal-path-menu.png",
+      "width": 940,
+      "height": 320,
+      "tier": "headless",
+      "sha256": "2fc5266ab53334788c8cb331a57b2bd9370741edb0b3488d66c953dd4d1ce0ac"
     },
     {
       "id": "terminal-sftp-cli",

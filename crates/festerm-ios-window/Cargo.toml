@@ -1,0 +1,23 @@
+[package]
+name = "festerm-ios-window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Narrow UIKit keyboard geometry adapter for the iOS host."
+publish = false
+
+[dependencies]
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSThread", "NSNotification", "NSOperation", "NSString", "block2"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "UIView", "UIResponder", "UIGeometry", "UIKeyboardLayoutGuide", "UILayoutGuide", "UITrackingLayoutGuide", "UIWindow"] }
+block2 = "0.6"
+
+# Like festerm-macos-window, this is the isolated native FFI boundary.
+# Shared core/renderer and app crates continue to forbid unsafe code.
+[lints.clippy]
+all = "warn"

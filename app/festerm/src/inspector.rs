@@ -126,11 +126,13 @@ pub fn show(
         .show(ctx, |ui| {
             ui.set_min_size(panel_rect.size());
             ui.set_max_size(panel_rect.size());
-            Frame::new()
+            crate::software_background::show_frame(
+                ui,
+                Frame::new()
                 .fill(theme::SURFACE_OVERLAY)
                 .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-                .inner_margin(Margin::same(20))
-                .show(ui, |ui| {
+                .inner_margin(Margin::same(20)),
+                |ui| {
                     ui.set_min_size(panel_rect.size() - vec2(40.0, 40.0));
                     ui.set_max_size(panel_rect.size() - vec2(40.0, 40.0));
                     ui.horizontal(|ui| {
@@ -306,7 +308,8 @@ pub fn show(
                                     );
                                 });
                         });
-                });
+                },
+            );
         });
     action
 }
@@ -333,7 +336,7 @@ fn fact(ui: &mut egui::Ui, label: &str, value: &str, selectable: bool) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
 
@@ -355,7 +358,7 @@ mod tests {
         assert_eq!(content.right() - overlay.right(), 16.0);
     }
 
-    fn base_content(subject_id: u64) -> InspectorContent<'static> {
+    pub(crate) fn base_content(subject_id: u64) -> InspectorContent<'static> {
         InspectorContent {
             subject_id,
             identity: "test-user@example.invalid",
@@ -388,6 +391,126 @@ mod tests {
                 let content_rect = ui.max_rect();
                 show(ui.ctx(), content_rect, content.clone(), false);
             })
+    }
+
+    #[test]
+    fn textureless_inspector_preserves_pixels_focus_and_click_catcher() {
+        use crate::software_background::PanelTestProbe;
+        use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+
+        for scale in [1.0, 1.25, 2.0] {
+            for width in [760.3, 460.3] {
+                let render = |native| {
+                    let state = create_render_state(default_wgpu_setup(), Default::default());
+                    let probe = std::cell::OnceCell::new();
+                    let mut content = base_content(1);
+                    content.diagnostics = "Synthetic renderer facts\nqueue=bounded\nframe=complete";
+                    content.input_report =
+                        "Redacted input-routing fixture: no commands or secrets.";
+                    let mut harness = Harness::builder()
+                        .with_size(vec2(width, 960.7))
+                        .with_pixels_per_point(scale)
+                        .renderer(WgpuTestRenderer::from_render_state(state.clone()))
+                        .build_ui_state(
+                            |ui,
+                             (open, actions, underlying): &mut (
+                                bool,
+                                Vec<InspectorAction>,
+                                usize,
+                            )| {
+                                ui.ctx().set_theme(egui::ThemePreference::Dark);
+                                ui.ctx().set_visuals(theme::default_visuals());
+                                ui.style_mut().animation_time = 0.0;
+                                if native {
+                                    probe.get_or_init(|| PanelTestProbe::install(ui.ctx(), &state));
+                                }
+                                let (_, underlying_control) =
+                                    ui.allocate_exact_size(vec2(12.0, 24.0), Sense::click());
+                                underlying_control.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Button,
+                                        true,
+                                        "Underlying control",
+                                    )
+                                });
+                                if underlying_control.clicked() {
+                                    *underlying += 1;
+                                }
+                                if *open {
+                                    if let Some(action) =
+                                        show(ui.ctx(), ui.max_rect(), content.clone(), false)
+                                    {
+                                        actions.push(action);
+                                        if action == InspectorAction::Close {
+                                            *open = false;
+                                        }
+                                    }
+                                }
+                            },
+                            (true, Vec::new(), 0),
+                        );
+                    harness.run();
+                    assert!(harness.get_by_label("Close Session Inspector").is_focused());
+                    let geometry = [
+                        harness.get_by_label("Close Session Inspector").rect(),
+                        harness.get_by_label("Reconnect").rect(),
+                        harness.get_by_label(content.identity).rect(),
+                    ];
+                    let collapsed = harness.render().expect("collapsed Inspector framebuffer");
+                    if native {
+                        assert_eq!(
+                            probe.get().unwrap().paints(),
+                            1,
+                            "only the Inspector frame is routed"
+                        );
+                    }
+                    assert!(
+                        collapsed
+                            .pixels()
+                            .filter(|pixel| pixel.0 == theme::SURFACE_OVERLAY.to_array())
+                            .count()
+                            > 10_000
+                    );
+                    assert!(
+                        collapsed
+                            .pixels()
+                            .filter(|pixel| pixel.0 == theme::TEXT_PRIMARY.to_array())
+                            .count()
+                            > 20
+                    );
+                    harness.get_by_label("Diagnostics").click();
+                    harness.run();
+                    harness.get_by_label("Copy redacted routing report");
+                    let expanded = harness.render().expect("expanded Inspector framebuffer");
+                    assert_ne!(
+                        collapsed, expanded,
+                        "the expanded fixture must draw its body"
+                    );
+                    if native {
+                        assert_eq!(probe.get().unwrap().paints(), 2);
+                    }
+                    harness.get_by_label("Open SFTP").click();
+                    harness.run();
+                    assert_eq!(harness.state().1, [InspectorAction::OpenSftp]);
+                    harness.get_by_label("Underlying control").click();
+                    harness.run();
+                    assert_eq!(
+                        harness.state().1,
+                        [InspectorAction::OpenSftp, InspectorAction::Close]
+                    );
+                    assert_eq!(harness.state().2, 0, "first outside click is consumed");
+                    harness.get_by_label("Underlying control").click();
+                    harness.run();
+                    assert_eq!(
+                        harness.state().2,
+                        1,
+                        "the subsequent click reaches the uncovered control"
+                    );
+                    (collapsed, expanded, geometry)
+                };
+                assert_eq!(render(false), render(true), "scale={scale}, width={width}");
+            }
+        }
     }
 
     #[test]

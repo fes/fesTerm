@@ -269,6 +269,10 @@ pub struct ChipViewModel {
     /// real, storable label, while singleton application surfaces such as
     /// Launcher and Settings do not.
     pub renamable: bool,
+    /// Enables the explicit reset intent without treating the default as an
+    /// alias. The application, not this widget, owns naming policy.
+    /// Includes an unsaved reset, allowing its metadata removal to be retried.
+    pub has_explicit_alias: bool,
     /// Whether this chip's tab may be dragged out of its window - into
     /// another window, or onto the desktop to detach (ADR 0033). Session
     /// chips may; the singleton application surfaces (Launcher, Settings,
@@ -348,6 +352,10 @@ pub enum ChromeAction {
         id: ChipId,
         name: String,
     },
+    UseDefaultName {
+        id: ChipId,
+        restore_focus: Option<Id>,
+    },
 }
 
 /// User-configurable chip layout mode
@@ -396,6 +404,7 @@ pub fn show(
                 status: chip.status,
                 closable: chip.closable,
                 renamable: chip.renamable,
+                has_explicit_alias: chip.has_explicit_alias,
                 movable_across_windows: chip.movable_across_windows,
                 quick_switch_number: chip.quick_switch_number,
                 pulse_new_output: chip.pulse_new_output,
@@ -1081,6 +1090,7 @@ mod tests {
             status: ChipStatus::Connected,
             closable: true,
             renamable: true,
+            has_explicit_alias: false,
             movable_across_windows: true,
             quick_switch_number: None,
             pulse_new_output: false,
@@ -1271,6 +1281,43 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::Activate(ChipId(2))));
+    }
+
+    #[test]
+    fn session_alias_context_menu_reset_targets_only_an_explicit_inactive_override() {
+        let mut renamed = chip(2, "Custom");
+        renamed.has_explicit_alias = true;
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "Default"), renamed],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+            available_update: None,
+        });
+        harness.run();
+        harness.get_by_label("Default chip").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Use default name").is_none());
+        harness.key_press(Key::Escape);
+        harness.run();
+        harness.get_by_label("Custom chip").click_secondary();
+        harness.run();
+        harness.get_by_label("Use default name").click();
+        harness.run();
+        assert!(harness
+            .state()
+            .observed
+            .iter()
+            .any(|action| matches!(action, ChromeAction::UseDefaultName { id: ChipId(2), .. })));
+        assert!(!harness
+            .state()
+            .observed
+            .contains(&ChromeAction::Activate(ChipId(2))));
+        assert!(!harness
+            .state()
+            .observed
+            .iter()
+            .any(|action| matches!(action, ChromeAction::Rename { .. })));
     }
 
     #[test]
@@ -2608,6 +2655,7 @@ mod tests {
                 status: ChipStatus::Neutral,
                 closable: false,
                 renamable: false,
+                has_explicit_alias: false,
                 movable_across_windows: false,
                 quick_switch_number: None,
                 pulse_new_output: false,
@@ -2693,6 +2741,7 @@ mod tests {
             status: ChipStatus::Neutral,
             closable: false,
             renamable: false,
+            has_explicit_alias: false,
             movable_across_windows: false,
             quick_switch_number: Some(1),
             pulse_new_output: false,
@@ -2708,6 +2757,7 @@ mod tests {
                     status: neutral_chip.status,
                     closable: neutral_chip.closable,
                     renamable: neutral_chip.renamable,
+                    has_explicit_alias: neutral_chip.has_explicit_alias,
                     movable_across_windows: neutral_chip.movable_across_windows,
                     quick_switch_number: neutral_chip.quick_switch_number,
                     pulse_new_output: neutral_chip.pulse_new_output,

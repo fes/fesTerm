@@ -200,6 +200,7 @@ mod native {
         pub(super) frames: AtomicU64,
         pub(super) reused_frames: AtomicU64,
         pub(super) first_failure: OnceLock<String>,
+        unsupported_frame: AtomicBool,
         #[cfg(test)]
         pub(super) last_updated_pixels: AtomicU64,
         #[cfg(test)]
@@ -340,6 +341,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             frames: AtomicU64::new(0),
             reused_frames: AtomicU64::new(0),
             first_failure: OnceLock::new(),
+            unsupported_frame: AtomicBool::new(false),
             #[cfg(test)]
             last_updated_pixels: AtomicU64::new(0),
             #[cfg(test)]
@@ -354,14 +356,26 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 .enabled()
                 .then(festerm_windows_direct2d::RenderTimings::default);
             let result = match renderer.lock() {
-                Ok(mut renderer) => renderer.render(
-                    frame.rect,
-                    frame.pixels_per_point,
-                    festerm_ui_egui::theme::SURFACE_TERMINAL,
-                    &frame.primitives,
-                    &frame.textures,
-                    render_timings.as_mut(),
-                ),
+                Ok(mut renderer) => {
+                    if frame.full_redraw {
+                        renderer.invalidate();
+                    }
+                    let result = renderer.render(
+                        frame.rect,
+                        frame.pixels_per_point,
+                        festerm_ui_egui::theme::SURFACE_TERMINAL,
+                        &frame.primitives,
+                        &frame.textures,
+                        render_timings.as_mut(),
+                    );
+                    if result
+                        .as_ref()
+                        .is_err_and(|error| error.is_unsupported_frame())
+                    {
+                        renderer.invalidate();
+                    }
+                    result
+                }
                 Err(_) => {
                     observed.active.store(false, Ordering::Relaxed);
                     festerm_ui_egui::remove_root_terminal_painter(context);
@@ -373,6 +387,14 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let rendered = match result {
                 Ok(Some(surface)) => surface,
                 Ok(None) => return None,
+                Err(error) if error.is_unsupported_frame() => {
+                    let _ = observed.first_failure.set(error.to_string());
+                    if !observed.unsupported_frame.swap(true, Ordering::Relaxed) {
+                        tracing::warn!(target: "festerm::rendering", %error,
+                            "unsupported Direct2D frame; retaining egui-wgpu for this frame");
+                    }
+                    return None;
+                }
                 Err(error) => {
                     let _ = observed.first_failure.set(error.to_string());
                     observed.active.store(false, Ordering::Relaxed);
@@ -382,6 +404,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
+            if observed.unsupported_frame.swap(false, Ordering::Relaxed) {
+                tracing::info!(target: "festerm::rendering",
+                    "Direct2D terminal painting resumed after unsupported content");
+            }
             let updated_regions = rendered.updated_regions;
             let updated_pixels = rendered.updated_pixels;
             let surface = rendered.surface;
@@ -654,6 +680,7 @@ mod tests {
         clipped: bool,
         disabled: bool,
         palette: bool,
+        recover_palette: bool,
     ) -> image::RgbaImage {
         use egui_kittest::{
             wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
@@ -687,12 +714,15 @@ mod tests {
         let mut status = None;
         let mut configured = false;
         let mut palette_seeded = false;
+        let mut frame_number = 0;
+        let mut frames_before_recovery = 0;
         let mut harness = Harness::builder()
             .with_size(egui::vec2(321.0, 193.0))
             .with_pixels_per_point(scale)
             .with_max_steps(16)
             .renderer(test_renderer)
             .build_ui(|ui| {
+                frame_number += 1;
                 if !configured {
                     let generation = festerm_ui_egui::install_terminal_fonts(ui.ctx());
                     view.set_font_set(festerm_ui_egui::TerminalFontSet::new(
@@ -707,6 +737,14 @@ mod tests {
                     configured = true;
                     ui.ctx().request_repaint();
                     return;
+                }
+                if recover_palette && frame_number == 4 {
+                    if let Some(status) = &status {
+                        use std::sync::atomic::Ordering;
+                        frames_before_recovery = status.frames.load(Ordering::Relaxed);
+                        assert!(status.first_failure.get().is_some());
+                    }
+                    terminal.ingest(b"\x1b[0m\x1b[2J\x1b[Hnative painting resumes");
                 }
                 ui.painter()
                     .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(70, 25, 80));
@@ -740,6 +778,9 @@ mod tests {
                         ui.ctx().request_repaint();
                     }
                 });
+                if recover_palette && frame_number == 3 {
+                    ui.ctx().request_repaint();
+                }
                 ui.painter().rect_filled(
                     egui::Rect::from_min_size(egui::pos2(15.0, 100.0), egui::vec2(180.0, 25.0)),
                     6.0,
@@ -757,15 +798,15 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         image
             .save(directory.join(format!(
-                "{}-scale-{scale}-clip-{clipped}-disabled-{disabled}-palette-{palette}.png",
-                if native { "direct2d" } else { "wgpu" }
+                "{}-scale-{scale}-clip-{clipped}-disabled-{disabled}-palette-{palette}{}.png",
+                if native { "direct2d" } else { "wgpu" },
+                if recover_palette { "-recovered" } else { "" },
             )))
             .unwrap();
         if let Some(status) = status {
             use std::sync::atomic::Ordering;
-            assert_eq!(
+            assert!(
                 status.active.load(Ordering::Relaxed),
-                !palette,
                 "unexpected fallback: {:?}",
                 status.first_failure.get()
             );
@@ -775,6 +816,12 @@ mod tests {
                     .get()
                     .unwrap()
                     .contains("256 feathered colors"));
+                if recover_palette {
+                    assert!(
+                        status.frames.load(Ordering::Relaxed) > frames_before_recovery,
+                        "eligible frames must return to native painting"
+                    );
+                }
             } else {
                 assert_eq!(status.frames.load(Ordering::Relaxed) > 0, !disabled);
             }
@@ -788,8 +835,8 @@ mod tests {
         for scale in [1.0, 1.25, 2.0] {
             for clipped in [false, true] {
                 for disabled in [false, true] {
-                    let reference = fixture(false, scale, clipped, disabled, false);
-                    let actual = fixture(true, scale, clipped, disabled, false);
+                    let reference = fixture(false, scale, clipped, disabled, false, false);
+                    let actual = fixture(true, scale, clipped, disabled, false, false);
                     assert_eq!(reference.dimensions(), actual.dimensions());
                     if !disabled {
                         assert!(
@@ -819,9 +866,117 @@ mod tests {
     #[test]
     fn unsupported_native_palette_keeps_the_current_frame_pixels() {
         assert_eq!(
-            fixture(false, 1.0, false, false, true),
-            fixture(true, 1.0, false, false, true)
+            fixture(false, 1.0, false, false, true, false),
+            fixture(true, 1.0, false, false, true, false)
         );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn unsupported_native_palette_returns_to_native_painting() {
+        let reference = fixture(false, 1.0, false, false, true, true);
+        let actual = fixture(true, 1.0, false, false, true, true);
+        assert_eq!(reference.dimensions(), actual.dimensions());
+        assert!(
+            reference
+                .pixels()
+                .filter(|pixel| pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200)
+                .count()
+                > 10,
+            "recovery comparison must contain terminal text"
+        );
+        assert_eq!(
+            reference
+                .pixels()
+                .zip(actual.pixels())
+                .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 2))
+                .count(),
+            0,
+            "recovered native pixels must match the ordinary-renderer tolerance"
+        );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn native_full_redraw_replaces_identical_terminal_pixels_once() {
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+        use festerm_core::{Dimensions, Terminal};
+        use festerm_ui_egui::{EncodedInputSink, TerminalView};
+        use std::sync::atomic::Ordering;
+
+        struct Sink;
+        impl EncodedInputSink for Sink {
+            fn record_encoded_input(&mut self, _: &[u8]) {
+                panic!("local redraw must not send terminal input");
+            }
+            fn terminal_resizes_owned_by_backend(&self) -> bool {
+                true
+            }
+        }
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let context = egui::Context::default();
+        let status = super::native::install(&context, &state).unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(48, 24).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25lunchanged ASCII terminal");
+        let mut view = TerminalView::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(480.0, 480.0),
+            )),
+            time: Some(0.0),
+            ..Default::default()
+        };
+        let mut reference = None;
+        for index in 0..8 {
+            if index == 3 {
+                view.request_full_redraw();
+            }
+            if index == 5 {
+                terminal.ingest(b"\x1b[2J\x1b[H");
+                view.request_full_redraw();
+            }
+            if index == 6 {
+                terminal.ingest(b"unchanged ASCII terminal");
+            }
+            let mut output = context.run_ui(input.clone(), |ui| {
+                view.show(ui, &mut terminal, &mut Sink);
+            });
+            renderer.handle_delta(&mut output.textures_delta);
+            let image = renderer.render(&context, &output).unwrap();
+            assert!(status.active.load(Ordering::Relaxed));
+            if index == 2 || index == 4 || index == 7 {
+                assert_eq!(status.last_updated_pixels.load(Ordering::Relaxed), 0);
+            }
+            if index == 2 {
+                assert!(status.last_surface_pixels.load(Ordering::Relaxed) > 0);
+                reference = Some(image.clone());
+            }
+            if index == 3 {
+                assert_eq!(
+                    status.last_updated_pixels.load(Ordering::Relaxed),
+                    status.last_surface_pixels.load(Ordering::Relaxed),
+                    "identical native pixels must all be replaced on explicit redraw"
+                );
+                assert_eq!(Some(image), reference);
+            }
+            if index == 6 {
+                assert_eq!(
+                    status.last_updated_pixels.load(Ordering::Relaxed),
+                    status.last_surface_pixels.load(Ordering::Relaxed),
+                    "a redraw while blank must also discard older retained pixels"
+                );
+            }
+        }
     }
 
     #[cfg(all(windows, target_arch = "x86_64"))]

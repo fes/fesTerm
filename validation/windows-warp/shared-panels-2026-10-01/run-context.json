@@ -1,0 +1,9 @@
+{
+  "slot_owner": "ui-shared-painting",
+  "logical_processors": 16,
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "measurement": "same-executable renderer differential, not shipping before/after or native presentation",
+  "desktop_input": "none synthesized",
+  "competing_work": "exclusive slot; all preparation commands completed",
+  "command": "festerm-b8199d56c92492ed.exe --exact software_background::tests::replay_warp_ui_surfaces_shared_panels --ignored --nocapture --test-threads=1"
+}

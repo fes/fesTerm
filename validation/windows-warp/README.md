@@ -4,6 +4,189 @@ Follow-up to [#242](https://github.com/fes/fesTerm/issues/242), after #253
 corrected application-window selection. This investigates CPU work that
 continues after the GUI frame counter stops advancing.
 
+## Bounded non-terminal surface matrix
+
+The existing optional `replay_warp_ui_surfaces` and
+`profile_interactive_surfaces` entry points now share a 26-state catalog, each
+at normal and narrow width (52 added variants). The original four WARP controls,
+twelve document/list construction scenes and 48 gallery scenarios are retained.
+The bounded batch covers About/licensing and existing synthetic idle/ready/
+installed updater controllers; expanded chrome and first/middle/last chip menus;
+live/read-only selection, OSC 8 link, frozen enabled/disabled path and history
+menus; live-close/risky-paste/final-dirty-document confirmations; and actual-task
+small/large/error Open File and small/large/error/overwrite Save As states.
+
+**Initial status: scaffolding, awaiting the exclusive validation slot.**
+No new measurements, captures or native acceptance are claimed here. Missing
+updater variants, empty picker readiness (which needs a model-state accessor),
+filter/sort/final-row/reopen interactions, aggregate quit/drop/reset safety
+variants and all native-platform evidence remain explicit prerequisites in
+[`surface-matrix.json`](surface-matrix.json). No existing CP-16/CP-17 budget is
+extended to About or menus, and no favorable menu latency threshold is invented.
+
+The [existing gallery generator](../../scripts/build_ui_state_doc.py) also
+expands that reconciled audit into a machine-readable report. It lists every
+audited state group and reusable state-profile dimension, with a named
+prerequisite and `currently_unmeasured` or `native_only` status. Supplied v2
+reports may mark **only an exact bounded fixture/metric** `covered`; broader
+slash-separated alternatives remain unqualified. Images never pass native rows.
+
+```powershell
+# Run only after obtaining the exclusive build/measurement slot.
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_SURFACE_PROFILE_OUT = "$PWD\target\evidence\surface-profile-attempt-01"
+$env:FESTERM_WARP_UI_OUT = "$PWD\target\evidence\surface-warp-attempt-01"
+cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
+cargo test --release -p festerm --bin festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1
+python scripts\build_ui_state_doc.py --surface-matrix-report target\evidence\surface-coverage-attempt-01.json --surface-profile target\evidence\surface-profile-attempt-01\profile.json --warp-replay target\evidence\surface-warp-attempt-01
+```
+
+Both probes remain under their existing optional-runner flags
+`FESTERM_RUN_SURFACE_PROFILE=1` / `FESTERM_RUN_WARP_UI_PROBE=1`; neither becomes
+a default benchmark or snapshot gate. Gallery generation uses
+`FESTERM_UI_GALLERY_OUT` pointed at a fresh owned directory before updating
+the reviewed document/images. `capture_surface_gallery(SurfaceKind, narrow)`
+is the shared full-root themed fixture API for style review.
+`capture_palette_gallery(narrow)` adds two gallery-only production command-palette
+views for coordinated style review. Palette
+performance remains unmeasured and outside the initial 52-variant probe batch.
+An additional 23 gallery-only style-review variants bring the total to 125,
+without changing the probe scene catalog. The reusable API is
+`capture_style_review_gallery(StyleReviewKind, size, fixture_id)`, returning
+the image and geometry observations. Its nine kinds combine ready-update/licenses,
+filtered long palette identity/secondary/shortcut, deep-directory Open File
+ready/error, `NOTES.md` overwrite/disabled remote, long live close, maximum
+bounded paste, dirty-document close, and applicable overflow controls.
+Each has `752 × 516` and `360 × 516` roots; About, ready Open File, Save As,
+paste and dirty close also have `360 × 240` variants.
+
+Geometry iteration does **not** require the full 125-image generation. The
+existing ignored capture test accepts `FESTERM_UI_GALLERY_SCENES=style-review`
+for these 23 curated cases, or a comma-delimited list of exact scene IDs for a
+smaller iteration. Unknown, empty and duplicate selections fail explicitly.
+Selected captures require `FESTERM_UI_GALLERY_OUT` to name a fresh empty
+evidence directory, preventing partial generation from pruning the published
+gallery or overwriting a failed attempt. With the selector unset, the existing
+full-gallery behavior is unchanged.
+
+```powershell
+# Only after the primary grants the exclusive capture slot:
+$env:FESTERM_UI_GALLERY_SCENES = 'style-review'
+$env:FESTERM_UI_GALLERY_OUT = "$PWD\target\evidence\style-before-attempt-01"
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact --nocapture --test-threads=1
+# Use a different fresh output for AFTER; do not change physical fixture IDs.
+Remove-Item Env:FESTERM_UI_GALLERY_SCENES
+Remove-Item Env:FESTERM_UI_GALLERY_OUT
+```
+
+These style fixtures assert their actual state at `752 × 516` before resizing
+the same application, without navigation or task reload. This proves worker
+readiness even if a short root virtualizes all rows away. The existing manifest
+records optional `geometry` observations against **`ctx.content_rect()`**, not
+the gallery harness's inset Ui: area/action bounds, actual action heights,
+focus and full palette identity. Missing or off-root controls are observations,
+not passes; no style/native acceptance is inferred. Geometry is also emitted
+to retained capture logs before drawing, preserving diagnostics for a failed
+render. No new snapshot baselines or budgets are introduced.
+
+Keep pre-style f0 production-widget captures and integrated-style captures in
+fresh disjoint output directories, with identical fixture IDs, physical checkout
+roots and renderer settings. Compiled `CARGO_MANIFEST_DIR` can otherwise change
+the visible real origin/breadcrumb across binaries. For the curated style
+entry point only, opt in to **actual shared physical I/O identity** with:
+
+- `FESTERM_UI_SURFACE_FIXTURE_ROOT`: absolute
+  `<controlled-workspace>\target\ui-gallery-owned-comparisons\<run>`;
+- `FESTERM_UI_SURFACE_FIXTURE_RUN`: the same simple run identity as that leaf;
+- `FESTERM_UI_SURFACE_FIXTURE_PHASE`: `baseline`, then `candidate` in a
+  separate sequential test process, with the same selected scene IDs.
+
+The helper creates its control-owner marker itself; do not pre-create an
+unowned control folder or run leaf. The controlled workspace must already
+contain Cargo/Git metadata. Known personal/system/temporary locations,
+username components, root/traversal/UNC/device paths and ancestor/child
+symlinks or Windows reparse points are refused. Baseline cannot adopt an
+existing leaf, even if empty. A persistent control-level run claim also rejects
+reusing a deleted run identity. Candidate requires the completed matching
+baseline ownership, selection and retained evidence/input proofs; each phase
+is claimable once. Baseline inputs remain frozen at the **same real scene paths**.
+Candidate constructors verify/reuse them without rewriting bytes or timestamps,
+with actual workers/documents and unchanged freshness/dirty-close semantics.
+Kind/root-size, file bytes and modified times must match before drawing.
+
+Owned inputs stay present until all selected PNGs/digests and the manifest
+are saved and verified. Baseline completion retains all inputs and its completed
+marker for candidate use. Only candidate completion removes inventoried files and empty
+directories after rechecking ownership/contents; modified or untracked inputs
+are retained instead. Control, phase and input-proof records remain. Failed
+or completed scopes cannot be silently retried/reused: use a fresh run for a
+new baseline/candidate pair, retaining previous records. Evidence directories
+must be fresh and disjoint from each other and the physical input scope.
+
+```powershell
+# Scaffold/runtime checks and the exclusive slot grant must precede use.
+$env:FESTERM_UI_GALLERY_SCENES = 'style-review' # or exact curated IDs
+$env:FESTERM_UI_SURFACE_FIXTURE_RUN = 'style-pair-01'
+$env:FESTERM_UI_SURFACE_FIXTURE_ROOT = 'Q:\src\OSS\fesTerm-ui-fleet\benchmarks\target\ui-gallery-owned-comparisons\style-pair-01'
+$env:FESTERM_UI_SURFACE_FIXTURE_PHASE = 'baseline'
+$env:FESTERM_UI_GALLERY_OUT = "$PWD\target\evidence\style-pair-01-before"
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact --nocapture --test-threads=1
+# After style integration, keep ROOT/RUN/selector unchanged, even across binaries:
+$env:FESTERM_UI_SURFACE_FIXTURE_PHASE = 'candidate'
+$env:FESTERM_UI_GALLERY_OUT = "$PWD\target\evidence\style-pair-01-after"
+cargo test -p festerm --bin festerm ui_gallery::capture_ui_state_gallery -- --include-ignored --exact --nocapture --test-threads=1
+Remove-Item Env:FESTERM_UI_GALLERY_SCENES, Env:FESTERM_UI_GALLERY_OUT, Env:FESTERM_UI_SURFACE_FIXTURE_ROOT, Env:FESTERM_UI_SURFACE_FIXTURE_RUN, Env:FESTERM_UI_SURFACE_FIXTURE_PHASE
+```
+
+This mode is **unexecuted scaffolding pending the primary's exclusive slot**;
+cross-worktree matched visual claims remain unqualified until its guards and
+sequential runs are validated. The default APIs retain compiled-worktree
+paths and make no matched-identity claim. Manifest captions/geometry state the
+actual physical scene directory and selected mode, never substitute synthetic
+metadata, adopt a generation-losing document, use junctions or sanitize pixels.
+This is not a canonical display-metadata feature or a generic PII-free pipeline.
+The 52-variant probe catalog is unchanged.
+
+An intentional geometry change is not a pixel-equality
+pass. Physical document/picker labels can reveal checkout usernames; review before
+publication or coordinate a canonical-display seam that preserves real generation
+and freshness semantics. Existing 48 baseline images remain untouched until
+authorized reviewed generation.
+
+Completed-render probes instead call raw `Context::run_ui` with production Dark visuals: they
+never submit the filled outer frame used by the visual-only gallery harness.
+
+Each probe output root must be fresh. Per-scene `status.json` and reports retain
+partial attempts if a task/semantic/pixel guard fails. Synthetic comparison
+files live at stable scene-specific paths under this worktree's
+`target/ui-gallery-fixtures/surface-batch`; a successful scene removes them,
+while a failed one retains them. The opt-in shared style scope follows the
+phase-level retention/targeted cleanup contract above instead. Set a fresh simple
+`FESTERM_UI_SURFACE_FIXTURE_RUN` tag to retry without deleting failed inputs.
+Changed fixture paths can change pixels; do not pool or compare mismatched tags.
+References require every matching scene PNG, including new states and dimensions.
+
+v2 records fixture/model preparation, the first fresh-context UI call and first
+tessellation, real-task/interaction readiness frames, eight warmups, and ordered
+steady construction/tessellation samples. Original controls preserve their
+workload order and painting policy. Expanded fixtures enable AccessKit for
+semantic checks; query-tree processing and texture uploads are outside their
+UI timer. Original WARP warm/steady UI samples still include texture-delta
+handling; that boundary is recorded, not pooled with the expanded UI-only bucket.
+The WARP report additionally records renderer initialization, first ready draw
+and five completed draw/sync/readback samples with median/p95/min/max and the
+exact percentile rule. That draw bucket includes renderer tessellation,
+submission, synchronization and CPU image readback. **It is not native
+input-to-display, OS presentation latency or actual idle scheduling.**
+
+Cold-process start is explicitly `null/not measured`: a fresh context in an
+already-running test process is not a cold application. Package/revision,
+dirty-source state, test-binary SHA256, OS/architecture, process ID, fixture
+root, adapter, scale and sample arrays accompany results. An artifact does not
+prove the host was quiet; execution still requires the primary's exclusive slot
+and retained external logs. #286 and #287 are prerequisites. No host-copy,
+retained-composition or #282 default-on gate is changed.
+
 ## Established cause
 
 Hot, process-scoped snapshots on the affected Windows x64 host found worker
@@ -120,6 +303,255 @@ samples reproduced the mismatch even after waiting for movement to start.
 No cause is assigned to that cursor behavior and no drag-latency or CPU
 improvement is inferred from these attempts. Real dragging, resize,
 mixed-DPI, multiple windows, and Windows Terminal comparison remain open.
+
+## Inspector/SFTP bounded shared-panel qualification
+
+The `perf/ui-shared-panel-coverage` candidate starts at the validated picker
+repair `64a45c94846309d7bb657c3751327c31ed31c31b` (#286, prerequisite to
+publication). Source inspection establishes eligibility, **not** a slow-site
+finding. The qualified Windows WARP change routes only Inspector's opaque overlay
+frame and SFTP's enclosing pane and table/body frames through `show_frame`.
+The opaque fill, original frame geometry/border, clipping and child order are
+unchanged. All existing adapter/format, shadow, opacity/visibility,
+root-origin, secondary-viewport and transform guards and geometry warnings
+remain intact.
+
+Header/filter/footer frames and the transfer rail are eligible where their
+existing fill/painter meets those guards, but stay ordinary in this first
+candidate: an additional callback is not free. The drawer and collision
+inner/metadata cards also remain ordinary, pending independent draw attribution
+and bounded synthetic transfer-event fixtures. Transparent containers,
+selection rows, error tints, outside-click catchers and modal outer
+shadow/backdrop are not replaced. No listing virtualization, transfer policy,
+styling, update cadence, Direct2D, host-copy or retained-composition change is
+included.
+
+### Prepared correctness coverage
+
+- `textureless_inspector_preserves_pixels_focus_and_click_catcher` compares
+  collapsed/expanded complete Inspector drawing, desktop/narrow geometry,
+  header focus, actions and first-consumed/second-delivered outside clicks.
+- `textureless_sftp_panes_preserve_pixels_geometry_and_selection` compares
+  complete split/narrow file-manager drawing, fractional clips, pane/row
+  geometry, independent selection and filter focus with fixed 100-row panes.
+- Both cover 100%, 125% and 200% scale and count actual callback paints.
+  Shared tests cover all frame/painter exclusions, original unexpected-mesh
+  fallback, and unsupported adapter/format policy. These are live paired
+  framebuffer comparisons with an explicitly pinned production Dark theme,
+  not automatic system-theme selection; there are no new stored snapshots.
+
+The new complete-widget tests and all frame/painter fallback cases passed on
+Windows. The release replay below then passed all 20 paired framebuffer
+comparisons with exact callback attribution. Those measured, bounded routes
+are retained; this does not qualify other call sites, hardware performance,
+native interaction latency or the remaining CP-16/TI-06/FD-05/FD-06 evidence.
+
+### Completed-render comparison and reproduction
+
+Use the existing opt-in release replay path. The new ignored
+`replay_warp_ui_surfaces_shared_panels` also matches the optional runner's
+`replay_warp_ui_surfaces` selector intentionally, so no new benchmark framework
+or runner switch is required. Source-level verification of
+`scripts/run-optional-validation.ps1` found that
+`FESTERM_RUN_WARP_UI_PROBE=1` executes
+`cargo test --release -p festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1`.
+Rust's substring test filter selects both the existing
+`ui_gallery::replay_warp_ui_surfaces` and the new
+`software_background::tests::replay_warp_ui_surfaces_shared_panels`; this was
+verified from their names and runner command, not by executing either replay.
+The prepared release executable's `replay_warp_ui_surfaces --ignored --list`
+also verifies the two matching ignored test names without rendering. They run
+serially and have disjoint outputs regardless of test order:
+
+- The existing replay writes `launcher.png`, `settings.png`, `profiles.png`
+  and `terminal.png` directly under `FESTERM_WARP_UI_OUT`.
+- The shared-panel replay reserves a **new** `shared-panels` child there with
+  `create_dir`, after asserting that child is absent. Its paired PNGs, raw
+  samples and provenance live only inside that child. Reusing it fails before
+  capture/timing without overwriting the previous attempt.
+
+Use a fresh parent output directory for each aggregate attempt as well, since
+the unchanged original replay owns its root-level files. The new replay uses
+`Context::run_ui`, not the Harness wrapper's
+extra filled frame. Fixtures are synthetic; the local loader is paused and
+no directory/network/real transfer work runs. All GPU fixture contexts pin the
+production Dark theme explicitly before installing its visuals.
+
+Before any renderer setup or timing, the replay archives `source-head.txt`,
+`source-status.txt`, the exact tracked candidate's `git diff --binary
+--full-index --no-ext-diff --no-textconv HEAD` as `candidate.diff`, its SHA-256
+in `candidate.diff.sha256`, and the actual `current_exe()` test executable's
+SHA-256 in `test-executable.sha256`. `provenance.json` binds those hashes to
+HEAD/status and labels the measurement kind/theme. Hashing streams bounded
+64 KiB blocks. All candidate source files in this task are tracked; freeze
+that source from compilation through capture. The standard-SHA256 helper has
+a deterministic `abc` test prepared for the granted validation slot.
+
+Scenes are collapsed Inspector, expanded Inspector with a bounded 64-line
+redacted report, unchanged 100/5000-row SFTP models, and an unchanged-text
+control. Each scene has four ordinary/textureless pairs, ordered AB, BA, AB,
+BA. Each path gets eight warmup constructions and completed warmup/settling
+draws, then retains all 20 individual UI durations, 20 tessellation durations
+and five completed draw/readback durations. PNGs compare every pixel within
+each pair; candidate draws must really execute (the text-only control must
+execute no panel callback). Unsupported devices/formats fail, rather than
+reporting a success-shaped fallback timing.
+
+UI time includes texture-delta handling and callback tessellation/uploads;
+the separate tessellation sample includes shape cloning. Draw/readback time
+includes tessellation, preparation, submission, synchronization and CPU image
+readback of the complete settled widget frame. GPU setup, fixture construction,
+expansion input and PNG/JSON writes are outside these boundaries. These are
+same-executable **ordinary-renderer versus textureless-renderer
+differentials**, not actual shipping before/after comparisons, native
+presentation/input latency, or a two-revision product CPU claim. The archived
+hash identifies the test executable, not a shipping application/installer.
+Any later shipping before/after claim needs independently qualified and hashed
+baseline/candidate shipping binaries and its own matched native evidence.
+
+The 2026-10-01 run used the exclusive `ui-shared-painting` slot after all
+preparation commands exited, with no concurrent fleet builds/captures or
+synthesized desktop input. The actual adapter was DX12 Microsoft Basic Render
+Driver/CPU, driver `10.0.26100.9278`, target `Rgba8Unorm`, 16 logical
+processors, 3548 x 2150 physical pixels at 200% scale.
+
+| Complete widget | Ordinary draw/readback median / p95 (ms) | Textureless draw/readback median / p95 (ms) | Median change | Ordinary → textureless UI median (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Inspector, collapsed | 239.946 / 260.012 | 86.814 / 89.785 | -63.82% | 0.0354 → 0.1073 |
+| Inspector, expanded | 290.176 / 293.583 | 148.071 / 151.194 | -48.97% | 0.0509 → 0.1116 |
+| SFTP, 100 rows/pane | 2050.915 / 2067.273 | 560.250 / 571.812 | -72.68% | 0.9425 → 1.1933 |
+| SFTP, 5000 rows/pane | 2041.661 / 2056.272 | 559.423 / 566.435 | -72.60% | 2.4319 → 2.5270 |
+| Unchanged text control | 76.173 / 77.623 | 75.760 / 76.708 | -0.54% (not an improvement claim) | 0.0046 → 0.0047 |
+
+These medians/p95s pool 20 completed samples per path/scene; UI medians pool
+80 samples. p95 uses sorted index `floor((n - 1) * 0.95)`. Raw ordering and all
+four paired repeats are retained. Every Inspector and SFTP pair reduced
+completed draw/readback: collapsed Inspector 50.28–64.46%, expanded
+48.49–54.99%, SFTP-100 72.61–72.87%, SFTP-5000 54.14–72.71%.
+The lower first ordinary medians (172.756 ms collapsed Inspector and
+1217.225 ms SFTP-5000) are not discarded. Control pairs include adverse
+textureless changes of +0.21% and +0.51% as well as -1.53% and -1.31%;
+no independent control improvement is inferred.
+
+**The UI-build cost increases are real:** callback tessellation/resource setup
+raises the medians by about 0.072, 0.061, 0.251 and 0.095 ms, respectively
+(+203%, +119%, +27%, +4%). The matched complete-draw reductions are much larger
+on this adapter, justifying these routes without claiming faster listing
+models. The SFTP result qualifies the enclosing-pane/table group, not separate
+per-call savings. Header/filter/rail/drawer/collision candidates are not
+promoted on the strength of this result.
+
+The [raw evidence](shared-panels-2026-10-01/) contains every duration, source
+status, versions/context, provenance and a byte-exact compressed source patch.
+The measured source is repair `64a45c94846309d7bb657c3751327c31ed31c31b`
+plus captured diff SHA-256
+`f2c3d0efa819b79a8dc55b8a44ae04198e24a4f54ee13aa4d77fa53ff165e8f0`.
+The actual release **test** executable SHA-256 is
+`ffbb27276352123cc82204282c87b8348e189df6be19708089002bbee48a9214`.
+`candidate.diff.gz` decompresses to the original captured `candidate.diff`
+bytes, avoiding Git line-ending conversion of the hash oracle. Paired PNGs,
+the full log and a hash-verified executable copy remain in the worktree's
+private `target\shared-panel-evidence\scheduled-run-20261001-1541-01` evidence;
+they are not newly required cross-platform snapshot baselines.
+
+To reproduce under an exclusive slot, prepend the tool paths in **every fresh process**,
+and use only the authorized worktree. The shared Cargo target is permitted only
+during that exclusive slot:
+
+```powershell
+Set-Location 'Q:\src\OSS\fesTerm-ui-fleet\painting'
+$env:PATH = 'C:\Users\fswiderski\.cargo\bin;C:\Users\fswiderski\AppData\Local\Programs\Python\Python312;' + $env:PATH
+$env:CARGO_TARGET_DIR = 'Q:\src\OSS\fesTerm\target'
+# Compile/validate first, outside every measurement interval:
+cargo test -p festerm --bin festerm software_background::tests -- --test-threads=1
+cargo test -p festerm --bin festerm inspector -- --test-threads=1
+cargo test -p festerm --bin festerm textureless_sftp_panes -- --test-threads=1
+cargo test --release -p festerm --bin festerm --no-run
+# Only after all preparation processes exit and the primary confirms a quiet interval:
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_WARP_UI_OUT = '.\target\shared-panel-evidence\scheduled-run-01'
+cargo test --release -p festerm --bin festerm replay_warp_ui_surfaces_shared_panels -- --ignored --nocapture --test-threads=1
+```
+
+Before running, also archive Rust and Cargo versions, host/adapter/driver,
+command and absence of competing builds/captures/desktop input. The replay
+captures source/executable provenance itself before timing; its raw-sample JSON
+references that provenance and records adapter/format, dimensions/DPI,
+durations and callback counts. Retain logs, paired images, provenance and all
+adverse results. Use a fresh run-specific parent output folder and never delete
+an earlier `shared-panels` child to make a retry pass. Compare per-pair median
+and tails, preserve warmup
+versus measured boundaries, and check the unchanged control for drift. Do not
+quiet-rerun failures into a pass. Remove unhelpful call-site substitutions,
+rather than spreading the path or changing fidelity/cadence to improve a number.
+
+Only after targeted correctness and the completed comparison should the full
+repository CI-equivalent commands run, including `cargo fmt`, workspace
+Clippy/tests/check, Python script and Direct2D unit suites, font/emoji/icon,
+packaging, traceability (also against #286's eventual merge base) and
+`python scripts/build_ui_state_doc.py --check`. Native TI-06, FD-05/06 and
+CP-16 evidence remains separately classified; this replay cannot qualify it.
+
+### Qualification checks and environment limitation
+
+The Windows qualification passed `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test --workspace` (1,905 passed, 52 ignored), and
+`cargo check --workspace`. Focused Inspector (11 passed, one ignored), SFTP
+full-widget, and fallback pixel tests also passed before measurement; the
+ignored release replay passed all 20 complete-frame comparisons. Initial
+test-scaffold compilation, unapplied texture-delta, and uninitialized-root
+screen-descriptor failures were fixed without relaxing rendering assertions.
+
+The unmodified command
+`python -m unittest discover -s scripts/tests -p "test_*.py"` initially failed
+one of 69 tests (three skipped): the AppImage shell/heredoc syntax test launched
+the System32 WSL `bash.exe`, with no installed distributions. Prepending Git
+Bash to `PATH` still failed: `shutil.which` and PowerShell resolved Git Bash,
+but a bare Windows `CreateProcess` invocation still selected the System32
+stub. Both failed attempts and the actual resolver diagnostic are retained,
+not reported as successful runs.
+
+The same 69-test discovery then passed (three skipped) using
+`python target\shared-panel-evidence\full-validation-20261001-01\run_script_tests_with_git_bash.py`.
+That driver supplies the explicit installed
+`C:\Program Files\Git\bin\bash.exe` as `Popen(executable=...)` **only** for
+bare `bash` argument lists. The actual workflow payload goes to Bash `-n`;
+test selection, child execution, return codes, stdout/stderr and all
+assertions remain unchanged. The line-ending-normalized
+[archived resolver](shared-panels-2026-10-01/git-bash-test-resolver.py)
+can reproduce that environment-only correction from the repository root.
+This is not a claim that the raw Windows command succeeded.
+
+The following also passed:
+
+- `python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v`
+  (five tests);
+- `python -m unittest discover -s validation/direct2d -p "test_*.py"`
+  (five tests);
+- `.\validation\direct2d\run.ps1 -ResultDirectory .\target\shared-panel-evidence\direct2d-self-test-20261001-01 -SelfTestOnly`
+  with `FESTERM_RUN_OPTIONAL_VALIDATION=1` (seven native checks and five Python
+  tests; no desktop workload);
+- `python scripts\manage_bundled_font.py`;
+- `python scripts\check_unicode_emoji_data.py`;
+- `python scripts\validate-icons.py --check`;
+- `python scripts\generate_windows_icon.py --check`;
+- `python scripts\check_packaging.py`;
+- `python scripts\check_validation_traceability.py`;
+- `python scripts\build_ui_state_doc.py --check`;
+- `git diff --check`.
+
+Validation logs remain in
+`target\shared-panel-evidence\full-validation-20261001-01`. The measured patch
+still reverse-applies cleanly against all three current Rust source files;
+later result documentation does not change the timed implementation. The
+complete optional-validation aggregator was not executed: the compiled
+release selector listing confirms both ignored replays match, and the fresh
+child guarantees disjoint outputs. Linux/macOS CI and Linux-only esctest2
+remain external checks. #286 remains an unmerged prerequisite; #288's
+Markdown work and mixed residual are not qualified here. The historical
+Launcher native evidence below is separate from this Inspector/SFTP
+renderer differential.
 
 ## Native evidence
 

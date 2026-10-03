@@ -297,6 +297,10 @@ fn supports_panel_painter(ui: &egui::Ui) -> bool {
         && ui.ctx().layer_transform_to_global(ui.layer_id()).is_none()
 }
 
+fn supports_panel_frame(ui: &egui::Ui, frame: &egui::Frame) -> bool {
+    frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
+}
+
 pub(crate) fn show_frame<R>(
     ui: &mut egui::Ui,
     frame: egui::Frame,
@@ -305,9 +309,7 @@ pub(crate) fn show_frame<R>(
     let renderer = ui
         .ctx()
         .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()));
-    let Some(renderer) = renderer.filter(|_| {
-        frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
-    }) else {
+    let Some(renderer) = renderer.filter(|_| supports_panel_frame(ui, &frame)) else {
         return frame.show(ui, contents);
     };
     let background = ui.painter().add(egui::Shape::Noop);
@@ -320,6 +322,27 @@ pub(crate) fn show_frame<R>(
             .set(background, renderer.shape(ui, frame.paint(content_rect)));
     }
     egui::InnerResponse::new(inner, prepared.allocate_space(ui))
+}
+
+#[cfg(test)]
+pub(crate) struct PanelTestProbe(Option<Arc<PanelRenderer>>);
+
+#[cfg(test)]
+impl PanelTestProbe {
+    pub(crate) fn install(context: &egui::Context, state: &egui_wgpu::RenderState) -> Self {
+        // Exercise geometry on CI adapters too; production install retains its adapter guards.
+        let renderer = PanelRenderer::new(state, egui_wgpu::RendererOptions::default().dithering);
+        if let Some(renderer) = &renderer {
+            context.data_mut(|data| data.insert_temp(panel_renderer_id(), Arc::clone(renderer)));
+        }
+        Self(renderer)
+    }
+
+    pub(crate) fn paints(&self) -> usize {
+        self.0.as_ref().map_or(0, |renderer| {
+            renderer.paints.load(std::sync::atomic::Ordering::Relaxed)
+        })
+    }
 }
 
 const SHADER: &str = r"
@@ -484,6 +507,104 @@ mod tests {
         fn record_encoded_input(&mut self, _bytes: &[u8]) {}
     }
 
+    #[test]
+    fn panel_frames_retain_all_painter_and_frame_guards() {
+        for case in [
+            "eligible",
+            "translucent-fill",
+            "shadow",
+            "opacity",
+            "invisible",
+            "transformed",
+            "nonzero-origin",
+            "secondary",
+        ] {
+            let context = egui::Context::default();
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    if case == "nonzero-origin" {
+                        egui::pos2(1.25, 2.5)
+                    } else {
+                        egui::Pos2::ZERO
+                    },
+                    egui::vec2(320.0, 240.0),
+                )),
+                ..Default::default()
+            };
+            if case == "secondary" {
+                input.viewport_id = egui::ViewportId::from_hash_of("secondary-panel-test");
+                input
+                    .viewports
+                    .insert(input.viewport_id, Default::default());
+            }
+            let mut output = context.run_ui(input, |ui| {
+                let mut frame = egui::Frame::new().fill(egui::Color32::DARK_BLUE);
+                match case {
+                    "translucent-fill" => frame.fill = egui::Color32::from_black_alpha(128),
+                    "shadow" => {
+                        frame.shadow = egui::Shadow {
+                            offset: [1, 2],
+                            blur: 4,
+                            spread: 0,
+                            color: egui::Color32::from_black_alpha(64),
+                        };
+                    }
+                    "opacity" => ui.set_opacity(0.5),
+                    "invisible" => ui.set_invisible(),
+                    "transformed" => context.set_transform_layer(
+                        ui.layer_id(),
+                        egui::emath::TSTransform::from_translation(egui::vec2(1.0, 0.0)),
+                    ),
+                    _ => {}
+                }
+                assert_eq!(
+                    supports_panel_frame(ui, &frame),
+                    case == "eligible",
+                    "{case}"
+                );
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn panel_frame_without_renderer_preserves_layout_and_child_order() {
+        let draw = |shared| {
+            let context = egui::Context::default();
+            let mut geometry = None;
+            let mut output = context.run_ui(Default::default(), |ui| {
+                let frame = egui::Frame::new()
+                    .fill(egui::Color32::DARK_BLUE)
+                    .stroke(egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE))
+                    .corner_radius(9)
+                    .inner_margin(egui::Margin::same(7));
+                let contents = |ui: &mut egui::Ui| ui.button("Unchanged child");
+                let response = if shared {
+                    show_frame(ui, frame, contents)
+                } else {
+                    frame.show(ui, contents)
+                };
+                geometry = Some((
+                    response.response.rect,
+                    response.inner.rect,
+                    response.inner.id,
+                ));
+            });
+            output.textures_delta.clear();
+            let fill = output.shapes.iter().position(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == egui::Color32::DARK_BLUE)
+            }).expect("ordinary frame fill");
+            let text = output
+                .shapes
+                .iter()
+                .position(|shape| matches!(&shape.shape, egui::Shape::Text(_)))
+                .expect("child text");
+            assert!(fill < text);
+            geometry.unwrap()
+        };
+        assert_eq!(draw(false), draw(true));
+    }
+
     #[cfg(all(windows, target_arch = "x86_64"))]
     #[test]
     fn textureless_application_chrome_preserves_pixels_across_dpi_and_clipping() {
@@ -498,6 +619,7 @@ mod tests {
             assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
             let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
             let context = egui::Context::default();
+            context.set_theme(egui::ThemePreference::Dark);
             context.set_visuals(festerm_ui_egui::theme::default_visuals());
             if native {
                 install(&context, &state);
@@ -746,6 +868,494 @@ mod tests {
             let ordinary = panel_image(false, 1.25, opacity, true, bordered, srgb, true);
             let native = panel_image(true, 1.25, opacity, true, bordered, srgb, true);
             assert_eq!(ordinary, native);
+        }
+    }
+
+    #[test]
+    fn textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports() {
+        use egui_kittest::TestRenderer;
+
+        for case in [
+            "translucent-fill",
+            "shadow",
+            "opacity",
+            "invisible",
+            "transformed",
+            "nonzero-origin",
+            "secondary",
+            "srgb",
+        ] {
+            let render = |native: bool| {
+                let mut state = create_render_state(default_wgpu_setup(), Default::default());
+                if case == "srgb" {
+                    state.target_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+                    *state.renderer.write() = egui_wgpu::Renderer::new(
+                        &state.device,
+                        state.target_format,
+                        Default::default(),
+                    );
+                }
+                let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+                let context = egui::Context::default();
+                context.set_theme(egui::ThemePreference::Dark);
+                context.set_visuals(festerm_ui_egui::theme::default_visuals());
+                let probe = native.then(|| PanelTestProbe::install(&context, &state));
+                let mut input = egui::RawInput {
+                    max_texture_side: Some(state.device.limits().max_texture_dimension_2d as usize),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        if case == "nonzero-origin" {
+                            egui::pos2(1.25, 2.5)
+                        } else {
+                            egui::Pos2::ZERO
+                        },
+                        egui::vec2(257.0, 157.0),
+                    )),
+                    ..Default::default()
+                };
+                if case == "secondary" {
+                    input
+                        .viewports
+                        .get_mut(&egui::ViewportId::ROOT)
+                        .unwrap()
+                        .native_pixels_per_point = Some(1.25);
+                    // Readback uses the root screen descriptor outside a viewport pass.
+                    let mut root = context.run_ui(input.clone(), |_ui| {});
+                    renderer.handle_delta(&mut root.textures_delta);
+                    input.viewport_id =
+                        egui::ViewportId::from_hash_of("secondary-panel-pixel-test");
+                    input
+                        .viewports
+                        .insert(input.viewport_id, Default::default());
+                }
+                input
+                    .viewports
+                    .get_mut(&input.viewport_id)
+                    .unwrap()
+                    .native_pixels_per_point = Some(1.25);
+                let mut output = None;
+                for _ in 0..5 {
+                    let mut frame = context.run_ui(input.clone(), |ui| {
+                        ui.set_clip_rect(egui::Rect::from_min_max(
+                            egui::pos2(11.25, 13.5),
+                            egui::pos2(241.75, 140.25),
+                        ));
+                        match case {
+                            "opacity" => ui.set_opacity(0.5),
+                            "invisible" => ui.set_invisible(),
+                            "transformed" => context.set_transform_layer(
+                                ui.layer_id(),
+                                egui::emath::TSTransform::from_translation(egui::vec2(1.25, 2.5)),
+                            ),
+                            _ => {}
+                        }
+                        let mut frame = egui::Frame::new()
+                            .fill(egui::Color32::DARK_BLUE)
+                            .stroke(egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE))
+                            .corner_radius(9)
+                            .inner_margin(egui::Margin::same(7));
+                        if case == "translucent-fill" {
+                            frame.fill = egui::Color32::from_black_alpha(128);
+                        } else if case == "shadow" {
+                            frame.shadow = egui::Shadow {
+                                offset: [1, 2],
+                                blur: 4,
+                                spread: 0,
+                                color: egui::Color32::from_black_alpha(64),
+                            };
+                        }
+                        let contents = |ui: &mut egui::Ui| {
+                            ui.set_min_size(egui::vec2(200.0, 100.0));
+                            ui.label("Fallback keeps the full widget");
+                        };
+                        if native {
+                            show_frame(ui, frame, contents);
+                        } else {
+                            frame.show(ui, contents);
+                        }
+                    });
+                    renderer.handle_delta(&mut frame.textures_delta);
+                    output = Some(frame);
+                }
+                let image = renderer
+                    .render(&context, &output.unwrap())
+                    .expect("fallback framebuffer");
+                if let Some(probe) = probe {
+                    assert_eq!(probe.paints(), 0, "{case} must stay on ordinary painting");
+                }
+                image
+            };
+            assert_eq!(render(false), render(true), "{case}");
+        }
+    }
+
+    #[test]
+    fn unexpected_panel_geometry_retains_the_original_mesh() {
+        let state = create_render_state(default_wgpu_setup(), Default::default());
+        let renderer = PanelRenderer::new(&state, true).unwrap();
+        let context = egui::Context::default();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let mut mesh = egui::Mesh::with_texture(egui::TextureId::User(17));
+            mesh.add_rect_with_uv(
+                egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(40.0, 30.0)),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+            let original = Arc::new(mesh);
+            let shape = renderer.shape(ui, egui::Shape::Mesh(Arc::clone(&original)));
+            let egui::Shape::Mesh(retained) = shape else {
+                panic!("unexpected geometry must not become a callback or blank shape");
+            };
+            assert!(Arc::ptr_eq(&original, &retained));
+        });
+        output.textures_delta.clear();
+    }
+
+    fn replay_sha256(mut input: impl std::io::Read) -> String {
+        use sha2::{Digest, Sha256};
+
+        let mut hash = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = input
+                .read(&mut buffer)
+                .expect("read replay provenance bytes");
+            if read == 0 {
+                break;
+            }
+            hash.update(&buffer[..read]);
+        }
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn shared_panel_replay_hash_is_standard_sha256() {
+        assert_eq!(
+            replay_sha256(&b"abc"[..]),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        );
+    }
+
+    #[test]
+    #[ignore = "optional completed Windows WARP Inspector/SFTP replay; not native latency evidence"]
+    fn replay_warp_ui_surfaces_shared_panels() {
+        use egui_kittest::TestRenderer;
+        use std::{
+            fs::File,
+            path::PathBuf,
+            process::{Command, Stdio},
+            time::Instant,
+        };
+
+        assert_eq!(
+            std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
+            Ok("1"),
+            "set FESTERM_RUN_OPTIONAL_VALIDATION=1"
+        );
+        let output_root = PathBuf::from(
+            std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"),
+        );
+        std::fs::create_dir_all(&output_root).expect("create replay output root");
+        let output = output_root.join("shared-panels");
+        assert!(
+            !output.try_exists().expect("check shared-panel replay output"),
+            "shared-panels output already exists; retain the earlier attempt and choose a fresh FESTERM_WARP_UI_OUT",
+        );
+        std::fs::create_dir(&output).expect("reserve fresh shared-panel replay output");
+        let revision = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("read source revision");
+        assert!(revision.status.success());
+        let source_status = Command::new("git")
+            .args(["status", "--short", "--branch"])
+            .output()
+            .expect("read source status");
+        assert!(source_status.status.success());
+        std::fs::write(output.join("source-head.txt"), &revision.stdout)
+            .expect("preserve replay source revision");
+        std::fs::write(output.join("source-status.txt"), &source_status.stdout)
+            .expect("preserve replay source status");
+        let source_diff = output.join("candidate.diff");
+        let diff_status = Command::new("git")
+            .args([
+                "--no-pager",
+                "-c",
+                "color.ui=false",
+                "diff",
+                "--binary",
+                "--full-index",
+                "--no-ext-diff",
+                "--no-textconv",
+                "HEAD",
+                "--",
+            ])
+            .stdout(Stdio::from(
+                File::create(&source_diff).expect("create candidate diff"),
+            ))
+            .status()
+            .expect("capture exact tracked candidate diff");
+        assert!(diff_status.success(), "candidate diff capture failed");
+        let source_diff_sha256 =
+            replay_sha256(File::open(&source_diff).expect("open captured candidate diff"));
+        let executable = std::env::current_exe().expect("identify actual replay test executable");
+        let executable_sha256 =
+            replay_sha256(File::open(&executable).expect("open actual replay test executable"));
+        std::fs::write(
+            output.join("candidate.diff.sha256"),
+            format!("{source_diff_sha256}  candidate.diff\n"),
+        )
+        .expect("preserve candidate diff hash");
+        std::fs::write(
+            output.join("test-executable.sha256"),
+            format!("{executable_sha256}  {}\n", executable.display()),
+        )
+        .expect("preserve actual test executable hash");
+        std::fs::write(
+            output.join("provenance.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "source_revision": String::from_utf8_lossy(&revision.stdout).trim(),
+                "source_status": String::from_utf8_lossy(&source_status.stdout).trim(),
+                "candidate_diff": "candidate.diff",
+                "candidate_diff_sha256": source_diff_sha256,
+                "test_executable": executable,
+                "test_executable_sha256": executable_sha256,
+                "measurement_kind": "same-executable ordinary-versus-textureless differential; not shipping before/after",
+                "theme": "production Dark",
+            }))
+            .unwrap(),
+        )
+        .expect("preserve provenance before renderer setup and timing");
+        let mut samples = Vec::new();
+        for scene in [
+            "inspector-collapsed",
+            "inspector-expanded",
+            "sftp-100",
+            "sftp-5000",
+            "unchanged-text-control",
+        ] {
+            for repeat in 0..4 {
+                let mut reference = None;
+                for native in if repeat % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                } {
+                    let state = create_render_state(default_wgpu_setup(), Default::default());
+                    let info = state.adapter.get_info();
+                    assert!(
+                        use_panel_pipeline(
+                            cfg!(windows),
+                            info.device_type,
+                            info.backend,
+                            state.target_format
+                        ),
+                        "replay requires Windows DX12 CPU/gamma, got {info:?}, {:?}",
+                        state.target_format
+                    );
+                    let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+                    let context = egui::Context::default();
+                    context.set_theme(egui::ThemePreference::Dark);
+                    context.set_visuals(festerm_ui_egui::theme::default_visuals());
+                    context.all_styles_mut(|style| {
+                        style.animation_time = 0.0;
+                        style.visuals.text_cursor.blink = false;
+                    });
+                    if native {
+                        install(&context, &state);
+                    }
+                    let panel = context
+                        .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()));
+                    assert_eq!(
+                        panel.is_some(),
+                        native,
+                        "no success-shaped renderer fallback"
+                    );
+                    let mut browser = crate::sftp_file_manager::tests::paint_fixture(
+                        &context,
+                        if scene == "sftp-5000" { 5000 } else { 100 },
+                    );
+                    let tab = crate::tabs::AppState::for_test().active();
+                    let diagnostics =
+                        "Synthetic renderer facts: bounded queues; completed rendering.\n"
+                            .repeat(64);
+                    let mut content = crate::inspector::tests::base_content(1);
+                    content.diagnostics = &diagnostics;
+                    content.input_report =
+                        "Redacted synthetic routing report; no commands or credentials.";
+                    let mut input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1774.0, 1075.0),
+                        )),
+                        time: Some(0.0),
+                        ..Default::default()
+                    };
+                    input
+                        .viewports
+                        .get_mut(&egui::ViewportId::ROOT)
+                        .unwrap()
+                        .native_pixels_per_point = Some(2.0);
+                    let mut step = |input: egui::RawInput| {
+                        context.run_ui(input, |ui| {
+                            if scene.starts_with("inspector") {
+                                assert!(crate::inspector::show(
+                                    ui.ctx(),
+                                    ui.max_rect(),
+                                    content.clone(),
+                                    false
+                                )
+                                .is_none());
+                            } else if scene.starts_with("sftp") {
+                                assert!(browser.show(ui, tab).is_none());
+                            } else {
+                                ui.heading("Unchanged text control");
+                            }
+                        })
+                    };
+                    let mut frame = step(input.clone());
+                    renderer.handle_delta(&mut frame.textures_delta);
+                    for _ in 0..8 {
+                        frame = step(input.clone());
+                        renderer.handle_delta(&mut frame.textures_delta);
+                    }
+                    if scene == "inspector-expanded" {
+                        let position = frame
+                            .shapes
+                            .iter()
+                            .find_map(|shape| {
+                                if let egui::Shape::Text(text) = &shape.shape {
+                                    (text.galley.text() == "Diagnostics")
+                                        .then(|| text.pos + text.galley.size() * 0.5)
+                                } else {
+                                    None
+                                }
+                            })
+                            .expect("visible Diagnostics header");
+                        for pressed in [true, false] {
+                            let mut click = input.clone();
+                            click.events = vec![
+                                egui::Event::PointerMoved(position),
+                                egui::Event::PointerButton {
+                                    pos: position,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ];
+                            frame = step(click);
+                            renderer.handle_delta(&mut frame.textures_delta);
+                        }
+                        for _ in 0..8 {
+                            frame = step(input.clone());
+                            renderer.handle_delta(&mut frame.textures_delta);
+                        }
+                        assert!(frame.shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("Synthetic renderer facts"))
+                        }), "expanded replay must contain the diagnostic report");
+                    }
+                    let image = renderer
+                        .render(&context, &frame)
+                        .expect("completed replay warmup");
+                    let callbacks_per_frame = if !native || scene == "unchanged-text-control" {
+                        0
+                    } else if scene.starts_with("inspector") {
+                        1
+                    } else {
+                        4
+                    };
+                    let paints = || {
+                        panel.as_ref().map_or(0, |panel| {
+                            panel.paints.load(std::sync::atomic::Ordering::Relaxed)
+                        })
+                    };
+                    assert_eq!(
+                        paints(),
+                        callbacks_per_frame,
+                        "warmup must exercise every selected frame before timing"
+                    );
+                    assert_eq!(image.dimensions(), (3548, 2150));
+                    assert!(
+                        image
+                            .pixels()
+                            .filter(
+                                |pixel| pixel.0 == festerm_ui_egui::theme::TEXT_PRIMARY.to_array()
+                            )
+                            .count()
+                            > 20,
+                        "visible text oracle"
+                    );
+                    image
+                        .save(output.join(format!(
+                            "shared-{scene}-{repeat}-{}.png",
+                            if native { "textureless" } else { "ordinary" }
+                        )))
+                        .expect("save paired replay pixels");
+                    if let Some(reference) = &reference {
+                        let reference: &image::RgbaImage = reference;
+                        assert_eq!(reference.dimensions(), image.dimensions());
+                        assert!(
+                            reference.pixels().eq(image.pixels()),
+                            "{scene}, repeat={repeat} framebuffer differs; paired images retained",
+                        );
+                    } else {
+                        reference = Some(image.clone());
+                    }
+                    let mut ui_ms = Vec::with_capacity(20);
+                    let mut tessellate_ms = Vec::with_capacity(20);
+                    let mut draw_readback_ms = Vec::with_capacity(5);
+                    for _ in 0..20 {
+                        let start = Instant::now();
+                        frame = step(input.clone());
+                        renderer.handle_delta(&mut frame.textures_delta);
+                        ui_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    for _ in 0..20 {
+                        let start = Instant::now();
+                        std::hint::black_box(
+                            context.tessellate(frame.shapes.clone(), context.pixels_per_point()),
+                        );
+                        tessellate_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    renderer
+                        .render(&context, &frame)
+                        .expect("completed settling frame");
+                    for _ in 0..5 {
+                        let start = Instant::now();
+                        renderer
+                            .render(&context, &frame)
+                            .expect("completed measured draw/readback");
+                        draw_readback_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    let paints = paints();
+                    assert_eq!(
+                        paints,
+                        callbacks_per_frame * 7,
+                        "measured callback attribution"
+                    );
+                    let sample = serde_json::json!({
+                        "scene": scene, "repeat": repeat, "native": native,
+                        "adapter": format!("{info:?}"), "format": format!("{:?}", state.target_format),
+                        "ui_ms": ui_ms, "tessellate_ms": tessellate_ms,
+                        "draw_and_readback_ms": draw_readback_ms, "panel_paints": paints,
+                    });
+                    eprintln!("shared-panel-replay {sample}");
+                    samples.push(sample);
+                    std::fs::write(output.join("shared-paint-replay.json"), serde_json::to_vec_pretty(&serde_json::json!({
+                        "source_revision": String::from_utf8_lossy(&revision.stdout).trim(),
+                        "source_status": String::from_utf8_lossy(&source_status.stdout).trim(),
+                        "provenance": "provenance.json",
+                        "candidate_diff_sha256": source_diff_sha256,
+                        "test_executable_sha256": executable_sha256,
+                        "measurement_kind": "same-executable ordinary-versus-textureless differential; not shipping before/after",
+                        "pixels": [3548, 2150], "scale": 2.0,
+                        "boundary": "UI includes texture deltas; drawing includes tessellation, submission, synchronization and readback; not native presentation",
+                        "samples": samples,
+                    })).unwrap()).expect("preserve all completed samples");
+                }
+            }
         }
     }
 

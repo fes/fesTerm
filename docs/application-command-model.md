@@ -146,15 +146,39 @@ Terminal-local selection Copy and Paste contents remain UI/input operations.
 Explicit OSC 8 activation emits an application `OpenExternalLink` intent so
 URL parsing, scheme/host policy, safe rejection feedback, and OS launch remain
 centralized and testable. Copy Link Address remains a local clipboard action.
-In contrast, a chip context menu translates Rename, Move left/right, and Close
+In contrast, a chip context menu translates Rename, Use default name, Move left/right, and Close
 into the same typed tab commands used by direct chrome gestures.
 Opening a chip menu targets its stable tab identifier without activating it.
+`RenameTab(TabId, String)` creates a sanitized explicit logical-view alias;
+`UseDefaultSessionName(TabId)` removes that override. Neither command mutates
+a reusable profile or durable attachment target. Empty/sanitized-empty rename
+edits cancel. Nonempty validation failures remain typed, content-free outcomes
+of the same command policy: an app notice reports refusal without echoing the
+rejected text or changing the name, saved metadata, or transport.
+The tab coordinator records
+pending naming metadata; the composition root combines all windows' edits and
+optional workspace snapshots into one transactional configuration save.
+Save failure is visible, and successful documents alone are broadcast.
+All restorable terminal kinds, including local/SSH tmux and Screen, retain
+their own aliases in opted-in workspace metadata, even if their backend is
+recreated. Native seeds use actual registry generations for newly opened views
+only; broadcasts never rename independent current views. Reset clears the
+current view and its associated native seed. Workspace opt-out or a missing
+restorable descriptor produces a live-only notice unless an exact native seed
+is available; no guessed identity or arbitrary mux alias lookup is added.
 
 ## Command Palette Rule
 
 The command palette is a discoverability and invocation surface, not a separate control plane. Palette entries must dispatch the same application commands used by shortcuts and visible chrome.
 
 Searchable session switching should resolve a stable session identity and dispatch the ordinary session-switch command.
+
+The palette-only **Redraw Terminal** entry dispatches
+`AppCommand::RedrawTerminal(TabId)`. The presentation owner invalidates only
+that view's row/glyph caches and requests a full local paint. An optional
+native painter receives a one-frame presentation hint to bypass retained
+pixels; no terminal state or backend control crosses the renderer boundary.
+There is deliberately no keyboard action/default chord for this command.
 
 ## State Ownership
 

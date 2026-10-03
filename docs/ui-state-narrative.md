@@ -18,17 +18,34 @@ It is regenerated, not written by hand: the screenshots come from the real
 UI rendered against repository-owned fixture data, so the document cannot
 drift from the product without the drift showing up as a changed picture.
 
-Everything here is synthetic. Hosts are `example.com`/`example.net`
-subdomains, addresses come from the documentation-reserved ranges in
-RFC 5737, and users are named `devuser`, `builder` and `operator`. No real
-configuration, credential, host key, clipboard content or shell history is
-reachable from the capture path.
+Profile identities and document contents here are synthetic. Hosts are
+`example.com`/`example.net` subdomains, addresses come from the
+documentation-reserved ranges in
+RFC 5737, and users are named `devuser`, `builder` and `operator`. Captures use
+isolated user directories rather than personal configuration, credentials,
+host keys, clipboard content or shell history.
+
+Local editor and picker path bars are a remaining exception to synthetic
+identity: they display the physical fixture location under the checkout.
+The committed Windows batch was reviewed from a controlled, non-personal
+checkout root, but a checkout under a user's home can expose that user's name
+and captures vary across worktrees. The pipeline is not yet PII-free by
+construction. Public regeneration requires a non-personal checkout root and
+path/metadata review until canonical synthetic document/picker display
+identities are separated from isolated physical fixture I/O.
 
 Two things this document deliberately does *not* do. It does not enumerate
 every state of every control — it shows each surface doing representative
 work, plus the edge states that are actually interesting. And it does not
 assert correctness; the automated suites and the validation gates do that.
 What it captures is how the product currently *presents* itself.
+
+Headless captures use the production blue-graphite dark visuals on the actual
+rendering context, including built-in controls and popup frames. They retain
+each scenario's fonts, viewport and crop; isolated widget pictures are not
+full-window/native-desktop evidence. Editor and picker file contents are
+synthetic; their displayed absolute paths currently name the capture
+worktree's `target/ui-gallery-fixtures/`.
 
 <!-- section: new-session title: Starting a session -->
 
@@ -82,12 +99,18 @@ deliberately the least decorated thing in it: no gutter, no persistent
 sidebar, no ornament competing with the program's own output. Chrome gets out
 of the way once a session is live.
 
-The two captures here show the same surface serving different kinds of work —
-an interactive remote shell, and the line-oriented `sftp` client. The second
-is worth including precisely because fesTerm also ships a graphical SFTP
+The captures here show the same surface serving different kinds of work — an
+interactive remote shell, the line-oriented `sftp` client, and the local
+context menus over selected text and a detected path. The `sftp` capture is
+worth including precisely because fesTerm also ships a graphical SFTP
 workspace: the command-line client remains available and unmodified, and
 choosing the GUI is a preference rather than a replacement. Users with muscle
 memory for `get` and `put` keep it.
+
+The context-menu pair makes two ownership boundaries visible. Copy and Paste
+are local terminal actions rather than bytes sent to the remote program. A
+detected path is frozen when the menu opens, then handed to application policy
+for **Open in editor** while **Copy path** preserves its exact spelling.
 
 <!-- section: sftp-workspace title: The SFTP workspace -->
 
@@ -249,3 +272,89 @@ The review question here is less about the individual fields than about the
 round trip — whether what a user builds in a connection form can be saved
 without re-entering it, and whether a saved profile makes clear what it will
 do before it is launched.
+
+<!-- section: surface-probes title: Menus, safety and file-dialog states -->
+
+The bounded non-terminal probe catalog complements the original 48 gallery
+scenarios with production About/licenses/updater states, expanded chrome and
+chip menus, terminal selection/link/path/history menus, representative close
+and paste safeguards, and Open File/Save As sheets. Each has a normal root
+and a `360 × 516` narrow counterpart. These are full-root themed captures, not
+hand-drawn modal substitutes or native-window acceptance.
+
+Two additional gallery-only command-palette views support the coordinated
+style review, using the real application-owned commands and initial search
+focus. They do not add palette timing claims to the bounded performance batch.
+
+Another 23 gallery-only examples support before/after geometry review at
+`752 × 516`, `360 × 516` and selected `360 × 240` roots. They combine
+licenses with a synthetic ready updater, long palette identity/path/shortcut,
+deep ready/error picker paths, `NOTES.md` overwrite, long live-close identity,
+the maximum bounded paste preview, dirty-close actions and applicable overflow
+controls. Optional manifest geometry records root bounds, actions and focus;
+missing/clipped controls remain observations, not successful acceptance.
+Pre-style and candidate captures must retain identical physical fixture identities.
+Owned checkout paths are real display identities and require publication review;
+they are not automatically canonical or free of checkout usernames.
+The existing capture test can select only these 23 examples with
+`FESTERM_UI_GALLERY_SCENES=style-review`, or exact comma-delimited scene IDs,
+into a fresh evidence directory. Curated before/after geometry iteration
+does not require full-gallery generation.
+Default fixture paths are rooted in the compiled worktree, so matching scene
+names alone cannot qualify a cross-worktree comparison. An opt-in owned
+physical-root/run/phase mode can bind sequential baseline/candidate captures
+to the same real I/O paths, retaining actual tasks and document freshness.
+Its ownership/input/phase/targeted-cleanup tests and the exact 23-state
+`style-pair-20261001-1700` sequential capture completed with production-f0
+widgets before and candidate `daf9796` after, using the same real Q-drive paths,
+input contents/mtimes, CPU/DX12 adapter and 1.0 pixels-per-point. This qualifies
+that retained input identity and drawing provenance, not complete style
+acceptance: actual short Save As drawing escapes the sheet, while deep narrow
+Open File breadcrumbs occupy the initial ready/error viewport. Missing or
+clipped actions are still not passes. The completed phase is immutable and its
+inventoried inputs were cleaned only by successful completion; further source
+iterations require a fresh uniformly matched pair. Captions record actual
+paths and mode, not anonymized metadata or sanitized pixels. See the
+[owned comparison contract](../validation/windows-warp/README.md).
+
+Source follow-up pins Save As filename/notice/actions and enforces inherited
+nested-panel clipping before child paint and pointer registration; the
+paint-only workaround was superseded. Initial modal-owned Save As fields/actions
+pass at all three roots/both densities. It bounds Open File breadcrumbs to a horizontally
+scrollable row retaining all exact ancestor targets and full hover identities.
+New tests prove clipped row/action pointer refusal and safe navigation.
+Open File now reserves Cancel and the error/list viewport; initial path/filter
+pointer focus, error paint and modal-owned actions pass at all three roots/both
+densities, with terminal focus restored after cancellation. The Save response
+has an explicit ID on the filename's modal layer. A fresh uniformly matched
+pair must still qualify subsequent drawing; the
+completed `daf9796` pair is neither relabeled nor promoted.
+
+The fresh `style-pair-20261002-r2` pair then qualified corrected `426c458`'s
+bounded geometry/action slice through exact physical file SHA/mtime/kind parity
+and inspection of all 23 AFTER images at 752×516, 360×516 and five 360×240
+states. Observed off-root sheets/actions became zero; initial principal fields
+and actions remain visible, with compact body rows/navigation/disclosures
+scrollable. About-short's update action, null overflow areas and collapsed
+palette/update-announcement states are not promoted. Native/usability,
+performance and anonymous-origin claims remain excluded, and the original
+48 PNGs/failed first pair are unchanged.
+
+Directory examples use owned synthetic files and the actual background listing
+tasks. A ready entry or the actual task error must be verified at a usable root
+before capture; the style examples then resize without navigation or reload.
+Loading is not silently accepted as a small/large/error example. Updater
+examples use existing in-process test controllers and never check a live
+endpoint or install a package. A fake session records input rather than
+starting a shell or reaching a host.
+
+The reusable [surface matrix](../validation/windows-warp/surface-matrix.json)
+retains all 33 audited families and 163 unique GUI references. It explicitly
+leaves remaining variants and native prerequisites unqualified. First UI
+calls, preparation/worker wait, warmup and steady forced frames are distinct
+from real user input, idle scheduling, cold process startup and presentation.
+The bounded 52-scene performance batch and the full 125-scene gallery remain
+unexecuted here; the named 23-state pair does not qualify sibling states,
+performance, hardware, native UI or usability. Its retained captions and
+manifests are drawing evidence, with the visual blockers above, rather than a
+blanket catalog acceptance.

@@ -29,7 +29,6 @@
     "ADR-0011",
     "ADR-0012",
     "ADR-0013",
-    "ADR-0014",
     "ADR-0015",
     "ADR-0016"
   ],
@@ -594,7 +593,8 @@
     {
       "id": "session-chips",
       "edges": [
-        "CHIP-*"
+        "CHIP-0[1-9]",
+        "CHIP-1[0-3]"
       ],
       "requirements": [
         "docs/gui-design.md#independent-session-chips"
@@ -607,6 +607,35 @@
         "chip_context_menu_targets_inactive_chip_without_activating_it",
         "dragging_one_chip_onto_another_emits_a_reorder_action",
         "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape",
+        "session_alias_rename_is_instance_only_and_terminal_titles_never_become_aliases",
+        "session_alias_reset_clears_override_and_empty_commit_keeps_previous_name",
+        "session_alias_pending_edits_are_bounded_and_live_failed_edits_join_the_next_transaction",
+        "session_alias_workspace_round_trip_restores_local_serial_and_authentication_surfaces",
+        "session_alias_authentication_completion_and_password_retry_preserve_only_same_instance",
+        "session_alias_running_sessions_completion_uses_exact_native_generation_without_workspace",
+        "session_alias_workspace_owns_name_independently_of_native_seed_and_replacement",
+        "session_alias_reconnect_keeps_view_name_without_seeding_a_replacement_generation",
+        "session_alias_fresh_native_attachment_refuses_an_old_generation_seed",
+        "session_alias_native_seed_updates_never_rename_other_current_views",
+        "session_alias_native_seed_broadcast_keeps_window_views_independent_and_latest_edit_wins",
+        "session_alias_multi_window_move_save_restore_and_reset_use_one_configuration",
+        "session_alias_native_metadata_saves_without_workspace_restore_or_terminal_contents",
+        "session_alias_workspace_opt_out_keeps_mux_name_live_only_without_writing_metadata",
+        "session_alias_actual_save_failure_is_visible_and_never_broadcasts_unsaved_metadata",
+        "session_alias_rejected_secret_edit_is_visible_without_mutating_or_saving",
+        "session_alias_restored_authentication_chips_display_saved_view_aliases",
+        "session_alias_failed_reset_remains_retryable_until_metadata_is_really_removed",
+        "session_alias_fixture_cleanup_preserves_original_panics_for_files_and_empty_directories",
+        "was_saved_is_true_for_every_successful_save_variant_and_false_otherwise",
+        "session_alias_context_menu_reset_targets_only_an_explicit_inactive_override",
+        "session_alias_bounds_sanitize_user_edits_and_reject_invalid_metadata",
+        "session_alias_metadata_rejects_legacy_endpoints_duplicates_and_unknown_fields",
+        "durable_aliases_round_trip_without_workspace_and_refuse_recycled_generations",
+        "workspace_replacements_preserve_durable_aliases_and_update_bookkeeping",
+        "durable_alias_registry_is_bounded_without_pruning_absent_sessions",
+        "legacy_configuration_has_no_session_aliases_or_added_defaults",
+        "native_session_identity_reports_actual_registry_facts_across_reconnect",
+        "native_session_identity_copies_existing_registry_facts_without_changing_provider_record",
         "single_row_layout_shrinks_chips_before_falling_back_to_a_scrollbar",
         "focused_chip_priority_is_identical_at_both_vertical_densities",
         "single_row_compacts_only_inactive_chips_with_water_filling",
@@ -618,7 +647,33 @@
       ],
       "manual_scenarios": [
         "AS-03",
-        "AS-09"
+        "AS-09",
+        "AS-10"
+      ],
+      "status": "partial",
+      "prerequisites": []
+    },
+    {
+      "id": "session-alias-view-ownership",
+      "edges": [
+        "CHIP-14"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-chip-context-menu-and-rename",
+        "docs/configuration.md#session-display-aliases"
+      ],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0018"
+      ],
+      "automated_tests": [
+        "session_alias_mux_workspace_names_are_per_view_not_backend_lookup",
+        "workspace_aliases_round_trip_for_all_mux_kinds_without_provider_identity",
+        "session_alias_native_seed_updates_never_rename_other_current_views",
+        "session_alias_workspace_opt_out_keeps_mux_name_live_only_without_writing_metadata"
+      ],
+      "manual_scenarios": [
+        "AS-10"
       ],
       "status": "partial",
       "prerequisites": []
@@ -640,6 +695,10 @@
         "chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window",
         "viewport_replay_preserves_cache_geometry_during_output_resizes",
         "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface",
+        "about_actions_stay_inside_the_full_root_with_licenses_and_update_disclosures",
+        "safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets",
+        "modal_size_reserves_the_entire_frame_and_root_gutter",
+        "overflow_menu_uses_context_menu_density_and_semantic_actions",
         "clean_exit_records_the_requested_reason_and_clears_the_run_marker",
         "next_start_reports_a_missing_clean_shutdown_and_preserves_exit_intent",
         "next_start_reuses_the_last_clean_exit_when_no_run_was_abandoned",
@@ -665,6 +724,11 @@
         "package_managers_can_check_but_cannot_install",
         "successful_update_install_requests_one_normal_application_close",
         "update_install_waits_for_live_session_restart_consent",
+        "downloading_rechecks_and_selects_the_latest_release_without_installing_it",
+        "installing_rechecks_and_verifies_a_newer_release_instead_of_installing_cached_bytes",
+        "freshness_failures_never_download_or_install_a_stale_release",
+        "newer_release_verification_failure_never_installs_the_cached_release",
+        "refresh_worker_disconnect_or_stale_completion_discards_cached_install_authority",
         "window_close_during_update_consent_preserves_live_sessions",
         "an_automatic_check_waits_for_the_interval_to_elapse",
         "a_first_ever_check_waits_out_the_startup_delay",
@@ -674,7 +738,7 @@
         "a_user_requested_check_still_reports_its_failure",
         "an_automatic_check_records_when_it_ran_for_the_next_launch",
         "a_version_the_user_has_already_seen_is_not_announced_again",
-        "an_update_already_waiting_is_not_re_checked",
+        "an_update_already_waiting_is_not_re_checked_automatically",
         "a_completed_automatic_check_records_itself_in_the_configuration",
         "opening_about_acknowledges_the_update_the_badge_announced",
         "an_available_update_names_itself_on_the_overflow_control",
@@ -728,13 +792,22 @@
       "automated_tests": [
         "command_palette_selection_activates_the_chosen_tab_end_to_end",
         "escape_dismisses_without_a_selection",
+        "palette_fits_the_full_root_and_elides_long_rows_without_losing_identity",
         "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
         "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
-        "oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents"
+        "oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents",
+        "redraw_terminal_palette_command_is_local_unbound_and_preserves_tui_keys",
+        "full_redraw_rebuilds_unchanged_rows_and_preserves_terminal_and_view_state",
+        "full_redraw_request_is_view_local",
+        "native_full_redraw_replaces_identical_terminal_pixels_once",
+        "empty_full_redraw_reaches_the_native_hook_without_inventing_pixels",
+        "empty_full_redraw_can_insert_the_native_callback",
+        "retained_frames_update_only_changed_regions_and_preserve_older_pixels"
       ],
       "manual_scenarios": [
         "AS-04",
-        "TI-15"
+        "TI-15",
+        "TI-16"
       ],
       "status": "partial",
       "prerequisites": []
@@ -889,6 +962,8 @@
         "direct2d_invalid_overrides_do_not_enable_the_default",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
+        "unsupported_native_palette_returns_to_native_painting",
+        "unsupported_frames_are_distinct_from_native_failures",
         "replay_terminal_tui_workloads",
         "localized_tui_updates_leave_other_rows_unchanged",
         "changing_chrome_keeps_localized_output_and_changes_the_title_each_tick",
@@ -987,6 +1062,8 @@
       "automated_tests": [
         "paste_policy_normalizes_endings_and_counts_trailing_lines_exactly",
         "paste_preview_is_bounded_and_escapes_non_whitespace_controls",
+        "safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets",
+        "narrow_confirmation_layout_preserves_escape_and_stale_generation_safety",
         "deferred_paste_requests_preserve_multiplicity_for_application_policy",
         "keyboard_delayed_paste_cancels_on_tab_generation_and_owner_changes",
         "keyboard_late_or_duplicate_clipboard_callbacks_cannot_fulfil_new_requests",
@@ -1168,7 +1245,13 @@
         "session_inspector_opens_without_resizing_and_escape_restores_terminal_mode",
         "sftp_action_does_not_expose_an_unavailable_reconnect",
         "disconnected_native_session_offers_resume_in_the_inspector",
-        "inspector_consumes_the_first_uncovered_terminal_click"
+        "inspector_consumes_the_first_uncovered_terminal_click",
+        "textureless_inspector_preserves_pixels_focus_and_click_catcher",
+        "panel_frames_retain_all_painter_and_frame_guards",
+        "panel_frame_without_renderer_preserves_layout_and_child_order",
+        "textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports",
+        "unexpected_panel_geometry_retains_the_original_mesh",
+        "replay_warp_ui_surfaces_shared_panels"
       ],
       "manual_scenarios": [
         "TI-06"
@@ -1372,6 +1455,12 @@
         "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
         "saving_an_untitled_snapshot_from_dirty_close_continues_through_save_as",
         "save_as_matching_an_existing_file_states_the_overwrite_and_still_saves",
+        "file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting",
+        "save_as_breadcrumb_respects_remaining_toolbar_width_and_exact_navigation_identity",
+        "save_as_nested_panels_preserve_the_short_sheet_paint_clip",
+        "save_as_nested_panel_controls_respect_inherited_pointer_clipping",
+        "save_as_clipped_rows_cannot_select_or_navigate_outside_the_viewport",
+        "dirty_document_confirmation_wraps_actions_without_changing_the_save_default",
         "virtualized_save_as_picker_reaches_and_selects_the_final_row",
         "save_as_matching_an_existing_directory_disables_save_and_says_why",
         "save_as_remote_destination_is_present_but_refuses_and_explains",
@@ -1394,7 +1483,14 @@
         "a_caret_move_takes_the_viewport_with_it",
         "the_outline_is_offered_only_while_the_file_renders_as_markdown",
         "the_outline_rail_lists_the_headings_of_the_file_being_edited",
+        "the_editor_outline_borrows_all_headings_and_reaches_the_offscreen_tail",
+        "the_borrowed_editor_outline_follows_a_rebound_document",
+        "code_copy_caption_matches_the_same_context_factory_and_refreshes_dependencies",
+        "code_copy_caption_preserves_the_mixed_preview_on_cold_warm_and_invalidated_passes",
+        "code_copy_caption_preserves_selection_scroll_hover_and_exact_fence_payloads",
         "scrolling_the_text_brings_the_preview_to_the_same_section",
+        "code_byte_navigation_reaches_the_offscreen_shared_preview_tail_and_keeps_copy_selection",
+        "code_byte_navigation_preserves_horizontal_wrap_geometry_and_offset",
         "the_dirty_close_prompt_keeps_the_size_it_opened_at",
         "a_file_that_cannot_be_opened_says_so_instead_of_doing_nothing",
         "quitting_with_a_bang_throws_the_changes_away_without_asking",
@@ -1453,6 +1549,7 @@
       ],
       "automated_tests": [
         "toggle_chip_layout_flips_between_wrap_and_single_row_scroll",
+        "safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets",
         "textureless_bordered_panels_match_pixels_across_dpi",
         "textureless_panel_fill_preserves_opacity_and_srgb_fallback",
         "replay_warp_ui_surfaces",
@@ -1576,6 +1673,10 @@
         "sort_and_filter_keep_folders_first",
         "visible_entry_snapshots_are_shared_and_invalidated_without_mutating_readers",
         "virtualized_pane_keeps_scrolling_selection_and_filtering_on_the_full_listing",
+        "textureless_sftp_panes_preserve_pixels_geometry_and_selection",
+        "panel_frames_retain_all_painter_and_frame_guards",
+        "textureless_frame_fallback_preserves_pixels_for_shadow_and_viewports",
+        "replay_warp_ui_surfaces_shared_panels",
         "breadcrumb_segments_expose_clickable_ancestors",
         "arrow_selection_extends_contiguous_range",
         "pane_order_preference_swaps_visual_sides_only",
@@ -1849,6 +1950,7 @@
       ],
       "automated_tests": [
         "terminal_zoom_is_session_local_bounded_and_resettable",
+        "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
         "zoom_palette_commands_change_only_the_active_session_and_reset"
       ],
       "manual_scenarios": [
@@ -1935,6 +2037,8 @@
       ],
       "automated_tests": [
         "live_close_confirmation_asks_when_the_preference_is_on",
+        "safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets",
+        "narrow_confirmation_layout_preserves_escape_and_stale_generation_safety",
         "escape_cancels_live_close_without_closing_session",
         "disabled_close_confirmation_closes_live_session_immediately"
       ],
@@ -2124,6 +2228,9 @@
         "markdown_viewer_palette_items_follow_the_active_viewer",
         "workspace_capture_omits_runtime_markdown_viewer_tabs",
         "find_navigation_wraps_in_both_directions",
+        "code_byte_navigation_find_reaches_the_viewer_preview_tail",
+        "code_byte_navigation_reaches_the_offscreen_shared_preview_tail_and_keeps_copy_selection",
+        "code_byte_navigation_preserves_horizontal_wrap_geometry_and_offset",
         "opening_find_requests_query_focus",
         "same_source_reload_preserves_current_match_when_possible",
         "mode_switch_anchor_round_trips_within_heading_section",
@@ -2151,6 +2258,8 @@
         "directory_scroll_history_restores_direct_parent_and_discards_reentry",
         "directory_scroll_history_discards_every_skipped_descendant",
         "the_markdown_file_picker_starts_at_home_and_then_resumes_the_last_directory",
+        "file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting",
+        "deep_open_picker_keeps_initial_path_and_filter_visible_without_losing_ancestors",
         "the_markdown_file_picker_targets_the_active_viewer_only_from_a_viewer",
         "local_home_directory_resolves_to_a_real_directory",
         "markdown_file_picker_reports_the_directory_it_is_browsing",
@@ -2168,6 +2277,9 @@
         "a_table_too_wide_for_the_reading_column_still_wraps_on_words",
         "a_table_that_fits_keeps_its_natural_column_widths",
         "table_cells_reuse_fitting_galleys_without_changing_layout",
+        "code_copy_caption_matches_the_same_context_factory_and_refreshes_dependencies",
+        "code_copy_caption_preserves_the_mixed_preview_on_cold_warm_and_invalidated_passes",
+        "code_copy_caption_preserves_selection_scroll_hover_and_exact_fence_payloads",
         "a_table_that_does_not_fit_is_shared_out_across_the_reading_width",
         "a_table_narrower_than_its_floor_falls_back_to_the_floor",
         "the_markdown_pickers_table_spans_the_same_width_as_its_filter_field",
@@ -2231,6 +2343,57 @@
       "prerequisites": [
         "a grammar or query that fails to load has no automated trigger: the fallback is exercised by construction (an unknown language) rather than by a broken grammar",
         "scroll smoothness over a large real source file while a session produces output, and the binary-size delta on Windows and Linux, are manual evidence"
+      ]
+    },
+    {
+      "id": "ios-rendering-spike",
+      "edges": [
+        "MOB-*"
+      ],
+      "requirements": [
+        "docs/adr/0042-ios-rendering-spike-host.md"
+      ],
+      "decisions": [
+        "ADR-0031",
+        "ADR-0042"
+      ],
+      "automated_tests": [
+        "mobile_lifecycle_is_idempotent_and_counts_resume_after_suspend",
+        "mobile_probe_uses_core_encoding_without_echoing_or_retaining_input",
+        "mobile_fixture_renders_at_phone_width_and_preserves_grid_on_memory_warning",
+        "mobile_gpu_limits_accept_simulator_downlevel_capabilities",
+        "mobile_phone_ipad_and_split_view_keep_terminal_above_persistent_keyboard",
+        "mobile_persistent_keyboard_does_not_restart_ime_between_frames",
+        "mobile_sticky_modifiers_are_one_shot_and_preserve_ime_commit_boundaries",
+        "mobile_arrow_hold_drag_repeats_with_dead_zone_and_stops_on_release",
+        "mobile_arrow_tap_and_early_drag_reach_existing_pointer_routing",
+        "mobile_arrow_multitouch_resize_and_background_cancel_without_keys",
+        "mobile_arrow_gesture_keeps_keyboard_and_does_not_leak_mouse_reports",
+        "mobile_pinch_takes_over_arrows_and_quarantines_remaining_finger",
+        "mobile_pinch_cancellation_and_existing_pointer_ownership_are_respected",
+        "mobile_pinch_resizes_only_terminal_and_preserves_zoom_on_memory_warning",
+        "mobile_workspaces_limit_native_keyboard_and_terminal_gestures_to_terminal",
+        "responsive_tiers_follow_measured_space_not_device_identity",
+        "compact_files_layout_keeps_both_panes_on_screen",
+        "compact_files_layout_keeps_collision_and_queue_actions_reachable",
+        "wide_files_layout_keeps_horizontal_panes_on_screen",
+        "transfer_direction_follows_the_selected_source_pane",
+        "collision_requires_an_explicit_decision_and_queue_is_bounded",
+        "transfer_progress_is_monotonic_and_completes",
+        "markdown_fixture_uses_shared_parser_and_has_navigable_contents",
+        "terminal_pinch_zoom_uses_shared_bounds_and_rejects_invalid_samples",
+        "explicit_modifiers_encode_control_meta_and_cursor_chords_atomically"
+      ],
+      "manual_scenarios": [
+        "MOB-01",
+        "MOB-02",
+        "MOB-03",
+        "MOB-04",
+        "MOB-05"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]

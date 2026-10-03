@@ -600,6 +600,7 @@ without permanently taking mouse input away from terminal applications.
 ### Session-chip context menu and rename
 
 A terminal session chip's context menu contains **Rename session**, applicable
+**Use default name** when an explicit alias exists, applicable
 **Move left** and **Move right** entries (omitted at the respective edge), a
 separator, and **Close session**. The menu targets the clicked chip without
 activating it. Close uses the same live-session consequence and confirmation
@@ -620,6 +621,49 @@ value does not replace the existing name. Moving focus elsewhere commits a
 valid value and otherwise restores the previous name. The resulting display text is
 sanitized and bounded by the same rules as other chip identity text. Rename
 never edits the terminal-provided secondary title.
+
+Rename changes only this session's explicit display alias. It never edits a
+reusable profile, provider attachment name, destination, shell input, or
+terminal contents. **Use default name** removes the override; it does not save
+the current default as another fixed alias. Existing sessions retain their
+original default when a profile is edited, while a newly launched unrelated
+session uses its ordinary default. Control, bidi-direction, and Unicode
+line/paragraph-separator characters are removed from user edits; names are
+trimmed and limited to 200 Unicode scalar
+values, and an empty result leaves the prior name unchanged. The existing
+configuration secret-material rejection also applies to saved aliases.
+Nonempty rejected edits show a bounded app notice without echoing the rejected
+text; the prior name and metadata remain unchanged and no save is attempted.
+
+Profile-backed local, SSH, terminal SFTP, and serial workspace tabs save optional
+aliases as logical-view metadata when Restore workspace is enabled, including
+local/SSH tmux and Screen and restored SSH/SFTP tabs awaiting authentication.
+Authentication retries, reconnect, backend recreation, and moving a tab between
+windows retain that view's override. A new attachment does not inherit another
+view's alias by profile or provider name. External OSC titles remain transient
+and are never an alias source. Disabling restoration never silently enables it;
+without a restorable descriptor or verified native seed, edits remain live-only
+with visible feedback.
+
+Native `festerm-sessiond` aliases also live in a bounded, local configuration
+seed registry keyed by the actual daemon PID, creation generation and generation
+endpoint, not a chip position, runtime TabId, profile name, or provider name
+alone. The same native generation reattached through Running Sessions recovers
+the last saved seed without workspace restoration. A replacement generation
+does not. The registry never overwrites a saved tab's or other existing view's
+explicit alias, even if both views attach to the same native session. Reset
+removes only the current logical view's override and its associated seed; other
+view aliases remain unchanged. All windows' pending edits
+and optional workspace metadata use one atomic configuration replacement;
+failure leaves the last saved document unchanged and produces a visible notice
+that the current name is not saved.
+
+**Qualification:** focused regressions and the Windows local CI-equivalent
+suite passed on 2026-10-02. Required remote platform checks and the
+native/accessibility/usability evidence in AS-10 remain pending.
+Alias ownership is deliberately frontend-tab ownership, not an arbitrary
+physical tmux/Screen instance naming service. No provider commands, remote
+helpers, platform prerequisites or attach-only stale-generation checks change.
 
 The name hit target consumes the double-click so it cannot become a custom
 title-bar maximize gesture or terminal input. Since the first click follows the
@@ -689,15 +733,33 @@ and session diagnostics. Licenses shows the repository license and bundled
 dependency/asset notices, including the exact Inter font license once the font
 is shipped.
 
+Current implementation keeps the complete About disclosures in a bounded
+scrolling body and leaves Copy Version Information, Licenses, and Close outside
+that scroll. Actions reuse the existing semantic button roles and have at least
+28 px height; narrow layouts do not shorten authorship, diagnostic sensitivity,
+update eligibility, or transmitted-data disclosures.
+
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases
-`latest/download/festerm-update.json` endpoint only after the user presses the
-button; it sends no profile, session, terminal, device, or configuration data.
+`latest/download/festerm-update.json` endpoint after an explicit check, download,
+or install action, or an enabled automatic check; it sends no profile, session,
+terminal, device, or configuration data.
 Checking, verified download, and installation are separate user actions.
 Package-manager installations may report availability but defer installation
 to their package manager. Release notes never interrupt startup. Update state
 is quiet, factual, dismissible, and cannot block the Launcher or a terminal
 session. Developer and incompletely signed builds expose no network action.
+
+Download and install actions re-check the latest eligible release rather than
+pinning a stale notification. Download selects the refreshed release and never
+installs it. Install refreshes again after restart consent: the same version
+reuses its verified download; a newer version is downloaded and verified before
+installation proceeds under that consent. About names the actual downloading
+and installing version and shows a busy refresh state in between. Failed
+refresh, withdrawal, invalid version, rollback to an older offer, or failed
+verification never falls back to installing cached older bytes. A new explicit
+check is required to retry. This can require network access even when an older
+artifact is already downloaded; it does not enable unsolicited downloads.
 
 #### Automatic update checks
 
@@ -728,7 +790,8 @@ quiet:
   notice for that version; it is never shown twice.
 - **Reversible.** The **Check for fesTerm updates automatically** preference
   in Settings › Interface controls this. It is on by default; turning it off
-  leaves the manual **Check for Updates** button as the only network action.
+  leaves only explicit check/download/install actions contacting the release
+  endpoint.
   About discloses the automatic check while it is on.
 
 ### Approved native Markdown viewing
@@ -995,6 +1058,8 @@ The primary tab label should follow this order:
 5. Generic fallback such as `Local Shell` or `SSH Session`.
 
 The terminal-provided dynamic title must not replace the primary identity.
+The profile default, explicit logical-view alias, and durable attachment identity
+are separate values; naming a chip never changes the attachment target.
 
 ### Dynamic terminal title
 
@@ -2430,6 +2495,11 @@ moves selection, Enter activates, and Escape closes and restores previous
 focus. Query text clears on close and is never logged or persisted. Results
 scroll while the search field and group context remain visible.
 
+Current implementation bounds the palette against the full root viewport,
+including frame margins and short-window title/search space. Long row text
+and shortcuts elide in separate columns rather than painting over each other;
+the complete stable identity and secondary text remain the accessible label.
+
 With an empty query, the palette presents a **Sessions** group in chip order,
 with the active surface visibly identified, followed by an applicable
 **Commands** group. Session matching and ranking prefer stable identity over
@@ -2460,6 +2530,14 @@ palette.
 The palette does not search terminal history. Its trigger uses
 `CommandPalette`; the ordinary `Search` icon is reserved for terminal-content
 search.
+
+**Redraw Terminal** is available for an active terminal, including retained
+disconnected history. It has no keyboard binding and does not reserve common
+TUI keys such as Ctrl+L or Ctrl+R. It rebuilds the visible presentation and
+forces retained native regions to repaint even when their contents are
+unchanged. It sends no terminal input, resize, or recovery control request,
+and preserves content, modes, selection, scroll position and zoom.
+**Reset Terminal** is different: it resets terminal state, not just painting.
 
 ### Terminal-content search
 
@@ -2985,6 +3063,54 @@ palette—not an overflow menu—is the session switcher when many chips are
 offscreen.
 
 The terminal viewport must never become fragmented or uncovered because chrome, diagnostics, or footer geometry was calculated after terminal dimensions.
+
+Current implementation gives Open File and Save As one popup frame and
+calculates their content size after subtracting that frame and a 16 px root
+gutter. At the supported `360 × 240` root, the sheet content scrolls rather than
+forcing a 420 px width or 360 px height. Save As retains its existing file-name,
+overwrite/blocker notice, and action footer inside the scrollable sheet.
+Safety dialogs keep their full disclosures in a bounded body, with wrapped
+28 px actions outside it; existing safe/default focus and cancellation policy
+remain authoritative.
+
+The first matched headless review still blocks acceptance of this implementation:
+short Save As child content can paint outside its bounded sheet, and the deep
+Open File breadcrumb occupies the initial narrow ready/error viewport.
+Passing rectangle/interaction tests do not replace clipped-paint and usable
+initial-presentation evidence.
+
+The follow-up Save As layout pins the filename, overwrite notice and actions
+before allocating the remaining viewport to scrollable navigation and rows.
+Nested panels intersect their clip with the inherited viewport before creating
+widgets, preserving both paint and pointer clipping rather than masking drawing
+after interaction. Picker sizing uses the full client root, not the editor or
+terminal's smaller content area. Open File keeps all breadcrumb ancestors in a
+height-bounded horizontal scroll region; a new path starts at its current
+directory, and full paths remain available on hover with exact navigation
+targets. Open File pins Cancel before allocating its remaining space to the
+path/filter controls and bounded error/list body; short roots use compact
+insets/gaps without changing typography or reducing disclosures. Tests prove
+initial modal-owned fields/actions at all three roots and both densities,
+initial error visibility, restored terminal input focus and refusal of clipped
+Save As row/action pointer clicks. Save uses an explicit stable response ID
+on the filename's modal layer, not a background button label match. Fresh
+matched drawing must still pass before visual acceptance.
+
+The fresh `style-pair-20261002-r2` comparison subsequently rendered the corrected
+`426c458` source and the retained production-f0 runner at identical physical
+inputs/settings. All 23 AFTER images were inspected: observed off-root sheets
+fell from eight to zero, and observed off-root action scenes from seven to zero.
+Save As filename/notice/Save/Cancel and Open File path/filter/Cancel are initially
+visible without scrolling the whole sheet. At 360×240, the Open File body starts
+with the table header/item count; rows, Save As navigation and long About/safety
+disclosures use their bounded body scroll regions. This is a geometry/action
+slice, not a native/usability acceptance or a claim that every body item is
+initially visible. Raw missing/null/duplicate-label observations remain
+unqualified; see the evidence boundaries in `docs/manual-validation.md`.
+
+Byte-identical [focused BEFORE/AFTER review images](images/dialog-style-review/style-pair-20261002-r2/)
+retain their exact [source/physical-input provenance](images/dialog-style-review/style-pair-20261002-r2/provenance.json);
+they are separate from the original gallery and are not platform snapshots.
 
 ## Future Populated Launcher Example
 
