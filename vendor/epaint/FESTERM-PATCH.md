@@ -19,7 +19,8 @@ Local Rust changes are confined to:
 - `text/fonts.rs`: non-consuming revision access through `Fonts`/`FontsView`.
 - `lib.rs`: export the opaque revision type.
 
-See Proposed ADR 0043. Preserve the licenses and keep the diff against this exact
+See ADR 0043 (accepted snapshot ownership/vendoring contract, not native
+performance acceptance). Preserve the licenses and keep the diff against this exact
 archive reviewable. Dependency upgrades require auditing **every** font-image
 mutation and mutable-image exposure, rerunning the vendor and integrated tests,
 and either rebasing this narrowly scoped patch or removing it after equivalent

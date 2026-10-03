@@ -1,6 +1,6 @@
 # ADR 0043: Immutable Native Font Atlas Snapshots
 
-- **Status:** Proposed
+- **Status:** Accepted (snapshot ownership and vendoring contract only)
 - **Date:** 2026-10-02
 - **Supersedes:** None
 
@@ -56,8 +56,12 @@ callback timing. Capture wall-time measurement remains opt-in.
 
 ## Consequences
 
-The owner approved the narrow vendoring approach for implementation/review.
-The Proposed decision still carries dependency-maintenance cost: preserve
+The owner approved the narrow vendoring approach and authorized source
+re-review/merge of PR #304. Independent security, reliability and
+scope/architecture reviews accepted the narrow implementation contract.
+This accepts neither the broader native renderer nor process-CPU, native
+presentation, sustained-resource or latency qualification.
+The decision still carries dependency-maintenance cost: preserve
 provenance/licenses, audit every mutable image path on upgrades, and prefer
 equivalent upstream support when available. No terminal/session writer,
 crate dependency direction, backend selection, font-delta owner, rendering

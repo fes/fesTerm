@@ -80,6 +80,8 @@ explicitly runs the excluded vendored atlas mutation/clone tests as well as the
 integrated snapshot/lifetime tests. This accepts neither sustained process CPU
 improvement nor native-window/resource/latency qualification; #298 and CP-18
 retain those evidence gates.
+ADR 0043's accepted disposition covers the source-reviewed snapshot ownership
+and vendoring contract only, not acceptance of the broader native renderer.
 
 `TERM-01` also has a controlled TUI performance corpus: quiet populated content,
 localized status updates, streaming primary-screen output, full alternate-screen
@@ -119,6 +121,8 @@ require visual review; it does not qualify gestures or background/resume.
 Read-only cold-service preparation (#303) runs before compilation under a
 pinned toolchain. Its `prepared` receipt is not a passed `MOB-01`/`MOB-03`
 application run; inventory, launch/capture and cleanup checks remain unchanged.
+Portable preparation/non-app-evidence regressions are named in ADR 0042;
+vendor-only epaint edits also trigger mobile compilation and Simulator CI.
 The mobile device descriptor requests downlevel GPU limits to accommodate the
 observed Simulator Metal limit; issue #261 remains the native startup gate.
 

@@ -1046,7 +1046,7 @@
       "status": "partial",
       "prerequisites": [
         "IME and complete selection semantics remain platform/capability work",
-        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 vendor texture_atlas::tests and formatting explicitly gated in CI, with sustained resource/CPU/native evidence still pending",
+        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests and formatting explicitly gated in CI and sustained resource/CPU/native evidence still pending",
         "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards"
       ]
     },
@@ -2393,7 +2393,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; separate read-only prepared receipts (#303) are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI, including vendor-only epaint edits; separate read-only prepared receipts (#303), covered by ADR-0042 portable preparation regressions, are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]

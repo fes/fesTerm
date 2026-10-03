@@ -34,14 +34,13 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0036: The Core Reports Colors From an Embedder-Supplied Scheme](0036-embedder-color-scheme-in-core.md) — keeps `OSC 4/10/11/12` answers in `festerm-core` while `festerm-ui-egui` owns the values; see issue #222
 - [ADR 0037: Reverse Wraparound Climbs Only the Line It Is On](0037-reverse-wraparound-bounds.md) — implements `DECSET 45` with xterm's post-383 bounds and retires stale soft-wrap marks on explicit line breaks
 - [ADR 0038: Authoritative Terminal Snapshots for `festerm-sessiond` Reattach Recovery](0038-sessiond-terminal-recovery-snapshots.md) — updates ADR 0025's recovery model to use protocol-v2 terminal snapshots rather than raw replay tails
+- [ADR 0043: Immutable Native Font Atlas Snapshots](0043-immutable-native-font-atlas-snapshots.md) - narrowly vendored non-consuming identity and bounded context snapshot ownership only; native CPU/resource/presentation/latency qualification remains open under #298 and CP-18
 
 ## Superseded Decisions
 
 - [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md) — superseded by ADR 0015
 
 ## Proposed Decisions
-
-- [ADR 0043: Immutable Native Font Atlas Snapshots](0043-immutable-native-font-atlas-snapshots.md) - narrowly vendored non-consuming font identity, bounded context-owned snapshot reuse; issue #298
 
 - [ADR 0042: Isolated iOS Rendering Spike Host](0042-ios-rendering-spike-host.md) — Phase 1 implementation for review; native feasibility pending
 
