@@ -26,11 +26,12 @@ members = [
     "crates/festerm-syntax",
 ]
 resolver = "2"
-exclude = ["vendor/egui-winit", "vendor/egui-wgpu", "fuzz"]
+exclude = ["vendor/egui-winit", "vendor/egui-wgpu", "vendor/epaint", "fuzz"]
 
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }
 egui-wgpu = { path = "vendor/egui-wgpu" }
+epaint = { path = "vendor/epaint" }
 
 [workspace.package]
 version = "0.8.0"

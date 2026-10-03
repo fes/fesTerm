@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use egui::{
@@ -16,12 +17,88 @@ pub struct TerminalPaintFrame {
     pub full_redraw: bool,
     pub primitives: Vec<ClippedPrimitive>,
     pub textures: Vec<(TextureId, Arc<ColorImage>)>,
+    pub font_atlas_capture: FontAtlasCapture,
+}
+
+/// Content-free capture diagnostics, separate from native callback timings.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FontAtlasCapture {
+    pub elapsed: Duration,
+    pub atlas_bytes: usize,
+    pub cloned_bytes: usize,
+    pub reused: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NativePainterOptions {
+    /// Capture wall time only when renderer profiling is enabled.
+    pub capture_font_atlas_timings: bool,
+    /// May reduce the 64 MiB retention limit; zero disables snapshot retention.
+    pub font_atlas_cache_budget_bytes: usize,
+}
+
+impl Default for NativePainterOptions {
+    fn default() -> Self {
+        Self {
+            capture_font_atlas_timings: false,
+            font_atlas_cache_budget_bytes: MAX_CACHED_FONT_BYTES,
+        }
+    }
 }
 
 type Factory = dyn Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync;
 
 #[derive(Clone)]
-struct Hook(Arc<Factory>);
+struct Hook {
+    factory: Arc<Factory>,
+    options: NativePainterOptions,
+}
+
+#[derive(Clone)]
+struct FontAtlasSnapshot {
+    revision: egui::epaint::FontImageRevision,
+    image: Arc<ColorImage>,
+}
+
+const MAX_CACHED_FONT_BYTES: usize = 64 * 1024 * 1024;
+
+fn font_atlas_id() -> Id {
+    Id::new("festerm::native-font-atlas-snapshot")
+}
+
+fn font_atlas_snapshot_with_budget(
+    context: &Context,
+    budget_bytes: usize,
+) -> (Arc<ColorImage>, bool) {
+    let previous = context.data(|data| data.get_temp::<FontAtlasSnapshot>(font_atlas_id()));
+    let (snapshot, reused) = context.fonts_mut(|fonts| {
+        let revision = fonts.image_revision();
+        if let Some(previous) = previous.filter(|previous| {
+            previous.revision == revision
+                && previous.image.pixels.len() * std::mem::size_of::<egui::Color32>()
+                    <= budget_bytes.min(MAX_CACHED_FONT_BYTES)
+        }) {
+            return (previous, true);
+        }
+        (
+            FontAtlasSnapshot {
+                revision,
+                image: Arc::new(fonts.image()),
+            },
+            false,
+        )
+    });
+    if !reused {
+        context.data_mut(|data| {
+            data.remove::<FontAtlasSnapshot>(font_atlas_id());
+            let bytes = snapshot.image.pixels.len() * std::mem::size_of::<egui::Color32>();
+            if bytes <= budget_bytes.min(MAX_CACHED_FONT_BYTES) {
+                data.insert_temp(font_atlas_id(), snapshot.clone());
+            }
+        });
+    }
+    (snapshot.image, reused)
+}
 
 #[derive(Clone, Default)]
 struct Images(Arc<Mutex<HashMap<TextureId, Arc<ColorImage>>>>);
@@ -44,12 +121,33 @@ pub fn install_root_terminal_painter(
     context: &Context,
     factory: impl Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync + 'static,
 ) {
-    context.data_mut(|data| data.insert_temp(hook_id(), Hook(Arc::new(factory))));
+    install_root_terminal_painter_with_options(context, NativePainterOptions::default(), factory);
+}
+
+/// Installs the same painter with optional content-free capture timing.
+pub fn install_root_terminal_painter_with_options(
+    context: &Context,
+    options: NativePainterOptions,
+    factory: impl Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync + 'static,
+) {
+    context.data_mut(|data| {
+        data.remove::<FontAtlasSnapshot>(font_atlas_id());
+        data.insert_temp(
+            hook_id(),
+            Hook {
+                factory: Arc::new(factory),
+                options,
+            },
+        );
+    });
 }
 
 /// Removes the optional painter, restoring ordinary painting immediately.
 pub fn remove_root_terminal_painter(context: &Context) {
-    context.data_mut(|data| data.remove::<Hook>(hook_id()));
+    context.data_mut(|data| {
+        data.remove::<Hook>(hook_id());
+        data.remove::<FontAtlasSnapshot>(font_atlas_id());
+    });
 }
 
 pub(crate) fn installed(context: &Context) -> bool {
@@ -105,6 +203,13 @@ impl Batch {
     pub(crate) fn finish(self, painter: &Painter) {
         self.context
             .data_mut(|data| data.remove::<Images>(images_id()));
+        let current = self.context.data(|data| {
+            data.get_temp::<Hook>(hook_id())
+                .is_some_and(|hook| Arc::ptr_eq(&hook.factory, &self.hook.factory))
+        });
+        if !current {
+            return;
+        }
         let shapes = self.context.graphics(|graphics| {
             graphics
                 .get(painter.layer_id())
@@ -129,18 +234,34 @@ impl Batch {
             .lock()
             .expect("native image collector")
             .clone();
-        textures.insert(
-            TextureId::Managed(0),
-            Arc::new(self.context.fonts(|fonts| fonts.image())),
+        let capture_started = self
+            .hook
+            .options
+            .capture_font_atlas_timings
+            .then(Instant::now);
+        let (font_atlas, reused) = font_atlas_snapshot_with_budget(
+            &self.context,
+            self.hook.options.font_atlas_cache_budget_bytes,
         );
+        let atlas_bytes = font_atlas.pixels.len() * std::mem::size_of::<egui::Color32>();
+        let font_atlas_capture = FontAtlasCapture {
+            elapsed: capture_started
+                .map(|started| started.elapsed())
+                .unwrap_or_default(),
+            atlas_bytes,
+            cloned_bytes: if reused { 0 } else { atlas_bytes },
+            reused,
+        };
+        textures.insert(TextureId::Managed(0), font_atlas);
         let frame = TerminalPaintFrame {
             rect: self.rect,
             pixels_per_point,
             full_redraw: self.full_redraw,
             primitives,
             textures: textures.into_iter().collect(),
+            font_atlas_capture,
         };
-        if let Some(callback) = (self.hook.0)(&self.context, frame) {
+        if let Some(callback) = (self.hook.factory)(&self.context, frame) {
             if count == 0 {
                 painter.add(Shape::Callback(callback));
                 return;
@@ -164,6 +285,182 @@ impl Drop for Batch {
 mod tests {
     use super::*;
     use egui::Color32;
+
+    fn font_atlas_snapshot(context: &Context) -> (Arc<ColorImage>, bool) {
+        font_atlas_snapshot_with_budget(context, MAX_CACHED_FONT_BYTES)
+    }
+
+    #[test]
+    fn retired_capture_cannot_repopulate_a_removed_or_replaced_painter_cache() {
+        for replace in [false, true] {
+            let context = Context::default();
+            install_root_terminal_painter(&context, |_, _| panic!("retired painter called"));
+            let mut output = context.run_ui(Default::default(), |ui| {
+                let painter = ui.painter();
+                let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
+                painter.rect_filled(ui.max_rect(), 0.0, Color32::RED);
+                remove_root_terminal_painter(ui.ctx());
+                if replace {
+                    install_root_terminal_painter(ui.ctx(), |_, _| {
+                        panic!("replacement must start with its own batch")
+                    });
+                }
+                batch.finish(painter);
+                assert!(ui.ctx().data(|data| data
+                    .get_temp::<FontAtlasSnapshot>(font_atlas_id())
+                    .is_none()));
+            });
+            assert!(output.shapes.iter().any(
+                |shape| matches!(&shape.shape, Shape::Rect(rect) if rect.fill == Color32::RED)
+            ));
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn font_snapshot_budget_bounds_retention_without_changing_pixels() {
+        let context = Context::default();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let (image, _) = font_atlas_snapshot_with_budget(ui.ctx(), 0);
+            let bytes = image.pixels.len() * std::mem::size_of::<egui::Color32>();
+            assert!(bytes > 0);
+            assert!(ui.ctx().data(|data| data
+                .get_temp::<FontAtlasSnapshot>(font_atlas_id())
+                .is_none()));
+            let (other, reused) = font_atlas_snapshot_with_budget(ui.ctx(), bytes - 1);
+            assert!(!reused);
+            assert!(!Arc::ptr_eq(&image, &other));
+            assert_eq!(image.as_ref(), other.as_ref());
+            let (_, reused) = font_atlas_snapshot_with_budget(ui.ctx(), bytes);
+            assert!(!reused);
+            let (cached, reused) = font_atlas_snapshot_with_budget(ui.ctx(), bytes);
+            assert!(reused);
+            assert_eq!(cached.as_ref(), image.as_ref());
+            let (_, reused) = font_atlas_snapshot_with_budget(ui.ctx(), bytes - 1);
+            assert!(!reused);
+            assert!(ui.ctx().data(|data| data
+                .get_temp::<FontAtlasSnapshot>(font_atlas_id())
+                .is_none()));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn font_snapshot_reuses_unchanged_pixels_and_refreshes_same_frame_glyphs() {
+        let context = Context::default();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let (original, reused) = font_atlas_snapshot(ui.ctx());
+            assert!(!reused);
+            let frozen = original.as_ref().clone();
+            let (unchanged, reused) = font_atlas_snapshot(ui.ctx());
+            assert!(reused);
+            assert!(Arc::ptr_eq(&original, &unchanged));
+            let _ = ui.painter().layout_no_wrap(
+                "New glyphs at a new size".to_owned(),
+                egui::FontId::monospace(37.0),
+                Color32::WHITE,
+            );
+            let (updated, reused) = font_atlas_snapshot(ui.ctx());
+            assert!(!reused);
+            assert!(!Arc::ptr_eq(&original, &updated));
+            assert_ne!(original.as_ref(), updated.as_ref());
+            assert_eq!(original.as_ref(), &frozen);
+            assert_eq!(updated.as_ref(), &ui.ctx().fonts(|fonts| fonts.image()));
+            let (unchanged, reused) = font_atlas_snapshot(ui.ctx());
+            assert!(reused);
+            assert!(Arc::ptr_eq(&updated, &unchanged));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn font_snapshot_preserves_deltas_and_releases_on_painter_teardown() {
+        let context = Context::default();
+        install_root_terminal_painter(&context, |_, _| None);
+        let mut weak = None;
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let (image, _) = font_atlas_snapshot(ui.ctx());
+            weak = Some(Arc::downgrade(&image));
+        });
+        assert!(!output.textures_delta.set.is_empty());
+        output.textures_delta.clear();
+        let mut weak = weak.unwrap();
+        assert!(weak.upgrade().is_some());
+        remove_root_terminal_painter(&context);
+        assert!(weak.upgrade().is_none());
+        install_root_terminal_painter(&context, |_, _| None);
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let (image, reused) = font_atlas_snapshot(ui.ctx());
+            assert!(!reused);
+            weak = Arc::downgrade(&image);
+        });
+        output.textures_delta.clear();
+        install_root_terminal_painter(&context, |_, _| None);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn font_snapshot_refreshes_for_dpi_zoom_and_font_definition_changes() {
+        let context = Context::default();
+        let mut snapshots = Vec::new();
+        for stage in 0..4 {
+            match stage {
+                1 => context.set_pixels_per_point(2.0),
+                2 => context.set_zoom_factor(1.5),
+                3 => {
+                    let mut fonts = egui::FontDefinitions::default();
+                    for names in fonts.families.values_mut() {
+                        names.reverse();
+                    }
+                    context.set_fonts(fonts);
+                }
+                _ => {}
+            }
+            let mut output = context.run_ui(Default::default(), |ui| {
+                let _ = ui.painter().layout_no_wrap(
+                    "Atlas scale".to_owned(),
+                    egui::FontId::monospace(17.0),
+                    Color32::WHITE,
+                );
+                let (image, reused) = font_atlas_snapshot(ui.ctx());
+                assert!(!reused, "stage {stage}");
+                assert_eq!(image.as_ref(), &ui.ctx().fonts(|fonts| fonts.image()));
+                if let Some(previous) = snapshots.last() {
+                    assert!(!Arc::ptr_eq(previous, &image), "stage {stage}");
+                }
+                snapshots.push(image);
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn font_capture_reports_reuse_without_default_timing() {
+        let context = Context::default();
+        let captures = Arc::new(Mutex::new(Vec::new()));
+        let observed = captures.clone();
+        install_root_terminal_painter(&context, move |_, frame| {
+            observed.lock().unwrap().push(frame.font_atlas_capture);
+            None
+        });
+        let mut output = context.run_ui(Default::default(), |ui| {
+            for _ in 0..2 {
+                let painter = ui.painter();
+                let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
+                painter.rect_filled(ui.max_rect(), 0.0, Color32::WHITE);
+                batch.finish(painter);
+            }
+        });
+        output.textures_delta.clear();
+        let captures = captures.lock().unwrap();
+        assert_eq!(captures.len(), 2);
+        assert!(!captures[0].reused);
+        assert_eq!(captures[0].cloned_bytes, captures[0].atlas_bytes);
+        assert!(captures[1].reused);
+        assert_eq!(captures[1].cloned_bytes, 0);
+        assert_eq!(captures[1].atlas_bytes, captures[0].atlas_bytes);
+        assert!(captures.iter().all(|capture| capture.elapsed.is_zero()));
+    }
 
     #[test]
     fn empty_full_redraw_reaches_the_native_hook_without_inventing_pixels() {

@@ -41,6 +41,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0043: Immutable Native Font Atlas Snapshots](0043-immutable-native-font-atlas-snapshots.md) - narrowly vendored non-consuming font identity, bounded context-owned snapshot reuse; issue #298
+
 - [ADR 0042: Isolated iOS Rendering Spike Host](0042-ios-rendering-spike-host.md) — Phase 1 implementation for review; native feasibility pending
 
 - [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) — Proposed; owner-approved default selection is bounded to supported Windows x64 WARP, while CP-18 and issue #244 qualification remain open

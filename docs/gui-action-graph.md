@@ -70,6 +70,17 @@ output consumption remain unchanged. A rejected native frame keeps ordinary
 painting in the same frame. CP-18 tracks the remaining
 native qualification; ADR-0039 remains Proposed and issue #244 remains open.
 
+For `TERM-01`, ADR 0043 introduces a non-consuming font-image identity and one
+immutable per-context snapshot retained only within a 64 MiB ceiling. Capture
+after tessellation includes same-frame glyphs; font deltas remain renderer-owned.
+Painter teardown/replacement clears the cache and retired batches cannot refill
+it. Native texture identity/equal replacement preserves pixels and upload
+behavior without changing input, cadence, fallback or backend defaults. CI
+explicitly runs the excluded vendored atlas mutation/clone tests as well as the
+integrated snapshot/lifetime tests. This accepts neither sustained process CPU
+improvement nor native-window/resource/latency qualification; #298 and CP-18
+retain those evidence gates.
+
 `TERM-01` also has a controlled TUI performance corpus: quiet populated content,
 localized status updates, streaming primary-screen output, full alternate-screen
 redraws, and recorded Copilot/Vim/htop/tmux screens. The optional completed-render
