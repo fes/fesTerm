@@ -3788,6 +3788,13 @@ impl FesTermApp {
                             }
                         }
                         if installation_kind.can_install() {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Download and install actions re-check the latest release.",
+                                )
+                                .small()
+                                .color(theme::TEXT_MUTED),
+                            );
                             if action_button(ui, ActionButtonRole::Accent, "Download Update").clicked() {
                                 update_action = Some(UpdateAction::Download);
                             }
@@ -3800,6 +3807,12 @@ impl FesTermApp {
                                 "https://github.com/fes/fesTerm/releases",
                             );
                         }
+                    }
+                    UpdateStatus::Refreshing(_, _) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Checking for the latest release before continuing…");
+                        });
                     }
                     UpdateStatus::Downloading(summary) => {
                         ui.horizontal(|ui| {
@@ -3815,6 +3828,13 @@ impl FesTermApp {
                             "fesTerm {} is downloaded and verified.",
                             summary.version
                         ));
+                        ui.label(
+                            egui::RichText::new(
+                                "Installing checks for a newer release and verifies it before use.",
+                            )
+                            .small()
+                            .color(theme::TEXT_MUTED),
+                        );
                         if action_button(ui, ActionButtonRole::Accent, "Install and Restart").clicked() {
                             update_action = Some(UpdateAction::Install);
                         }
@@ -3846,9 +3866,9 @@ impl FesTermApp {
                     // asked each time, so the disclosure has to say so here
                     // rather than only in Settings.
                     let disclosure = if automatic_update_checks {
-                        "Checks fesTerm’s public GitHub Releases when you ask and about once a day; turn automatic checks off in Settings. No profile, session, terminal, device, or configuration data is sent."
+                        "Checks fesTerm’s public GitHub Releases when you check, download, or install an update and about once a day; turn automatic checks off in Settings. No profile, session, terminal, device, or configuration data is sent."
                     } else {
-                        "Checks fesTerm’s public GitHub Releases only when requested. No profile, session, terminal, device, or configuration data is sent."
+                        "Checks fesTerm’s public GitHub Releases when you check, download, or install an update. No profile, session, terminal, device, or configuration data is sent."
                     };
                     ui.label(
                         egui::RichText::new(disclosure)
@@ -11841,7 +11861,7 @@ mod tests {
         harness.step();
         harness.get_by_label("Check for Updates");
         harness.get_by_label_contains(
-            "Checks fesTerm’s public GitHub Releases when you ask and about once a day",
+            "Checks fesTerm’s public GitHub Releases when you check, download, or install an update and about once a day",
         );
     }
 
@@ -11949,6 +11969,7 @@ mod tests {
         harness.get_by_label("Install and Restart").click();
         harness.step();
         harness.step();
+        harness.step();
 
         assert!(harness.state().update_restart_authorized);
         assert!(harness.state().update_exit_requested);
@@ -11972,6 +11993,11 @@ mod tests {
             egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
         });
         failed_frame.textures_delta.clear();
+        assert!(!app.update_exit_requested);
+        let mut install_result_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        install_result_frame.textures_delta.clear();
 
         assert!(matches!(app.updates.status(), UpdateStatus::Failed { .. }));
         assert!(!app.update_restart_authorized);
