@@ -430,3 +430,14 @@ a historical shipping-binary A/B, native application-window measurement,
 presentation/input latency, sustained memory acceptance or #297 attribution.
 The supported adapter/default policy and experimental host-copy default are
 unchanged. CP-18 and broader #244/#282 gates remain open.
+
+The [2026-10-03 control receipt](font-atlas-cache-control-2026-10-03.json)
+binds the clean measured source and optimized binary. All eight copy/upload,
+pixel and cadence checks passed: each 200-frame disabled control copied
+200 MiB with the 1-MiB atlas or 1,600 MiB with the 8-MiB atlas; cached controls
+copied zero bytes after warm-up. **Process-CPU improvement is not qualified**:
+44 of 82 monitored intervals exceeded the unchanged 5% external CPU guard.
+Raw timing/capture/monitor attempts are retained in development evidence;
+no rejected attempt is pooled into a CPU claim. Earlier idle, missed-deadline
+and fixture-lifecycle failures are preserved separately. Repeat the frozen
+control on an exclusively quiet host before making a CPU improvement claim.

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "issue": 298,
+  "measured_source": "b46ce4b3a9c1b4b036f0c79fca9e682265251929",
+  "release_probe_sha256": "973a6660a45cd25becefb42a58338f81b194a4254c2726a7522844a44d6cc128",
+  "scope": "Offscreen cache-disabled mechanism control in the candidate pipeline, not shipping-binary or native-window acceptance",
+  "viewport_pixels": [256, 128],
+  "terminal_grid": [30, 6],
+  "cases": 8,
+  "frames_per_case": 200,
+  "requested_hz": 20,
+  "repetitions": 2,
+  "order": ["disabled,cached", "cached,disabled"],
+  "mechanism_checks": {
+    "all_cases_passed": true,
+    "all_native_capture_counts_exact": true,
+    "all_late_frame_counts_zero": true,
+    "all_steady_state_texture_upload_counts_zero": true,
+    "all_final_pixels_within_existing_two_level_tolerance": true
+  },
+  "atlas_copy_checks": [
+    {
+      "atlas_bytes": 1048576,
+      "disabled_cloned_bytes_per_200_frames": 209715200,
+      "cached_cloned_bytes_per_200_frames": 0
+    },
+    {
+      "atlas_bytes": 8388608,
+      "disabled_cloned_bytes_per_200_frames": 1677721600,
+      "cached_cloned_bytes_per_200_frames": 0
+    }
+  ],
+  "cpu_qualification": {
+    "accepted": false,
+    "reason": "External process CPU exceeded the unchanged 5 percent quiet-host guard",
+    "failed_monitor_intervals": 44,
+    "monitor_intervals": 82,
+    "cpu_improvement_claimed": false,
+    "prerequisite": "Repeat the frozen control on an exclusively quiet Windows x64 WARP host"
+  },
+  "preserved_rejected_attempts": [
+    "Attempt 1: pre-run idle guard rejected 7.450577457998702 percent system CPU; no native sample",
+    "Attempt 2: large-target control missed all 200 requested deadlines; not accepted",
+    "Attempt 3: one small control completed; reinitializing the used kittest renderer rejected the remaining controls",
+    "Attempt 4: all eight mechanism controls passed; external CPU guard rejected process-CPU qualification"
+  ],
+  "remaining_gates": [
+    "Quiet-host process-CPU qualification",
+    "Native-window and sustained resource qualification under CP-18",
+    "Independent degraded-process attribution for issue 297",
+    "Hardware and other-platform native presentation",
+    "Architectural review of Proposed ADR 0043"
+  ]
+}

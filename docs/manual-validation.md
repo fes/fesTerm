@@ -684,6 +684,10 @@ capture bytes/time, uploads and process CPU. It is offscreen mechanism evidence,
 not a native-window comparison, sustained resource acceptance, physical latency
 or attribution of #297. CP-18 and those remaining native/manual checks stay open;
 see Proposed ADR 0043 and `validation/direct2d/README.md`.
+The 2026-10-03 source-bound eight-case offscreen control passed copy/upload,
+pixel and unchanged-cadence checks, but failed the external quiet-host guard.
+Only its deterministic mechanism evidence is recorded; process-CPU improvement
+remains unqualified pending an exclusively quiet host.
 
 **Window-identity correction (#242):** The Windows CPU and OS-input probes
 share `scripts/windows-application-window.ps1`. A native Win32 regression
