@@ -922,7 +922,8 @@
         "ADR-0012",
         "ADR-0037",
         "ADR-0039",
-        "ADR-0040"
+        "ADR-0040",
+        "ADR-0043"
       ],
       "automated_tests": [
         "native_background_hook_preserves_rectangles_and_translucent_fallback",
@@ -940,6 +941,14 @@
         "child_acknowledgment_requires_completed_controlled_input",
         "native_bounds_crop_sparse_paints_and_validate_indices",
         "shared_surfaces_preserve_pixels_and_previous_frame_ownership",
+        "texture_identity_and_equal_replacement_preserve_uploads_and_pixels",
+        "font_snapshot_reuses_unchanged_pixels_and_refreshes_same_frame_glyphs",
+        "font_snapshot_preserves_deltas_and_releases_on_painter_teardown",
+        "font_snapshot_refreshes_for_dpi_zoom_and_font_definition_changes",
+        "font_snapshot_budget_bounds_retention_without_changing_pixels",
+        "font_capture_reports_reuse_without_default_timing",
+        "retired_capture_cannot_repopulate_a_removed_or_replaced_painter_cache",
+        "profile_native_font_atlas_capture",
         "retained_frames_update_only_changed_regions_and_preserve_older_pixels",
         "narrow_damage_includes_removed_triangles_and_falls_back_for_clip_changes",
         "narrow_retained_updates_match_full_pixels_with_overlap_erasure_and_dpi",
@@ -1037,7 +1046,7 @@
       "status": "partial",
       "prerequisites": [
         "IME and complete selection semantics remain platform/capability work",
-        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review",
+        "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
         "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards"
       ]
     },
@@ -2386,7 +2395,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI; separate read-only prepared receipts (#303) are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
+        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI, including vendor-only epaint edits; separate read-only prepared receipts (#303), covered by ADR-0042 portable preparation regressions, are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
       ]
     }
   ]

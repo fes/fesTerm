@@ -3,6 +3,38 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reusing native font snapshots without borrowing renderer-owned deltas
+
+Issue #298 exposed an avoidable long-lived cost: native terminal capture cloned
+the complete font atlas even when only one cell changed and the atlas did not.
+The dependency had no trustworthy non-consuming revision at that boundary.
+With owner approval, a narrow pinned epaint patch now invalidates an opaque
+identity before mutable image exposure. It is lazy, so ordinary rendering does
+not allocate a new identity for every glyph, and independent atlas clones cannot
+accidentally acquire equal revisions after diverging.
+
+The native-painter context keeps one immutable, at-most-64-MiB snapshot and
+releases it on painter replacement/removal. Same-frame glyph additions refresh
+it after tessellation; regular egui font deltas remain owned by egui-wgpu.
+Both upload and retained-frame comparisons use Arc identity first, adopting
+byte-equal replacement snapshots without another upload. Deterministic tests
+cover scale/font changes, immutable older pixels, budget boundaries and teardown.
+An opt-in paced WARP control measures capture, uploads and process CPU separately
+from callback timing. These mechanisms do not attribute #297's CPU plateau or
+close native-window/resource/latency qualification. Independent source reviews
+accept ADR 0043's narrow snapshot ownership/vendoring contract only. The
+excluded atlas tests and formatting are explicit CI gates, and vendor edits
+trigger mobile CI. The authorized PR reconstruction removes accidental build
+artifacts from its history without changing the recorded historical CPU
+rejections or relabeling old measurements as current-head evidence.
+The owner's final consolidation into #306 also preserves #305's cross-platform
+vendor gates and deterministic hygiene guard against tracked Cargo output.
+
+The companion Simulator infrastructure fix pins the toolchain and initializes
+cold service caches before compilation in a bounded read-only preparation step.
+Its `prepared` receipt is never application `pass` evidence; failure receipts
+and all native application/owned-device/cleanup checks remain intact (#303).
+
 ## Keeping unread output static without an animation preference
 
 Long-running sessions exposed a perpetual background-output attention loop
