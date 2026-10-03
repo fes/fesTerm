@@ -741,13 +741,25 @@ update eligibility, or transmitted-data disclosures.
 
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases
-`latest/download/festerm-update.json` endpoint only after the user presses the
-button; it sends no profile, session, terminal, device, or configuration data.
+`latest/download/festerm-update.json` endpoint after an explicit check, download,
+or install action, or an enabled automatic check; it sends no profile, session,
+terminal, device, or configuration data.
 Checking, verified download, and installation are separate user actions.
 Package-manager installations may report availability but defer installation
 to their package manager. Release notes never interrupt startup. Update state
 is quiet, factual, dismissible, and cannot block the Launcher or a terminal
 session. Developer and incompletely signed builds expose no network action.
+
+Download and install actions re-check the latest eligible release rather than
+pinning a stale notification. Download selects the refreshed release and never
+installs it. Install refreshes again after restart consent: the same version
+reuses its verified download; a newer version is downloaded and verified before
+installation proceeds under that consent. About names the actual downloading
+and installing version and shows a busy refresh state in between. Failed
+refresh, withdrawal, invalid version, rollback to an older offer, or failed
+verification never falls back to installing cached older bytes. A new explicit
+check is required to retry. This can require network access even when an older
+artifact is already downloaded; it does not enable unsolicited downloads.
 
 #### Automatic update checks
 
@@ -778,7 +790,8 @@ quiet:
   notice for that version; it is never shown twice.
 - **Reversible.** The **Check for fesTerm updates automatically** preference
   in Settings › Interface controls this. It is on by default; turning it off
-  leaves the manual **Check for Updates** button as the only network action.
+  leaves only explicit check/download/install actions contacting the release
+  endpoint.
   About discloses the automatic check while it is on.
 
 ### Approved native Markdown viewing
