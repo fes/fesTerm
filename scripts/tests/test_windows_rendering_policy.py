@@ -2,11 +2,38 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+
+class Direct2DFallbackDiagnosticTests(unittest.TestCase):
+    def test_native_required_probes_reject_unsupported_frame_transitions(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "app" / "festerm" / "src" / "direct2d.rs").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r'"(unsupported Direct2D frame;[^"]+)"', source
+        )
+        self.assertIsNotNone(match)
+        message = match.group(1)
+        for relative in (
+            ("scripts", "check-windows-idle-rendering.ps1"),
+            ("validation", "terminal-performance", "compare-windows.ps1"),
+        ):
+            with self.subTest(script=relative):
+                script = root.joinpath(*relative).read_text(encoding="utf-8")
+                patterns = [
+                    pattern
+                    for pattern in re.findall(r"-Pattern '([^']+)'", script)
+                    if "Direct2D state poisoned" in pattern
+                ]
+                self.assertEqual(len(patterns), 1)
+                self.assertRegex(message, patterns[0])
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows rendering probe")
