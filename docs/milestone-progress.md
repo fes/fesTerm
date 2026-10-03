@@ -330,6 +330,15 @@ matching input/phase proofs and tracked cleanup are required; workers and real
 document generation remain intact. This is not canonical display metadata
 or anonymization, and its validation/matched visual claims remain pending.
 
+An integrated Windows CI run exposed that the owned-style protocol unit test
+still borrowed the compiled checkout's shared control namespace. A missing
+ownership record there produced only a file-not-found message, while local
+prior ownership masked the prerequisite. The test now uses the shared private
+Git/Cargo workspace helper's flat layout, proves both cold creation and
+unowned-control refusal, and retains every identity, junction and cleanup
+assertion. Missing style-file errors identify the owned path. Production
+ownership policy, benchmark inputs and historical evidence remain unchanged.
+
 ## Separating an outline allocation fix from the residual Preview cost
 
 The mixed Markdown Preview investigation found a genuine unnecessary copy:
