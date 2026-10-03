@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import platform
 import plistlib
@@ -58,6 +59,7 @@ class Runner:
         with self.log.open("a", encoding="utf-8") as stream:
             stream.write("$ " + shlex.join(args) + "\n")
             stream.flush()
+            started = time.monotonic()
             try:
                 result = subprocess.run(args, cwd=ROOT, text=True, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, timeout=timeout)
@@ -65,9 +67,9 @@ class Runner:
                 output = error.stdout or ""
                 if isinstance(output, bytes):
                     output = output.decode("utf-8", errors="replace")
-                stream.write(output + f"\ntimeout={timeout}s\n")
+                stream.write(output + f"\ntimeout={timeout}s elapsed={time.monotonic() - started:.3f}s\n")
                 raise
-            stream.write(result.stdout + f"\nexit={result.returncode}\n")
+            stream.write(result.stdout + f"\nexit={result.returncode} elapsed={time.monotonic() - started:.3f}s\n")
         if check and result.returncode:
             raise RuntimeError(f"Command failed ({result.returncode}): {shlex.join(args)}")
         return result.stdout
@@ -155,13 +157,16 @@ def exercise_device(run, spec: dict, bundle: Path, output: Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", action="store_true", help="opt in to creating temporary Simulators")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--run", action="store_true", help="opt in to creating temporary Simulators")
+    mode.add_argument("--prepare-only", action="store_true",
+                      help="initialize and validate installed runtimes without creating or launching devices")
     parser.add_argument("--build", action="store_true", help="build the Simulator bundle first")
     parser.add_argument("--bundle", type=Path, default=ROOT / "target/ios-spike/fesTermSpike.app")
     parser.add_argument("--output", type=Path, default=ROOT / "target/ios-smoke")
     args = parser.parse_args()
-    if not args.run:
-        parser.error("Pass --run to create and remove test-owned Simulators")
+    if args.prepare_only and args.build:
+        parser.error("--prepare-only cannot build or exercise an application")
     if platform.system() != "Darwin":
         parser.error("Simulator execution requires macOS and full Xcode")
     output = args.output.resolve() / uuid.uuid4().hex
@@ -170,6 +175,10 @@ def main() -> int:
               "scope": "install, launch survival, first UI callback, PNG capture, terminate/relaunch; visual review required",
               "unverified": ["rendering correctness", "native keyboard/IME", "touch gestures",
                              "background/resume", "physical-device behavior"]}
+    if args.prepare_only:
+        report["scope"] = "read-only CoreSimulator cache initialization; no application exercised"
+    report["runner_image"] = {key: os.environ[key] for key in ("ImageOS", "ImageVersion")
+                              if key in os.environ}
     run = Runner(output / "commands.log")
     manifest = output / "manifest.json"
     manifest.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -178,6 +187,13 @@ def main() -> int:
         report["xcode"] = run("xcodebuild", "-version").strip()
         report["host_arch"] = platform.machine()
         report["simulator_sdk"] = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-version").strip()
+        if args.prepare_only:
+            # Cold service/runtime cache initialization is separate from the
+            # unchanged 45s inventory and application-operation deadlines.
+            inventory = json.loads(run("xcrun", "simctl", "list", "--json", timeout=180))
+            report["available_devices"] = choose_devices(inventory, report["simulator_sdk"])
+            report["status"] = "prepared"
+            return 0
         if args.build:
             run(sys.executable, str(ROOT / "scripts/build-ios-spike.py"), timeout=1200)
         bundle = args.bundle.resolve()

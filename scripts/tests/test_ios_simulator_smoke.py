@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import struct
 import tempfile
+import json
 import unittest
 from unittest.mock import patch
 import subprocess
@@ -70,6 +71,49 @@ class IosSimulatorSmokeTests(unittest.TestCase):
                     smoke.Runner(log)("xcrun", timeout=1)
             self.assertIn("partial diagnostic", log.read_text())
             self.assertIn("timeout=1s", log.read_text())
+            self.assertIn("elapsed=", log.read_text())
+
+    def test_ios_smoke_read_only_preparation_is_not_application_evidence(self):
+        runtime = DEVICE["runtime"]
+        inventory = {"runtimes": [{"identifier": runtime, "version": "18.5", "isAvailable": True}],
+                     "devices": {runtime: [{"name": family, "deviceTypeIdentifier": family,
+                                            "udid": EXISTING, "isAvailable": True}
+                                           for family in ("iPhone", "iPad")]}}
+        for failure in (None, subprocess.TimeoutExpired(["xcrun"], 180)):
+            calls = []
+
+            def run(*args, **kwargs):
+                calls.append((args, kwargs))
+                if args == ("xcrun", "simctl", "list", "--json"):
+                    self.assertEqual(kwargs["timeout"], 180)
+                    if failure:
+                        raise failure
+                    return json.dumps(inventory)
+                if "--show-sdk-version" in args:
+                    return "18.5\n"
+                return "fixture\n"
+
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.object(smoke.sys, "argv", ["smoke", "--prepare-only", "--output", directory]), \
+                    patch.object(smoke.platform, "system", return_value="Darwin"), \
+                    patch.object(smoke, "Runner", return_value=run):
+                self.assertEqual(smoke.main(), 1 if failure else 0)
+                report = json.loads(next(Path(directory).glob("*/manifest.json")).read_text())
+                self.assertEqual(report["status"], "fail" if failure else "prepared")
+                self.assertEqual(report["devices"], [])
+                self.assertNotEqual(report["status"], "pass")
+                if failure:
+                    self.assertIn("timed out", report["error"])
+                else:
+                    self.assertEqual([d["family"] for d in report["available_devices"]], ["iPhone", "iPad"])
+            self.assertEqual(len(calls), 4)
+
+    def test_ios_smoke_preparation_cannot_build_or_run_an_application(self):
+        for args in (["--prepare-only", "--build"], ["--prepare-only", "--run"]):
+            with patch.object(smoke.sys, "argv", ["smoke", *args]):
+                with self.assertRaises(SystemExit) as error:
+                    smoke.main()
+                self.assertEqual(error.exception.code, 2)
 
     def test_ios_smoke_launch_and_relaunch_only_mutate_the_created_simulator(self):
         run = FakeRunner()

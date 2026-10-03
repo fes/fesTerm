@@ -103,7 +103,14 @@ capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
 cover ownership, failure reporting and cleanup; actual execution is an iOS CI
 gate. The manifest and PNGs are review evidence, not automatic rendering,
 keyboard or lifecycle acceptance. Physical-device and most interaction
-evidence above remains pending. A local iPhone 17/iOS 26.5/Xcode 27 run
+evidence above remains pending. CI pins Xcode 16.4 and runs read-only
+`--prepare-only` before compilation to initialize cold CoreSimulator caches
+(runner-images #12862; local tracker #303). Preparation has a separate 180-second
+bound, produces `prepared` rather than app `pass` evidence, and never retries or
+mutates existing devices. The subsequent inventory, application and capture
+deadlines and all ownership/UI/cleanup checks remain unchanged. Failed
+preparation and command durations are retained in the same evidence artifact.
+A local iPhone 17/iOS 26.5/Xcode 27 run
 visually covered Terminal, Compact stacked Files, Markdown wrapping and
 Contents/heading activation; it does not qualify iPad, rotation, Dynamic Type,
 VoiceOver or a physical device. The `c7ecb14` run diagnosed a renderer initialization
