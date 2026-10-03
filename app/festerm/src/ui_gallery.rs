@@ -3866,7 +3866,12 @@ fn owned_style_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     use std::io::Read;
     owned_style_no_aliases(path)?;
     if !fs::symlink_metadata(path)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            format!(
+                "cannot inspect owned style fixture {}: {error}",
+                path.display()
+            )
+        })?
         .is_file()
     {
         return Err(format!(
@@ -3876,7 +3881,12 @@ fn owned_style_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     }
     let mut bytes = Vec::new();
     fs::File::open(path)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            format!(
+                "cannot open owned style fixture {}: {error}",
+                path.display()
+            )
+        })?
         .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
@@ -4508,10 +4518,8 @@ fn surface_owned_physical_scope_preserves_paths_and_refuses_reuse_or_untracked_c
         )
         .unwrap();
     }
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap();
+    let owned_workspace = crate::owned_fixture_paths::TestWorkspace::new_flat("style-protocol");
+    let workspace = owned_workspace.path().canonicalize().unwrap();
     let workspace = PathBuf::from(
         workspace
             .to_string_lossy()
@@ -4537,6 +4545,24 @@ fn surface_owned_physical_scope_preserves_paths_and_refuses_reuse_or_untracked_c
     fs::create_dir(&after).unwrap();
     let id = "style-about-ready-licenses-baseline";
     let planned = std::collections::BTreeSet::from([id.to_owned()]);
+    let control = root.parent().unwrap();
+    assert!(
+        !control.exists(),
+        "the protocol must start with a cold private namespace"
+    );
+    fs::create_dir(control).unwrap();
+    let unowned_error = OwnedStyleScope::begin(
+        root.clone(),
+        run.clone(),
+        "baseline",
+        before.clone(),
+        planned.clone(),
+    )
+    .err()
+    .expect("an unowned restored control directory must never be adopted");
+    assert!(unowned_error.contains(&control.join(".owner.json").display().to_string()));
+    assert!(!control.join(".owner.json").exists());
+    fs::remove_dir(control).unwrap();
     assert!(OwnedStyleScope::begin(
         root.clone(),
         run.clone(),
