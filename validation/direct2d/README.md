@@ -374,7 +374,7 @@ dense/native-only check on unsupported hardware or ARM64. Set
 `FESTERM_RUN_DIRECT2D_PROBE=1` as well to include the isolated replay.
 
 Windows CI also runs the deterministic Python test
-`test_default_and_explicit_selection_reach_executable_validation`, which
+`test_retired_renderer_settings_do_not_change_probe_preconditions`, which
 exercises the probe's executable validation path without opening a GUI. That
 guard accepts unset and all retired override values without changing the
 request; production selection ignores them too.
