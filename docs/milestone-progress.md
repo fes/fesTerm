@@ -34,6 +34,18 @@ held the requested 10 Hz with exact pixels. All 1,200 frames and noisy cases
 remain in the [source-pinned performance record](../validation/terminal-performance/README.md#reversed-controls-after-the-shipping-allocationbinding-merge);
 this is an exploratory efficiency result, not a precise native percentage.
 
+The next guarded release comparison used real application windows rather than
+the offscreen construction. One pre-palette/current/current/pre-palette series
+kept the palette, producer, geometry and font matched under recorded shared-host
+load. The two shipping-palette windows averaged about 44% less app CPU while
+constructing about 2.49 times as many GUI frames. All output, overlay fallback
+and ordinary shutdown guards passed. Both independently built producer hashes
+remain explicit despite byte-identical producer/fixture/dependency source.
+The [complete native record](../validation/terminal-performance/README.md#2026-10-04-guarded-native-palette-comparison)
+retains all four runs, including worse repeat samples. This supports practical
+native efficiency, not physical presentation FPS, a precise percentage,
+long-lived resource acceptance or a reproduction of #297.
+
 ## Reading live keyboard preferences without rebuilding saved settings
 
 The background-session investigation for #297 found repeated GUI-process work

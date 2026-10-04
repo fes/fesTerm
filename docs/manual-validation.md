@@ -815,6 +815,15 @@ same-source comparison; unset uses the production path. Automatic copy and
 retention must still decline the overlay. Offscreen savings do not replace
 native visual/input, sustained-resource, graphics-recovery, mixed-monitor or
 physical presentation-latency evidence.
+The separately guarded 2026-10-04 release BAAB comparison adds actual native
+palette-open efficiency observations: approximately 44% less app CPU and 2.49x
+constructed GUI frame rate on this Windows CPU adapter, with all four strict
+desktop/input/foreground/geometry/output/fallback and ordinary-cleanup guards
+passed. Source/binary identities, ordered output, host load and external final
+captures are preserved in the
+[complete record](../validation/terminal-performance/README.md#2026-10-04-guarded-native-palette-comparison).
+This is one shared-host series, not physical presentation FPS, interaction
+latency, sustained-resource acceptance or complete CP-18 qualification.
 The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
 CPU; its campaign stopped at a later foreground-activation failure. Streaming,
 full-redraw, force-full-repaint control and repeated parity evidence remain
