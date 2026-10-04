@@ -108,6 +108,14 @@ Session availability uses egui's single-pass wake API rather than its zero-delay
 two-pass widget-settling policy. Every event still requests a wake, including
 events arriving during a frame; no output/frame-rate budget is introduced.
 
+For `KEY-01/02`, `CHIP-01` and `SET-05`, frame-time binding reads borrow live
+application preferences instead of reconstructing persistable interface settings
+for every chip or input/menu check. Local edits and `WINDOW-02` committed
+broadcasts take effect immediately; settings persistence, input ordering,
+session pumping and unread-state semantics are unchanged. Counted one/six-session
+synthetic tests prove the avoided snapshots, not native CPU improvement or
+attribution of #297.
+
 ## How to use the graph
 
 ### Isolated iOS feasibility host

@@ -3,6 +3,32 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reading live keyboard preferences without rebuilding saved settings
+
+The background-session investigation for #297 found repeated GUI-process work
+without evidence that event wakes themselves were wrong: each chip's
+quick-switch check constructed a complete persistable `InterfaceSettings`.
+Input routing and native-menu cache checks did the same. With six session chips,
+those steady-frame paths built at least eight settings copies, cloning every
+configured keyboard override and converting an unrelated SFTP directory to an
+owned string, even when no preference had changed.
+
+Read-only consumers now borrow the existing live bindings. Routing retains its
+required owned packet/context copies; persistence still constructs a settings
+value only when requested. No new cache, invalidation seam, runtime lock,
+dependency, wake suppression or output-cadence change is involved. Local edits
+and committed sibling broadcasts are visible immediately through the same
+application-owned preferences.
+
+Counted synthetic fixtures with one and six sessions, populated bindings and an
+SFTP directory prove zero settings snapshots over twenty output-driven frame
+passes. They also verify unchanged aliases, background unread state, ordered
+query replies, bounded-drain continuation, foreground writes and final lifecycle
+events. This removes demonstrated repeated work, not a demonstrated cause of
+#297's multi-day plateau or a measured native CPU improvement. Matched one/six
+session WARP CPU, frame-rate and input measurements remain coordinator-owned;
+CP-16/17/18 and the degraded-process attribution remain open.
+
 ## Reusing native font snapshots without borrowing renderer-owned deltas
 
 Issue #298 exposed an avoidable long-lived cost: native terminal capture cloned
