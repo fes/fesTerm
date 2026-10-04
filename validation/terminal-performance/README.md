@@ -92,6 +92,60 @@ reconnect. A short churn run neither demonstrates nor disproves #297's
 multi-day plateau. Native presentation, complete GPU-resource retirement,
 real device-loss recovery and degraded-user-process attribution remain open.
 
+### 2026-10-04 source-bound observations
+
+The [machine-readable record](six-session-aging-2026-10-04.json) preserves
+both complete optimized runs and their adverse observations. Both execute
+`c257d312e397384e4ab30b3fe70d7351dec60919`, based on shipping v0.9.0
+`667bd9a91d76e4b847cd6da869ac6af4a0a1246f`; archived executable SHA256 is
+`2F843A6E874B617FB525798C718C7829397951438359887BBE64826B7693428C`.
+The 120/400-cycle runs completed 720/2,400 churn frames and 1,800 paced
+measurement frames across 24 phases, with all six normalized PNGs byte-identical
+(`524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b`).
+Later documentation commits are not relabeled as measurement execution.
+
+**No multi-day plateau was reproduced.** All six ten-second idle windows
+requested zero frames/callbacks and recorded zero process CPU ticks. Frozen
+and five-background-output frames had zero native terminal damage. Foreground
+updates retained median native damage of 21,105 / 2,982,063 pixels (about 0.7%).
+Each 100-step foreground or five-background-output phase produced 100 immediate
+repaint callbacks, not a growing stream of settling callbacks. Non-idle
+completed cadence remained approximately the requested 10 Hz.
+
+| Churn cycles | Workload | Fresh CPU ms/frame | Churned CPU ms/frame | Rebuilt CPU ms/frame |
+| --- | --- | ---: | ---: | ---: |
+| 120 | Frozen | 16.25 | 18.44 | 18.44 |
+| 120 | Foreground | 48.44 | 28.75 | 52.97 |
+| 120 | Five background outputs | 19.06 | 20.16 | 19.69 |
+| 400 | Frozen | 18.13 | 18.59 | 17.97 |
+| 400 | Foreground | 50.78 | 28.13 | 49.38 |
+| 400 | Five background outputs | 19.38 | 18.91 | 19.22 |
+
+These are all-thread completed offscreen observations, not precise native CPU
+percentages. The colder fresh/rebuilt active phases each cloned 8.5 MiB of
+changing atlas snapshots and rebuilt the UI prefix 17 times; churned active
+phases had already populated those glyphs and did neither. Their lower CPU
+therefore is **not an optimization result** or a valid cold-versus-warm speedup
+claim. Cold/full-damage and noisy/worse frozen/background samples remain in
+the record.
+
+Memory did grow. Idle private-byte medians were roughly
+530 → 570 → 545 MiB for fresh/churned/rebuilt after 120 cycles, and
+528 → 590 → 557 MiB after 400. Working set rose as well and did not return
+to the initial footprint after an in-process GUI rebuild. This is not a pure
+leak/fragmentation or resource-retirement attribution: test resize-operation
+history, allocator residency and queued/native resources are not independently
+accounted for. Handles did not accumulate monotonically. The current atlas
+settled at 1 MiB for both churn scales, and current retained-prefix texture
+storage stayed 13,648,656 bytes. Broader GPU accounting and a real process
+restart/degraded-user capture remain necessary.
+
+Two failed attempts remain explicit, not folded into accepted observations:
+release inventory initially failed because the GUI-subsystem executable needed
+awaited redirected handles; the next full run failed exact normalization
+because the ordinary zoom notice was still visible. The repair waits for its
+real expiry and preserves the same exact pixel oracle.
+
 ## Editor, Markdown and SFTP UI construction
 
 The historical measurements below use the original controls and their stated

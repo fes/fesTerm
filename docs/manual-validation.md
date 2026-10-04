@@ -996,6 +996,10 @@ multi-day behavior, native presentation, real persistent-shell reconnect,
 WARP thread-stack attribution and complete GPU resource accounting remain
 manual/native evidence under #297/#282. It never operates installed sessions.
 See `validation/terminal-performance/README.md#bounded-six-session-aging`.
+The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
+normalized pixels, without reproducing the multi-day plateau. Moderate process
+memory growth remains an observation requiring separate attribution; no
+native/multi-day acceptance row is closed.
 
 ### Desktop Markdown file associations
 

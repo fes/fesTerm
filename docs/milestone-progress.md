@@ -23,6 +23,19 @@ to its hash and clean source. It retains adverse results instead of imposing a
 new noisy CPU acceptance threshold. Multi-day reproduction and degraded-process
 thread attribution remain open; this is a bounded discriminator, not a fix.
 
+The first optimized runs exposed two harness assumptions: a Windows
+GUI-subsystem test binary needs explicitly awaited redirected output, and fast
+warmup can finish while the ordinary zoom notice is still visible. Both were
+repaired without weakening eligibility or pixel checks. The corrected
+120/400-cycle runs completed 24 phases with exactly equal normalized images.
+Neither reproduced the CPU plateau or elevated idle demand; local damage and
+callback counts stayed narrow/bounded. Process memory rose moderately and was
+only partly reduced by rebuilding the synthetic GUI, so resource attribution
+remains open. Cold atlas growth also explains why fresh active phases cost
+more than already-warmed churned ones; this is not a new optimization claim.
+See the source-bound performance record rather than inferring a multi-day
+cause from these short controls.
+
 ## Reading live keyboard preferences without rebuilding saved settings
 
 The background-session investigation for #297 found repeated GUI-process work
