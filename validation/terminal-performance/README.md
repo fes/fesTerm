@@ -86,6 +86,11 @@ observations are not a pure graphics-allocation measurement.
 `check_session_aging.py` independently verifies the complete phase matrix,
 ordered frame/event counts, zero pending events, native-copy eligibility,
 finite counters, damage bounds, exact PNG bytes/geometry and executable hash.
+Frame completion times must be ordered and within the phase window; paced
+phases must cover their declared deadlines and final cadence window. Timing
+comparisons allow one microsecond for clock/floating-point representation.
+Retention outcomes must be actual, mutually exclusive booleans; both false
+remains a legitimate retention decline, not a reused or rebuilt frame.
 It preserves noisy/adverse observations; there is no CPU percentage assertion
 in CI. A rebuilt synthetic GUI is not a real process restart or persistent-shell
 reconnect. A short churn run neither demonstrates nor disproves #297's

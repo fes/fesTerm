@@ -13,6 +13,7 @@ from compare_retained import digest
 
 STATES = ("fresh", "churned", "rebuilt")
 MODES = ("frozen", "active", "background", "idle")
+TIMING_TOLERANCE_MS = 0.001
 
 
 def require(condition, message):
@@ -64,13 +65,33 @@ def check_phase(summary, samples, frames, idle_seconds):
     else:
         require(len(samples) == frames, "truncated paced phase")
         require(summary["requested_cadence_ms"] == 100, "changed controlled cadence")
+        require(
+            elapsed * 1000 + TIMING_TOLERANCE_MS >= frames * summary["requested_cadence_ms"],
+            "truncated declared paced window",
+        )
     expected = {"active": 1, "background": 5, "frozen": 0, "idle": 0}[mode]
     require(summary["supplied_events"] == len(samples) * expected, "wrong phase event count")
+    previous_completion_ms = 0
     for index, sample in enumerate(samples):
         require(sample["index"] == index, "out-of-order/duplicate frame")
         require(sample["supplied_events"] == expected, "wrong per-frame event count")
         for field in ("elapsed_ms", "work_ms", "cpu_ms", "dirty_rows"):
             number(sample[field], field)
+        completion_ms = sample["elapsed_ms"]
+        require(
+            previous_completion_ms <= completion_ms + TIMING_TOLERANCE_MS,
+            "reversed frame completion timestamps",
+        )
+        require(
+            completion_ms <= elapsed * 1000 + TIMING_TOLERANCE_MS,
+            "frame completion exceeds phase window",
+        )
+        if mode != "idle":
+            require(
+                completion_ms + TIMING_TOLERANCE_MS >= index * summary["requested_cadence_ms"],
+                "frame completed before its declared paced deadline",
+            )
+        previous_completion_ms = completion_ms
         rendering = sample["rendering"]
         require(rendering["native_calls"] == 1, "ordinary fallback is not admitted evidence")
         require(rendering["host_copy"] is True, "native copy declined")
@@ -82,6 +103,12 @@ def check_phase(summary, samples, frames, idle_seconds):
             "font_atlas_cloned_bytes", "uploaded_textures",
         ):
             number(rendering[field], field)
+        for field in ("retained_reused", "retained_rebuilt"):
+            require(type(rendering[field]) is bool, f"{field} must be a boolean")
+        require(
+            not (rendering["retained_reused"] and rendering["retained_rebuilt"]),
+            "a frame cannot both reuse and rebuild retention",
+        )
     return {
         "summary": summary,
         "cpu_ms_per_frame": distribution([sample["cpu_ms"] for sample in samples]),

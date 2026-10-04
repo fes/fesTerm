@@ -75,6 +75,45 @@ class SessionAgingTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 aging.check_phase({**summary, **change}, samples, 2, 1)
 
+    def test_impossible_reversed_and_unpaced_completion_times_are_rejected(self):
+        mutations = [
+            lambda summary, samples: summary.update(wall_seconds=0.001, completed_hz=2000),
+            lambda summary, samples: samples[1].update(elapsed_ms=0),
+            lambda summary, samples: samples[1].update(elapsed_ms=1001),
+            lambda summary, samples: (
+                summary.update(wall_seconds=0.15, completed_hz=2 / 0.15),
+                samples[1].update(elapsed_ms=120),
+            ),
+            lambda summary, samples: (
+                samples[0].update(elapsed_ms=50),
+                samples[1].update(elapsed_ms=99),
+            ),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                summary, samples = self.phase()
+                mutate(summary, samples)
+                with self.assertRaises(ValueError):
+                    aging.check_phase(summary, samples, 2, 1)
+        summary, samples = self.phase()
+        summary.update(wall_seconds=0.1999995, completed_hz=2 / 0.1999995)
+        aging.check_phase(summary, samples, 2, 1)
+
+    def test_retention_outcomes_are_boolean_and_mutually_exclusive(self):
+        for outcomes in [(1000, False), (True, 1), (True, True), (None, False)]:
+            with self.subTest(outcomes=outcomes):
+                summary, samples = self.phase()
+                samples[0]["rendering"].update(
+                    retained_reused=outcomes[0], retained_rebuilt=outcomes[1],
+                )
+                with self.assertRaises(ValueError):
+                    aging.check_phase(summary, samples, 2, 1)
+        summary, samples = self.phase()
+        samples[0]["rendering"].update(retained_reused=False, retained_rebuilt=False)
+        result = aging.check_phase(summary, samples, 2, 1)
+        self.assertEqual(result["retained_reused_frames"], 1)
+        self.assertEqual(result["retained_rebuilt_frames"], 0)
+
     def test_complete_source_bound_matrix_keeps_adverse_results(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
