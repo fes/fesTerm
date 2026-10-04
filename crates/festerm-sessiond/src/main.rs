@@ -3127,13 +3127,19 @@ fn spawn_shell(
         Some(working_directory) => PathBuf::from(working_directory),
         None => env::current_dir()?,
     });
-    command.env("TERM", "xterm-256color");
+    apply_terminal_environment(&mut command);
     let child = pair.slave.spawn_command(command)?;
     let master = pair.master;
     Ok(SpawnedShell {
         child,
         master: Some(master),
     })
+}
+
+fn apply_terminal_environment(command: &mut CommandBuilder) {
+    command.env("TERM", "xterm-256color");
+    command.env("TERM_PROGRAM", "fesTerm");
+    command.env_remove("TERM_SESSION_ID");
 }
 
 fn terminate_pid(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
@@ -5137,6 +5143,26 @@ mod tests {
             directory.canonicalize().unwrap().as_path()
         );
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn native_persistent_children_identify_festerm_and_drop_stale_terminal_session() {
+        let mut command = CommandBuilder::new("shell");
+        command.env("TERM", "stale");
+        command.env("TERM_PROGRAM", "tmux");
+        command.env("TERM_SESSION_ID", "stale-session");
+
+        apply_terminal_environment(&mut command);
+
+        assert_eq!(
+            command.get_env("TERM"),
+            Some(std::ffi::OsStr::new("xterm-256color"))
+        );
+        assert_eq!(
+            command.get_env("TERM_PROGRAM"),
+            Some(std::ffi::OsStr::new("fesTerm"))
+        );
+        assert_eq!(command.get_env("TERM_SESSION_ID"), None);
     }
 
     #[cfg(unix)]

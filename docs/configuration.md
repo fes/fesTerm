@@ -110,7 +110,7 @@ confirm_session_close = false
 prefer_powershell = true
 customize_local_shell = false
 restore_workspace = true
-terminal_font = "jetbrains-mono"
+terminal_font = "jet-brains-mono"
 terminal_ligatures = true
 emoji_presentation = "color"
 scrollback_limit = "64-mib"
@@ -264,8 +264,8 @@ The optional `[settings]` table includes these interface preferences:
 `show_session_details` (default `false`), `confirm_session_close` (default
 `false`), `prefer_powershell` (default `true`), `customize_local_shell`
 (default `false`), `restore_workspace` (default `true`), `terminal_font`
-(`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
-default `"jetbrains-mono"`), `terminal_ligatures` (default `true`),
+(`"jet-brains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
+default `"jet-brains-mono"`), `terminal_ligatures` (default `true`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
 `scrollback_limit` (`"disabled"`, `"16-mib"`, `"64-mib"`, or `"256-mib"`;
 default `"64-mib"`),

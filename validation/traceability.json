@@ -1865,6 +1865,7 @@
         "second_client_replaces_first_client_and_first_receives_stolen_notice",
         "a_takeover_during_the_output_poll_still_sends_the_stolen_notice",
         "local_children_identify_festerm_and_drop_an_inherited_terminal_session",
+        "native_persistent_children_identify_festerm_and_drop_stale_terminal_session",
         "profiles_delete_flow_returns_a_delete_profile_command",
         "local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path",
         "ssh_profile_editor_offers_a_password_field_that_dispatches_store_profile_password",
