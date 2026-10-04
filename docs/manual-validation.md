@@ -804,7 +804,8 @@ triangle counts. This is optional offscreen attribution; removal of overlay
 fills is still a pixel-changing diagnostic, not an accepted rendering change.
 Native palette appearance, focus, input, presentation and CP-18 remain manual
 or separately qualified evidence.
-The palette's graphics-only textureless frame/shadow path has automated exact
+The palette's graphics-only textureless frame/shadow and opaque untextured
+search/selection-rectangle paths have automated exact
 RGBA comparisons for dark/light/short/query states at 100%, 125%, 150% and
 200%, plus root opacity, nonzero origin, palette transform, secondary viewport
 and translucent-frame fallback. Candidate geometry, invisible/root-transform
@@ -815,6 +816,17 @@ same-source comparison; unset uses the production path. Automatic copy and
 retention must still decline the overlay. Offscreen savings do not replace
 native visual/input, sustained-resource, graphics-recovery, mixed-monitor or
 physical presentation-latency evidence.
+The rectangle extension additionally rejects textured/translucent candidates
+and requires the same eligible opaque window frame. A same-source release BAAB
+control preserves all four initial captures and each case's final pixels across
+1,200 completed measured frames while reducing CPU work by roughly 49-52%. A separate
+guarded native shipping/candidate/candidate/shipping series observed about 42%
+less app CPU, with all output, overlay-ineligibility and ordinary-cleanup guards
+passed. One candidate had lower GUI frame rate than its preceding baseline;
+all four scores remain explicit. See the
+[complete records](../validation/terminal-performance/README.md#opaque-palette-rectangle-follow-up).
+These are shared-host efficiency observations, not physical display FPS,
+latency, a resource budget, hardware qualification or complete CP-18 acceptance.
 The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
 CPU; its campaign stopped at a later foreground-activation failure. Streaming,
 full-redraw, force-full-repaint control and repeated parity evidence remain

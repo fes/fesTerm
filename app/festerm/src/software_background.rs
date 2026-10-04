@@ -178,7 +178,7 @@ fn palette_fills_enabled(_context: &egui::Context) -> bool {
     {
         _context.data(|data| {
             !data
-                .get_temp::<bool>(egui::Id::new("festerm::test-ordinary-palette-fills"))
+                .get_temp::<bool>(palette_fills_disabled_id())
                 .unwrap_or(false)
         })
     }
@@ -188,14 +188,14 @@ fn palette_fills_enabled(_context: &egui::Context) -> bool {
     }
 }
 
+#[cfg(test)]
+fn palette_fills_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-palette-fills")
+}
+
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 pub(crate) fn set_palette_fills_enabled(context: &egui::Context, enabled: bool) {
-    context.data_mut(|data| {
-        data.insert_temp(
-            egui::Id::new("festerm::test-ordinary-palette-fills"),
-            !enabled,
-        )
-    });
+    context.data_mut(|data| data.insert_temp(palette_fills_disabled_id(), !enabled));
 }
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
@@ -745,6 +745,8 @@ mod tests {
             .palette_frames
             .load(std::sync::atomic::Ordering::Relaxed);
         assert!(old_count > 0);
+        let old_fills = old.palette_fills.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(old_fills > 0);
         context.data_mut(|data| data.insert_temp(panel_renderer_id(), Arc::clone(&current)));
         context.add_plugin(PaletteFrameBackground);
         draw();
@@ -753,10 +755,18 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             old_count
         );
+        assert_eq!(
+            old.palette_fills.load(std::sync::atomic::Ordering::Relaxed),
+            old_fills
+        );
         let current_count = current
             .palette_frames
             .load(std::sync::atomic::Ordering::Relaxed);
         assert!(current_count > 0);
+        let current_fills = current
+            .palette_fills
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(current_fills > 0);
         let mut unsupported = state.clone();
         unsupported.target_format = wgpu::TextureFormat::Bgra8UnormSrgb;
         install(&context, &unsupported);
@@ -769,6 +779,12 @@ mod tests {
                 .palette_frames
                 .load(std::sync::atomic::Ordering::Relaxed),
             current_count
+        );
+        assert_eq!(
+            current
+                .palette_fills
+                .load(std::sync::atomic::Ordering::Relaxed),
+            current_fills
         );
     }
 

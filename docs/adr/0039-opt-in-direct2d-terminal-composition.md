@@ -200,6 +200,14 @@ because the supported WARP path now defaults on.
   `declined_native_paint_keeps_original_shapes`,
   `native_paint_replaces_only_its_scope_and_preserves_order`, and
   `translucent_and_invisible_painters_never_enter_native_capture`.
+- **Existing palette graphics coverage:** `PAL-01`/`PAL-03`/`PAL-04` keep the
+  same geometry/order/fallback contract when opaque search/selection rectangles
+  use the already-present textureless panel shader. Required regressions are
+  `palette_fills_accept_only_opaque_untextured_rectangles`,
+  `palette_frame_retains_root_opacity_visibility_origin_and_layer_transform_guards`,
+  `palette_frame_plugin_reinstallation_uses_current_renderer_and_declines_missing_renderer`,
+  and `textureless_palette_frame_preserves_shadow_pixels_across_dpi_and_fallback`.
+  This adds coverage, not a new ownership or graphics-host boundary.
 - **Native/manual evidence required:** `CP-18`, `TI-16`, alongside the retained `CP-16`
   and `CP-17` budgets. Issue #244 retains the remaining mixed-DPI,
   multi-window, device-loss, latency, memory, and representative-hardware

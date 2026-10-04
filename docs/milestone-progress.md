@@ -3,6 +3,30 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reusing the palette shader for opaque search and selection rectangles
+
+Release attribution after the shipped shadow fix still found most palette
+render cost in ordinary meshes. Removing opaque white-texture triangles reduced
+that cost, but changed pixels and was only a diagnostic. The narrow follow-up
+instead sends opaque untextured palette search/selection rectangles through the
+existing panel shader, preserving egui's complete tessellated geometry, clip and
+position in the paint list. The same eligible opaque window frame is required;
+brushes, translucent fills, unsupported roots/transforms/viewports/adapters and
+formats keep ordinary rendering. No glyph, layout, focus, command, output or
+repaint policy changes.
+
+All sixteen theme/height/query/DPI and five fallback comparisons remain exact
+and now assert real fill conversion. A new deterministic predicate test covers
+textured/translucent refusal. Same release executable controls reduced completed
+CPU work roughly 49-52%, with exact initial/final pixels and the requested 10 Hz
+through all 1,200 measured frames. A separate actual native BAAB series observed
+about 42% less app CPU than the shipped shadow-only baseline. Every strict guard
+and normal shutdown passed. One candidate frame-rate sample was worse, and both
+noisy repeats remain in the
+[complete source-bound records](../validation/terminal-performance/README.md#opaque-palette-rectangle-follow-up).
+This is practical efficiency, not physical display FPS/latency, a new resource
+budget, hardware performance or a cause/fix for the multi-day #297 report.
+
 ## Painting the palette shadow without the atlas texture
 
 The native palette controls correctly declined final-terminal copying and

@@ -800,6 +800,7 @@
         "escape_dismisses_without_a_selection",
         "palette_fits_the_full_root_and_elides_long_rows_without_losing_identity",
         "palette_frame_candidates_are_only_the_opaque_untextured_shadow_frame",
+        "palette_fills_accept_only_opaque_untextured_rectangles",
         "palette_frame_retains_root_opacity_visibility_origin_and_layer_transform_guards",
         "palette_frame_plugin_reinstallation_uses_current_renderer_and_declines_missing_renderer",
         "textureless_palette_frame_preserves_shadow_pixels_across_dpi_and_fallback",
