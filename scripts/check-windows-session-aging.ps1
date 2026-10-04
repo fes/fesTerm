@@ -124,6 +124,10 @@ try {
         $process.Refresh()
     }
     $process.WaitForExit()
+    $binding.completed_utc = [DateTime]::UtcNow.ToString('o')
+    $binding.exit_code = $process.ExitCode
+    $binding.process_id = $process.Id
+    $binding | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'source.json')
     if ($process.ExitCode -ne 0) { throw "Aging probe failed with exit $($process.ExitCode); inspect logs." }
 } finally {
     if ($process) {
@@ -144,10 +148,6 @@ if ((& git rev-parse HEAD).Trim() -ne $head -or (& git status --porcelain)) {
 if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $binaryHash) {
     throw 'Archived executable changed during the probe.'
 }
-$binding.completed_utc = [DateTime]::UtcNow.ToString('o')
-$binding.exit_code = 0
-$binding.process_id = $process.Id
-$binding | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'source.json')
 & python (Join-Path $root 'validation\terminal-performance\check_session_aging.py') $output
 if ($LASTEXITCODE -ne 0) { throw 'Aging evidence validation failed.' }
 Write-Output "Aging probe completed: $output"

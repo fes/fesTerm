@@ -940,6 +940,7 @@
         "aging_settings_reject_zero_overflow_and_malformed_values",
         "aging_fixture_notifies_and_pumps_all_six_owned_sessions",
         "aging_idle_scheduler_waits_for_demand_and_honors_deadline",
+        "aging_normalization_waits_for_real_notice_expiry_without_dismissing_it",
         "profile_case_filter_preserves_order_and_rejects_incomplete_inputs",
         "automatic_warp_composition_preserves_platform_adapter_and_format_policy",
         "automatic_rgba_native_painting_keeps_shader_composition",

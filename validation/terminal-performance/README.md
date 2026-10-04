@@ -65,6 +65,11 @@ is not native event-driven frame rate. Idle waits on the existing egui repaint
 callback/deadline without periodic polling and records whatever frames are
 actually requested. The ordinary session notifier, bounded pumping, terminal
 ownership and output policy are unchanged.
+Normalization waits for the ordinary zoom notice's real expiry and lets the
+production UI remove it; it does not forcibly dismiss overlays or reset caches.
+This matters in optimized builds, where a fixed number of warmup frames can
+finish before the notice disappears. Cold atlas growth during the first active
+phase remains recorded rather than filtered out.
 
 Each frame retains completed all-thread process CPU and wall work, **native
 updated/surface pixels**, UI dirty rows, copy/retention outcomes, current

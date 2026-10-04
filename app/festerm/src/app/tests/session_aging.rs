@@ -169,13 +169,21 @@ impl Fixture {
             transport.push_event(SessionEvent::Output(Workload::Localized.setup()));
             self.draw(renderer, 2.0);
         }
+        self.wait_for_transient_notice();
         for _ in 0..8 {
             self.draw(renderer, 2.0);
         }
+        assert!(self.app.overlays.transient_notice.is_none());
         assert_eq!(
             self.app.active_terminal_dimensions_for_test(),
             festerm_core::Dimensions::new(120, 40).unwrap()
         );
+    }
+
+    fn wait_for_transient_notice(&self) {
+        if let Some((_, deadline)) = self.app.overlays.transient_notice.as_ref() {
+            thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        }
     }
 
     fn feed(&self, mode: &str, step: usize) -> usize {
@@ -402,6 +410,21 @@ fn aging_idle_scheduler_waits_for_demand_and_honors_deadline() {
 }
 
 #[test]
+fn aging_normalization_waits_for_real_notice_expiry_without_dismissing_it() {
+    let mut fixture = Fixture::new();
+    let deadline = Instant::now() + Duration::from_millis(10);
+    fixture.app.overlays.transient_notice = Some(("controlled zoom notice".to_owned(), deadline));
+    fixture.wait_for_transient_notice();
+    assert!(Instant::now() >= deadline);
+    assert!(fixture.app.overlays.transient_notice.is_some());
+    let mut output = fixture.context.run_ui(Default::default(), |ui| {
+        fixture.app.show_transient_notice(ui.ctx());
+    });
+    output.textures_delta.clear();
+    assert!(fixture.app.overlays.transient_notice.is_none());
+}
+
+#[test]
 #[ignore = "optional bounded six-session aging discriminator; not multi-day/native presentation evidence"]
 fn profile_six_session_aging() {
     assert_eq!(
@@ -479,12 +502,12 @@ fn profile_six_session_aging() {
         .unwrap()
         .into_rgba8();
     for state in ["churned", "rebuilt"] {
-        assert_eq!(
-            reference,
-            image::open(directory.join(format!("{state}-normalized.png")))
-                .unwrap()
-                .into_rgba8(),
-            "{state} normalization must preserve every pixel",
+        let actual = image::open(directory.join(format!("{state}-normalized.png")))
+            .unwrap()
+            .into_rgba8();
+        assert!(
+            reference == actual,
+            "{state} normalization must preserve every pixel"
         );
     }
     std::fs::write(
