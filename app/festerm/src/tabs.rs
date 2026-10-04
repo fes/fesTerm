@@ -130,6 +130,11 @@ fn make_notifier(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
     Arc::new(EguiRepaintNotifier(context.clone()))
 }
 
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn session_notifier_for_test(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
+    make_notifier(context)
+}
+
 /// Concrete transports that can occupy an application session tab.
 ///
 /// The application owns this narrow sum type so terminal/UI code sees only

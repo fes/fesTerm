@@ -6635,6 +6635,9 @@ mod tests {
         Harness, SnapshotOptions,
     };
 
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    mod session_aging;
+
     #[test]
     fn external_document_activation_waits_for_modal_and_error_acknowledgement() {
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());

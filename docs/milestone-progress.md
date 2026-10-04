@@ -3,6 +3,59 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Separating six-session aging from ordinary active rendering
+
+Issue #297 describes GUI CPU that grows over days and drops when the frontend
+restarts while its persistent shells survive. A short throughput benchmark
+cannot prove that cause, and UI dirty-row counts do not establish native GPU
+damage. The next diagnostic therefore uses six owned synthetic application
+sessions, the normal event notifier and bounded application pumping rather
+than touching the installed sessions or suppressing wakes.
+
+Fresh, tab/DPI/zoom-churned and rebuilt GUI states run the same frozen,
+foreground-output, background-output and idle phases. Exact normalized
+framebuffers guard workload/geometry restoration. Completed process CPU,
+native damaged pixels, atlas uploads and prefix reuse are recorded separately
+from repaint callbacks and sampled process resources. Non-idle frames are
+forced at a declared cadence; idle follows egui demand without periodic polling.
+The supervisor archives the compiler-reported executable and binds observations
+to its hash and clean source. It retains adverse results instead of imposing a
+new noisy CPU acceptance threshold. Multi-day reproduction and degraded-process
+thread attribution remain open; this is a bounded discriminator, not a fix.
+
+The first optimized runs exposed two harness assumptions: a Windows
+GUI-subsystem test binary needs explicitly awaited redirected output, and fast
+warmup can finish while the ordinary zoom notice is still visible. Both were
+repaired without weakening eligibility or pixel checks. The corrected
+120/400-cycle runs completed 24 phases with exactly equal normalized images.
+Neither reproduced the CPU plateau or elevated idle demand; local damage and
+callback counts stayed narrow/bounded. Process memory rose moderately and was
+only partly reduced by rebuilding the synthetic GUI, so resource attribution
+remains open. Cold atlas growth also explains why fresh active phases cost
+more than already-warmed churned ones; this is not a new optimization claim.
+See the source-bound performance record rather than inferring a multi-day
+cause from these short controls.
+
+The memory follow-up separates dropping the test renderer from dropping the
+application/context that still owns the native painter. Public wgpu registry
+snapshots during churn and teardown reveal retained handles without pretending
+to measure every driver allocation. Vacant registry slots are not in-flight
+resources or texture bytes. Four held teardown windows allow independent
+process sampling before a replacement GUI exists. Source inspection also
+corrected an earlier caveat: the fake SSH transports ignore resize requests,
+so they do not retain the suggested resize-history allocation.
+
+The optimized 400/1,200-cycle follow-ups kept public registry counts flat through
+churn while process memory still rose. Dropping only the offscreen renderer
+left the application/context-owned device, queue and native texture alive.
+Dropping the entire fixture cleared those public IDs and reduced private-memory
+medians from roughly 550-635 MiB to 19-22 MiB. Initial release spikes and surviving
+workers remain in the record: this separates ownership/lifetime observations,
+not every GPU allocation or a demonstrated leak. Exact normalized images, zero
+idle demand and narrow native damage still held; no multi-day CPU plateau was
+reproduced. See the
+[complete source-bound resource record](../validation/terminal-performance/README.md#optimized-public-registry-and-teardown-follow-up).
+
 ## Painting the palette shadow without the atlas texture
 
 The native palette controls correctly declined final-terminal copying and

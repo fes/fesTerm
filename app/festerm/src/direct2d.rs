@@ -105,7 +105,7 @@ impl TimingConfig {
 }
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
-mod profile;
+pub(crate) mod profile;
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 mod font_atlas_profile;

@@ -33,6 +33,188 @@ This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
 
+## Bounded six-session aging
+
+`scripts/check-windows-session-aging.ps1` runs a separately opt-in, repository-owned
+discriminator for #297. It requires a clean committed Windows x64 checkout and
+a DX12 CPU adapter. It builds and archives the exact compiler-reported test
+executable, records HEAD/tree/binary hash and preserves all logs and observations.
+It does not connect to SSH, PTYs, installed configuration or sessiond sessions.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-aging
+```
+
+Defaults are 120 cycles of all-six-tab activation, alternating 125%/200% DPI
+and zoom/reset (720 completed churn frames), 100 frames per paced phase at a
+requested 100ms cadence, and ten seconds per idle window. `-Cycles`, `-Frames`
+and `-IdleSeconds` have explicit caps; the supervisor has an independent
+`-TimeoutSeconds` deadline. `-Profile debug` is a supported diagnostic control
+and must never be described as release/production CPU evidence.
+`FESTERM_RUN_SESSION_AGING=1` plus a fresh absolute `FESTERM_AGING_SUITE_OUT`
+includes the default release probe in the Windows optional-validation suite;
+the shell runner declares this Windows-only check skipped.
+
+The twelve phases cross **fresh**, **churned** and **rebuilt** GUI states with
+**frozen**, **foreground output**, **five background outputs** and **idle**.
+Normalized scenes have exactly equal full framebuffers at 2058x1658 physical
+pixels, 200% DPI and the same 120x40 active terminal. Non-idle frames are
+deliberately forced/paced to compare CPU per completed frame; their cadence
+is not native event-driven frame rate. Idle waits on the existing egui repaint
+callback/deadline without periodic polling and records whatever frames are
+actually requested. The ordinary session notifier, bounded pumping, terminal
+ownership and output policy are unchanged.
+Normalization waits for the ordinary zoom notice's real expiry and lets the
+production UI remove it; it does not forcibly dismiss overlays or reset caches.
+This matters in optimized builds, where a fixed number of warmup frames can
+finish before the notice disappears. Cold atlas growth during the first active
+phase remains recorded rather than filtered out.
+
+Each frame retains completed all-thread process CPU and wall work, **native
+updated/surface pixels**, UI dirty rows, copy/retention outcomes, current
+prefix texture/signature bytes, font-atlas bytes/clones/reuse and uploads.
+UI dirty rows do not substitute for native damage. Current prefix storage
+does not include queued/in-flight or total GPU resources. The supervisor
+samples current/peak working set, private bytes, handles and thread CPU
+counters every 500ms; those counters do not identify main/WARP workers without
+separate thread-stack evidence. Very short smoke phases may have no resource
+sample and are marked explicitly, not replaced with zero. These fake SSH
+transports ignore resize requests and do not accumulate resize history.
+Process observations still include the entire application, renderer and test
+harness, not just graphics allocations.
+
+`check_session_aging.py` independently verifies the complete phase matrix,
+ordered frame/event counts, zero pending events, native-copy eligibility,
+finite counters, damage bounds, exact PNG bytes/geometry and executable hash.
+Frame completion times must be ordered and within the phase window; paced
+phases must cover their declared deadlines and final cadence window. Timing
+comparisons allow one microsecond for clock/floating-point representation.
+Retention outcomes must be actual, mutually exclusive booleans; both false
+remains a legitimate retention decline, not a reused or rebuilt frame.
+It preserves noisy/adverse observations; there is no CPU percentage assertion
+in CI. A rebuilt synthetic GUI is not a real process restart or persistent-shell
+reconnect. A short churn run neither demonstrates nor disproves #297's
+multi-day plateau. Native presentation, complete GPU-resource retirement,
+real device-loss recovery and degraded-user-process attribution remain open.
+
+New runs additionally record all 23 public wgpu registries after each normalized
+state, every 20 churn cycles (plus the final cycle), and separate renderer/context
+teardown. Four teardown windows last `-IdleSeconds` each and permit external
+resource sampling without rebuilding first. Submitted work is completed before
+teardown observations. The old instance remains alive only to report its
+registries; a rebuilt renderer uses a new instance. Historical receipts without
+the explicit registry schema remain valid but have no retirement observations.
+Each held window records both monotonic duration and UTC endpoints. The checker
+admits external samples only inside those endpoints; subsequent destruction or
+renderer initialization cannot contaminate the held-window distribution.
+
+These counters describe allocated IDs, IDs retained from user handles, and
+vacant registry slots. In wgpu 30, `num_released_from_user` counts vacant slots,
+**not live in-flight resources**. `element_size` describes registry elements,
+not texture payload or GPU allocation size. Even zero public IDs after context
+teardown does not establish complete driver/native resource retirement. The
+checker preserves retained IDs and adverse memory observations rather than
+asserting an unapproved process/GPU budget.
+
+### 2026-10-04 source-bound observations
+
+The [machine-readable record](six-session-aging-2026-10-04.json) preserves
+both complete optimized runs and their adverse observations. Both execute
+`c257d312e397384e4ab30b3fe70d7351dec60919`, based on shipping v0.9.0
+`667bd9a91d76e4b847cd6da869ac6af4a0a1246f`; archived executable SHA256 is
+`2F843A6E874B617FB525798C718C7829397951438359887BBE64826B7693428C`.
+The 120/400-cycle runs completed 720/2,400 churn frames and 1,800 paced
+measurement frames across 24 phases, with all six normalized PNGs byte-identical
+(`524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b`).
+Later documentation commits are not relabeled as measurement execution.
+
+**No multi-day plateau was reproduced.** All six ten-second idle windows
+requested zero frames/callbacks and recorded zero process CPU ticks. Frozen
+and five-background-output frames had zero native terminal damage. Foreground
+updates retained median native damage of 21,105 / 2,982,063 pixels (about 0.7%).
+Each 100-step foreground or five-background-output phase produced 100 immediate
+repaint callbacks, not a growing stream of settling callbacks. Non-idle
+completed cadence remained approximately the requested 10 Hz.
+
+| Churn cycles | Workload | Fresh CPU ms/frame | Churned CPU ms/frame | Rebuilt CPU ms/frame |
+| --- | --- | ---: | ---: | ---: |
+| 120 | Frozen | 16.25 | 18.44 | 18.44 |
+| 120 | Foreground | 48.44 | 28.75 | 52.97 |
+| 120 | Five background outputs | 19.06 | 20.16 | 19.69 |
+| 400 | Frozen | 18.13 | 18.59 | 17.97 |
+| 400 | Foreground | 50.78 | 28.13 | 49.38 |
+| 400 | Five background outputs | 19.38 | 18.91 | 19.22 |
+
+These are all-thread completed offscreen observations, not precise native CPU
+percentages. The colder fresh/rebuilt active phases each cloned 8.5 MiB of
+changing atlas snapshots and rebuilt the UI prefix 17 times; churned active
+phases had already populated those glyphs and did neither. Their lower CPU
+therefore is **not an optimization result** or a valid cold-versus-warm speedup
+claim. Cold/full-damage and noisy/worse frozen/background samples remain in
+the record.
+
+Memory did grow. Idle private-byte medians were roughly
+530 → 570 → 545 MiB for fresh/churned/rebuilt after 120 cycles, and
+528 → 590 → 557 MiB after 400. Working set rose as well and did not return
+to the initial footprint after an in-process GUI rebuild. This is not a pure
+leak/fragmentation or resource-retirement attribution: allocator residency and
+queued/native resources are not independently accounted for. Subsequent source
+inspection corrected the original resize-history caveat: the fake SSH
+transports used in these runs ignore resize requests. Handles did not accumulate
+monotonically. The current atlas
+settled at 1 MiB for both churn scales, and current retained-prefix texture
+storage stayed 13,648,656 bytes. Broader GPU accounting and a real process
+restart/degraded-user capture remain necessary.
+
+### Optimized public-registry and teardown follow-up
+
+The [complete resource record](six-session-resource-attribution-2026-10-04.json)
+adds 400/1,200-cycle release matrices at
+`f7f19c992e9e5cc4ab2e808f37cbd4fa06990c64`, tree
+`9ec0f831eda6cf2c7611f553e336077ae0fd91ff`, archived executable SHA256
+`C08952DB2BDE4623FF87033F3BEA0351F2514182719338533FF1BEFE30B29882`.
+These are new executions, not replacements for the original `c257d31` or
+integrated `e2a6b03` receipts. Both complete twelve-phase matrices passed the
+stricter independent checker, including all 23 public registries and held-window
+clock/sample admission. The six normalized PNGs also match the historical hash.
+All six ten-second idle windows still requested zero frames/callbacks and
+recorded zero process CPU ticks. Frozen/background native damage stayed zero;
+foreground median damage stayed 21,105 / 2,982,063 pixels.
+
+Public registries did not grow through churn: every twentieth-cycle checkpoint
+kept 19 IDs, including one device, one queue and three textures. Fresh/churned/
+rebuilt normalization kept 20 IDs. Dropping only the offscreen renderer left
+eight IDs, including the device/queue and one native texture still owned by the
+fixture/context. Dropping that entire fixture/context reduced all public IDs
+to zero. This does not count internal/native/in-flight allocations.
+
+| Churn cycles | Idle private MiB: fresh/churned/rebuilt | Renderer dropped, context alive: private MiB median | Full fixture/context dropped: private MiB median |
+| --- | --- | --- | --- |
+| 400 | 531.7 / 586.2 / 549.6 | 586.0 / 549.4 | 19.4 / 18.9 |
+| 1,200 | 528.4 / 635.3 / 571.7 | 635.1 / 571.5 | 21.5 / 21.2 |
+
+The paired teardown scores refer to churned and rebuilt owners respectively.
+Each held window contains 19-20 external samples. Initial full-teardown samples
+still reached 147-150 MiB before lower steady samples; those maxima and delayed
+release observations are preserved, not excluded. Some worker threads also
+remained after public IDs vanished. Thus neither zero IDs nor the smaller
+process footprint proves complete native/GPU retirement or a resource budget.
+Fixture destruction drops application/context state as well as its painter;
+it does not identify which surviving allocation accounts for the earlier
+memory, prove a leak, or reproduce the multi-day CPU plateau.
+
+The first phase-label-only debug smoke remains superseded diagnostic evidence:
+its teardown labels also covered replacement initialization. Separate transition
+labels and checked UTC/monotonic held endpoints corrected that attribution.
+The corrected debug smoke is not pooled with these optimized matrices.
+
+Two failed attempts remain explicit, not folded into accepted observations:
+release inventory initially failed because the GUI-subsystem executable needed
+awaited redirected handles; the next full run failed exact normalization
+because the ordinary zoom notice was still visible. The repair waits for its
+real expiry and preserves the same exact pixel oracle.
+
 ## Editor, Markdown and SFTP UI construction
 
 The historical measurements below use the original controls and their stated

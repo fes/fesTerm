@@ -1010,6 +1010,29 @@ issue #297's degraded-process attribution. No broader acceptance is advanced.
 | --- | --- | --- | --- |
 | CP-18 | On supported Windows x64 WARP, verify automatic root-terminal/native copy/retention selection without settings. Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths keep ordinary pixels, no blank/stale frame appears, all retired variable values are ignored, intrinsic fallback works, and hardware rendering is unchanged. Historical off/on comparisons require pinned historical binaries/drivers; only offscreen test executables expose feature controls. | Automated framebuffer + native performance + manual interaction; broader qualification remains open | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and palette-budget fallback. `validation/direct2d/run.ps1` provides isolated replay through `FESTERM_RUN_DIRECT2D_PROBE=1`. On a known eligible WARP host, use `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer -RequireDirect2D`; actual native frames are required and CPU/FPS budgets remain unchanged. The aggregate optional runner includes sustained output without a retired-variable gate; dense/native-required checks are explicit CLI requests. The current native comparison driver builds its clean checkout and measures only automatic mode; A/B/C fails before desktop access. Owner-approved ADRs 0039/0040/0041 accept bounded rollout, not all CP-18 qualification. #244/#282 retain mixed-DPI, multi-window, device-loss, physical latency, sustained resources and representative-hardware follow-ups; #242 retains idle failures. |
 
+The separately opt-in six-session aging probe under CP-18 automates a bounded,
+owned fresh/churned/rebuilt GUI comparison, exact normalized pixels, native
+damage, atlas/prefix reuse, completed CPU and sampled private bytes/working
+set/handles/threads. Only idle demand is event-driven; active/frozen/background
+frames are forced and paced. Public wgpu ID/vacant-slot snapshots and separately
+held renderer/context teardown windows add bounded retirement discriminators,
+not complete native/GPU allocation accounting or an approved resource budget.
+This replaces no degraded-user-process capture:
+multi-day behavior, native presentation, real persistent-shell reconnect,
+WARP thread-stack attribution and complete GPU resource accounting remain
+manual/native evidence under #297/#282. It never operates installed sessions.
+See `validation/terminal-performance/README.md#bounded-six-session-aging`.
+The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
+normalized pixels, without reproducing the multi-day plateau. Moderate process
+memory growth remains an observation requiring separate attribution; no
+native/multi-day acceptance row is closed.
+The subsequent optimized 400/1,200-cycle matrices added all 23 public registry
+reports and four independently clipped held-teardown windows each. Counts stayed
+flat through churn; full fixture/context destruction cleared public IDs and most
+private memory, while renderer-only destruction did not. Early release spikes
+and remaining workers are recorded. This is partial ownership/lifetime evidence,
+not complete GPU retirement, a leak finding or a resource-budget acceptance.
+
 ### Desktop Markdown file associations
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
