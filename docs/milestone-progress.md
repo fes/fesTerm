@@ -29,6 +29,61 @@ palette overlays must still decline automatic copy/retention. Source-pinned
 offscreen CPU observations do not qualify native presentation, sustained
 resources, physical latency or the multi-day #297 cause.
 
+## Reading live keyboard preferences without rebuilding saved settings
+
+The background-session investigation for #297 found repeated GUI-process work
+without evidence that event wakes themselves were wrong: each chip's
+quick-switch check constructed a complete persistable `InterfaceSettings`.
+Input routing and native-menu cache checks did the same. With six session chips,
+those steady-frame paths built at least eight settings copies, cloning every
+configured keyboard override and converting an unrelated SFTP directory to an
+owned string, even when no preference had changed.
+
+Read-only consumers now borrow the existing live bindings. Routing retains its
+required owned packet/context copies; persistence still constructs a settings
+value only when requested. No new cache, invalidation seam, runtime lock,
+dependency, wake suppression or output-cadence change is involved. Local edits
+and committed sibling broadcasts are visible immediately through the same
+application-owned preferences.
+
+Counted synthetic fixtures with one and six sessions, populated bindings and an
+SFTP directory prove zero settings snapshots over twenty output-driven frame
+passes. They also verify unchanged aliases, background unread state, ordered
+query replies, bounded-drain continuation, foreground writes and final lifecycle
+events. This removes demonstrated repeated work, not a demonstrated cause of
+#297's multi-day plateau or a measured native CPU improvement. Matched one/six
+session WARP CPU, frame-rate and input measurements remain coordinator-owned;
+CP-16/17/18 and the degraded-process attribution remain open.
+
+## Recognizing native glyph quads without per-glyph heap scratch
+
+The shipping WARP path still prepared every glyph rectangle using a temporary
+vector to find the triangles' shared diagonal. Each valid quad pushed two
+vertices, allocating once for the first and again for the second, then released
+both allocations. Trusted immutable font snapshots (#306) remove a different
+capture cost; they do not remove this geometry-preparation work.
+The retained renderer prepares before checking previous-image reuse, so this
+heap scratch also recurred when the published native pixels did not change.
+
+Quad recognition now borrows at most two corner pointers in fixed stack storage,
+with no retained scratch or new cache. The exact old predicate remains a
+test-only allocation control: 14,400 cold/warm/recolored glyph preparations
+perform the same work and construct identical native operations while removing
+28,800 allocations and 864,000 cumulative allocated bytes on the tested MSVC
+toolchain. Exhaustive corner topologies, fractional geometry, mask/bitmap/solid
+colors and alpha, mutations, malformed mappings and typed refusal/recovery
+also match the old preparation. The tests create no graphics device.
+
+Drawing, clipping, damage/culling, texture revisions/uploads, published image
+lifetime, retention budgets and ordinary fallback remain unchanged. Windows
+CI's existing native self-test runner includes these allocation checks. Native
+renderer-only changes also trigger package smoke, protected by a portable
+workflow regression. This is
+a bounded source-backed heap-churn improvement for #267/#297/#298, not a claim
+of process-CPU, native-window or latency improvement, and not attribution of
+#297's long-lived plateau. CP-18 remains open; the saved comparison protocol
+includes capture and native preparation rather than timing only replayed draws.
+
 ## Shipping the supported WARP pipeline without switches
 
 The owner accepted the repeated material CPU reductions despite shared-host

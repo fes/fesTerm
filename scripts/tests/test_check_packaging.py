@@ -15,6 +15,16 @@ BASH = shutil.which("bash")
 
 
 class PackagingMetadataTests(unittest.TestCase):
+    def test_native_renderer_changes_trigger_package_smoke(self):
+        workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(
+            encoding="utf-8"
+        )
+        triggers = workflow.split("\npermissions:", 1)[0]
+        self.assertRegex(
+            triggers,
+            r"(?m)^      - 'crates/festerm-windows-direct2d/\*\*'$",
+        )
+
     @unittest.skipUnless(BASH, "Linux package smoke requires bash")
     def test_linux_appimage_smoke_has_valid_shell_and_heredoc_syntax(self):
         workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(

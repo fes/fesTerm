@@ -2451,6 +2451,8 @@ impl Drop for PendingResume {
 
 pub struct AppState {
     keyboard_bindings: festerm_config::KeyboardBindings,
+    #[cfg(test)]
+    interface_settings_snapshot_count: std::cell::Cell<usize>,
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
@@ -2596,6 +2598,8 @@ impl AppState {
             show_durable_session_in_status_bar: settings.show_durable_session_in_status_bar(),
             automatic_update_checks: settings.automatic_update_checks(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
+            #[cfg(test)]
+            interface_settings_snapshot_count: std::cell::Cell::new(0),
             sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
@@ -3087,10 +3091,18 @@ impl AppState {
         self.default_sftp_local_directory.as_deref()
     }
 
+    /// Borrows live bindings without constructing a persistable settings copy.
+    pub const fn keyboard_bindings(&self) -> &festerm_config::KeyboardBindings {
+        &self.keyboard_bindings
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
     pub fn interface_settings(&self) -> InterfaceSettings {
+        #[cfg(test)]
+        self.interface_settings_snapshot_count
+            .set(self.interface_settings_snapshot_count.get() + 1);
         InterfaceSettings::new(
             chip_layout_to_preference(self.chip_layout),
             self.status_bar_visible,
@@ -5447,6 +5459,10 @@ impl SessionTab {
 
 #[cfg(test)]
 impl AppState {
+    pub(crate) fn interface_settings_snapshot_count(&self) -> usize {
+        self.interface_settings_snapshot_count.get()
+    }
+
     /// Test-only constructor that starts with a Launcher tab instead of
     /// spawning a real local shell, so dispatch/tab-lifecycle tests do not
     /// need a live PTY. `pub(crate)` so `app.rs`'s headless UI tests can also
