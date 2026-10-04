@@ -59,6 +59,11 @@ impl PaletteState {
         self.open
     }
 
+    /// Stable graphics identity shared with the optional application frame painter.
+    pub fn window_id() -> Id {
+        Id::new("festerm_command_palette")
+    }
+
     pub fn open(&mut self) {
         self.open = true;
         self.query.clear();
@@ -122,7 +127,7 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     );
 
     let area_response = Window::new("Command Palette")
-        .id(Id::new("festerm_command_palette"))
+        .id(PaletteState::window_id())
         .collapsible(false)
         .resizable(false)
         .frame(frame)

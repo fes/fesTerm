@@ -95,6 +95,13 @@ from terminal preparation/drawing using completed GPU work and process-wide CPU
 time. Its diagnostic mesh omissions are not valid production optimizations.
 The chrome fill optimization must preserve every pixel, including fractional
 DPI, clipping and translucent fallback, without changing update cadence.
+`PAL-01`/`PAL-03`/`PAL-04` additionally retain exact palette frame/shadow pixels
+when eligible WARP uses the same geometry through the textureless panel shader.
+Sixteen theme/height/query/DPI combinations and five fallback cases are
+automated; renderer reinstallation and missing-renderer fallback are covered.
+Unsupported roots, transforms/viewports/adapters/formats keep ordinary painting.
+This changes neither widget geometry/focus nor final-terminal copy eligibility;
+native appearance, resource and presentation evidence remains under CP-18.
 
 The owner-approved automatic host-copy and retained window-prefix policies
 under ADRs 0040/0041 select both only

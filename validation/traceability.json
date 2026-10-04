@@ -790,11 +790,22 @@
       "requirements": [
         "docs/gui-design.md#command-palette-and-session-switcher"
       ],
-      "decisions": [],
+      "decisions": [
+        "ADR-0039",
+        "ADR-0040",
+        "ADR-0041"
+      ],
       "automated_tests": [
         "command_palette_selection_activates_the_chosen_tab_end_to_end",
         "escape_dismisses_without_a_selection",
         "palette_fits_the_full_root_and_elides_long_rows_without_losing_identity",
+        "palette_frame_candidates_are_only_the_opaque_untextured_shadow_frame",
+        "palette_frame_retains_root_opacity_visibility_origin_and_layer_transform_guards",
+        "palette_frame_plugin_reinstallation_uses_current_renderer_and_declines_missing_renderer",
+        "textureless_palette_frame_preserves_shadow_pixels_across_dpi_and_fallback",
+        "white_mesh_geometry_preserves_alpha_and_rejects_textures_or_invalid_indices",
+        "residual_profile_scene_preserves_controls_and_accepts_production_palette",
+        "residual_profile_palette_preserves_overlay_fallback_under_automatic_policy",
         "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
         "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
         "oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents",

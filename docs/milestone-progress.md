@@ -3,6 +3,37 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Painting the palette shadow without the atlas texture
+
+The native palette controls correctly declined final-terminal copying and
+prefix retention, yet the overlay still consumed nearly all host CPU. A real
+application-palette offscreen scene localized most completed-render work to
+the ordinary Window frame and shadow, not terminal damage or session delivery.
+Omitting fills was useful attribution but changed pixels and was rejected.
+
+The graphics-only fix tessellates that same palette-layer frame and feeds its
+unchanged vertices, indices, colors and clip to the existing textureless panel
+shader. The shadow remains present. Layout, IDs, widget order, focus, commands
+and repaint cadence stay with egui and the application. Ordinary rendering
+remains the fallback for translucent/invisible roots, shifted viewports,
+transforms, secondary viewports and unsupported adapters/formats. The generic
+panel-frame shadow/opacity guards are not relaxed.
+
+Exact framebuffer comparisons exercise sixteen dark/light/short/query and
+DPI combinations plus five fallback cases. Reinstallation coverage proves
+the plugin reads the current renderer rather than retaining an old one;
+unsupported reinstall clears that handle. Geometry moves into the existing
+immutable panel callback and complete paint-key contract without another
+production mesh clone. The optional same-source control is test-only, and
+palette overlays must still decline automatic copy/retention. Source-pinned
+offscreen CPU observations do not qualify native presentation, sustained
+resources, physical latency or the multi-day #297 cause.
+After integrating the shipped allocation and live-binding fixes, reversed
+same-source controls still used roughly 77-80% less completed-render CPU and
+held the requested 10 Hz with exact pixels. All 1,200 frames and noisy cases
+remain in the [source-pinned performance record](../validation/terminal-performance/README.md#reversed-controls-after-the-shipping-allocationbinding-merge);
+this is an exploratory efficiency result, not a precise native percentage.
+
 ## Reading live keyboard preferences without rebuilding saved settings
 
 The background-session investigation for #297 found repeated GUI-process work
@@ -28,6 +59,7 @@ events. This removes demonstrated repeated work, not a demonstrated cause of
 #297's multi-day plateau or a measured native CPU improvement. Matched one/six
 session WARP CPU, frame-rate and input measurements remain coordinator-owned;
 CP-16/17/18 and the degraded-process attribution remain open.
+
 ## Recognizing native glyph quads without per-glyph heap scratch
 
 The shipping WARP path still prepared every glyph rectangle using a temporary
