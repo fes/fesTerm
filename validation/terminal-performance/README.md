@@ -978,6 +978,87 @@ exactly. The archived compiler/source binding and test inventory are in
 `warp-palette-current-main-built-debug-2`; unfiltered receipts and the all-case
 summary are `warp-palette-integrated-current-debug-baab-*` in the session.
 
+#### 2026-10-04 guarded native palette comparison
+
+The [complete machine-readable record](native-palette-2026-10-04-observations.json)
+adds one **release, actual application** BAAB series: pre-palette shipping
+`667bd9a91d76e4b847cd6da869ac6af4a0a1246f`, shipping palette
+`1680a02843a576678e38b15e546d610951fe27a7`, then the same sources in reverse.
+The unchanged native driver built and canonically staged each clean checkout;
+all four cases passed desktop, input, foreground, geometry, ordered output,
+CPU-adapter, Direct2D, overlay-ineligibility and normal-cleanup guards.
+No owned build/test overlapped timed samples. Background host activity was
+recorded, not excluded or attributed precisely to external processes.
+
+Each case kept the actual command palette open over 120x40 cells, at
+2058x1658 physical client pixels and 192 DPI, using bundled JetBrains Mono NL
+without ligatures. The owned producer delivered all 200 updates at a requested
+100ms interval and exactly 23,790 bytes. The selected DX12 CPU adapter was
+Microsoft Basic Render Driver/WARP `10.0.26100.9278`. Producers were independently built:
+their binary hashes differ between controls, but their crate, shared fixture
+crate, workspace manifest and lockfile Git objects are byte-identical. Both
+binary identities and complete ordered producer reports remain explicit.
+
+| Order | Source | System-normalized app CPU | Constructed GUI frames/s | Aggregate host busy mean |
+| --- | --- | ---: | ---: | ---: |
+| 1 | Pre-palette | 78.57% | 6.46 | 87.20% |
+| 2 | Shipping palette | 42.10% | 15.33 | 55.17% |
+| 3 | Shipping palette | 45.41% | 14.82 | 55.90% |
+| 4 | Pre-palette | 78.34% | 5.63 | 89.23% |
+
+Means of the two run scores give **44.2% less app CPU** (78.46% to 43.75%)
+while constructing about **2.49 times as many GUI frames** (6.04 to 15.07/s).
+CPU is normalized across 16 logical processors. Frame counters are not
+physical presentation FPS or input latency; the GUI may coalesce producer
+updates differently. This is practical native efficiency evidence under
+shared-host load, not a precise statistical estimate or Windows Terminal parity.
+The higher-CPU second candidate and slower second baseline are retained.
+
+All four overlays still recorded zero final-terminal copies and zero retained
+prefix reuse/rebuilds, so the improvement did not bypass paint ordering. All
+four applications quit normally; no owned descendants survived. External final
+captures show the palette above synthetic frame 200 and have matched geometry.
+Their separate raw hashes are preserved, not asserted byte-identical: the caret
+and external capture timing can differ. Existing deterministic framebuffer
+comparisons remain the exact-pixel oracle. No installed session or user terminal
+content was accessed. Sustained resources, physical latency, mixed-DPI/recovery,
+hardware-GPU behavior and the multi-day #297 cause remain open under CP-18/#282.
+
+#### Release attribution of remaining costs
+
+The [complete subsequent release attribution](residual-release-attribution-2026-10-04.json)
+executes archived `C08952DB2BDE4623FF87033F3BEA0351F2514182719338533FF1BEFE30B29882`
+at `f7f19c992e9e5cc4ab2e808f37cbd4fa06990c64`; its later documentation does not
+relabel that execution. Eight full-application, five palette and three
+fill-omission controls preserve every score and host observation.
+
+| Scene | Case | CPU-ms/frame | Completed-work ms/frame |
+| --- | --- | ---: | ---: |
+| Application | Frozen | 7.50 | 8.54 |
+| Application | Localized | 26.88 | 22.05 |
+| Application | Localized without composition | 10.16 | 10.27 |
+| Application | Native immutable image copy | 2.97 | 1.91 |
+| Application | Allocate and copy | 3.13 | 2.01 |
+| Application | Solid native patch | 2.19 | 0.99 |
+| Application | UI-only, native pixels frozen | Below CPU-counter resolution | 1.43 |
+| Application | Unchanged native-frame validation | Below CPU-counter resolution | 1.22 |
+| Palette | Frozen | 507.34 | 48.15 |
+| Palette | Ordinary meshes only | 454.53 | 47.54 |
+| Palette | Localized | 530.78 | 62.94 |
+| Palette | Localized without composition | 14.84 | 11.62 |
+| Palette | Frozen repeat | 522.66 | 48.67 |
+
+The palette still correctly declined automatic copy/retention. Omitting opaque
+white-texture fill triangles subsequently reduced frozen work from roughly
+460-476 to 179 CPU-ms/frame, but changed pixels and is **only attribution**.
+It includes ordinary meshes outside the palette as well, so it does not alone
+prove a palette-only change wins. UI/native-frame validation below finite
+Windows CPU-counter resolution does not mean zero work. Isolated costs need not
+add because batching, worker scheduling and warmed state differ. These are
+forced offscreen controls, not native presentation, physical latency or a
+resource acceptance. The narrow palette-fill follow-up has its own independent
+exact and native evidence; neither this attribution nor that work is a #297 fix.
+
 `profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
 completed-draw wall time and primitive identities. Individual cases include
 clear/sleep controls, frozen whole-frame and single-primitive composition,

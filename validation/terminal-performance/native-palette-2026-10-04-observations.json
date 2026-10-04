@@ -1,0 +1,2770 @@
+{
+  "schema": 1,
+  "purpose": "Guarded native localized terminal with actual command palette open.",
+  "order": [
+    "baseline-1",
+    "current-1",
+    "current-2",
+    "baseline-2"
+  ],
+  "profile": "release",
+  "producer_source_matching": {
+    "git_objects_identical_across_sources": {
+      "crates/festerm-pty-test-child": "f9e2a58ecca23e690c32339943f4f0cf53e25e4c",
+      "crates/festerm-test-support": "738b6a892ff5855ac4485c4ddd0502bcdb816c2c",
+      "Cargo.toml": "506e9c44b10d9a1c285d4fcfbd73fce3dd66c669",
+      "Cargo.lock": "114c5bbb9807ae583bf0e1d3c0335425fa8721cf"
+    },
+    "binary_boundary": "Independently built producers differ between source groups; each group's binary identity and all ordered output reports are retained."
+  },
+  "means_of_run_scores": {
+    "baseline": {
+      "cpu_percent": 78.45842181069852,
+      "gui_frames_per_second": 6.043191976534829,
+      "held_host_busy_percent_mean": 88.21467747962473
+    },
+    "current": {
+      "cpu_percent": 43.754839105891705,
+      "gui_frames_per_second": 15.071892414641102,
+      "held_host_busy_percent_mean": 55.53816114014896
+    }
+  },
+  "cpu_percent_reduction": 44.23181336547694,
+  "gui_frame_rate_ratio": 2.494028399753624,
+  "runs": [
+    {
+      "name": "baseline-1",
+      "source_head": "667bd9a91d76e4b847cd6da869ac6af4a0a1246f",
+      "executable_sha256": "F4E2555BE8C2E74D5B7A8572F0AD4AF3598BD5574BAFEBA6C1548289691785A3",
+      "producer_sha256": "1B820D243AC4126278AD5E9BA46718FEF81E5E4E700B170E0E97D0EC21798202",
+      "driver_sha256": "490456E6DA8071BBA21D78BB8669B9420E26C379D5FE790A9677ACDD578F341F",
+      "controller_sha256": "9EC59492996A5215720CA2C9F294C9579500343496127109D2206EFA19E2891C",
+      "sample_started_unix_ms": 1791098179756,
+      "sample_seconds": 10.6824438,
+      "cpu_percent": 78.57335685210907,
+      "gui_frames_per_second": 6.459196162585943,
+      "direct2d_frames_per_second": 6.459196162585943,
+      "working_set_bytes": 247009280,
+      "private_bytes": 515084288,
+      "metrics": [
+        2058,
+        1658,
+        2058,
+        1658,
+        192,
+        1211,
+        383,
+        0,
+        0,
+        4480,
+        2424
+      ],
+      "font": "JetBrains Mono NL (bundled, ligatures disabled)",
+      "logical_processors": 16,
+      "producer": {
+        "workload": "localized",
+        "frames": 200,
+        "bytes": 23790,
+        "interval_ms": 100,
+        "started_unix_ms": 1791098174287,
+        "geometry": {
+          "columns": 120,
+          "rows": 40
+        },
+        "completed_ms": [
+          100.7329,
+          200.35240000000002,
+          300.588,
+          400.5605,
+          500.50249999999994,
+          600.5666,
+          700.6159,
+          800.7872,
+          900.6759,
+          1000.4943,
+          1100.6189,
+          1200.5038,
+          1300.5002000000002,
+          1400.4014,
+          1500.7047999999998,
+          1600.3712,
+          1700.5759999999998,
+          1800.6598000000001,
+          1900.6113,
+          2000.7272999999998,
+          2100.3573,
+          2200.7609,
+          2300.476,
+          2400.7329999999997,
+          2500.7193,
+          2600.6385999999998,
+          2700.4017,
+          2800.7144,
+          2900.8611,
+          3000.5730000000003,
+          3100.478,
+          3200.6363,
+          3300.8448000000003,
+          3400.743,
+          3500.6684,
+          3600.7358,
+          3700.4828,
+          3800.6128000000003,
+          3900.4351,
+          4000.6699000000003,
+          4100.363200000001,
+          4200.3518,
+          4300.8447,
+          4400.705,
+          4500.5873,
+          4600.4614,
+          4700.370999999999,
+          4800.4249,
+          4900.4475999999995,
+          5000.6672,
+          5100.6115,
+          5200.4321,
+          5300.6548,
+          5400.4785,
+          5500.4972,
+          5600.399,
+          5700.7067,
+          5800.4277,
+          5900.7444,
+          6000.6354,
+          6100.4699,
+          6200.4798,
+          6300.756899999999,
+          6400.4847,
+          6500.9178,
+          6600.7954,
+          6700.509099999999,
+          6833.9498,
+          7003.4653,
+          7003.7466,
+          7170.4719,
+          7200.7845,
+          7333.0103,
+          7501.982,
+          7502.2345000000005,
+          7671.4686,
+          7700.8034,
+          7837.665,
+          8005.1693000000005,
+          8005.919499999999,
+          8173.560399999999,
+          8200.3458,
+          8351.6429,
+          8517.5552,
+          8517.807700000001,
+          8684.012700000001,
+          8700.3949,
+          8856.978299999999,
+          9006.9783,
+          9008.3288,
+          9196.754,
+          9200.4377,
+          9324.6324,
+          9407.9802,
+          9521.3421,
+          9636.0206,
+          9743.9216,
+          9856.1448,
+          10013.7963,
+          10014.112000000001,
+          10186.793399999999,
+          10200.5273,
+          10356.0108,
+          10401.2019,
+          10500.5547,
+          10626.366600000001,
+          10790.2629,
+          10800.3871,
+          10957.536100000001,
+          11122.5806,
+          11123.169300000001,
+          11291.1964,
+          11300.6528,
+          11456.465100000001,
+          11618.8968,
+          11619.2062,
+          11733.522799999999,
+          11904.8963,
+          11908.042500000001,
+          12022.1715,
+          12100.6394,
+          12244.9183,
+          12403.175,
+          12408.534899999999,
+          12573.3513,
+          12600.4519,
+          12744.4083,
+          12901.8423,
+          12902.1394,
+          13078.7148,
+          13100.392100000001,
+          13238.5342,
+          13402.570000000002,
+          13410.964399999999,
+          13515.4293,
+          13600.5094,
+          13740.4326,
+          13902.9484,
+          13906.6627,
+          14073.3189,
+          14100.3382,
+          14239.130599999999,
+          14408.6234,
+          14408.9603,
+          14570.128499999999,
+          14600.6383,
+          14742.4182,
+          14900.867,
+          14901.4352,
+          15069.396299999999,
+          15100.7256,
+          15235.9291,
+          15399.382899999999,
+          15401.5016,
+          15563.6244,
+          15600.7699,
+          15700.4582,
+          15800.7555,
+          15949.2695,
+          16114.367999999999,
+          16114.7004,
+          16284.432999999999,
+          16300.586,
+          16403.0929,
+          16562.0349,
+          16600.3368,
+          16724.532499999998,
+          16890.8916,
+          16900.376,
+          17063.7654,
+          17100.7692,
+          17236.3597,
+          17398.3871,
+          17400.7577,
+          17566.8195,
+          17600.4318,
+          17730.2439,
+          17901.744300000002,
+          17902.0349,
+          18070.8822,
+          18100.325399999998,
+          18238.9063,
+          18407.4569,
+          18408.1584,
+          18575.363500000003,
+          18600.544800000003,
+          18741.586300000003,
+          18855.2038,
+          19019.1403,
+          19019.581899999997,
+          19189.371900000002,
+          19206.0122,
+          19356.0308,
+          19522.9782,
+          19523.7175,
+          19638.874,
+          19794.267099999997,
+          19800.3815,
+          19958.424300000002,
+          20000.6968
+        ]
+      },
+      "intervals": [
+        {
+          "Seconds": 1.0424753,
+          "CpuPercent": 76.62801459180855,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 259379200,
+          "PrivateBytes": 526839808,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 2.0813142,
+          "CpuPercent": 78.21231954252002,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247865344,
+          "PrivateBytes": 517033984,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 3.2276119,
+          "CpuPercent": 79.05886926232165,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 248385536,
+          "PrivateBytes": 517685248,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 4.2799764,
+          "CpuPercent": 76.65030747426391,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 248156160,
+          "PrivateBytes": 517079040,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 5.3283032,
+          "CpuPercent": 78.99492791751581,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247255040,
+          "PrivateBytes": 514940928,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 6.4453653,
+          "CpuPercent": 79.90407382006784,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247394304,
+          "PrivateBytes": 515874816,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 7.4755711,
+          "CpuPercent": 77.8250144291558,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 246943744,
+          "PrivateBytes": 514424832,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 8.6152226,
+          "CpuPercent": 80.63388785957817,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247074816,
+          "PrivateBytes": 514691072,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 9.6422119,
+          "CpuPercent": 79.30492800655271,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 246554624,
+          "PrivateBytes": 514150400,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        },
+        {
+          "Seconds": 10.6824438,
+          "CpuPercent": 78.20146281805046,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247009280,
+          "PrivateBytes": 515084288,
+          "PeakWorkingSetBytes": 326422528,
+          "PeakPagedBytes": 559706112,
+          "Handles": 499,
+          "Threads": 33
+        }
+      ],
+      "host_cpu_samples": [
+        {
+          "aggregate_host_busy_percent": 29.807692307692314,
+          "unix_ms": 1791098158959
+        },
+        {
+          "aggregate_host_busy_percent": 20.09615384615384,
+          "unix_ms": 1791098159976
+        },
+        {
+          "aggregate_host_busy_percent": 19.615384615384613,
+          "unix_ms": 1791098160990
+        },
+        {
+          "aggregate_host_busy_percent": 16.826923076923073,
+          "unix_ms": 1791098162002
+        },
+        {
+          "aggregate_host_busy_percent": 25.36302032913843,
+          "unix_ms": 1791098163013
+        },
+        {
+          "aggregate_host_busy_percent": 26.479146459747817,
+          "unix_ms": 1791098164020
+        },
+        {
+          "aggregate_host_busy_percent": 29.6875,
+          "unix_ms": 1791098165026
+        },
+        {
+          "aggregate_host_busy_percent": 18.461538461538463,
+          "unix_ms": 1791098166031
+        },
+        {
+          "aggregate_host_busy_percent": 8.49609375,
+          "unix_ms": 1791098167033
+        },
+        {
+          "aggregate_host_busy_percent": 34.87084870848709,
+          "unix_ms": 1791098168093
+        },
+        {
+          "aggregate_host_busy_percent": 74.40305635148042,
+          "unix_ms": 1791098169124
+        },
+        {
+          "aggregate_host_busy_percent": 87.27097396335583,
+          "unix_ms": 1791098170132
+        },
+        {
+          "aggregate_host_busy_percent": 89.74609375,
+          "unix_ms": 1791098171137
+        },
+        {
+          "aggregate_host_busy_percent": 78.9423076923077,
+          "unix_ms": 1791098172145
+        },
+        {
+          "aggregate_host_busy_percent": 84.375,
+          "unix_ms": 1791098173152
+        },
+        {
+          "aggregate_host_busy_percent": 93.36538461538461,
+          "unix_ms": 1791098174162
+        },
+        {
+          "aggregate_host_busy_percent": 77.65151515151516,
+          "unix_ms": 1791098175190
+        },
+        {
+          "aggregate_host_busy_percent": 86.70774647887323,
+          "unix_ms": 1791098176301
+        },
+        {
+          "aggregate_host_busy_percent": 91.63461538461539,
+          "unix_ms": 1791098177312
+        },
+        {
+          "aggregate_host_busy_percent": 88.87867647058823,
+          "unix_ms": 1791098178383
+        },
+        {
+          "aggregate_host_busy_percent": 93.75,
+          "unix_ms": 1791098179399
+        },
+        {
+          "aggregate_host_busy_percent": 88.46863468634686,
+          "unix_ms": 1791098180459
+        },
+        {
+          "aggregate_host_busy_percent": 87.73946360153256,
+          "unix_ms": 1791098181472
+        },
+        {
+          "aggregate_host_busy_percent": 86.15384615384616,
+          "unix_ms": 1791098182482
+        },
+        {
+          "aggregate_host_busy_percent": 88.28125,
+          "unix_ms": 1791098183497
+        },
+        {
+          "aggregate_host_busy_percent": 87.59615384615384,
+          "unix_ms": 1791098184509
+        },
+        {
+          "aggregate_host_busy_percent": 87.40942028985508,
+          "unix_ms": 1791098185576
+        },
+        {
+          "aggregate_host_busy_percent": 88.20422535211267,
+          "unix_ms": 1791098186697
+        },
+        {
+          "aggregate_host_busy_percent": 87.01923076923077,
+          "unix_ms": 1791098187708
+        },
+        {
+          "aggregate_host_busy_percent": 85.57692307692308,
+          "unix_ms": 1791098188721
+        },
+        {
+          "aggregate_host_busy_percent": 86.80555555555556,
+          "unix_ms": 1791098189845
+        },
+        {
+          "aggregate_host_busy_percent": 87.01171875,
+          "unix_ms": 1791098190851
+        },
+        {
+          "aggregate_host_busy_percent": 84.90384615384615,
+          "unix_ms": 1791098191860
+        },
+        {
+          "aggregate_host_busy_percent": 89.23076923076923,
+          "unix_ms": 1791098192874
+        },
+        {
+          "aggregate_host_busy_percent": 88.82410106899903,
+          "unix_ms": 1791098193888
+        },
+        {
+          "aggregate_host_busy_percent": 92.85024154589372,
+          "unix_ms": 1791098194895
+        },
+        {
+          "aggregate_host_busy_percent": 88.07692307692308,
+          "unix_ms": 1791098195908
+        },
+        {
+          "aggregate_host_busy_percent": 88.46153846153845,
+          "unix_ms": 1791098196921
+        },
+        {
+          "aggregate_host_busy_percent": 97.4609375,
+          "unix_ms": 1791098197921
+        },
+        {
+          "aggregate_host_busy_percent": 100.0,
+          "unix_ms": 1791098198922
+        },
+        {
+          "aggregate_host_busy_percent": 91.89453125,
+          "unix_ms": 1791098199922
+        }
+      ],
+      "held_host_busy_percent_mean": 87.19845207168997,
+      "held_host_sample_count": 9,
+      "host_activity_boundary": "Coarse complete sample intervals wholly inside application timing; includes app, producer, controller and unrelated host work.",
+      "overlay_copy_frames_per_second": 0.0,
+      "overlay_retained_frames_per_second": 0.0,
+      "desktop_capture": {
+        "Method": "external desktop CopyFromScreen; owned client rectangle",
+        "Geometry": [
+          1211,
+          384,
+          2058,
+          1658,
+          192
+        ],
+        "Sha256": "1870BB2ED880DD29B4739E8B75F84285D9166CA8F01EC444065D8318152ABC7A"
+      },
+      "guards_passed": true,
+      "normal_cleanup": true,
+      "remaining_owned_descendants": 0,
+      "raw_artifact_sha256": {
+        "receipt.json": "9749610EDD0C4F7D7629E9CE088A93130FCD716FB27047230A430C47B1C0246D",
+        "manifest.json": "60ECFBE4B660001833A073124C4D445627B6C810E9A6E7B17C6E4736E10C9B6B",
+        "result.json": "B95B7C6B9E69B381D252444D98856E44856819D8E0134297AC15AB220A6E99AD",
+        "producer.json": "B038F21E32D692CA442989F48563E7F540EE023FC43A3D80331AABBF8D05B559",
+        "cleanup.json": "D871FE3952022862F24269844AB0B2EB14D4256DCD82C977E426F8DF9A2D0E04",
+        "warmup-guard.json": "A629C6E6F25BE954EB9667EECA3E7A2BD53743C5842AB9625212CEC5851106E6",
+        "start.geometry.json": "3E49F84A099B59C9DBFA3AFE136ADABAB6939E2177ED5A16827DFC5B96E1634D",
+        "desktop-final.json": "49DFBFE17BA3B16F88412E641D463802852E21C1C70167C4166DACACFA57D6F1",
+        "desktop-final.png": "1870BB2ED880DD29B4739E8B75F84285D9166CA8F01EC444065D8318152ABC7A"
+      }
+    },
+    {
+      "name": "current-1",
+      "source_head": "1680a02843a576678e38b15e546d610951fe27a7",
+      "executable_sha256": "AD80D48291859541C866B6101CC39E77498E00BBF22AFFBA8B368B8CA72CEA7A",
+      "producer_sha256": "F82C8C2987597A4AC495DC339842F320136202368C435228904F866929A4670C",
+      "driver_sha256": "490456E6DA8071BBA21D78BB8669B9420E26C379D5FE790A9677ACDD578F341F",
+      "controller_sha256": "9EC59492996A5215720CA2C9F294C9579500343496127109D2206EFA19E2891C",
+      "sample_started_unix_ms": 1791098221769,
+      "sample_seconds": 10.3097037,
+      "cpu_percent": 42.10421985745332,
+      "gui_frames_per_second": 15.325367692186925,
+      "direct2d_frames_per_second": 10.087583797388861,
+      "working_set_bytes": 234110976,
+      "private_bytes": 489529344,
+      "metrics": [
+        2058,
+        1658,
+        2058,
+        1658,
+        192,
+        1211,
+        383,
+        0,
+        0,
+        4480,
+        2424
+      ],
+      "font": "JetBrains Mono NL (bundled, ligatures disabled)",
+      "logical_processors": 16,
+      "producer": {
+        "workload": "localized",
+        "frames": 200,
+        "bytes": 23790,
+        "interval_ms": 100,
+        "started_unix_ms": 1791098216669,
+        "geometry": {
+          "columns": 120,
+          "rows": 40
+        },
+        "completed_ms": [
+          100.8825,
+          200.4224,
+          310.5272,
+          410.594,
+          509.68800000000005,
+          604.0664999999999,
+          707.5981999999999,
+          812.8916,
+          900.5438,
+          1000.4664999999999,
+          1100.4091,
+          1200.8537,
+          1300.7287000000001,
+          1400.5285000000001,
+          1500.3109000000002,
+          1600.9284,
+          1700.475,
+          1800.6769,
+          1900.6264,
+          2000.6616,
+          2100.7158,
+          2200.8082,
+          2300.3402,
+          2400.6425,
+          2500.3989,
+          2601.1986,
+          2704.7735,
+          2800.4226,
+          2900.6156,
+          3000.6303000000003,
+          3100.5445,
+          3200.6088,
+          3300.5195,
+          3400.3179,
+          3500.5468,
+          3600.76,
+          3700.5427,
+          3800.5782,
+          3900.3012,
+          4000.7576,
+          4100.5523,
+          4200.4926,
+          4300.585599999999,
+          4400.7078,
+          4500.742,
+          4600.5349,
+          4700.3393,
+          4800.4965999999995,
+          4900.8304,
+          5000.6215,
+          5100.556100000001,
+          5200.4509,
+          5300.4847,
+          5400.4262,
+          5500.5882,
+          5600.6437,
+          5700.6094,
+          5802.1705,
+          5900.6622,
+          6000.669,
+          6100.3185,
+          6200.8231,
+          6300.4381,
+          6400.4427000000005,
+          6500.2917,
+          6600.5722000000005,
+          6700.4812999999995,
+          6800.3596,
+          6900.5679,
+          7000.6866,
+          7100.4822,
+          7200.64,
+          7300.6975,
+          7400.5793,
+          7500.2922,
+          7600.5742,
+          7700.4484,
+          7800.4742,
+          7900.7112,
+          8000.6253,
+          8100.7023,
+          8200.4632,
+          8300.6962,
+          8400.4005,
+          8500.4573,
+          8600.6384,
+          8700.423,
+          8800.6117,
+          8900.380200000001,
+          9000.4676,
+          9100.5494,
+          9200.3812,
+          9300.3356,
+          9400.7423,
+          9500.3545,
+          9600.514799999999,
+          9700.3377,
+          9800.3585,
+          9900.2718,
+          10000.293599999999,
+          10100.354,
+          10200.6876,
+          10300.3061,
+          10400.3152,
+          10500.4951,
+          10600.6607,
+          10700.6352,
+          10800.424700000001,
+          10900.738000000001,
+          11000.572999999999,
+          11100.448699999999,
+          11200.3411,
+          11300.7541,
+          11400.3426,
+          11500.580100000001,
+          11600.844200000001,
+          11700.417399999998,
+          11804.0555,
+          11900.649599999999,
+          12000.6297,
+          12104.3675,
+          12200.4683,
+          12300.5677,
+          12400.4624,
+          12500.4469,
+          12600.509199999999,
+          12700.488500000001,
+          12800.5263,
+          12900.3312,
+          13000.6592,
+          13100.713600000001,
+          13200.693899999998,
+          13300.3208,
+          13400.296,
+          13500.276899999999,
+          13600.7258,
+          13700.5779,
+          13800.3862,
+          13900.6438,
+          14000.604,
+          14100.3845,
+          14200.5198,
+          14300.3605,
+          14400.7174,
+          14500.4762,
+          14600.4391,
+          14700.7513,
+          14800.763200000001,
+          14900.6152,
+          15000.430100000001,
+          15100.3807,
+          15200.3286,
+          15300.4894,
+          15400.3285,
+          15500.5845,
+          15600.727299999999,
+          15700.4778,
+          15806.2186,
+          15900.789200000001,
+          16000.700599999998,
+          16100.412599999998,
+          16200.496000000001,
+          16300.244700000001,
+          16400.8559,
+          16500.648699999998,
+          16600.3965,
+          16700.5536,
+          16807.2413,
+          16900.312199999997,
+          17000.6013,
+          17100.268799999998,
+          17200.3993,
+          17300.626699999997,
+          17400.6288,
+          17500.6329,
+          17600.4025,
+          17700.6108,
+          17800.396,
+          17900.7481,
+          18000.3104,
+          18100.3264,
+          18216.3209,
+          18300.632,
+          18400.577299999997,
+          18500.3104,
+          18600.5421,
+          18700.276899999997,
+          18800.394699999997,
+          18900.3583,
+          19000.677799999998,
+          19100.5161,
+          19200.4604,
+          19300.4391,
+          19400.349599999998,
+          19500.5663,
+          19600.9757,
+          19700.6339,
+          19800.4332,
+          19900.5257,
+          20000.5939
+        ]
+      },
+      "intervals": [
+        {
+          "Seconds": 1.0356975,
+          "CpuPercent": 40.54483814048021,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 242913280,
+          "PrivateBytes": 497725440,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 2.0676984,
+          "CpuPercent": 39.93304414753902,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 240975872,
+          "PrivateBytes": 496193536,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 3.1403847,
+          "CpuPercent": 40.876495066637844,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 243920896,
+          "PrivateBytes": 498520064,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 4.1707531,
+          "CpuPercent": 45.39865911066372,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 240373760,
+          "PrivateBytes": 493342720,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 5.1940911,
+          "CpuPercent": 44.37454316169243,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 240599040,
+          "PrivateBytes": 494940160,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 6.2126027,
+          "CpuPercent": 42.66719323569805,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 240476160,
+          "PrivateBytes": 494637056,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 7.2475537,
+          "CpuPercent": 43.21611602868153,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 239464448,
+          "PrivateBytes": 494166016,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 8.2680254,
+          "CpuPercent": 43.733605008350516,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 237686784,
+          "PrivateBytes": 494108672,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 9.2888636,
+          "CpuPercent": 45.24850877445613,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 233811968,
+          "PrivateBytes": 488157184,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        },
+        {
+          "Seconds": 10.3097037,
+          "CpuPercent": 35.10818565023066,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 234110976,
+          "PrivateBytes": 489529344,
+          "PeakWorkingSetBytes": 265306112,
+          "PeakPagedBytes": 520429568,
+          "Handles": 489,
+          "Threads": 35
+        }
+      ],
+      "host_cpu_samples": [
+        {
+          "aggregate_host_busy_percent": 22.65625,
+          "unix_ms": 1791098202357
+        },
+        {
+          "aggregate_host_busy_percent": 26.63461538461539,
+          "unix_ms": 1791098203365
+        },
+        {
+          "aggregate_host_busy_percent": 17.59615384615385,
+          "unix_ms": 1791098204378
+        },
+        {
+          "aggregate_host_busy_percent": 13.749999999999996,
+          "unix_ms": 1791098205390
+        },
+        {
+          "aggregate_host_busy_percent": 22.265625,
+          "unix_ms": 1791098206402
+        },
+        {
+          "aggregate_host_busy_percent": 27.596153846153847,
+          "unix_ms": 1791098207407
+        },
+        {
+          "aggregate_host_busy_percent": 15.8203125,
+          "unix_ms": 1791098208411
+        },
+        {
+          "aggregate_host_busy_percent": 16.9921875,
+          "unix_ms": 1791098209417
+        },
+        {
+          "aggregate_host_busy_percent": 5.192307692307696,
+          "unix_ms": 1791098210422
+        },
+        {
+          "aggregate_host_busy_percent": 33.88671875,
+          "unix_ms": 1791098211425
+        },
+        {
+          "aggregate_host_busy_percent": 35.7421875,
+          "unix_ms": 1791098212435
+        },
+        {
+          "aggregate_host_busy_percent": 42.50000000000001,
+          "unix_ms": 1791098213438
+        },
+        {
+          "aggregate_host_busy_percent": 31.057692307692307,
+          "unix_ms": 1791098214453
+        },
+        {
+          "aggregate_host_busy_percent": 39.453125,
+          "unix_ms": 1791098215453
+        },
+        {
+          "aggregate_host_busy_percent": 35.05859375,
+          "unix_ms": 1791098216454
+        },
+        {
+          "aggregate_host_busy_percent": 51.193887297039154,
+          "unix_ms": 1791098217483
+        },
+        {
+          "aggregate_host_busy_percent": 54.88867376573088,
+          "unix_ms": 1791098218490
+        },
+        {
+          "aggregate_host_busy_percent": 58.996212121212125,
+          "unix_ms": 1791098219519
+        },
+        {
+          "aggregate_host_busy_percent": 48.17307692307692,
+          "unix_ms": 1791098220533
+        },
+        {
+          "aggregate_host_busy_percent": 52.44140625,
+          "unix_ms": 1791098221539
+        },
+        {
+          "aggregate_host_busy_percent": 60.05859375,
+          "unix_ms": 1791098222542
+        },
+        {
+          "aggregate_host_busy_percent": 59.1796875,
+          "unix_ms": 1791098223545
+        },
+        {
+          "aggregate_host_busy_percent": 49.519230769230774,
+          "unix_ms": 1791098224547
+        },
+        {
+          "aggregate_host_busy_percent": 50.0,
+          "unix_ms": 1791098225551
+        },
+        {
+          "aggregate_host_busy_percent": 58.203125,
+          "unix_ms": 1791098226555
+        },
+        {
+          "aggregate_host_busy_percent": 52.5,
+          "unix_ms": 1791098227563
+        },
+        {
+          "aggregate_host_busy_percent": 60.7421875,
+          "unix_ms": 1791098228569
+        },
+        {
+          "aggregate_host_busy_percent": 53.125,
+          "unix_ms": 1791098229573
+        },
+        {
+          "aggregate_host_busy_percent": 56.007751937984494,
+          "unix_ms": 1791098230576
+        },
+        {
+          "aggregate_host_busy_percent": 57.26744186046512,
+          "unix_ms": 1791098231583
+        },
+        {
+          "aggregate_host_busy_percent": 59.765625,
+          "unix_ms": 1791098232588
+        },
+        {
+          "aggregate_host_busy_percent": 65.48076923076923,
+          "unix_ms": 1791098233592
+        },
+        {
+          "aggregate_host_busy_percent": 63.942307692307686,
+          "unix_ms": 1791098234623
+        },
+        {
+          "aggregate_host_busy_percent": 55.57692307692308,
+          "unix_ms": 1791098235630
+        },
+        {
+          "aggregate_host_busy_percent": 58.30078125,
+          "unix_ms": 1791098236632
+        },
+        {
+          "aggregate_host_busy_percent": 44.43359375,
+          "unix_ms": 1791098237637
+        },
+        {
+          "aggregate_host_busy_percent": 87.95955882352942,
+          "unix_ms": 1791098238692
+        },
+        {
+          "aggregate_host_busy_percent": 82.21153846153845,
+          "unix_ms": 1791098239704
+        }
+      ],
+      "held_host_busy_percent_mean": 55.17160272974227,
+      "held_host_sample_count": 9,
+      "host_activity_boundary": "Coarse complete sample intervals wholly inside application timing; includes app, producer, controller and unrelated host work.",
+      "overlay_copy_frames_per_second": 0.0,
+      "overlay_retained_frames_per_second": 0.0,
+      "desktop_capture": {
+        "Method": "external desktop CopyFromScreen; owned client rectangle",
+        "Geometry": [
+          1211,
+          384,
+          2058,
+          1658,
+          192
+        ],
+        "Sha256": "336D9AC00816D6F8ECB41AF7716208A19CED5766274C664E4F996FD5C87E453E"
+      },
+      "guards_passed": true,
+      "normal_cleanup": true,
+      "remaining_owned_descendants": 0,
+      "raw_artifact_sha256": {
+        "receipt.json": "DDDC75C9FDB1BE7522BCE4F914DC9F6038FB24351EBF94E735DA10E78C152999",
+        "manifest.json": "FF83678B00A010F0B820502D9D0F1BFFBF74AAEFA0D270D32971F3CE6FA7B9B8",
+        "result.json": "BAA9EFAD67E1FCE67F6346D404F61C977E3D9F878396DEB69F0BDC5EC548E835",
+        "producer.json": "DBB64FE21F25A2FF876F2324EDDAC6C285D4CE28DF82E625F0D2AB4D774453EA",
+        "cleanup.json": "C5A21D9D6D2FD2F28EE5AB8759041180C6330C5A2D2EE85AB90FCD288D9CE3F4",
+        "warmup-guard.json": "6EA60EC48E75DB806A5A903A989641AD1281422AF0AD597B26FF3BADD29A0859",
+        "start.geometry.json": "95FE60FAA8CE64DC53E8D75DBEF0943866A4BC3B0D392FB437871F7D800510DF",
+        "desktop-final.json": "C05EB87EAA1FF13295F605B526FDDFB0671033ECE3BF2D92DD77F978CBF4FF7B",
+        "desktop-final.png": "336D9AC00816D6F8ECB41AF7716208A19CED5766274C664E4F996FD5C87E453E"
+      }
+    },
+    {
+      "name": "current-2",
+      "source_head": "1680a02843a576678e38b15e546d610951fe27a7",
+      "executable_sha256": "AD80D48291859541C866B6101CC39E77498E00BBF22AFFBA8B368B8CA72CEA7A",
+      "producer_sha256": "F82C8C2987597A4AC495DC339842F320136202368C435228904F866929A4670C",
+      "driver_sha256": "490456E6DA8071BBA21D78BB8669B9420E26C379D5FE790A9677ACDD578F341F",
+      "controller_sha256": "9EC59492996A5215720CA2C9F294C9579500343496127109D2206EFA19E2891C",
+      "sample_started_unix_ms": 1791098260789,
+      "sample_seconds": 10.392473,
+      "cpu_percent": 45.405458354330094,
+      "gui_frames_per_second": 14.81841713709528,
+      "direct2d_frames_per_second": 10.007242741934474,
+      "working_set_bytes": 230580224,
+      "private_bytes": 487190528,
+      "metrics": [
+        2058,
+        1658,
+        2058,
+        1658,
+        192,
+        1211,
+        383,
+        0,
+        0,
+        4480,
+        2424
+      ],
+      "font": "JetBrains Mono NL (bundled, ligatures disabled)",
+      "logical_processors": 16,
+      "producer": {
+        "workload": "localized",
+        "frames": 200,
+        "bytes": 23790,
+        "interval_ms": 100,
+        "started_unix_ms": 1791098255723,
+        "geometry": {
+          "columns": 120,
+          "rows": 40
+        },
+        "completed_ms": [
+          100.6253,
+          200.5516,
+          300.29670000000004,
+          400.80080000000004,
+          527.0673,
+          600.5974,
+          700.77,
+          800.6406000000001,
+          900.8636,
+          1000.5377,
+          1100.4022,
+          1201.5928000000001,
+          1300.2637,
+          1400.7939999999999,
+          1500.7931,
+          1603.0989,
+          1707.7442999999998,
+          1823.4607999999998,
+          1900.5288999999998,
+          2000.676,
+          2104.1288,
+          2200.3267,
+          2300.6638000000003,
+          2400.353,
+          2500.5692000000004,
+          2600.3005,
+          2701.4808000000003,
+          2814.1409,
+          2900.69,
+          3000.5487999999996,
+          3100.3035,
+          3200.6348,
+          3300.5646,
+          3400.5568999999996,
+          3501.9042000000004,
+          3612.4849,
+          3716.7528,
+          3800.2905,
+          3900.6553,
+          4000.5455,
+          4100.3302,
+          4200.6876,
+          4314.6089999999995,
+          4400.5527,
+          4501.1366,
+          4600.6158,
+          4707.8769,
+          4800.7032,
+          4900.3488,
+          5000.4181,
+          5100.3589,
+          5209.136799999999,
+          5300.4852,
+          5400.5255,
+          5500.3374,
+          5600.4519,
+          5706.1688,
+          5815.5203,
+          5900.7796,
+          6000.8601,
+          6100.6444,
+          6200.6128,
+          6300.5875,
+          6400.8369,
+          6500.769499999999,
+          6600.3961,
+          6706.0852,
+          6815.485299999999,
+          6900.514400000001,
+          7001.6776,
+          7100.6595,
+          7210.2961,
+          7300.5311,
+          7400.9817,
+          7500.4994,
+          7600.443399999999,
+          7710.0644,
+          7800.257699999999,
+          7900.398,
+          8000.4832,
+          8100.8017,
+          8200.7043,
+          8300.6767,
+          8400.3981,
+          8500.781200000001,
+          8600.7349,
+          8700.623800000001,
+          8814.617,
+          8900.3268,
+          9000.8711,
+          9119.9308,
+          9200.418300000001,
+          9300.5736,
+          9400.3633,
+          9500.6341,
+          9600.699799999999,
+          9700.6584,
+          9808.8922,
+          9900.2566,
+          10000.754799999999,
+          10100.3533,
+          10200.3451,
+          10300.593299999999,
+          10400.4475,
+          10500.2952,
+          10600.719500000001,
+          10704.161600000001,
+          10814.5138,
+          10900.9021,
+          11001.1403,
+          11103.6412,
+          11205.4334,
+          11300.3409,
+          11400.8292,
+          11500.444099999999,
+          11600.7724,
+          11700.608900000001,
+          11805.3161,
+          11900.950200000001,
+          12000.9688,
+          12100.5788,
+          12200.480000000001,
+          12300.5348,
+          12400.463399999999,
+          12500.450499999999,
+          12600.5251,
+          12701.4377,
+          12818.1763,
+          12900.391300000001,
+          13000.3046,
+          13101.1036,
+          13205.1883,
+          13314.650500000002,
+          13400.3476,
+          13500.5826,
+          13600.7402,
+          13702.0882,
+          13821.7778,
+          13900.4841,
+          14003.6736,
+          14101.220299999999,
+          14200.3668,
+          14300.4281,
+          14400.8068,
+          14501.1793,
+          14609.5237,
+          14723.436,
+          14800.2515,
+          14900.3425,
+          15000.7635,
+          15100.646700000001,
+          15200.713800000001,
+          15300.341400000001,
+          15400.3701,
+          15500.717200000001,
+          15600.6884,
+          15702.4406,
+          15814.7543,
+          15900.7263,
+          16000.4163,
+          16102.3288,
+          16201.624800000001,
+          16300.5761,
+          16400.3056,
+          16500.2831,
+          16600.7718,
+          16700.628,
+          16814.0383,
+          16900.3153,
+          17000.4978,
+          17106.2507,
+          17210.7174,
+          17300.68,
+          17400.694600000003,
+          17500.362500000003,
+          17608.3308,
+          17706.33,
+          17800.5316,
+          17900.6539,
+          18000.5975,
+          18100.4425,
+          18200.5629,
+          18300.5031,
+          18400.6827,
+          18500.6025,
+          18600.8052,
+          18705.1532,
+          18800.7242,
+          18900.5264,
+          19000.4743,
+          19100.4657,
+          19200.378,
+          19314.3008,
+          19400.4021,
+          19500.4954,
+          19600.5898,
+          19700.4297,
+          19803.7019,
+          19900.471400000002,
+          20001.2556
+        ]
+      },
+      "intervals": [
+        {
+          "Seconds": 1.0273619,
+          "CpuPercent": 45.72162569976558,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 242728960,
+          "PrivateBytes": 498081792,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 2.0884481,
+          "CpuPercent": 47.76576469470624,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 232939520,
+          "PrivateBytes": 488460288,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 3.1361794,
+          "CpuPercent": 42.87537749421058,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 233127936,
+          "PrivateBytes": 488497152,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 4.1861537,
+          "CpuPercent": 45.853056831962455,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 233115648,
+          "PrivateBytes": 489000960,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 5.2120755,
+          "CpuPercent": 41.12155526863744,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 232984576,
+          "PrivateBytes": 488648704,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 6.2315607,
+          "CpuPercent": 46.74540640707682,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 232361984,
+          "PrivateBytes": 488628224,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 7.2512708,
+          "CpuPercent": 43.287425514369225,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 232255488,
+          "PrivateBytes": 488136704,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 8.3182044,
+          "CpuPercent": 50.43293579844142,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 231583744,
+          "PrivateBytes": 487243776,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 9.3493004,
+          "CpuPercent": 44.798356554578824,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 231194624,
+          "PrivateBytes": 488099840,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        },
+        {
+          "Seconds": 10.392473,
+          "CpuPercent": 45.21588158086207,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 230580224,
+          "PrivateBytes": 487190528,
+          "PeakWorkingSetBytes": 268955648,
+          "PeakPagedBytes": 520925184,
+          "Handles": 483,
+          "Threads": 35
+        }
+      ],
+      "host_cpu_samples": [
+        {
+          "aggregate_host_busy_percent": 25.9765625,
+          "unix_ms": 1791098241950
+        },
+        {
+          "aggregate_host_busy_percent": 28.46153846153846,
+          "unix_ms": 1791098242961
+        },
+        {
+          "aggregate_host_busy_percent": 31.634615384615383,
+          "unix_ms": 1791098243968
+        },
+        {
+          "aggregate_host_busy_percent": 25.9765625,
+          "unix_ms": 1791098244981
+        },
+        {
+          "aggregate_host_busy_percent": 26.249999999999996,
+          "unix_ms": 1791098245988
+        },
+        {
+          "aggregate_host_busy_percent": 24.21875,
+          "unix_ms": 1791098246997
+        },
+        {
+          "aggregate_host_busy_percent": 21.53846153846154,
+          "unix_ms": 1791098248003
+        },
+        {
+          "aggregate_host_busy_percent": 17.28515625,
+          "unix_ms": 1791098249011
+        },
+        {
+          "aggregate_host_busy_percent": 28.681424446583247,
+          "unix_ms": 1791098250015
+        },
+        {
+          "aggregate_host_busy_percent": 35.609756097560975,
+          "unix_ms": 1791098251017
+        },
+        {
+          "aggregate_host_busy_percent": 38.96484375,
+          "unix_ms": 1791098252023
+        },
+        {
+          "aggregate_host_busy_percent": 40.234375,
+          "unix_ms": 1791098253027
+        },
+        {
+          "aggregate_host_busy_percent": 50.29239766081872,
+          "unix_ms": 1791098254030
+        },
+        {
+          "aggregate_host_busy_percent": 37.38140417457305,
+          "unix_ms": 1791098255046
+        },
+        {
+          "aggregate_host_busy_percent": 40.76923076923077,
+          "unix_ms": 1791098256070
+        },
+        {
+          "aggregate_host_busy_percent": 57.11538461538461,
+          "unix_ms": 1791098257082
+        },
+        {
+          "aggregate_host_busy_percent": 61.62109375,
+          "unix_ms": 1791098258087
+        },
+        {
+          "aggregate_host_busy_percent": 53.65384615384615,
+          "unix_ms": 1791098259093
+        },
+        {
+          "aggregate_host_busy_percent": 60.64453125,
+          "unix_ms": 1791098260095
+        },
+        {
+          "aggregate_host_busy_percent": 51.5625,
+          "unix_ms": 1791098261101
+        },
+        {
+          "aggregate_host_busy_percent": 50.96339113680154,
+          "unix_ms": 1791098262109
+        },
+        {
+          "aggregate_host_busy_percent": 60.136452241715396,
+          "unix_ms": 1791098263109
+        },
+        {
+          "aggregate_host_busy_percent": 58.0078125,
+          "unix_ms": 1791098264113
+        },
+        {
+          "aggregate_host_busy_percent": 55.17578125,
+          "unix_ms": 1791098265116
+        },
+        {
+          "aggregate_host_busy_percent": 50.29296875,
+          "unix_ms": 1791098266119
+        },
+        {
+          "aggregate_host_busy_percent": 58.17307692307692,
+          "unix_ms": 1791098267124
+        },
+        {
+          "aggregate_host_busy_percent": 52.24609375,
+          "unix_ms": 1791098268126
+        },
+        {
+          "aggregate_host_busy_percent": 59.47265625,
+          "unix_ms": 1791098269131
+        },
+        {
+          "aggregate_host_busy_percent": 62.21153846153846,
+          "unix_ms": 1791098270146
+        },
+        {
+          "aggregate_host_busy_percent": 52.36742424242424,
+          "unix_ms": 1791098271175
+        },
+        {
+          "aggregate_host_busy_percent": 56.8359375,
+          "unix_ms": 1791098272184
+        },
+        {
+          "aggregate_host_busy_percent": 57.980769230769226,
+          "unix_ms": 1791098273189
+        },
+        {
+          "aggregate_host_busy_percent": 53.22265625,
+          "unix_ms": 1791098274194
+        },
+        {
+          "aggregate_host_busy_percent": 59.47265625,
+          "unix_ms": 1791098275196
+        },
+        {
+          "aggregate_host_busy_percent": 51.05769230769231,
+          "unix_ms": 1791098276203
+        },
+        {
+          "aggregate_host_busy_percent": 72.70114942528735,
+          "unix_ms": 1791098277567
+        },
+        {
+          "aggregate_host_busy_percent": 92.08984375,
+          "unix_ms": 1791098278566
+        }
+      ],
+      "held_host_busy_percent_mean": 55.904719550555654,
+      "held_host_sample_count": 10,
+      "host_activity_boundary": "Coarse complete sample intervals wholly inside application timing; includes app, producer, controller and unrelated host work.",
+      "overlay_copy_frames_per_second": 0.0,
+      "overlay_retained_frames_per_second": 0.0,
+      "desktop_capture": {
+        "Method": "external desktop CopyFromScreen; owned client rectangle",
+        "Geometry": [
+          1211,
+          384,
+          2058,
+          1658,
+          192
+        ],
+        "Sha256": "336D9AC00816D6F8ECB41AF7716208A19CED5766274C664E4F996FD5C87E453E"
+      },
+      "guards_passed": true,
+      "normal_cleanup": true,
+      "remaining_owned_descendants": 0,
+      "raw_artifact_sha256": {
+        "receipt.json": "1AF7E3AB21DA1F26E85802F4E289E030B16F74750BFB223EE45A1002F27F0E57",
+        "manifest.json": "402287CDA3E8A635CB645E93D6D6F8632654157BF616F30C9A8F68DF1AF85595",
+        "result.json": "B48267BCD0FFECA995ECD19EDB513AED21E1FB0CBB12C5A8BC16F1C89317A92C",
+        "producer.json": "BF14DDF03D1C5F58298F8B99A74AA0105A5624FFCFB4DAC1018966755C260DEB",
+        "cleanup.json": "82709B6C9B131132943555DD3D32A16F5E8C3E89CEA7BB5F7F0EE55B91675ADE",
+        "warmup-guard.json": "6E58C27726B732BF4AE4229627FEF1588585A0695084665895FA1B4993CBFDB9",
+        "start.geometry.json": "FE14C9BCF0B0CD0C345C0683C22E236D703F7A35747D9433EF5E3249B8729FC5",
+        "desktop-final.json": "C05EB87EAA1FF13295F605B526FDDFB0671033ECE3BF2D92DD77F978CBF4FF7B",
+        "desktop-final.png": "336D9AC00816D6F8ECB41AF7716208A19CED5766274C664E4F996FD5C87E453E"
+      }
+    },
+    {
+      "name": "baseline-2",
+      "source_head": "667bd9a91d76e4b847cd6da869ac6af4a0a1246f",
+      "executable_sha256": "F4E2555BE8C2E74D5B7A8572F0AD4AF3598BD5574BAFEBA6C1548289691785A3",
+      "producer_sha256": "1B820D243AC4126278AD5E9BA46718FEF81E5E4E700B170E0E97D0EC21798202",
+      "driver_sha256": "490456E6DA8071BBA21D78BB8669B9420E26C379D5FE790A9677ACDD578F341F",
+      "controller_sha256": "9EC59492996A5215720CA2C9F294C9579500343496127109D2206EFA19E2891C",
+      "sample_started_unix_ms": 1791098300411,
+      "sample_seconds": 11.0179369,
+      "cpu_percent": 78.34348676928799,
+      "gui_frames_per_second": 5.627187790483715,
+      "direct2d_frames_per_second": 5.627187790483715,
+      "working_set_bytes": 248299520,
+      "private_bytes": 518651904,
+      "metrics": [
+        2058,
+        1658,
+        2058,
+        1658,
+        192,
+        1211,
+        383,
+        0,
+        0,
+        4480,
+        2424
+      ],
+      "font": "JetBrains Mono NL (bundled, ligatures disabled)",
+      "logical_processors": 16,
+      "producer": {
+        "workload": "localized",
+        "frames": 200,
+        "bytes": 23790,
+        "interval_ms": 100,
+        "started_unix_ms": 1791098295169,
+        "geometry": {
+          "columns": 120,
+          "rows": 40
+        },
+        "completed_ms": [
+          177.9906,
+          200.627,
+          355.0799,
+          400.44550000000004,
+          585.1283000000001,
+          600.2577,
+          803.4888,
+          820.3519,
+          1043.2827,
+          1043.6102,
+          1226.2138,
+          1226.6042,
+          1300.4952,
+          1456.4468,
+          1500.2857999999999,
+          1649.4111999999998,
+          1804.0719,
+          1846.5394000000001,
+          1962.5499,
+          2000.3031,
+          2108.0964999999997,
+          2303.899,
+          2347.2932,
+          2535.0535,
+          2535.3903,
+          2600.6363,
+          2701.7077999999997,
+          2881.9474,
+          2900.6949999999997,
+          3072.6297,
+          3100.4811999999997,
+          3200.9067,
+          3328.8802,
+          3463.6366000000003,
+          3515.4486,
+          3669.5074,
+          3712.5919,
+          3892.1084,
+          3900.5449,
+          4090.2836999999995,
+          4100.441,
+          4273.8766000000005,
+          4300.6765,
+          4456.3423,
+          4500.3757000000005,
+          4646.3481,
+          4804.2275,
+          4831.2374,
+          5023.5664,
+          5025.5952,
+          5213.0965,
+          5214.2397,
+          5405.901,
+          5407.7471,
+          5593.6442,
+          5600.410099999999,
+          5723.5321,
+          5844.3386,
+          5974.7570000000005,
+          6000.4407,
+          6162.3883,
+          6200.6401000000005,
+          6350.9161,
+          6536.457399999999,
+          6537.5615,
+          6724.1364,
+          6725.1386,
+          6921.5967,
+          6922.525699999999,
+          7108.2557,
+          7109.0246,
+          7297.2995,
+          7300.7836,
+          7492.1366,
+          7500.5369,
+          7687.75,
+          7700.664,
+          7876.9276,
+          7900.5145,
+          8088.371099999999,
+          8100.640399999999,
+          8280.6558,
+          8300.818800000001,
+          8464.9379,
+          8500.6255,
+          8665.2381,
+          8804.152399999999,
+          8852.2901,
+          8964.7036,
+          9000.7761,
+          9172.6881,
+          9200.762299999999,
+          9355.257399999999,
+          9541.3067,
+          9541.9684,
+          9710.6793,
+          9742.484900000001,
+          9879.8718,
+          9931.128700000001,
+          10112.0855,
+          10112.4361,
+          10310.388700000001,
+          10315.0328,
+          10499.8816,
+          10503.685000000001,
+          10687.0851,
+          10700.562,
+          10872.969,
+          10901.422,
+          11071.3477,
+          11100.4715,
+          11261.6324,
+          11300.764799999999,
+          11450.310800000001,
+          11636.086000000001,
+          11643.4646,
+          11774.1329,
+          11800.4185,
+          11900.7623,
+          12020.6336,
+          12210.4995,
+          12211.092499999999,
+          12405.0162,
+          12405.3929,
+          12590.8309,
+          12600.7848,
+          12707.5939,
+          12800.477799999999,
+          12969.2423,
+          13000.6857,
+          13167.5287,
+          13200.539499999999,
+          13354.2369,
+          13455.2961,
+          13525.6085,
+          13669.6442,
+          13700.4898,
+          13800.4982,
+          13914.5281,
+          14100.536,
+          14100.7124,
+          14288.4085,
+          14300.5599,
+          14473.8991,
+          14500.4283,
+          14607.1282,
+          14788.875900000001,
+          14800.8145,
+          14973.724199999999,
+          15000.5291,
+          15174.9419,
+          15200.804399999999,
+          15366.5121,
+          15400.722,
+          15550.3449,
+          15600.554600000001,
+          15700.3611,
+          15870.4462,
+          15900.4498,
+          16064.433099999998,
+          16100.711100000002,
+          16261.986100000002,
+          16300.630500000001,
+          16448.4169,
+          16500.5079,
+          16645.893399999997,
+          16847.0856,
+          16847.437700000002,
+          17022.8999,
+          17032.167,
+          17213.766799999998,
+          17214.3915,
+          17411.4572,
+          17411.926300000003,
+          17540.628399999998,
+          17655.588200000002,
+          17787.1368,
+          17803.2251,
+          17972.471599999997,
+          18000.4566,
+          18161.1543,
+          18200.5442,
+          18346.4465,
+          18550.2418,
+          18552.821300000003,
+          18664.8715,
+          18700.6844,
+          18871.6822,
+          18900.6436,
+          19056.5848,
+          19225.1476,
+          19247.8839,
+          19436.3177,
+          19438.974000000002,
+          19600.7113,
+          19629.419299999998,
+          19819.950500000003,
+          19821.5307,
+          20013.9453,
+          20015.388000000003
+        ]
+      },
+      "intervals": [
+        {
+          "Seconds": 1.1179315,
+          "CpuPercent": 79.8419335173935,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 249458688,
+          "PrivateBytes": 520343552,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 2.2594333,
+          "CpuPercent": 81.78644571563532,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 246300672,
+          "PrivateBytes": 516628480,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 3.3437079,
+          "CpuPercent": 73.94416621951672,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 248479744,
+          "PrivateBytes": 519536640,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 4.5074566,
+          "CpuPercent": 75.27196915450904,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247717888,
+          "PrivateBytes": 518172672,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 5.6510269,
+          "CpuPercent": 79.33281954769203,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247717888,
+          "PrivateBytes": 517648384,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 6.6784983,
+          "CpuPercent": 75.18077267162859,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247885824,
+          "PrivateBytes": 517677056,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 7.7388984,
+          "CpuPercent": 78.83227283739413,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 247975936,
+          "PrivateBytes": 517718016,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 8.863806,
+          "CpuPercent": 77.6973537648781,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 248016896,
+          "PrivateBytes": 517718016,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 9.9417176,
+          "CpuPercent": 83.07803835676319,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 248078336,
+          "PrivateBytes": 517718016,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        },
+        {
+          "Seconds": 11.0179369,
+          "CpuPercent": 78.30870878268026,
+          "DesktopActive": true,
+          "InputChanged": false,
+          "Metrics": [
+            2058,
+            1658,
+            2058,
+            1658,
+            192,
+            1211,
+            383,
+            0,
+            0,
+            4480,
+            2424
+          ],
+          "WorkingSetBytes": 248299520,
+          "PrivateBytes": 518651904,
+          "PeakWorkingSetBytes": 297566208,
+          "PeakPagedBytes": 555081728,
+          "Handles": 491,
+          "Threads": 36
+        }
+      ],
+      "host_cpu_samples": [
+        {
+          "aggregate_host_busy_percent": 18.557692307692307,
+          "unix_ms": 1791098280936
+        },
+        {
+          "aggregate_host_busy_percent": 19.519230769230766,
+          "unix_ms": 1791098281949
+        },
+        {
+          "aggregate_host_busy_percent": 22.115384615384613,
+          "unix_ms": 1791098282957
+        },
+        {
+          "aggregate_host_busy_percent": 19.23076923076923,
+          "unix_ms": 1791098283969
+        },
+        {
+          "aggregate_host_busy_percent": 36.5234375,
+          "unix_ms": 1791098284976
+        },
+        {
+          "aggregate_host_busy_percent": 16.249999999999996,
+          "unix_ms": 1791098285986
+        },
+        {
+          "aggregate_host_busy_percent": 19.82421875,
+          "unix_ms": 1791098286991
+        },
+        {
+          "aggregate_host_busy_percent": 19.43359375,
+          "unix_ms": 1791098287998
+        },
+        {
+          "aggregate_host_busy_percent": 45.833333333333336,
+          "unix_ms": 1791098289017
+        },
+        {
+          "aggregate_host_busy_percent": 87.23591549295774,
+          "unix_ms": 1791098290137
+        },
+        {
+          "aggregate_host_busy_percent": 91.796875,
+          "unix_ms": 1791098291138
+        },
+        {
+          "aggregate_host_busy_percent": 75.86538461538461,
+          "unix_ms": 1791098292148
+        },
+        {
+          "aggregate_host_busy_percent": 75.59121621621621,
+          "unix_ms": 1791098293301
+        },
+        {
+          "aggregate_host_busy_percent": 81.73076923076923,
+          "unix_ms": 1791098294313
+        },
+        {
+          "aggregate_host_busy_percent": 89.01515151515152,
+          "unix_ms": 1791098295348
+        },
+        {
+          "aggregate_host_busy_percent": 81.80970149253731,
+          "unix_ms": 1791098296396
+        },
+        {
+          "aggregate_host_busy_percent": 88.20422535211267,
+          "unix_ms": 1791098297515
+        },
+        {
+          "aggregate_host_busy_percent": 84.03846153846153,
+          "unix_ms": 1791098298523
+        },
+        {
+          "aggregate_host_busy_percent": 88.93844781445138,
+          "unix_ms": 1791098299625
+        },
+        {
+          "aggregate_host_busy_percent": 86.54670094258783,
+          "unix_ms": 1791098300762
+        },
+        {
+          "aggregate_host_busy_percent": 87.5,
+          "unix_ms": 1791098301902
+        },
+        {
+          "aggregate_host_busy_percent": 87.24662162162163,
+          "unix_ms": 1791098303055
+        },
+        {
+          "aggregate_host_busy_percent": 94.80633802816901,
+          "unix_ms": 1791098304160
+        },
+        {
+          "aggregate_host_busy_percent": 90.71180555555556,
+          "unix_ms": 1791098305289
+        },
+        {
+          "aggregate_host_busy_percent": 88.5204081632653,
+          "unix_ms": 1791098306440
+        },
+        {
+          "aggregate_host_busy_percent": 90.3448275862069,
+          "unix_ms": 1791098307572
+        },
+        {
+          "aggregate_host_busy_percent": 90.23972602739725,
+          "unix_ms": 1791098308706
+        },
+        {
+          "aggregate_host_busy_percent": 84.765625,
+          "unix_ms": 1791098309711
+        },
+        {
+          "aggregate_host_busy_percent": 88.94277400581959,
+          "unix_ms": 1791098310719
+        },
+        {
+          "aggregate_host_busy_percent": 86.35961027457928,
+          "unix_ms": 1791098311819
+        },
+        {
+          "aggregate_host_busy_percent": 86.0576923076923,
+          "unix_ms": 1791098312833
+        },
+        {
+          "aggregate_host_busy_percent": 89.51923076923077,
+          "unix_ms": 1791098313853
+        },
+        {
+          "aggregate_host_busy_percent": 89.29794520547945,
+          "unix_ms": 1791098314992
+        },
+        {
+          "aggregate_host_busy_percent": 87.7840909090909,
+          "unix_ms": 1791098316017
+        },
+        {
+          "aggregate_host_busy_percent": 91.796875,
+          "unix_ms": 1791098317030
+        },
+        {
+          "aggregate_host_busy_percent": 89.17910447761194,
+          "unix_ms": 1791098318072
+        },
+        {
+          "aggregate_host_busy_percent": 94.74431818181817,
+          "unix_ms": 1791098319444
+        },
+        {
+          "aggregate_host_busy_percent": 96.49621212121212,
+          "unix_ms": 1791098320470
+        }
+      ],
+      "held_host_busy_percent_mean": 89.23090288755947,
+      "held_host_sample_count": 9,
+      "host_activity_boundary": "Coarse complete sample intervals wholly inside application timing; includes app, producer, controller and unrelated host work.",
+      "overlay_copy_frames_per_second": 0.0,
+      "overlay_retained_frames_per_second": 0.0,
+      "desktop_capture": {
+        "Method": "external desktop CopyFromScreen; owned client rectangle",
+        "Geometry": [
+          1211,
+          384,
+          2058,
+          1658,
+          192
+        ],
+        "Sha256": "9B14C20C500D5C22DDD0A12D1EBBB7AACA7AEFB7C6581E65D1DBAEC52D92B922"
+      },
+      "guards_passed": true,
+      "normal_cleanup": true,
+      "remaining_owned_descendants": 0,
+      "raw_artifact_sha256": {
+        "receipt.json": "751C62A3E63D2F90B82401723BDD8C6AA815C1DC3F732077CF9160E0CDF73497",
+        "manifest.json": "DE76F647108F3C95547C2F65BE19367D378D67F18483497D629536B3BF41D62F",
+        "result.json": "C29157BA2C3136B9B95DEECC0972303DD3466718A86DD84F05A68E88A671F175",
+        "producer.json": "E5726D550581F25894C112420111E874D09B459358ABA2704FA25F3E0580FBDA",
+        "cleanup.json": "DE9E00DFF08C64E2A0888E893025782DD2CB9A2F0F533293141F531AF2EAD935",
+        "warmup-guard.json": "DB8A7CA2E1EAE6F5520FEC3B6DD5E4DFA35AD256A71F54745F371802CA60AF01",
+        "start.geometry.json": "25191A23A43473C74DCEBC2C8A4780C12D3FF20959A0526F4482C4882B06D08C",
+        "desktop-final.json": "351ABAE7433FB94FC1F1AB27A3E2B6E2B69A690A2AB34ACF3163B83A3B8871B2",
+        "desktop-final.png": "9B14C20C500D5C22DDD0A12D1EBBB7AACA7AEFB7C6581E65D1DBAEC52D92B922"
+      }
+    }
+  ],
+  "limitations": [
+    "One noisy BAAB series on a Windows DX12 CPU adapter; not statistical or cross-platform qualification.",
+    "CPU is normalized across 16 logical processors; GUI frame counters are not physical presentation FPS or input latency.",
+    "Host activity includes owned application/producer/controller and other processes, not precise external-CPU attribution.",
+    "The 200-frame producer is equal and ordered; GUIs may render/coalesce at different rates without proving every intermediate presentation.",
+    "Final desktop captures are external and may differ due to caret blink; their raw hashes are retained, not asserted pixel-identical.",
+    "Producers are matched byte-identical source/fixtures/dependency manifests, not one shared executable; both independent build hashes remain explicit.",
+    "No installed application sessions, credentials or user terminal contents were accessed.",
+    "This does not reproduce multi-day aging, establish resource budgets or imply Windows Terminal parity."
+  ]
+}
