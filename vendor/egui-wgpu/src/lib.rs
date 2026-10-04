@@ -20,10 +20,12 @@ pub use wgpu;
 
 /// Low-level painting of [`egui`](https://github.com/emilk/egui) on [`wgpu`].
 mod renderer;
+mod retained;
 
 mod setup;
 
 pub use renderer::*;
+pub use retained::{CallbackPaintKey, RetainedUi, RetainedUiStats};
 pub use setup::{
     EguiDisplayHandle, NativeAdapterSelectorMethod, WgpuSetup, WgpuSetupCreateNew,
     WgpuSetupExisting,

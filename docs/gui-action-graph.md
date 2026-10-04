@@ -60,14 +60,12 @@ frame-building rate under controlled output; neither is a production frame
 limit or a claim about OS presentation latency.
 
 The Direct2D experiment also affects `TERM-01`: on supported Windows x64 WARP
-targets it is now the default eligible root-terminal path unless
-`FESTERM_EXPERIMENTAL_DIRECT2D=0` disables it; `1` requests the same supported
-path and invalid values retain ordinary painting. Automatic unsupported-adapter
-cases stay on ordinary painting without a selection warning; explicit `1`
-still reports ineligibility. Input ownership, geometry, clipping, colors and
+targets it is the automatic eligible root-terminal path without a setting.
+Unsupported-adapter cases stay on ordinary painting without a selection
+warning. Input ownership, geometry, clipping, colors and
 output consumption remain unchanged. A rejected native frame keeps ordinary
 painting in the same frame. CP-18 tracks the remaining
-native qualification; ADR-0039 remains Proposed and issue #244 remains open.
+native qualification; ADR-0039 accepts the bounded policy and issue #244 remains open.
 
 For `TERM-01`, ADR 0043 introduces a non-consuming font-image identity and one
 immutable per-context snapshot retained only within a 64 MiB ceiling. Capture
@@ -97,6 +95,25 @@ from terminal preparation/drawing using completed GPU work and process-wide CPU
 time. Its diagnostic mesh omissions are not valid production optimizations.
 The chrome fill optimization must preserve every pixel, including fractional
 DPI, clipping and translucent fallback, without changing update cadence.
+
+The owner-approved automatic host-copy and retained window-prefix policies
+under ADRs 0040/0041 select both only
+on Windows x64 DX12 CPU/BGRA gamma and compatible opaque-root targets.
+All three production renderer/composition switches are retired and ignored.
+Only exact, bounded, immutable paint signatures may reuse preceding UI pixels;
+the current terminal image is still copied every frame. Texture changes,
+unknown/stateful callbacks, external texture ownership, overlays and host
+lifecycle changes must invalidate or decline retention without skipping
+preparation or output. CP-18 compares host-copy alone against this additional
+path and the shipping shader baseline, requiring actual reuse/copy counters,
+current pixels and unchanged cadence. Rollout accepts the repeatable practical
+CPU benefit despite shared-host noise, not precise benchmark percentages,
+physical presentation latency or multi-day CPU-cause attribution.
+The repository-owned balanced offscreen runner checks cross-run evidence without
+making CPU percentages CI assertions. Off/on controls exist only in test probes;
+native A/B/C campaigns require their historical driver/binary. Remaining
+native/resource/latency follow-ups are explicit in
+[#282](https://github.com/fes/fesTerm/issues/282).
 
 The supported native path now retains immutable pixels for unchanged
 presentation regions. Small updates redraw only changed regions before normal

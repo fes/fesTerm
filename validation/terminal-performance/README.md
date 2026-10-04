@@ -1,5 +1,34 @@
 # Terminal TUI performance
 
+## Automatic WARP composition rollout
+
+PR #281 consolidates the stacked follow-on and reviewed shipping main. At the
+owner's request it enables automatic host-copy and retained-prefix eligibility
+for Windows x64 DX12 CPU/BGRA gamma and compatible opaque-root targets only.
+All three former renderer/composition environment switches are removed and
+ignored. Compatibility, exact-pixel, ownership, resource and lifecycle
+fallbacks remain required; there is no production opt-out or force-on switch.
+
+The existing source-pinned observations below remain historical evidence,
+not a rerun on this final no-switch source. The owner accepts repeated 34-76%
+combined-versus-baseline active CPU savings despite recorded shared-host noise
+as practical rollout evidence, not precise benchmark qualification. Source
+reviews and exact-head CI gate merge; #282 retains broader native/resource/
+latency qualification as follow-up work without claiming those checks passed.
+
+The current native driver measures only automatic `current` mode.
+It builds/stages its clean checkout before desktop access and accepts only
+that checkout's release executable, checking source stability across the build
+and binary stability across cases. Arbitrary/prebuilt historical executables
+cannot be attributed to current source. OS-input `-SkipBuild` receipts retain
+the executable hash and runner SHA but mark binary source/policy unverified.
+`-QualifyCopyModes` fails before desktop access; historical A/B/C and off/on
+commands below require their pinned historical driver and application.
+The offscreen test executable keeps separate `FESTERM_TUI_PROFILE_HOST_COPY`
+and `FESTERM_TUI_PROFILE_RETAINED_COMPOSITION` controls for pixel/mechanism
+comparisons; production binaries do not read them. Historical settings, raw
+scores, noisy/failed intervals and hashes remain unchanged.
+
 This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
@@ -74,6 +103,15 @@ This follow-up changes only unit-test workspace setup and helper source
 identity; original measured proofs, reports and public evidence retain their
 original hashes. The failed Windows logs do not uniquely identify the missing
 file or whether cache state or test ordering produced the ownerless parent.
+
+The Windows owned-style capture protocol likewise uses a private, RAII-owned
+real Git/Cargo workspace, with a flat layout to preserve that protocol's
+unchanged stricter path policy. It asserts cold namespace creation and refusal
+of a pre-existing control directory without an ownership record before running
+the existing identity, junction, retained-input and cleanup checks. Shared or
+restored Cargo output cannot supply that test's control ownership. Missing
+style-fixture diagnostics include the actual owned path; the protocol never
+repairs or adopts an unowned directory.
 
 ### Render-local code-header caption: matched evidence
 
@@ -698,6 +736,11 @@ live localized-native cases; unrelated diagnostic cases report null.
 
 ### Default-off final-target host-copy prototype
 
+**Historical prototype policy:** the switches and commands in this section
+apply only to its pinned historical binaries/drivers. Current production
+selection is automatic; current offscreen comparisons use the test-only
+controls described at the top of this document.
+
 **Applicability: Windows x64 DX12 WARP / DevBox only.** The owner authorized
 vendoring pinned egui-wgpu 0.36.1 to test the real application. Proposed
 [ADR-0040](../../docs/adr/0040-opt-in-final-target-terminal-copy.md) describes
@@ -845,6 +888,596 @@ ADR-0040 remains Proposed and the feature remains off pending review. Mixed
 monitor DPI, multiwindow/transparent surfaces, graphics recovery, hardware
 negative-routing, native screenshot/overlay review, latency and full CP-18
 qualification remain open in #267/#244; dragging remains separate in #263.
+
+### Default-off retained-window prefix prototype
+
+**Historical prototype policy:** these production switch instructions require
+the recorded historical binaries/drivers; they cannot toggle current builds.
+
+The owner separately authorized Proposed
+[ADR-0041](../../docs/adr/0041-opt-in-retained-window-prefix.md), extending the
+host-copy experiment without enabling either option by default. Set both
+`FESTERM_EXPERIMENTAL_HOST_COPY=1` and
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1` on the supported Windows x64
+DX12 WARP/BGRA path. Compare retention off/on while keeping host-copy on in
+both modes; comparing against shader composition would conflate two changes.
+
+The host retains only the complete UI prefix before the final terminal copy.
+Each frame still constructs the UI, prepares every callback, copies the
+prefix into the actual target, copies the current terminal image and presents
+normally. A miss renders a fresh private image, never overwriting pixels
+referenced by older queued copies. Retention does not preserve a swap-chain
+backbuffer, contain old terminal pixels, skip output or introduce another
+queue submission/completion wait.
+
+The cache owns at most one 16,777,216-pixel image (64 MiB) and 1 MiB of exact
+paint-signature data. Ordered mesh and callback inputs, clips, screen/clear/
+format state and managed-texture identity must match exactly. Unknown
+callbacks, external textures, overlays and incompatible targets retain the
+existing path; lifecycle changes discard the cache. Candidate signatures,
+rebuild images and recorded/in-flight GPU resource lifetimes are additional,
+so these are not peak-allocation or total-process memory bounds.
+
+#### Completed-work comparison on the refreshed terminal baseline
+
+Eight release processes completed ABBA (off/on/on/off), then BAAB
+(on/off/off/on), on main `8721b0bfc7d414123a53e25bae4740f8c5097283` plus the
+prototype. This base includes the reviewed narrow-damage preparation fix.
+Each process used the application scene, 120x40 cells, 2058x1658 physical
+pixels, 200% scale, DX12 Microsoft Basic Render Driver/WARP
+`10.0.26100.9278`, 16 logical processors, five warmups and 100 completed
+frames per case at requested 10 Hz. No build or other benchmark overlapped.
+
+| Case | Retention off mean CPU-ms/frame | Retention on mean CPU-ms/frame | Change |
+| --- | ---: | ---: | ---: |
+| Frozen complete composition, first | 41.796875 | 9.179688 | -78.0% |
+| Localized, including composition | 59.453125 | 29.648438 | -50.1% |
+| UI/native update, excluding composition | 12.226563 | 13.789063 | +12.8% |
+| Frozen complete composition, repeated | 44.453125 | 9.257813 | -79.2% |
+
+Localized off samples ranged from 48.438 to 68.750 CPU-ms/frame, versus
+27.500 to 31.719 on. Frozen controls also varied: first off 25.469-55.938,
+on 8.438-10.313; ending off 30.156-58.594, on 8.438-10.313.
+The no-composition control was adverse and remains visible: off
+9.844-13.438, on 12.031-15.625. It performs no prefix reuse, so the table
+does not establish a benefit for native drawing or UI construction alone.
+
+Every case completed 100 frames at 9.9976-9.9999 Hz. Each enabled localized
+sample reused 93 prefixes and rebuilt seven; both frozen cases reused all
+100. The measured cache held 13,648,656 texture bytes and 37,000 signature
+bytes. All eight initial PNG byte streams and primitive metadata match,
+and the probe requires exact initial and final ordinary-composition pixels.
+Mean completed-draw wall times were 33.078 to 25.623 ms/frame for localized,
+18.101 to 9.626 for initial frozen, and 18.945 to 9.829 for ending frozen.
+These are completed offscreen rendering observations, not native presentation,
+input latency, hardware-GPU benefit or Windows Terminal parity.
+
+The earlier complete series on `207d806f82cf5edd44c048d90778148ace7ea7cd`
+is preserved separately, not pooled with this refreshed baseline. Its
+localized mean was 95.625 to 57.578125 CPU-ms/frame (-39.8%); initial/ending
+frozen means were 40.273438 to 8.671875 and 35.507813 to 7.968750.
+No-composition means were 43.750 to 40.937500. Both orders completed with
+exact initial pixels, the same reuse counts and approximately 10 Hz cadence.
+
+| Measured artifact | SHA256 |
+| --- | --- |
+| Refreshed application | `EFA9E09C528C5616F576AB3AD5A90B016001462ED66CEA07F4575EA45C3D3E65` |
+| Refreshed offscreen probe | `CA601DC905DD9B263EA641649C4FD04173D3FEC6A7940B94455CC7273CB4A778` |
+| Earlier-base offscreen probe | `B50230ED3017EADF9FC7832679FC0626CE1C2C8FADFA0F07E138C0F3FEFD8CA4` |
+| Native workload producer | `F4A3E5C56BBFC8576255A38CC3E8665624753572CA52C70FB5F252FFC7BF9899` |
+
+Raw offscreen evidence is under
+`target\perf-campaign\retained-prefix-872-{abba,baab}-*`;
+`retained-prefix-872-offscreen-summary.json` validates all eight processes,
+hashes, metadata, image bytes, bounds and cadence.
+`retained-prefix-pre-872-summary.json` describes the older-base series.
+
+#### Additional completed-work comparison after context-menu and Markdown merges
+
+A separate release rebuild on main
+`d86850973e79c68e199cda988e548c5bf894c7f4` plus the prototype includes the
+merged context-menu and Markdown Find/table fixes and the final lifetime,
+budget and callback-preparation regressions. Another complete ABBA then BAAB
+series used the same scene, dimensions, WARP adapter, five warmups, 100 frames
+per case and 100 ms interval. Host-copy remained on in both modes. No campaign
+build or other probe overlapped.
+
+| Case | Retention off mean CPU-ms/frame | Retention on mean CPU-ms/frame | Change |
+| --- | ---: | ---: | ---: |
+| Frozen complete composition, first | 40.664063 | 9.843750 | -75.8% |
+| Localized, including composition | 63.398438 | 30.039063 | -52.6% |
+| UI/native update, excluding composition | 14.921875 | 13.046875 | -12.6% |
+| Frozen complete composition, repeated | 48.281250 | 8.398438 | -82.6% |
+
+In ABBA/BAAB chronological order within each mode, localized off samples were
+64.531250, 59.687500, 59.218750 and 70.156250 CPU-ms/frame; on samples were
+30.312500, 30.312500, 28.437500 and 31.093750. Initial frozen off ranged
+33.906-52.188, on 9.531-10.156; ending frozen off 39.531-52.656, on
+7.500-9.531. No-composition off ranged 13.438-15.625, on 11.875-13.594.
+That control performs no prefix reuse, and its direction differs from the
+adverse +12.8% result on `8721b0b`; neither series establishes an independent
+UI-construction or native-drawing improvement.
+
+All 32 cases completed 100 frames at 9.9961-10.0000 Hz. Each enabled localized
+case again reused 93 prefixes and rebuilt seven, while frozen cases reused
+all 100. The current cache again held 13,648,656 texture bytes and 37,000
+signature bytes. Initial PNG bytes and primitive metadata match across all
+eight processes, with exact initial/final ordinary pixels enforced by the
+probe. Mean completed-draw wall times were 34.079 to 27.513 ms/frame for
+localized, 18.671 to 9.919 for initial frozen, and 18.034 to 10.071 for ending
+frozen. These remain offscreen observations, not native presentation or input
+latency measurements.
+
+| Artifact built from `d868509` plus the prototype | SHA256 |
+| --- | --- |
+| Application build, not native-qualified | `67A8AE07F91F5F851855B3DA068F0F957485AC01E96C9A6108E9CF8CF5F6ECD0` |
+| Measured offscreen probe | `DBED5CBDAC540A789A2BBAF25E841237258C9F7C15A3F61BAE38E190804674F2` |
+| Initial PNG, identical across all eight processes | `4becf04f9181a36ec7ef17b8d4b40568c561fedc2ad1ace738a7afd6aad54944` |
+
+Raw evidence is under `target\perf-campaign\retained-prefix-d868-{abba,baab}-*`;
+`retained-prefix-d868-offscreen-summary.json` validates process results,
+executable hashes, source metadata, exact images, frame counts, timings,
+bounds and reuse. This series predates the subsequent syntax/fenced-loading
+merge in #280 and must not be relabelled as a measurement of that later
+source. All three source baselines remain separate.
+
+#### Guarded native attempts remain incomplete
+
+The first native attempt, `retained-prefix-872-native-abba-01-off`, failed
+foreground activation before sampling. Its failure, logs and PID-scoped
+forced cleanup are retained; no result from that attempt is a native CPU
+measurement. The application and its controlled producer both terminated.
+
+After a separately authorized quiet-desktop interval, the fresh
+`retained-prefix-872-native-qualified-abba-01-off` invocation completed all
+four off-mode workloads with valid guards: quiet 0.03876%, localized 3.35713%,
+streaming 4.00932%, full redraw 8.45378% process CPU normalized across 16
+logical processors. All used the same 2058x1658 client, 192 DPI and 120x40
+grid. The following `-abba-02-on` invocation stopped at quiet because
+`InputChanged=true`; foreground and geometry guards remained unchanged.
+There are **no matched active native off/on samples**, and no native CPU
+improvement is claimed. All five test windows required PID-scoped forced
+cleanup. The invalid sample and four valid off-only samples remain in
+`retained-prefix-872-native-incomplete-summary.json`, not in an improvement
+aggregate. No automatic retry or weakened guard was used.
+
+After integrating #280, application commit
+`55db37700e092cc7a4e8e657d42e977661ecda91` had SHA256
+`6ED0B471A3C37634A47067924788DFA14151CD8B9C74B9F028511DB0261E0F1C`.
+Its separately authorized off/on native-window smokes both passed: observed
+focus, four resize generations, PTY output 75B to 118B and one CSI 6n reply.
+Both exited normally without desktop input. Off performed 67 host copies and
+no prefix retention; on performed 105 copies, 93 prefix reuses and 12 rebuilds.
+Maximum observed current-cache allocations were 18,151,080 image bytes and
+36,168 signature bytes, not peak-process measurements.
+
+The subsequent fresh guarded series completed four valid off-mode controls:
+quiet 0.03875%, localized 2.86020%, streaming 3.85628%, full redraw 9.34673%
+normalized process CPU. The client remained 2058x1658 at 192 DPI, with a
+120x40 grid; the monitor work area was 3352x2434. The first on-mode quiet
+sample then failed with `InputChanged=true`, unchanged foreground/geometry,
+and no active on-mode sample. All five CPU workload windows again required
+PID-scoped forced cleanup, and all application/producer processes terminated.
+This is neither a completed native comparison nor graceful-shutdown evidence;
+the successful self-smokes do not erase that limitation. Evidence remains in
+`retained-prefix-publication-native-{smoke-*,abba-*}` and
+`retained-prefix-publication-native-incomplete-summary.json`. No further
+desktop attempt is implied or automatically retried.
+
+#### Correctness, reproduction and remaining boundary
+
+Native framebuffer regressions compare hits, misses and ordinary fallback
+across 100%, 125% and 200% scale, new UI frames, panel changes, terminal
+movement, clear color, fractional clips, overlays, disabled opacity and
+screenshot-target usage. Texture tests cover full/partial updates, samplers,
+removal, renderer replacement, actual managed-texture exports and external
+bindings. A queued-copy regression submits an old copy only after rebuilding
+and destroying the cache, requiring its original pixels. An oversized
+signature must fall back with identical ordinary pixels and recover on the
+next eligible frame. Both callback preparation phases execute even on hits;
+unkeyed callbacks must still paint. Pure tests cover inclusive size/signature
+thresholds, arithmetic overflow and exact namespace identity.
+
+The Rust probe and regressions, the guarded native driver, and the interactive
+editor/Markdown/SFTP surface probes are repository-owned, not session-only
+tests. `compare_retained.py` adds reusable ABBA/BAAB orchestration and evidence
+validation for the completed offscreen comparison. It uses one already-built
+release **test executable**, explicitly waits for each process, keeps host-copy
+on, controls the scene/cases and reference image, and removes the independent
+diagnostic-copy/sampler overrides. It never builds during sampling, overwrites
+an evidence directory, retries a failure or accepts incomplete/mixed results.
+
+Build from a stable checkout before measuring, install the existing image-check
+dependency, and identify the exact test artifact rather than selecting an
+arbitrary executable from `target\release\deps`:
+
+```powershell
+python -m pip install -r validation\direct2d\requirements.txt
+$source = git rev-parse HEAD
+$dirty = @(git status --porcelain).Count -ne 0
+$build = cargo test --release -p festerm --no-run --message-format=json
+if ($LASTEXITCODE -ne 0) { throw 'Release probe build failed.' }
+$probe = @($build | ForEach-Object { $_ | ConvertFrom-Json } |
+    Where-Object { $_.reason -eq 'compiler-artifact' -and
+        $_.target.name -eq 'festerm' -and $_.profile.test -and $_.executable })
+if ($probe.Count -ne 1) { throw 'Expected one festerm test executable.' }
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+python validation\terminal-performance\compare_retained.py run `
+    --probe $probe[0].executable --directory '<fresh-evidence-directory>' `
+    --source-label "$source; dirty=$dirty; release test build"
+python validation\terminal-performance\compare_retained.py check '<evidence-directory>'
+```
+
+The source label is an explicit provenance declaration, not proof that an
+arbitrary supplied binary was built from the current checkout. The runner
+records and checks its executable SHA256 before/after each process. Checking
+saved evidence is portable and does not require that executable to remain at
+its original path. All 32 cases must retain exact initial PNG bytes and scene
+metadata, successful initial/final pixel oracles, 100 frames near 10 Hz, finite
+consistent timings, real reuse and current-cache bounds. Adverse CPU results
+are reported, not treated as invalid data or omitted. No timing percentage is
+a normal CI assertion; deterministic fixtures test the runner and rejection
+rules without launching a GPU workload.
+
+The optional Windows suite exposes this through
+`FESTERM_RUN_RETAINED_COMPARISON=1`, with `FESTERM_RETAINED_PROBE_EXE`,
+`FESTERM_RETAINED_COMPARE_OUT` and `FESTERM_RETAINED_SOURCE_LABEL` pointing to
+the prepared executable, fresh output directory and declared source. Keep
+other builds/benchmarks out of the sampling interval. Raw machine captures
+and one-off investigation records remain local evidence, not committed
+fixtures.
+
+The checked-in runner was also exercised end to end using the same immutable
+`DBED5CBD...` probe from the `d868509` series, not the later application build.
+Its separate complete ABBA/BAAB run produced:
+
+| Case | Retention off mean CPU-ms/frame | Retention on mean CPU-ms/frame | Change |
+| --- | ---: | ---: | ---: |
+| Frozen complete composition, first | 43.984375 | 9.531250 | -78.3% |
+| Localized, including composition | 68.085938 | 33.476563 | -50.8% |
+| UI/native update, excluding composition | 12.617188 | 13.710938 | +8.7% |
+| Frozen complete composition, repeated | 37.617188 | 9.218750 | -75.5% |
+
+Localized off samples were 68.281250, 70.625000, 65.000000 and 68.437500;
+on samples were 32.031250, 32.343750, 31.718750 and 37.812500. Frozen first
+off ranged 34.375-56.250, on 8.438-10.313; ending off 30.781-40.469,
+on 7.969-11.250. No-composition off ranged 11.563-14.375, on 11.406-15.156;
+its adverse result remains visible. All 32 cases completed 100 frames at
+9.9932-9.9999 Hz with the same exact initial image/metadata, initial/final
+pixel oracles, 93 localized reuses/seven rebuilds, 100 frozen reuses and
+13,648,656 image/37,000 signature bytes. Mean completed-draw wall times were
+35.077 to 29.677 ms localized, 22.567 to 9.877 first frozen and 20.392 to
+9.909 ending frozen. The portable `check` command independently revalidated
+the saved series at `target\perf-campaign\retained-prefix-runner-qualification-d868`.
+Its manifest, per-process logs/metadata and complete `summary.json` remain
+separate from the earlier run; neither this rerun nor its timing percentages
+is a native default-on qualification.
+
+For the guarded desktop driver:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+$env:FESTERM_EXPERIMENTAL_HOST_COPY='1'
+$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION='0'
+.\validation\terminal-performance\compare-windows.ps1 -FesTermOnly `
+  -ResultDirectory '<fresh-retention-off-directory>'
+$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION='1'
+.\validation\terminal-performance\compare-windows.ps1 -FesTermOnly `
+  -ResultDirectory '<fresh-retention-on-directory>'
+```
+
+Repeat all four workloads in both ABBA and BAAB order on an unlocked, unused
+desktop. `RetainedCompositionRequested`, `RetainedUiFramesPerSecond` and
+`RetainedUiRebuildsPerSecond` distinguish requested retention from actual
+reuse; active enabled samples require reuse. Do not automatically retry a
+failed desktop guard or substitute these counters for displayed-frame evidence.
+Mixed-monitor DPI, device recovery, transparent/secondary windows, hardware
+negative routing, memory growth, native screenshot/overlay review and physical
+latency remain separate CP-18 obligations. ADR-0041 stays Proposed and
+architectural review remains required before merge.
+
+#### Default-on gates for both copy experiments
+
+[#282](https://github.com/fes/fesTerm/issues/282) owns the explicit evidence and
+approval gates for host-copy (#270 / ADR-0040) and retained composition
+(#281 / ADR-0041). It requires current-source shipping-default, host-copy-only
+and combined comparisons; valid native delivery/cadence and adverse controls;
+native visual/lifecycle/recovery/shutdown coverage; peak/in-flight resource
+behavior; independent latency; negative routing and opt-outs; and an explicit
+architectural/default-selection decision. Repeated offscreen savings, passing
+CI or merging the opt-in code alone do not satisfy those gates. Retention does
+not implicitly promote its host-copy prerequisite.
+
+#### Current-source native A/B/C qualification
+
+Prepare and stage a clean, committed candidate before starting any measurement:
+
+```powershell
+pwsh -NoProfile -File scripts\stage-conpty.ps1 -Configuration Release
+$env:FESTERM_RUN_OPTIONAL_VALIDATION='1'
+pwsh -NoProfile -File validation\terminal-performance\compare-windows.ps1 `
+  -FesTermOnly -QualifyCopyModes -CaptureFinalFrame `
+  -ResultDirectory '<fresh-native-series>'
+python validation\terminal-performance\check_windows.py '<fresh-native-series>'
+```
+
+The driver declares `ABC CBA CBA ABC` before launching anything: four processes
+per setting and workload, using shipping A (`0`,`0`), host-copy B (`1`,`0`) and
+combined C (`1`,`1`). The default corpus also includes `changing-chrome`:
+the repository-owned localized producer changes its OSC title every tick.
+Ordinary eligible active cases require actual copies/reuse; changing chrome
+requires actual rebuilds. `-OverlayControl -Workloads localized` adds a
+separate command-palette fallback series, with test-owned input only before
+quiet warmup. Unsupported overlay copies/reuse must stay zero.
+
+Without `-QualifyCopyModes`, unset copy flags follow this candidate's staged
+defaults: host-copy is requested, and unset retention follows that request.
+Host-copy `0` opts out of both by default; retention `0` requests host-copy alone.
+The driver records the raw initial and per-process environment settings
+separately from resolved requests and requires actual copies/reuse when requested.
+This allows a fresh unset/default run to verify the proposed policy rather than
+mislabeling it as shipping A. Malformed settings and contradictory explicit
+requests remain rejected before launch. A/B/C still writes explicit `0`/`1`
+settings in the same predeclared order; no measurement or cleanup guard changes.
+
+The run declaration captures the mode branch as an array, including the single
+`current` mode. PowerShell otherwise unwraps that branch to a string and strict
+mode fails on `.Count` before any application launches. The pure declaration
+regression executes the actual script statements without a desktop, covering
+one/multiple workloads, the 60-case balanced series, the 12-case overlay series
+and Windows Terminal/full-repaint controls. A failed default declaration is
+preserved as a zero-case failure, not replaced by explicit-C measurements.
+
+An external quiet-host controller may provide a fresh `-GuardStopFile` path.
+If it writes that file, the driver rejects the attempt before another launch
+or during warmup/sampling and still runs its unchanged normal owned-tree
+cleanup. A stopped sample is `invalid-external-cpu`, not a completed series.
+The controller's CPU observations and rejection must be retained with the
+native attempt; this hook does not itself establish a quiet-host pass.
+
+Every run records source and executable/producer hashes, release configuration,
+CPU affinity/capacity, OS/architecture, matched font/grid/client pixels/DPI,
+ordered start/finish times, producer completion/bytes/timestamps, guards and
+per-second CPU/private-memory/working-set/handle/thread observations. Desktop
+availability is checked during warmup, every interval and at completion: a
+disconnected RDP session is invalid even if a window stays responsive and its
+foreground handle has not changed. Saved evidence must retain these checks.
+Captures use the external, foreground-owned client rectangle **after** sampling;
+they are not an application's screenshot request or proof of displayed-frame
+cadence. The portable validator rejects incomplete orders, source/binary/font/
+geometry/delivery changes, invalid guards and forced/incomplete cleanup. It
+preserves adverse controls and reports distributions and all four order blocks;
+it introduces no favorable timing threshold or memory acceptance budget.
+
+The controlled child deliberately remains live after production. Primary-window
+Quit is always confirmed, even with per-tab `confirm_session_close=false`.
+The terminal's modal blackout defers accessibility requests until after its
+background controls render, allowing the foreground confirmation to receive
+UIA invocation without enabling terminal-local controls. A returned invocation
+or focus change alone is not acceptance: the application must actually exit
+normally within the unchanged deadline, with its owned descendants absent.
+Before sampling, `warmup-guard.json` records all three strict predicates and
+their expected/observed values: last-input tick (including mouse movement),
+foreground HWND and complete window/DPI/monitor metrics. The failure message
+identifies each changed predicate; evidence is written before rejection.
+This adds observability, not retries or guard tolerance. The saved validator
+checks new records against actual results while retaining compatibility with
+older evidence that predates them.
+Previously sending only `WM_CLOSE` left this ordinary confirmation pending and
+the harness force-killed the application. The driver now invokes the unique
+**Quit fesTerm** accessibility button belonging to its test window, records
+normal exit and verifies its captured descendant tree has exited. Forced kills
+remain cleanup, fail this oracle and stop the series. Shared activation temporarily
+joins the caller, foreground and owned target GUI queues when ordinary activation
+fails, always detaching them in `finally`. Joining only the caller and foreground
+queues can leave a separately threaded application inactive. The driver uses
+this single bounded helper and still rejects identity changes or failure to
+obtain foreground; it does not inject input to manufacture activation.
+
+For bounded resource observations, run a separate single-setting invocation
+with, for example, `-SampleSeconds 300 -ProducerFrames 3100`. The producer's
+existing 6,000-tick limit is unchanged. Process peaks and interval trends do not
+account for every GPU in-flight allocation; current cache counters and process
+memory are not an approved total-resource budget.
+
+Independent functional runs can select the already-staged release application:
+
+```powershell
+pwsh -NoProfile -File scripts\run-windows-os-input-smoke.ps1 `
+  -Configuration Release -SkipBuild -ExerciseWindowLifecycle `
+  -ResultPath '<fresh-result-path>' -CaptureDirectory '<fresh-capture-directory>'
+```
+
+This keeps the original 20-second in-app deadline and exact PTY acknowledgment.
+It additionally checks maximize/minimize/exact restore and captures the owned
+initial/restored/maximized window; keyboard-routing mode also captures its
+palette. It is not a mixed-DPI transition, all-view interaction or latency gate.
+This OS-input fixture uses its ordinary mouse-input path to focus the restored
+terminal: physical client coordinates, a bounded nine-point search for an
+unoccluded owned root, a second ownership check before the click, and an actual
+foreground assertion. It refuses a fully occluded client. The separate CPU
+comparison still uses the unchanged no-input activation helper and strict
+interval guards; mouse input is not used to rescue an invalid timing interval.
+The aggregate optional runner exposes the balanced series only through
+`FESTERM_RUN_COPY_QUALIFICATION=1` and `FESTERM_COPY_QUALIFICATION_OUT`.
+Both experiments remain default-off and every compound #282 gate stays open
+until its full evidence and required maintainer decisions exist.
+
+#### 2026-09-30 x64 qualification evidence
+
+The clean final automation source `5f2d601e3dd8f8358a96be57f4637eef4d79a177`
+completed a separate eight-process offscreen ABBA/BAAB series and saved-evidence
+validation. Localized mean CPU was 68.945312 to 26.562500 ms/frame (-61.47%),
+with -61.32% / -61.61% changes in the two orders. Frozen first/repeated changes
+were -84.46% / -77.05%. The inactive no-composition control also moved -21.73%;
+it remains variable-control evidence, not an independent retention-path gain.
+These are host-copy-on retention comparisons, **not native C versus shipping A,
+displayed-frame delivery or latency**. Earlier-source series remain separate.
+
+Release software-GPU routing/pixel/lifetime checks, native ConPTY resize and
+bounded shutdown, controlled offscreen TUI/Direct2D replay and required local
+quality checks also completed. The Direct2D runner rebuilt the release test
+executable after the offscreen series; the evidence records both hashes and
+does not pool their measurements.
+
+External initial/maximized production captures established the DX12 CPU/WARP
+path at 192 DPI, but restore/foreground failed. A fresh user-authorized native
+A/B/C series then stopped at WTSDisconnected preflight before any application
+launch or CPU sample. The sleep/display inhibitor was released. The CPU fixture's
+new primary-Quit confirmation path remains natively unverified, and correcting
+restore-state assertions does not resolve the observed focus failure.
+
+The 2026-10-02 follow-up corrected the OS-input fixture's owned-client focus
+preparation and qualified shipping-A/requested-C restore/input separately.
+Its first balanced native A quiet case then passed the interval guards but
+failed normal Quit cleanup; that failed series remains preserved and supplies
+no accepted comparison. An untimed observer and two red accessibility tests
+identified terminal blackout consuming the foreground dialog's action.
+The clean committed `537bbcc` correction, release executable
+`AF411D78EFFE4F160681AD73FE2E960E06C5E9090364C9B18E56D6AF2C501B0E`,
+then passed a one-invocation shipping-A native Quit proof: exit code 0 in under
+one second, no second close or forced kill, and independently absent app/child
+PIDs. Its two actual captures were reviewed. This local-process functional proof
+does not replace a fresh, complete native A/B/C series, palette control or the
+broader #282 qualification matrix.
+
+#### 2026-10-03 shared-host exploratory evidence
+
+Clean source `f93570c22ebc34992c1d11300f0c66c27559f194`, release application
+`D2753A597FFA46F96052100DC3C4BC8BDB6593EC065A2047B676764E71232887`
+and producer `C1008B6A6CF2F5FE7CA47AFD388800CF4DAD27CE6B4F852A1C0981C83B8FD188`
+completed 60 balanced and 12 separate palette cases on Windows x64 at 200% DPI,
+2058x1658 client pixels and a 120x40 grid. Each used 200 producer frames at
+100ms cadence and at least ten seconds of sampling. With explicit owner
+approval, the external controller recorded CPU noise instead of aborting for
+that alone. All other guards, deadlines and normal-cleanup requirements stayed
+hard; **this is exploratory, not strict CPU qualification**.
+
+| Workload | Mean A CPU % | Mean B CPU % | Mean C CPU % | C versus A |
+| --- | ---: | ---: | ---: | ---: |
+| Quiet | 0.0216 | 0.0072 | 0.0192 | Near counter granularity |
+| Localized | 6.197 | 3.103 | 1.504 | -75.7% |
+| Streaming | 5.073 | 2.971 | 1.577 | -68.9% |
+| Full redraw | 10.549 | 8.253 | 6.110 | -42.1% |
+| Changing chrome | 6.710 | 4.398 | 4.424 | -34.1% |
+| Separate palette control | 79.382 | 79.241 | 79.354 | No useful gain |
+
+These are means of four whole-process scores per setting, normalized across
+16 logical processors, not pooled frame percentiles. Every active workload's C
+score was lower than A in all four predeclared order blocks. Changing chrome
+was mixed versus B, with C about 0.6% higher on average. Palette B/C copy and C
+reuse/rebuild counters were zero; GUI/native repaint counters were only
+5.35-6.27/s while producer completion stayed about 10/s. Neither counter nor
+the final post-sample capture proves displayed cadence or independent latency.
+
+The conservative controller flagged external estimates above 5% in 906/1417
+balanced intervals and 171/214 palette intervals. Every case had some flagged
+sampling exposure. Raw cumulative counters and complete sampling coverage were
+checked independently; all cases and order blocks remain in the
+[sanitized scores and noise record](windows-retained-exploratory-2026-10-03.json),
+without dropping or reweighting noisy trials. These estimates do not identify
+the cause of background work or the multi-day plateau in #297.
+
+Saved validation, all 72 capture hashes and normal whole-tree exits passed;
+all 216 old app/producer/ConPTY identities were independently absent. Full
+visual/native-lifecycle acceptance is not inferred from capture hashes.
+The subsequent unset/default phase failed in its mode declaration before any
+app case, leaving zero default results. That failure is preserved separately,
+the single-mode array repair has a deterministic regression, and explicit C
+does not replace default evidence. Both system/display keep-awake requests were
+released. Earlier rejected attempts and historical v0.7.1 evidence remain
+unchanged. #282's broader qualification and rollout gates stay open.
+
+#### 2026-10-02 connected single-host balanced evidence
+
+The clean `483ae068f29628be438d7fa498cf66f1eb053fa2` source and unchanged
+`AF411D78EFFE4F160681AD73FE2E960E06C5E9090364C9B18E56D6AF2C501B0E`
+release completed all 60 native cases in `ABC CBA CBA ABC` order from
+21:25:05 to 21:57:23 UTC. Each workload has four samples per mode. The saved
+validator passed, and an independent invocation produced the identical summary.
+Every warmup and sample retained the strict desktop/input/foreground/geometry
+guards, bundled font, 120x40 PTY, 200 producer ticks and actual requested path
+counters. This is the same connected Windows x64 DX12 CPU/WARP host at 192 DPI,
+not representative hardware or cross-platform evidence.
+
+| Workload | Shipping A median CPU | Host-copy B median CPU | Combined C median CPU |
+| --- | ---: | ---: | ---: |
+| Quiet | 0.0288% | 0.0479% | 0.0383% |
+| Localized | 6.5613% | 3.5942% | 1.9703% |
+| Streaming | 9.2215% | 6.3333% | 2.9692% |
+| Full redraw | 11.7737% | 9.1409% | 7.4261% |
+| Changing chrome | 7.8083% | 4.4752% | 4.8742% |
+
+CPU is process time normalized over the host's 16 logical processors. Quiet
+results are near counter granularity and do not establish an idle win.
+Combined C was worse than B for changing chrome; this adverse control is
+retained. Producer completion and application counters are not displayed-frame
+cadence or photon latency.
+
+All 60 final captures were checked through 14 reviewed full-resolution unique
+images with exact complete-file SHA256 duplicate links; no blocking blank,
+stale, corrupt or clipped content was observed. All 61 applications, including
+the first failed palette control, quit normally; 183 app/child identities were
+independently absent. The 818-member physical local closure
+`native282-screen-awake-balanced-and-palette-stop-20261002-2205` has manifest
+SHA256 `28B57C7FDEAA286CEDF1AE99A65DCCE25CD9EEB4D84B603796FA4DDF4F146AD9`.
+It is local, not included in the earlier published bundle.
+
+The separate palette series stopped at its first A case before warmup or CPU
+sampling. An untimed original-shortcut observer showed the palette open in the
+actual capture and owned UIA tree: its exact name was **Command Palette**, while
+the probe queried **Command palette**. The case-sensitive query is corrected
+and a portable regression couples it to the production window title. The
+shortcut, wait, foreground requirement, timing guards and cleanup are unchanged.
+The failed control remains preserved. The clean corrected `6c04768` source
+restaged the byte-identical application and passed required local quality checks,
+including the new regression. Its fresh 12-case control opened the palette and
+completed shipping A, then stopped during B at 5.2634799 seconds: the last-input
+tick changed from `258393796` to `258409531`, while foreground HWND `8718364`,
+full geometry and the active desktop remained unchanged. The input source is
+unknown. Both app/child trees exited normally and all six old identities were
+independently absent; the saved checker rejected the incomplete 2/12 series.
+Actual untimed and completed-A palette captures were reviewed. No C control or
+retry followed within that attempt. The completed balanced series is not rerun
+or pooled with older partial attempts. Full #282 qualification and default
+promotion remain open.
+
+A separately user-authorized fresh control on clean
+`fd9dd14b4dd6f68b0bedbbdda1e421b3641a3b40` completed all 12 localized palette
+cases in the same `ABC CBA CBA ABC` order from 22:20:07 to 22:27:14 UTC.
+This is a documentation-only successor of the corrected probe source, with
+the unchanged application and producer binaries. Driver and saved-validator
+exits were zero; an independent saved validation produced the identical summary.
+Every desktop/input/foreground/geometry guard passed. The ineligible overlay
+recorded zero host-copy frames for B/C and zero retained reuse/rebuild frames
+for C, demonstrating the intended ordinary-composition fallback on this host.
+
+Median CPU with the palette open was A **77.0561%**, B **76.7437%** and C
+**77.0154%**: this control does not show a useful optimization gain and retains
+the high ordinary-composition cost. GUI counters ranged from 5.0213 to 6.4026
+frames/s, not displayed-frame cadence. The 12 actual captures were reviewed
+through six full-resolution unique images with exact SHA256 duplicate links.
+They show the palette over controlled terminal content; some contain visible
+frame 197/199 rather than 200, so producer completion is not a settled-final-
+presentation guarantee. No latency or displayed-delivery claim follows.
+
+All 12 applications and their captured descendant trees exited normally; all
+36 old identities were independently absent. The 186-member physical local
+closure `native282-palette-control-accepted-20261002-2230` has manifest SHA256
+`90A311799BC4E07204875AA86071A56454D3185B74D8DE32778C9A14F1A9D130`.
+The prior 818-member accepted balanced closure and 113-member corrected-probe/
+input-stop closure were physically reverified unchanged. These two complete,
+separately source-pinned series now supply the single-host guarded comparison
+and palette-ineligibility control; no incomplete samples were pooled and the
+60-case series was not rerun. Broader #282 equipment, recovery, resource,
+latency, architecture, default-selection and rollout gates remain open.
+
+The earlier [sanitized evidence bundle](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+contains provenance, ordered attempts, raw distributions, logs, external
+captures, cleanup records and a gate-by-gate report. All eight #282 gates
+remain open; mixed-DPI/additional-machine coverage, sustained peak/in-flight
+resources and an approved budget, independent latency, recovery and maintainer
+architecture/default/rollout decisions are not supplied by these results.
 
 ### Prior remaining-gap investigation and renderer-host boundary
 

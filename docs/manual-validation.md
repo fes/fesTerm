@@ -791,7 +791,20 @@ comparisons at 100%, 125% and 200%, including fractional clipping and translucen
 before/after qualification still uses the isolated `-FesTermOnly` driver and a
 fresh quiet-desktop interval; no installed application is changed by these tests.
 
-**Default-off host-copy prototype (ADR-0040):** with owner authorization,
+**Owner-approved automatic WARP rollout (2026-10-03):** the supported Windows
+x64 DX12 CPU/BGRA gamma, compatible opaque-root pipeline uses host-copy and
+retention without on/off settings. All three former environment switches are
+ignored. Policy matrices and a real Windows installation regression cover
+automatic eligibility, hardware/platform/backend/format exclusions and
+copy/retention activation. Target/lifecycle/error fallbacks remain required.
+The owner accepts repeatable material process-CPU savings despite recorded
+shared-host noise; exact percentages and broad native/resource/latency claims
+remain unqualified follow-ups in #282/CP-18. The historical receipts below
+are preserved, not relabeled as new-binary or default-smoke results. Native
+A/B/C runs require their pinned historical driver/binary; current native probes
+measure the automatic route and reject removed controls before desktop access.
+
+**Historical default-off host-copy prototype (ADR-0040):** with owner authorization,
 `FESTERM_EXPERIMENTAL_HOST_COPY=1` adds a final-target copy on the eligible
 Windows x64 WARP/BGRA path only. Unset/`0` and all unsupported app routes retain
 existing behavior. Deterministic exact-pixel coverage exercises DPI changes,
@@ -808,8 +821,8 @@ See the terminal-performance README for hashes, memory snapshots and all
 result ranges. This does not close CP-18, approve the vendored architecture,
 or qualify mixed-monitor DPI, native screenshot/overlay presentation,
 multiwindow/transparent surfaces, device recovery, hardware-negative routing,
-latency or graceful shutdown. Run both host-copy settings during those checks,
-and verify fallback instead of assuming a requested copy actually executed.
+latency or graceful shutdown. That historical qualification planned both
+host-copy settings and verified fallback rather than assuming a request executed.
 
 The final prototype's isolated native-window self-smoke also passed with
 host copying off and on: observed focus, four resize generations, real PTY
@@ -818,6 +831,133 @@ at changed sizes; disabled logs contain none. Both self-smoke processes exited
 normally, unlike the separate CPU workload windows. This adds native
 focus/resize evidence, not native screenshot, independent OS-input or general
 shutdown acceptance.
+
+**Historical default-off retained-prefix prototype (ADR-0041):** the owner separately
+authorized retaining unchanged preceding window/chrome pixels. Its old controls enabled both
+`FESTERM_EXPERIMENTAL_HOST_COPY=1` and
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=1`; isolated prefix experiments compare
+against host-copy alone, while #282's native default-on qualification must also
+compare the shipping shader path. The cache owns one immutable image up to
+64 MiB and up to 1 MiB of exact signatures. Pixel regressions cover panel input
+changes, DPI, terminal movement, clear color, clipping, overlays, disabled
+painting, capture targets, full/partial texture changes, removal, renderer
+replacement, actual managed-texture exports, external bindings and unkeyed
+callback side effects. Additional regressions submit an older queued copy only
+after rebuilding and destroying the cache, require ordinary pixels and recovery
+after an oversized signature, and count both callback preparation phases on
+cache hits. Separate pure tests cover exact bounds and identity keys.
+The cache-owned limits exclude temporary capture/rebuild allocations and
+images retained by recorded or in-flight GPU work.
+
+The optional completed-work probe rejects missing reuse and mismatched initial
+or final pixels. The native comparison driver records reused and rebuilt frame
+rates and rejects active samples with no actual reuse. These safeguards do not
+replace remaining native visual/lifecycle checks or qualify mixed-monitor,
+transparent/secondary-window, recovery, memory growth, physical latency or
+hardware-negative-routing behavior. Default enablement and architectural
+approval remain separate from this prototype's implementation and measurements.
+Separate offscreen ABBA/BAAB series on `8721b0b` and `d868509` completed with
+exact pixels, bounded current cache resources, actual reuse and approximately
+10 Hz cadence; source hashes, variable controls and results remain separately
+documented in `validation/terminal-performance/README.md`. The later series
+predates #280's syntax/fenced-loading merge. Native qualification is still incomplete:
+an initial foreground failure produced no sample, then a separately authorized
+attempt completed four off-mode workloads before desktop input invalidated the
+first on-mode quiet sample. No matched native active-workload comparison exists,
+no native improvement is claimed, and neither failure was retried automatically.
+
+On publication commit `55db377`, both retained-prefix off/on native-window
+self-smokes subsequently passed focus, four resize generations, PTY continuity
+and CSI 6n, and exited normally. Enabled logs prove 93 prefix reuses and 12
+rebuilds; disabled logs contain none. A newly authorized native CPU series
+again completed only four off-mode controls before input invalidated on/quiet,
+so no matched active comparison exists. Its five CPU windows needed forced
+cleanup; this does not replace the normal-exit self-smoke evidence or qualify
+general shutdown. All attempts remain separately recorded. The reusable
+offscreen ABBA/BAAB runner and artifact validator are checked in, with synthetic
+CI coverage rather than flaky timing assertions. Explicit default-on gates for
+both copy experiments are tracked in
+[#282](https://github.com/fes/fesTerm/issues/282).
+
+The current-source Windows qualification driver adds a predeclared balanced
+shipping/host-copy/combined series, a changing-title control and an opt-in
+palette fallback control, with portable saved-evidence rejection tests.
+Per-second process resources and external owned-client captures complement
+the existing application counters; neither proves total in-flight memory or
+displayed-frame cadence. The release-capable OS-input driver can independently
+exercise maximize/minimize/exact restore without rebuilding during a run.
+Restoring a minimized maximized window first recovers its maximized geometry,
+then a separate restore recovers the original normal geometry. Activation and
+every native CPU interval require a still-active, unlocked desktop; a
+disconnected RDP session remains unavailable rather than a background pass.
+CPU-window cleanup explicitly answers the ordinary primary Quit confirmation
+and verifies the captured child tree, rather than counting a forced kill as a
+successful shutdown. These are automation seams, not a declaration that CP-18
+or #282 has passed. Mixed-DPI hardware, other architectures/GPUs, genuine device
+loss, complete all-view interactions, independent latency, resource budgets and
+architectural/default-on approvals retain their native/manual boundaries.
+
+The 2026-09-30 final-source `5f2d601` qualification completed separate offscreen
+ABBA/BAAB, saved-evidence, release routing/lifetime, ConPTY resize/shutdown and
+controlled TUI/Direct2D replay checks. External initial/maximized WARP captures
+are partial evidence: restore/focus failed, and the subsequently authorized
+native A/B/C series stopped before launch on WTSDisconnected. No native CPU
+comparison or independent latency result exists. CPU-fixture Quit confirmation
+still needs native verification; the inhibitor was released. The
+[sanitized report and raw evidence](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+preserve these failures and leave every compound #282 gate open.
+
+On 2026-10-02, connected Windows DevBox functional input runs passed the
+maximize/minimize/exact-restore sequence in shipping A (`0`,`0`) and requested
+combined C (`1`,`1`), with real PTY acknowledgment, four resize generations,
+eight reviewed owned-client captures and normal descendant-tree exit.
+The OS-input fixture now uses its ordinary mouse-input path at a bounded,
+physical-DPI, process/root-verified visible terminal point after restoration;
+fully occluded points are refused. This addresses the background driver's
+foreground assumption without changing the application's focus behavior or the
+shared no-input CPU helper. Evidence is limited to that connected host at 200%
+scale: mixed-DPI transitions, cache eligibility/native CPU comparison, the
+CPU-fixture Quit path and the broader CP-18/#282 matrix remain unqualified.
+
+The subsequent first native A quiet interval passed its strict interval guards
+but failed normal Quit cleanup: the unique owned UIA invocation focused the
+button without activating it. The failed series is retained, not a native
+performance result. An untimed observer and two failing headless accessibility
+tests established that terminal modal blackout removed accessibility requests
+before foreground confirmation widgets rendered. The corrected view defers
+those requests until after its own controls, preserving terminal blackout and
+the ordinary confirmation policy. A clean committed `537bbcc` release then
+passed a shipping-A (`0`,`0`) untimed native proof on the same connected 200%
+DevBox: one owned UIA invocation was followed by exit code 0 in under one second,
+without a second close request or forced termination. Both actual before-close
+and confirmation captures were reviewed, and the app and two captured descendant
+PIDs were independently absent. This qualifies that local-process Quit route,
+not the full AS-08 platform/transport matrix or a balanced native CPU comparison.
+
+The later clean `483ae06` / unchanged `AF411D78...` release completed all 60
+balanced native A/B/C cases on that connected 192-DPI Windows x64 WARP host.
+Both saved-checker invocations passed; 60 captures were covered by 14 reviewed
+full-resolution unique images with exact SHA256 duplicate links. All 61 apps,
+including the first failed palette control, exited normally and all 183 old
+app/child identities were independently absent. The palette control stopped
+before sampling because its case-sensitive UIA query used **Command palette**
+instead of the actual **Command Palette** title; an untimed owned-window tree
+and actual capture proved the mismatch. The corrected query has a portable
+regression. Its fresh replacement completed A but stopped in B on new input
+with foreground/geometry unchanged; the incomplete 2/12 control was rejected
+and preserved, with both process trees normally exited and independently
+absent. A later separately authorized fresh `fd9dd14` / unchanged application
+control completed all 12 palette cases with strict guards and both saved
+validations passing. All 12 owned trees exited normally and 36 old identities
+were independently absent. Twelve captures were reviewed through six
+full-resolution unique images and exact duplicate hashes. B/C host-copy frames
+and C retained reuse/rebuild frames stayed zero while the palette was open,
+qualifying that single-host ineligibility fallback. The high ordinary-
+composition CPU cost is retained; producer completion/captures do not establish
+settled presentation or displayed-frame cadence. See the
+[single-host record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence)
+for raw-series boundaries and adverse results. CP-18/#282 remain open for
+broader equipment, recovery, resources, latency and maintainer decisions.
 
 **Unsupported-frame recovery (2026-10-02):** deterministic native integration
 covers palette-budget refusal with unchanged ordinary-frame pixels, followed
@@ -832,7 +972,7 @@ issue #297's degraded-process attribution. No broader acceptance is advanced.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
-| CP-18 | On supported Windows x64 WARP, compare eligible root-terminal rendering with `FESTERM_EXPERIMENTAL_DIRECT2D=0` (ordinary egui-wgpu baseline) versus the supported Direct2D path (unset by default, or explicit `1` for compatibility). Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths remain ordinary painting, no blank/stale frame appears, `0` disables the path, `1` cannot force unsupported conditions, and hardware rendering is unchanged. | Automated framebuffer + native performance + manual interaction; experimental | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and explicit palette-budget fallback. `validation/direct2d/run.ps1` provides the isolated replay and is available through the optional runner with `FESTERM_RUN_DIRECT2D_PROBE=1`. Compare `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer` with `FESTERM_EXPERIMENTAL_DIRECT2D=0` for the ordinary baseline and, on a known eligible WARP host, the supported unset default (or explicit `1`) for the candidate, adding `-RequireDirect2D` to validate automatic/default selection and to reject `0` or invalid values. The aggregate optional Windows runner keeps that strict dense/native-required check explicitly behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or ARM64 machines still run their ordinary optional suite. The probe requires actual native frames and preserves existing CPU/FPS budgets. Single-host sparse/dense application measurements and the keep-#239/#240 review are in the probe README; intermittent idle failures are tracked by #242. Owner approval makes this bounded WARP path default-on, but issue #244 still owns mixed-DPI, multi-window, device-loss, latency, memory and representative-hardware qualification, and ADR-0039 remains Proposed. |
+| CP-18 | On supported Windows x64 WARP, verify automatic root-terminal/native copy/retention selection without settings. Exercise sparse/dense/scrolling/colored output, resize, selection/copy, cursor, emoji, overlays, mixed-DPI monitor transitions, secondary/transparent windows, initialization/render failure and device recovery. Confirm unsupported paths keep ordinary pixels, no blank/stale frame appears, all retired variable values are ignored, intrinsic fallback works, and hardware rendering is unchanged. Historical off/on comparisons require pinned historical binaries/drivers; only offscreen test executables expose feature controls. | Automated framebuffer + native performance + manual interaction; broader qualification remains open | Integrated GPU comparisons cover 100%, 125%, 200%, clipping, opacity and palette-budget fallback. `validation/direct2d/run.ps1` provides isolated replay through `FESTERM_RUN_DIRECT2D_PROBE=1`. On a known eligible WARP host, use `check-windows-idle-rendering.ps1 -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer -RequireDirect2D`; actual native frames are required and CPU/FPS budgets remain unchanged. The aggregate optional runner includes sustained output without a retired-variable gate; dense/native-required checks are explicit CLI requests. The current native comparison driver builds its clean checkout and measures only automatic mode; A/B/C fails before desktop access. Owner-approved ADRs 0039/0040/0041 accept bounded rollout, not all CP-18 qualification. #244/#282 retain mixed-DPI, multi-window, device-loss, physical latency, sustained resources and representative-hardware follow-ups; #242 retains idle failures. |
 
 ### Desktop Markdown file associations
 
