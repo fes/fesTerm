@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Separating six-session aging from ordinary active rendering
+
+Issue #297 describes GUI CPU that grows over days and drops when the frontend
+restarts while its persistent shells survive. A short throughput benchmark
+cannot prove that cause, and UI dirty-row counts do not establish native GPU
+damage. The next diagnostic therefore uses six owned synthetic application
+sessions, the normal event notifier and bounded application pumping rather
+than touching the installed sessions or suppressing wakes.
+
+Fresh, tab/DPI/zoom-churned and rebuilt GUI states run the same frozen,
+foreground-output, background-output and idle phases. Exact normalized
+framebuffers guard workload/geometry restoration. Completed process CPU,
+native damaged pixels, atlas uploads and prefix reuse are recorded separately
+from repaint callbacks and sampled process resources. Non-idle frames are
+forced at a declared cadence; idle follows egui demand without periodic polling.
+The supervisor archives the compiler-reported executable and binds observations
+to its hash and clean source. It retains adverse results instead of imposing a
+new noisy CPU acceptance threshold. Multi-day reproduction and degraded-process
+thread attribution remain open; this is a bounded discriminator, not a fix.
+
 ## Reading live keyboard preferences without rebuilding saved settings
 
 The background-session investigation for #297 found repeated GUI-process work

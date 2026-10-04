@@ -331,6 +331,21 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=terminal-cpu-profile status=skipped reason=explicit-opt-in"
     }
+    if ($env:FESTERM_RUN_SESSION_AGING -eq '1') {
+        try {
+            if (-not $env:FESTERM_AGING_SUITE_OUT) {
+                throw 'Set FESTERM_AGING_SUITE_OUT to a fresh absolute evidence directory.'
+            }
+            & "$PSScriptRoot\check-windows-session-aging.ps1" -OutputDirectory $env:FESTERM_AGING_SUITE_OUT
+            Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=skipped reason=explicit-opt-in"
+    }
     if ($env:FESTERM_RUN_RETAINED_COMPARISON -eq '1') {
         try {
             if (-not $env:FESTERM_RETAINED_PROBE_EXE -or -not $env:FESTERM_RETAINED_COMPARE_OUT -or

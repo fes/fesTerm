@@ -133,6 +133,18 @@ session pumping and unread-state semantics are unchanged. Counted one/six-sessio
 synthetic tests prove the avoided snapshots, not native CPU improvement or
 attribution of #297.
 
+`TERM-01` now also has an opt-in, owned six-session aging discriminator.
+Fresh, bounded tab/DPI/zoom churn and rebuilt GUI states use the same normalized
+pixels, workload, physical size and measurement DPI. Paced non-idle phases
+measure completed offscreen work; only the idle phase follows actual egui demand.
+Native updated/surface pixels, repaint callbacks, completed process CPU,
+retained-prefix/atlas counters and sampled process resources are kept distinct.
+`FrameDiagnostics.dirty_rows` is UI-cache work, not GPU damage. No notifier,
+production cadence, terminal ownership or queue policy changes are involved.
+This is not a multi-day reproducer, real persistent-shell reconnect, native
+presentation measurement or attribution of WARP worker threads; #297 and
+CP-18 remain open. See the performance validation guide.
+
 ## How to use the graph
 
 ### Isolated iOS feasibility host

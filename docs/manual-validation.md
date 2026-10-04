@@ -991,6 +991,16 @@ issue #297's degraded-process attribution. No broader acceptance is advanced.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
+The separately opt-in six-session aging probe under CP-18 automates a bounded,
+owned fresh/churned/rebuilt GUI comparison, exact normalized pixels, native
+damage, atlas/prefix reuse, completed CPU and sampled private bytes/working
+set/handles/threads. Only idle demand is event-driven; active/frozen/background
+frames are forced and paced. This replaces no degraded-user-process capture:
+multi-day behavior, native presentation, real persistent-shell reconnect,
+WARP thread-stack attribution and complete GPU resource accounting remain
+manual/native evidence under #297/#282. It never operates installed sessions.
+See `validation/terminal-performance/README.md#bounded-six-session-aging`.
+
 | CP-19 | Install the direct-distribution macOS app, current-user Windows NSIS package, or Linux Debian/integrated AppImage. Choose fesTerm in Open With for `.md` and `.markdown`, cold and warm, including multiple files, spaces/Unicode, a blocking dialog, an existing dirty document in another window, and a missing file. Confirm document tabs, no terminal input/upload, unchanged default handler, and clean upgrade/uninstall association behavior. | Automated routing/packaging + native lifecycle + usability | Deterministic application, ingress and packaging coverage accompanies the implementation. Native installed-package menu discovery, OS foreground/focus restrictions, upgrade/uninstall and AppImage desktop integration remain qualification work; no Store/mobile document-access claim. |
 
 On 2026-09-28, an isolated macOS bundle with private configuration/runtime paths

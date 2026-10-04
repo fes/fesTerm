@@ -33,6 +33,60 @@ This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
 
+## Bounded six-session aging
+
+`scripts/check-windows-session-aging.ps1` runs a separately opt-in, repository-owned
+discriminator for #297. It requires a clean committed Windows x64 checkout and
+a DX12 CPU adapter. It builds and archives the exact compiler-reported test
+executable, records HEAD/tree/binary hash and preserves all logs and observations.
+It does not connect to SSH, PTYs, installed configuration or sessiond sessions.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-aging
+```
+
+Defaults are 120 cycles of all-six-tab activation, alternating 125%/200% DPI
+and zoom/reset (720 completed churn frames), 100 frames per paced phase at a
+requested 100ms cadence, and ten seconds per idle window. `-Cycles`, `-Frames`
+and `-IdleSeconds` have explicit caps; the supervisor has an independent
+`-TimeoutSeconds` deadline. `-Profile debug` is a supported diagnostic control
+and must never be described as release/production CPU evidence.
+`FESTERM_RUN_SESSION_AGING=1` plus a fresh absolute `FESTERM_AGING_SUITE_OUT`
+includes the default release probe in the Windows optional-validation suite;
+the shell runner declares this Windows-only check skipped.
+
+The twelve phases cross **fresh**, **churned** and **rebuilt** GUI states with
+**frozen**, **foreground output**, **five background outputs** and **idle**.
+Normalized scenes have exactly equal full framebuffers at 2058x1658 physical
+pixels, 200% DPI and the same 120x40 active terminal. Non-idle frames are
+deliberately forced/paced to compare CPU per completed frame; their cadence
+is not native event-driven frame rate. Idle waits on the existing egui repaint
+callback/deadline without periodic polling and records whatever frames are
+actually requested. The ordinary session notifier, bounded pumping, terminal
+ownership and output policy are unchanged.
+
+Each frame retains completed all-thread process CPU and wall work, **native
+updated/surface pixels**, UI dirty rows, copy/retention outcomes, current
+prefix texture/signature bytes, font-atlas bytes/clones/reuse and uploads.
+UI dirty rows do not substitute for native damage. Current prefix storage
+does not include queued/in-flight or total GPU resources. The supervisor
+samples current/peak working set, private bytes, handles and thread CPU
+counters every 500ms; those counters do not identify main/WARP workers without
+separate thread-stack evidence. Very short smoke phases may have no resource
+sample and are marked explicitly, not replaced with zero. Test transports
+retain bounded-by-workload resize-operation history, so those process
+observations are not a pure graphics-allocation measurement.
+
+`check_session_aging.py` independently verifies the complete phase matrix,
+ordered frame/event counts, zero pending events, native-copy eligibility,
+finite counters, damage bounds, exact PNG bytes/geometry and executable hash.
+It preserves noisy/adverse observations; there is no CPU percentage assertion
+in CI. A rebuilt synthetic GUI is not a real process restart or persistent-shell
+reconnect. A short churn run neither demonstrates nor disproves #297's
+multi-day plateau. Native presentation, complete GPU-resource retirement,
+real device-loss recovery and degraded-user-process attribution remain open.
+
 ## Editor, Markdown and SFTP UI construction
 
 The historical measurements below use the original controls and their stated

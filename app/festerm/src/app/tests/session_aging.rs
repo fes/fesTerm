@@ -1,0 +1,505 @@
+use super::*;
+use crate::direct2d::profile::aging::{Frame, Renderer, PHYSICAL_SIZE};
+use crate::session_controller::fake::FakeSshSession;
+use festerm_session::SessionEvent;
+use festerm_test_support::tui_workload::Workload;
+use festerm_windows_direct2d::process_cpu_time;
+use serde::Serialize;
+use std::{
+    io::Write,
+    sync::{atomic::AtomicU64, Condvar, Mutex},
+    time::Instant,
+};
+
+const SESSION_COUNT: usize = 6;
+const CADENCE: Duration = Duration::from_millis(100);
+const MAX_IDLE_FRAMES: usize = 10_000;
+
+fn bounded_setting(value: Option<&str>, default: usize, maximum: usize) -> Result<usize, String> {
+    match value {
+        None => Ok(default),
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|value| (1..=maximum).contains(value))
+            .ok_or_else(|| format!("expected an integer in 1..={maximum}, got {value:?}")),
+    }
+}
+
+#[derive(Default)]
+struct Requests {
+    immediate: AtomicU64,
+    delayed: AtomicU64,
+    deadline: Mutex<Option<Instant>>,
+    changed: Condvar,
+}
+
+impl Requests {
+    fn schedule(&self, delay: Duration) {
+        let Some(deadline) = Instant::now().checked_add(delay) else {
+            return;
+        };
+        let mut next = self.deadline.lock().unwrap();
+        if next.is_none_or(|next| deadline < next) {
+            *next = Some(deadline);
+            self.changed.notify_one();
+        }
+    }
+
+    fn counts(&self) -> [u64; 2] {
+        [
+            self.immediate.load(Ordering::Relaxed),
+            self.delayed.load(Ordering::Relaxed),
+        ]
+    }
+
+    fn wait_due(&self, end: Instant) -> bool {
+        let mut next = self.deadline.lock().unwrap();
+        loop {
+            let now = Instant::now();
+            if now >= end {
+                return false;
+            }
+            if next.is_some_and(|next| next <= now) {
+                *next = None;
+                return true;
+            }
+            let until = next.map_or(end, |next| next.min(end));
+            let (guard, _) = self.changed.wait_timeout(next, until - now).unwrap();
+            next = guard;
+        }
+    }
+}
+
+struct Fixture {
+    app: FesTermApp,
+    sessions: Vec<(TabId, FakeSshSession)>,
+    context: egui::Context,
+    requests: Arc<Requests>,
+    started: Instant,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let context = egui::Context::default();
+        context.set_theme(egui::ThemePreference::Dark);
+        context.set_visuals(festerm_ui_egui::theme::default_visuals());
+        let (app, sessions) = background_efficiency_fixture(SESSION_COUNT, &context);
+        let requests = Arc::new(Requests::default());
+        let observed = requests.clone();
+        context.set_request_repaint_callback(move |info| {
+            if info.viewport_id != egui::ViewportId::ROOT {
+                return;
+            }
+            if info.delay.is_zero() {
+                observed.immediate.fetch_add(1, Ordering::Relaxed);
+            } else {
+                observed.delayed.fetch_add(1, Ordering::Relaxed);
+            }
+            observed.schedule(info.delay);
+        });
+        for (_, transport) in &sessions {
+            transport.set_notifier_for_test(crate::tabs::session_notifier_for_test(&context));
+        }
+        Self {
+            app,
+            sessions,
+            context,
+            requests,
+            started: Instant::now(),
+        }
+    }
+
+    fn input(&self, scale: f32) -> egui::RawInput {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(
+                    PHYSICAL_SIZE[0] as f32 / scale,
+                    PHYSICAL_SIZE[1] as f32 / scale,
+                ),
+            )),
+            time: Some(self.started.elapsed().as_secs_f64()),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(scale);
+        input
+    }
+
+    fn draw(&mut self, renderer: &mut Renderer, scale: f32) -> (Frame, usize) {
+        *self.requests.deadline.lock().unwrap() = None;
+        let calls = renderer.calls();
+        let output = self.context.run_ui(self.input(scale), |ui| {
+            self.app.frame_logic(ui.ctx());
+            self.app.ui_content(ui);
+        });
+        self.requests
+            .schedule(output.viewport_output[&egui::ViewportId::ROOT].repaint_delay);
+        let dirty = self
+            .app
+            .state
+            .session_tab(self.app.state.active())
+            .unwrap()
+            .view
+            .diagnostics()
+            .dirty_rows;
+        let frame = renderer.draw(&self.context, output, calls);
+        assert!(self
+            .sessions
+            .iter()
+            .all(|(_, transport)| transport.pending_events_for_test() == 0));
+        (frame, dirty)
+    }
+
+    fn normalize(&mut self, renderer: &mut Renderer) {
+        for _ in 0..8 {
+            self.draw(renderer, 2.0);
+        }
+        for (tab, transport) in self.sessions.clone() {
+            self.app
+                .state
+                .dispatch(AppCommand::ActivateTab(tab), &self.context);
+            self.app
+                .zoom_active_session(ZoomCommand::Reset, &self.context);
+            self.draw(renderer, 2.0);
+            transport.push_event(SessionEvent::Output(Workload::Localized.setup()));
+            self.draw(renderer, 2.0);
+        }
+        for _ in 0..8 {
+            self.draw(renderer, 2.0);
+        }
+        assert_eq!(
+            self.app.active_terminal_dimensions_for_test(),
+            festerm_core::Dimensions::new(120, 40).unwrap()
+        );
+    }
+
+    fn feed(&self, mode: &str, step: usize) -> usize {
+        let mut count = 0;
+        for (tab, transport) in &self.sessions {
+            let active = *tab == self.app.state.active();
+            if mode == "all" || (mode == "active" && active) || (mode == "background" && !active) {
+                transport.push_event(SessionEvent::Output(Workload::Localized.update(step)));
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
+#[derive(Serialize)]
+struct Sample {
+    index: usize,
+    elapsed_ms: f64,
+    work_ms: f64,
+    cpu_ms: f64,
+    supplied_events: usize,
+    dirty_rows: usize,
+    rendering: Frame,
+}
+
+fn phase_marker(directory: &std::path::Path, phase: &str) {
+    let record = serde_json::json!({
+        "phase": phase, "pid": std::process::id(),
+        "unix_ms": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+    });
+    // Replace a complete marker; the sampler opens it with delete sharing.
+    std::fs::write(
+        directory.join("phase-next.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    std::fs::rename(
+        directory.join("phase-next.json"),
+        directory.join("phase.json"),
+    )
+    .unwrap();
+}
+
+fn measured_phase(
+    fixture: &mut Fixture,
+    renderer: &mut Renderer,
+    directory: &std::path::Path,
+    name: &str,
+    mode: &str,
+    frames: usize,
+    idle_seconds: usize,
+) {
+    phase_marker(directory, name);
+    let mut log = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(directory.join(format!("{name}.jsonl")))
+        .unwrap();
+    let before = fixture.requests.counts();
+    let cpu = process_cpu_time().unwrap();
+    let started = Instant::now();
+    let end = started + Duration::from_secs(idle_seconds as u64);
+    let mut index = 0;
+    let mut events = 0;
+    loop {
+        if mode == "idle" {
+            assert!(
+                index < MAX_IDLE_FRAMES,
+                "idle repaint storm exceeded diagnostic cap"
+            );
+            if !fixture.requests.wait_due(end) {
+                break;
+            }
+        } else {
+            if index == frames {
+                break;
+            }
+            if let Some(delay) =
+                (started + CADENCE.mul_f64(index as f64)).checked_duration_since(Instant::now())
+            {
+                thread::sleep(delay);
+            }
+        }
+        let frame_cpu = process_cpu_time().unwrap();
+        let work = Instant::now();
+        let supplied_events = fixture.feed(mode, index);
+        let (rendering, dirty_rows) = fixture.draw(renderer, 2.0);
+        assert_eq!(
+            rendering.native_calls, 1,
+            "measured frame must use native painting"
+        );
+        assert!(
+            rendering.host_copy,
+            "measured frame must retain automatic copy eligibility"
+        );
+        let sample = Sample {
+            index,
+            elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+            work_ms: work.elapsed().as_secs_f64() * 1000.0,
+            cpu_ms: (process_cpu_time().unwrap() - frame_cpu).as_secs_f64() * 1000.0,
+            supplied_events,
+            dirty_rows,
+            rendering,
+        };
+        serde_json::to_writer(&mut log, &sample).unwrap();
+        writeln!(log).unwrap();
+        events += supplied_events;
+        index += 1;
+    }
+    if mode != "idle" {
+        if let Some(delay) =
+            (started + CADENCE.mul_f64(frames as f64)).checked_duration_since(Instant::now())
+        {
+            thread::sleep(delay);
+        }
+    }
+    log.flush().unwrap();
+    let elapsed = started.elapsed().as_secs_f64();
+    let cpu_ms = (process_cpu_time().unwrap() - cpu).as_secs_f64() * 1000.0;
+    let after = fixture.requests.counts();
+    let summary = serde_json::json!({
+        "schema": 1, "phase": name, "mode": mode,
+        "completed_frames": index, "supplied_events": events,
+        "wall_seconds": elapsed, "process_cpu_ms": cpu_ms,
+        "completed_hz": index as f64 / elapsed,
+        "cpu_ms_per_completed_frame": (index > 0).then(|| cpu_ms / index as f64),
+        "immediate_repaint_callbacks": after[0] - before[0],
+        "delayed_repaint_callbacks": after[1] - before[1],
+        "requested_cadence_ms": (mode != "idle").then_some(100),
+        "event_driven": mode == "idle",
+        "pending_events": fixture.sessions.iter()
+            .map(|(_, transport)| transport.pending_events_for_test()).collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        directory.join(format!("{name}.json")),
+        serde_json::to_vec_pretty(&summary).unwrap(),
+    )
+    .unwrap();
+}
+
+fn state_phases(
+    fixture: &mut Fixture,
+    renderer: &mut Renderer,
+    directory: &std::path::Path,
+    state: &str,
+    frames: usize,
+    idle_seconds: usize,
+) {
+    fixture.normalize(renderer);
+    let image = renderer.image();
+    image
+        .save(directory.join(format!("{state}-normalized.png")))
+        .unwrap();
+    drop(image);
+    for mode in ["frozen", "active", "background", "idle"] {
+        for _ in 0..4 {
+            fixture.draw(renderer, 2.0);
+        }
+        measured_phase(
+            fixture,
+            renderer,
+            directory,
+            &format!("{state}-{mode}"),
+            mode,
+            frames,
+            idle_seconds,
+        );
+    }
+}
+
+#[test]
+fn aging_settings_reject_zero_overflow_and_malformed_values() {
+    assert_eq!(bounded_setting(None, 120, 2000).unwrap(), 120);
+    assert_eq!(bounded_setting(Some("2000"), 120, 2000).unwrap(), 2000);
+    for value in ["", "0", "2001", "-1", "2.0", " 20", "18446744073709551616"] {
+        assert!(bounded_setting(Some(value), 120, 2000).is_err(), "{value}");
+    }
+}
+
+#[test]
+fn aging_fixture_notifies_and_pumps_all_six_owned_sessions() {
+    let mut fixture = Fixture::new();
+    for _ in 0..4 {
+        let mut output = fixture.context.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+    }
+    let before = fixture.requests.counts();
+    assert_eq!(fixture.feed("all", 7), SESSION_COUNT);
+    assert!(fixture.requests.counts()[0] > before[0]);
+    assert!(fixture
+        .sessions
+        .iter()
+        .all(|(_, transport)| transport.pending_events_for_test() == 1));
+    let mut output = fixture.context.run_ui(Default::default(), |ui| {
+        fixture.app.pump_all_sessions(ui.ctx());
+    });
+    output.textures_delta.clear();
+    for (tab, transport) in &fixture.sessions {
+        assert_eq!(transport.pending_events_for_test(), 0);
+        assert!(transport.sent().is_empty());
+        assert_eq!(
+            fixture
+                .app
+                .state
+                .session_tab(*tab)
+                .unwrap()
+                .has_new_output_since_active,
+            *tab != fixture.app.state.active()
+        );
+    }
+}
+
+#[test]
+fn aging_idle_scheduler_waits_for_demand_and_honors_deadline() {
+    let requests = Requests::default();
+    assert!(!requests.wait_due(Instant::now()));
+    requests.schedule(Duration::ZERO);
+    assert!(requests.wait_due(Instant::now() + Duration::from_secs(1)));
+    requests.schedule(Duration::from_secs(5));
+    requests.schedule(Duration::ZERO);
+    assert!(requests.wait_due(Instant::now() + Duration::from_secs(1)));
+}
+
+#[test]
+#[ignore = "optional bounded six-session aging discriminator; not multi-day/native presentation evidence"]
+fn profile_six_session_aging() {
+    assert_eq!(
+        std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
+        Ok("1")
+    );
+    let setting = |name, default, maximum| {
+        let value = match std::env::var(name) {
+            Ok(value) => Some(value),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => panic!("{name}: {error}"),
+        };
+        bounded_setting(value.as_deref(), default, maximum)
+            .unwrap_or_else(|error| panic!("{name}: {error}"))
+    };
+    let cycles = setting("FESTERM_AGING_CYCLES", 120, 2000);
+    let frames = setting("FESTERM_AGING_FRAMES", 100, 1000);
+    let idle_seconds = setting("FESTERM_AGING_IDLE_SECONDS", 10, 300);
+    let directory =
+        PathBuf::from(std::env::var_os("FESTERM_AGING_OUT").expect("set FESTERM_AGING_OUT"));
+    assert!(!directory.exists(), "use a fresh evidence directory");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut fixture = Fixture::new();
+    let mut renderer = Renderer::new(&fixture.context);
+    state_phases(
+        &mut fixture,
+        &mut renderer,
+        &directory,
+        "fresh",
+        frames,
+        idle_seconds,
+    );
+    phase_marker(&directory, "churn");
+    for cycle in 0..cycles {
+        for (tab, _) in fixture.sessions.clone() {
+            fixture
+                .app
+                .state
+                .dispatch(AppCommand::ActivateTab(tab), &fixture.context);
+            fixture.app.zoom_active_session(
+                if cycle % 2 == 0 {
+                    ZoomCommand::In
+                } else {
+                    ZoomCommand::Reset
+                },
+                &fixture.context,
+            );
+            fixture.feed("all", cycle);
+            fixture.draw(&mut renderer, if cycle % 2 == 0 { 1.25 } else { 2.0 });
+        }
+    }
+    state_phases(
+        &mut fixture,
+        &mut renderer,
+        &directory,
+        "churned",
+        frames,
+        idle_seconds,
+    );
+    phase_marker(&directory, "rebuilding");
+    drop(renderer);
+    drop(fixture);
+    let mut fixture = Fixture::new();
+    let mut renderer = Renderer::new(&fixture.context);
+    state_phases(
+        &mut fixture,
+        &mut renderer,
+        &directory,
+        "rebuilt",
+        frames,
+        idle_seconds,
+    );
+    phase_marker(&directory, "validating-pixels");
+    let reference = image::open(directory.join("fresh-normalized.png"))
+        .unwrap()
+        .into_rgba8();
+    for state in ["churned", "rebuilt"] {
+        assert_eq!(
+            reference,
+            image::open(directory.join(format!("{state}-normalized.png")))
+                .unwrap()
+                .into_rgba8(),
+            "{state} normalization must preserve every pixel",
+        );
+    }
+    std::fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": 1, "session_count": SESSION_COUNT, "churn_cycles": cycles,
+            "churn_submitted_frames": cycles * SESSION_COUNT, "frames_per_paced_phase": frames,
+            "idle_seconds": idle_seconds, "physical_size": PHYSICAL_SIZE,
+            "measurement_scale": 2.0, "churn_scales": [1.25, 2.0],
+            "states": ["fresh", "churned", "rebuilt"],
+            "modes": ["frozen", "active", "background", "idle"],
+            "normalized_pixels_equal": true, "installed_sessions_accessed": false,
+            "production_cadence_changed": false,
+            "limitations": "Completed offscreen work, forced paced non-idle frames, event-driven idle demand; not native presentation or a multi-day reproducer. Rebuild discards synthetic GUI and renderer state, not user shells."
+        })).unwrap(),
+    ).unwrap();
+    phase_marker(&directory, "complete");
+}
