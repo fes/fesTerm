@@ -95,6 +95,13 @@ from terminal preparation/drawing using completed GPU work and process-wide CPU
 time. Its diagnostic mesh omissions are not valid production optimizations.
 The chrome fill optimization must preserve every pixel, including fractional
 DPI, clipping and translucent fallback, without changing update cadence.
+`PAL-01`/`PAL-03`/`PAL-04` additionally retain exact palette frame/shadow pixels
+when eligible WARP uses the same geometry through the textureless panel shader.
+Sixteen theme/height/query/DPI combinations and five fallback cases are
+automated; renderer reinstallation and missing-renderer fallback are covered.
+Unsupported roots, transforms/viewports/adapters/formats keep ordinary painting.
+This changes neither widget geometry/focus nor final-terminal copy eligibility;
+native appearance, resource and presentation evidence remains under CP-18.
 
 The owner-approved automatic host-copy and retained window-prefix policies
 under ADRs 0040/0041 select both only
@@ -152,15 +159,22 @@ CP-18 remain open. See the performance validation guide.
 These edges belong only to `app/festerm-mobile` (ADR 0042), not the desktop
 application or a supported mobile SSH workflow. Checkpoint: newly launched
 preview with repository-owned fixtures; Reset restores terminal content.
-The iOS workflow's isolated Simulator smoke automates install, launch survival,
-first UI callback, terminate/relaunch and PNG capture for `MOB-01`/`MOB-03`.
+The iOS workflow's nightly/manual isolated Simulator smoke automates install,
+launch survival, first UI callback, terminate/relaunch and PNG capture for
+`MOB-01`/`MOB-03`.
 A live process without the UI callback fails; app stderr is retained. Screenshots still
 require visual review; it does not qualify gestures or background/resume.
 Read-only cold-service preparation (#303) runs before compilation under a
 pinned toolchain. Its `prepared` receipt is not a passed `MOB-01`/`MOB-03`
 application run; inventory, launch/capture and cleanup checks remain unchanged.
-Portable preparation/non-app-evidence regressions are named in ADR 0042;
-vendor-only epaint edits also trigger mobile compilation and Simulator CI.
+Affected PRs retain mobile unit/dependency checks, device compilation and
+Simulator app builds, including vendor-only epaint edits; they skip
+CoreSimulator preparation and runtime smoke while iOS is experimental.
+Nightly/manual failures retain their failed status and artifacts (#303), not
+desktop merge vetoes; their `experimental-simulator-smoke` check is distinct
+from the PR's `simulator-build` context. Workflow-policy and preparation/non-app-evidence
+regressions are named in ADR 0042. Native feasibility gates remain open;
+review an explicit runtime merge gate when mobile product support is accepted.
 The mobile device descriptor requests downlevel GPU limits to accommodate the
 observed Simulator Metal limit; issue #261 remains the native startup gate.
 

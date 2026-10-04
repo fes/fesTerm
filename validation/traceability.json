@@ -790,11 +790,22 @@
       "requirements": [
         "docs/gui-design.md#command-palette-and-session-switcher"
       ],
-      "decisions": [],
+      "decisions": [
+        "ADR-0039",
+        "ADR-0040",
+        "ADR-0041"
+      ],
       "automated_tests": [
         "command_palette_selection_activates_the_chosen_tab_end_to_end",
         "escape_dismisses_without_a_selection",
         "palette_fits_the_full_root_and_elides_long_rows_without_losing_identity",
+        "palette_frame_candidates_are_only_the_opaque_untextured_shadow_frame",
+        "palette_frame_retains_root_opacity_visibility_origin_and_layer_transform_guards",
+        "palette_frame_plugin_reinstallation_uses_current_renderer_and_declines_missing_renderer",
+        "textureless_palette_frame_preserves_shadow_pixels_across_dpi_and_fallback",
+        "white_mesh_geometry_preserves_alpha_and_rejects_textures_or_invalid_indices",
+        "residual_profile_scene_preserves_controls_and_accepts_production_palette",
+        "residual_profile_palette_preserves_overlay_fallback_under_automatic_policy",
         "open_terminal_history_in_editor_palette_command_creates_an_immutable_snapshot",
         "save_terminal_history_as_palette_command_opens_save_as_for_an_untitled_snapshot",
         "oversized_terminal_history_snapshot_refuses_without_mutating_tabs_or_documents",
@@ -2416,7 +2427,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py in iOS CI, including vendor-only epaint edits; separate read-only prepared receipts (#303), covered by ADR-0042 portable preparation regressions, are not app-pass evidence; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go before broader mobile product work"
+        "affected PRs retain mobile unit/dependency checks, device compilation and Simulator app builds, including vendor-only epaint edits; isolated Simulator install/launch/relaunch and PNG evidence via scripts/smoke-ios-simulator.py runs nightly/manual only under a distinct experimental-simulator-smoke check, not the simulator-build PR context or a desktop merge gate while iOS is experimental; failed runs/receipts remain failed (#303), with unchanged deadlines and ownership/UI/capture guards; separate read-only prepared receipts are not app-pass evidence; scripts/tests/test_scheduled_workflows.py and test_ios_simulator_smoke.py cover the ADR-0042 workflow-policy and preparation separation; visual review, native keyboard/IME, Metal lifecycle and provisioned physical iPhone/iPad evidence remain required; explicit go/no-go and runtime merge-gate review before mobile product support"
       ]
     }
   ]

@@ -501,6 +501,45 @@ fn profile_case_filter_preserves_order_and_rejects_incomplete_inputs() {
     );
 }
 
+fn application_profile_scene(scene: &str) -> Result<bool, &'static str> {
+    match scene {
+        "terminal" => Ok(false),
+        "application" | "application-palette" => Ok(true),
+        _ => Err("FESTERM_TUI_PROFILE_SCENE expects terminal, application, or application-palette"),
+    }
+}
+
+fn profile_requires_retention(scene: &str, case: &str) -> bool {
+    scene != "application-palette"
+        && matches!(case, "frozen-all" | "localized-all" | "frozen-all-repeat")
+}
+
+#[test]
+fn residual_profile_palette_preserves_overlay_fallback_under_automatic_policy() {
+    for scene in ["terminal", "application", "application-palette"] {
+        for case in ["frozen-all", "localized-all", "frozen-all-repeat"] {
+            assert_eq!(
+                profile_requires_retention(scene, case),
+                scene != "application-palette",
+                "{scene}, {case}"
+            );
+        }
+        for case in ["localized-ui-only", "meshes-only", "sleep-only"] {
+            assert!(!profile_requires_retention(scene, case));
+        }
+    }
+}
+
+#[test]
+fn residual_profile_scene_preserves_controls_and_accepts_production_palette() {
+    assert_eq!(application_profile_scene("terminal"), Ok(false));
+    assert_eq!(application_profile_scene("application"), Ok(true));
+    assert_eq!(application_profile_scene("application-palette"), Ok(true));
+    for invalid in ["", "palette", "Application", "application-palette,terminal"] {
+        assert!(application_profile_scene(invalid).is_err(), "{invalid}");
+    }
+}
+
 #[test]
 #[ignore = "optional paced process-CPU decomposition; not native presentation latency"]
 fn profile_terminal_residual_cpu() {
@@ -547,15 +586,29 @@ fn profile_terminal_residual_cpu() {
     context.set_theme(egui::ThemePreference::Dark);
     context.set_visuals(festerm_ui_egui::theme::default_visuals());
     crate::software_background::install(&context, &state);
+    let palette_frame_textureless = match std::env::var_os("FESTERM_TUI_PROFILE_PALETTE_FRAME") {
+        None => true,
+        Some(value) if value == "0" => false,
+        Some(value) if value == "1" => true,
+        _ => panic!("FESTERM_TUI_PROFILE_PALETTE_FRAME expects 0, 1, or unset"),
+    };
+    crate::software_background::set_palette_frame_enabled(&context, palette_frame_textureless);
     let status = super::native::install_with_host_copy(&context, &state, host_copy).unwrap();
     state.renderer.write().retained_composition_enabled = retained_composition;
     let mut retained_ui = egui_wgpu::RetainedUi::default();
     let scene = std::env::var_os("FESTERM_TUI_PROFILE_SCENE")
         .map(|value| value.into_string().expect("profile scene must be UTF-8"))
         .unwrap_or_else(|| "terminal".into());
-    assert!(matches!(scene.as_str(), "terminal" | "application"));
-    let mut application = (scene == "application").then(|| {
-        let (app, _, transport) = crate::app::FesTermApp::for_test_with_fake_ssh_session([]);
+    let application_scene = application_profile_scene(&scene).expect("valid profile scene");
+    assert!(
+        scene != "application-palette" || !direct_copy,
+        "a palette overlay cannot use a final-terminal direct-copy probe"
+    );
+    let mut application = application_scene.then(|| {
+        let (mut app, _, transport) = crate::app::FesTermApp::for_test_with_fake_ssh_session([]);
+        if scene == "application-palette" {
+            app.open_palette_for_gallery(&context);
+        }
         (app, transport)
     });
     let dimensions = Dimensions::new(120, 40).unwrap();
@@ -633,6 +686,26 @@ fn profile_terminal_residual_cpu() {
         "{:?}",
         status.first_failure.get()
     );
+    if scene == "application-palette" {
+        assert!(
+            context
+                .memory(|memory| memory.area_rect(egui::Id::new("festerm_command_palette")))
+                .is_some(),
+            "profile requires the actual production command palette"
+        );
+    }
+    let palette_frame_conversions = if scene == "application-palette" {
+        crate::software_background::palette_frame_conversions(&context)
+    } else {
+        0
+    };
+    if scene == "application-palette" {
+        assert_eq!(
+            palette_frame_conversions > 0,
+            palette_frame_textureless,
+            "profile must exercise the selected actual palette frame renderer",
+        );
+    }
     let surface = status.last_surface.lock().unwrap().clone().unwrap();
     let native_index = primitives
         .iter()
@@ -660,7 +733,11 @@ fn profile_terminal_residual_cpu() {
                     [0.0; 4],
                     Some(&mut retained_ui),
                 ),
-                (true, expected),
+                if scene == "application-palette" {
+                    (false, None)
+                } else {
+                    (true, expected)
+                },
                 "{:?}",
                 retained_ui.stats(),
             );
@@ -705,6 +782,35 @@ fn profile_terminal_residual_cpu() {
             "full application pixels changed",
         );
     }
+    let textureless_mesh = std::env::var_os("FESTERM_TUI_PROFILE_TEXTURELESS_MESH").map(|value| {
+        value
+            .into_string()
+            .expect("textureless mesh index must be UTF-8")
+            .parse::<usize>()
+            .expect("textureless mesh probe expects a nonnegative primitive index")
+    });
+    if let Some(index) = textureless_mesh {
+        let primitive = primitives.get_mut(index).expect("textureless mesh exists");
+        let Primitive::Mesh(mesh) = &primitive.primitive else {
+            panic!("textureless probe requires an ordinary mesh");
+        };
+        let probe = crate::software_background::PanelTestProbe::install(&context, &state);
+        let shape = probe
+            .white_mesh_shape(context.viewport_rect(), mesh)
+            .expect("supported exact-geometry textureless mesh");
+        let egui::Shape::Callback(callback) = shape else {
+            unreachable!()
+        };
+        primitive.primitive = Primitive::Callback(callback);
+        draw(&state, &texture, &screen, &primitives);
+        let candidate = read_image(&state, &texture);
+        candidate.save(directory.join("textureless.png")).unwrap();
+        assert_same_pixels(
+            &original_image,
+            &candidate,
+            "textureless diagnostic changed full-frame pixels",
+        );
+    }
     let metadata = primitives
         .iter()
         .enumerate()
@@ -718,6 +824,16 @@ fn profile_terminal_residual_cpu() {
             Primitive::Mesh(mesh) => serde_json::json!({
                 "index":index, "kind":"mesh", "vertices":mesh.vertices.len(),
                 "indices":mesh.indices.len(), "clip":format!("{:?}", primitive.clip_rect),
+                "bounds":format!("{:?}", mesh.calc_bounds()),
+                "opaque_white_triangles":mesh.indices.as_chunks::<3>().0.iter().filter(|triangle| {
+                    let first = mesh.vertices[triangle[0] as usize];
+                    triangle.iter().all(|index| {
+                        let vertex = mesh.vertices[*index as usize];
+                        vertex.uv == egui::epaint::WHITE_UV
+                            && vertex.color == first.color
+                            && vertex.color.is_opaque()
+                    })
+                }).count(),
             }),
         })
         .collect::<Vec<_>>();
@@ -734,6 +850,7 @@ fn profile_terminal_residual_cpu() {
     for (index, primitive) in primitives.iter().enumerate() {
         cases.push((format!("primitive-{index}"), vec![primitive.clone()]));
     }
+
     let meshes = primitives
         .iter()
         .filter(|primitive| matches!(primitive.primitive, Primitive::Mesh(_)))
@@ -785,6 +902,14 @@ fn profile_terminal_residual_cpu() {
     if let Some(requested) = std::env::var_os("FESTERM_TUI_PROFILE_CASES") {
         let requested = requested.into_string().expect("case names must be UTF-8");
         select_cases(&mut cases, &requested).expect("valid profile selection");
+    }
+    if textureless_mesh.is_some() {
+        assert!(
+            cases
+                .iter()
+                .all(|(name, _)| matches!(name.as_str(), "frozen-all" | "frozen-all-repeat")),
+            "textureless diagnostic supports only explicit frozen whole-frame controls"
+        );
     }
     let copy_descriptor = wgpu::TextureDescriptor {
         label: Some("native image copy probe"),
@@ -838,10 +963,7 @@ fn profile_terminal_residual_cpu() {
                 Some(callback.clone())
             });
         }
-        let requires_retention = matches!(
-            name.as_str(),
-            "frozen-all" | "localized-all" | "frozen-all-repeat"
-        );
+        let requires_retention = profile_requires_retention(&scene, &name);
         let mut last_composited_frame = None;
         let mut frame = |retained_ui: &mut egui_wgpu::RetainedUi| {
             if name == "sleep-only" {
@@ -916,7 +1038,13 @@ fn profile_terminal_residual_cpu() {
                             [0.0; 4],
                             Some(retained_ui),
                         );
-                        if host_copy {
+                        if scene == "application-palette" {
+                            assert_eq!(
+                                (copied, retained),
+                                (false, None),
+                                "palette overlay must retain ordered ordinary composition",
+                            );
+                        } else if host_copy {
                             assert!(copied, "host-copy probe silently fell back");
                         }
                         if retained_composition && requires_retention {
@@ -938,6 +1066,15 @@ fn profile_terminal_residual_cpu() {
                     [0.0; 4],
                     Some(retained_ui),
                 );
+                if scene == "application-palette"
+                    && matches!(name.as_str(), "frozen-all" | "frozen-all-repeat")
+                {
+                    assert_eq!(
+                        (copied, retained),
+                        (false, None),
+                        "palette overlay must retain ordered ordinary composition",
+                    );
+                }
                 if retained_composition && requires_retention {
                     assert!(
                         copied && retained.is_some(),
@@ -1026,6 +1163,9 @@ fn profile_terminal_residual_cpu() {
                 "exact_interpolated_pixels":true,
                 "direct_copy_probe":direct_copy,
                 "host_copy_probe":host_copy,
+                "textureless_mesh_probe":textureless_mesh,
+                "palette_frame_textureless":palette_frame_textureless,
+                "palette_frame_conversions_before_sampling":palette_frame_conversions,
                 "retained_composition_probe":retained_composition,
                 "scene":scene, "removed_fill_triangles":removed_fill_triangles,
                 "primitives":metadata, "measurements":measurements,

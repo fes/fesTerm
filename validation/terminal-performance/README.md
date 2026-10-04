@@ -790,6 +790,125 @@ target is retained: there is no per-frame image allocation or screenshot
 readback in the measured final-composition pass. CPU-counter granularity is
 visible in very small results; a reported zero is not proof of zero work.
 
+Use `FESTERM_TUI_PROFILE_SCENE=application-palette` to keep the real command
+palette open over that same synthetic session. The probe asserts the actual
+palette window exists and preserves the original scene controls, dimensions,
+native path and producer cadence. Mesh bounds and opaque white-triangle counts
+help attribute the ordinary overlay work. Select
+`frozen-all,meshes-only,without-solid-mesh-fills,localized-all,frozen-all-repeat`
+for a bounded first investigation. The fill-removal case deliberately changes
+pixels and is an attribution control, never a proposed production optimization.
+Retain noisy/adverse results and distinguish completed offscreen work from
+native presentation; the recorded investigations below are source-bound
+exploratory observations, not native qualification.
+
+`FESTERM_TUI_PROFILE_PALETTE_FRAME=0|1` selects ordinary or production
+textureless palette frame/shadow painting in the test executable only; unset
+uses the production path. It does not install a production renderer switch.
+The probe requires the selected real frame path before sampling, preserves
+every vertex/index/color/clip, and accepts only ordinary ordered composition
+under the overlay: current automatic copy/retention are requested but decline.
+For matched controls select `frozen-all,localized-all,frozen-all-repeat`, pin
+one archived executable/source, run reversed repeated controls, and require
+`FESTERM_TUI_PROFILE_REFERENCE` equality. Keep all 100 frames of every case;
+background activity is recorded rather than used to select clean subsets.
+
+The test-only `FESTERM_TUI_PROFILE_TEXTURELESS_MESH=<primitive-index>` replaces
+one captured valid white-UV mesh with the existing textureless panel shader.
+It preserves every vertex, index, clip and color, saves the candidate image,
+and requires exact full-frame RGBA equality before timing. Only explicitly
+selected `frozen-all,frozen-all-repeat` controls are allowed; dynamic or
+partial/omitted-mesh cases would not be equivalent controls. This does not
+relax production panel opacity, shadow, root-viewport or transform guards,
+and is distinct from production palette integration. Disable actual palette
+conversion (`FESTERM_TUI_PROFILE_PALETTE_FRAME=0`) before selecting an ordinary
+captured palette mesh by index.
+
+#### 2026-10-03 source-pinned integrated palette comparison
+
+Implementation `fe09b25011a762be1ff391d7010dc09a3f47e997`, based on automatic
+WARP main `14c735a`, completed same-executable ordinary/textureless controls in
+ABBA order. All twelve cases completed 100 frames each; no noisy/adverse case
+was dropped. This is unoptimized dev/test completed offscreen work, not native
+presentation, physical latency or a precise production CPU claim.
+
+| Run | Frame path | Case | CPU-ms/frame | Completed-ms/frame | Completed Hz |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Ordinary | Frozen | 1940.31 | 158.74 | 6.2995 |
+| 1 | Ordinary | Localized | 2005.00 | 190.92 | 5.2377 |
+| 1 | Ordinary | Frozen repeat | 1920.78 | 157.49 | 6.3496 |
+| 2 | Textureless | Frozen | 443.59 | 46.25 | 9.9997 |
+| 2 | Textureless | Localized | 495.47 | 80.62 | 9.9998 |
+| 2 | Textureless | Frozen repeat | 437.50 | 46.01 | 9.9998 |
+| 3 | Textureless | Frozen | 476.72 | 50.65 | 9.9994 |
+| 3 | Textureless | Localized | 536.25 | 85.30 | 9.9997 |
+| 3 | Textureless | Frozen repeat | 501.72 | 50.08 | 9.9996 |
+| 4 | Ordinary | Frozen | 1982.19 | 167.08 | 5.9849 |
+| 4 | Ordinary | Localized | 2159.22 | 206.12 | 4.8515 |
+| 4 | Ordinary | Frozen repeat | 2112.34 | 175.47 | 5.6989 |
+
+Equal-frame-count means show approximately 75-77% less CPU work per completed
+frame in all three workloads. CPU time includes every process/WARP worker,
+so CPU-ms/frame is not wall time. The ordinary path missed the requested 10 Hz;
+the candidate maintained it without omitting any draws. Automatic host-copy
+and retention remained requested but declined under the overlay, with zero
+reuses/rebuilds/cache bytes throughout. Native terminal damage stayed
+21,105 of 2,982,063 pixels in both localized controls. The selected real frame
+path was asserted before sampling, and exact initial and final composition
+pixels were required.
+
+The 2058x1658, 200%, 120x40 Microsoft Basic Render Driver workload used executable
+SHA256 `B3D0F6791010332EDCF96AAE5BA39C94E5E94E33D32EAFFA5FDCCD4BA87F0F50`.
+All four initial PNGs were byte-identical:
+`7ac141b438775bc7eb57a60532b8c73ccac8e2b7eb135964131be50ef7760ce5`.
+Recorded aggregate host peaks ranged from 66.8% to 95.7%; these include the
+probe and are not attribution of external CPU. Compiler/source hashes,
+inventories, twelve raw scores and unfiltered host samples remain in the
+session's `warp-palette-integrated-debug-abba-*` receipts and
+`warp-palette-current-main-built-debug-1` archive. This series predates the
+subsequent #308/#309 merge; it must not be relabeled as that newer source.
+
+#### Reversed controls after the shipping allocation/binding merge
+
+The independently merged #308/#309 baseline `9f04f5d` was integrated into
+`5af5e55613480e94cb8e0deaab1784d4ab422395` and fully requalified before a
+fresh BAAB series. This source uses both shipped optimizations in both frame
+controls, so their savings are not conflated with the palette shader change.
+The same twelve-case/1,200-frame, dimensions, requested cadence, driver,
+copy/retention refusal and exact-pixel guards all passed.
+
+| Run | Frame path | Case | CPU-ms/frame | Completed-ms/frame | Completed Hz |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Textureless | Frozen | 440.31 | 48.04 | 9.9996 |
+| 1 | Textureless | Localized | 488.12 | 82.42 | 9.9997 |
+| 1 | Textureless | Frozen repeat | 439.22 | 47.19 | 9.9995 |
+| 2 | Ordinary | Frozen | 2020.16 | 162.44 | 6.1560 |
+| 2 | Ordinary | Localized | 1955.78 | 189.03 | 5.2900 |
+| 2 | Ordinary | Frozen repeat | 1926.56 | 155.57 | 6.4278 |
+| 3 | Ordinary | Frozen | 2236.72 | 176.59 | 5.6626 |
+| 3 | Ordinary | Localized | 2252.66 | 208.38 | 4.7988 |
+| 3 | Ordinary | Frozen repeat | 2116.56 | 178.54 | 5.6009 |
+| 4 | Textureless | Frozen | 422.97 | 46.44 | 9.9996 |
+| 4 | Textureless | Localized | 481.88 | 79.70 | 9.9996 |
+| 4 | Textureless | Frozen repeat | 442.19 | 45.80 | 9.9999 |
+
+Equal-frame-count means again show a material practical improvement: roughly
+77-80% less CPU work per completed frame, and the requested 10 Hz versus
+4.8-6.4 Hz for ordinary painting. These approximate unoptimized offscreen
+results do not assert that native production windows save that percentage.
+All cases, including the slower third control, remain in the record; there
+is no clean-subset selection or aggregate across the two different sources.
+Aggregate host peaks were 72.1-95.3%, including the probe itself, not external
+CPU attribution. Sustained resources, native presentation/input/visual
+qualification and #297's multi-day cause remain open.
+
+Executable SHA256:
+`457BFCEE8DFFE19E27DA3DF49EB78A3164B8DA2CF81C1AB8CFA824A7DF728DB5`.
+All four current-source initial PNGs also match the earlier recorded PNG hash
+exactly. The archived compiler/source binding and test inventory are in
+`warp-palette-current-main-built-debug-2`; unfiltered receipts and the all-case
+summary are `warp-palette-integrated-current-debug-baab-*` in the session.
+
 `profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
 completed-draw wall time and primitive identities. Individual cases include
 clear/sleep controls, frozen whole-frame and single-primitive composition,

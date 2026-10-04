@@ -100,11 +100,16 @@ checks device compilation and Simulator linking, while the build script checks
 normal/build graph exclusions. `scripts/smoke-ios-simulator.py --run` adds
 isolated iPhone/iPad install, launch-survival, first UI callback, terminate/relaunch and screenshot
 capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
-cover ownership, failure reporting and cleanup; actual execution is an iOS CI
-gate. The manifest and PNGs are review evidence, not automatic rendering,
+cover ownership, failure reporting and cleanup. Affected PRs retain mobile
+unit/dependency/build checks but skip CoreSimulator preparation/runtime smoke;
+that experimental evidence runs nightly at 08:17 UTC on the default branch
+or via manual dispatch, not as a desktop merge gate. Failures still fail those
+runs and retain their artifacts (#303); no retry or guard/deadline change.
+Review an explicit runtime merge gate when mobile product support is accepted.
+The manifest and PNGs are review evidence, not automatic rendering,
 keyboard or lifecycle acceptance. Physical-device and most interaction
-evidence above remains pending. CI pins Xcode 16.4 and runs read-only
-`--prepare-only` before compilation to initialize cold CoreSimulator caches
+evidence above remains pending. Nightly/manual CI pins Xcode 16.4 and runs
+read-only `--prepare-only` before compilation to initialize cold CoreSimulator caches
 (runner-images #12862; local tracker #303). Preparation has a separate 180-second
 bound, produces `prepared` rather than app `pass` evidence, and never retries or
 mutates existing devices. The subsequent inventory, application and capture
@@ -792,6 +797,24 @@ experiment that requires exact initial/final pixels and owns the target outside
 the production callback. The same-format shader is its control; cadence and
 CPU-ms/frame must be reviewed, not CPU percentage alone. These additions do not
 qualify native presentation or change the production renderer.
+`FESTERM_TUI_PROFILE_SCENE=application-palette` opens and asserts the real
+command palette over that synthetic terminal, retaining the original
+application/terminal controls and reporting ordinary mesh bounds and solid-fill
+triangle counts. This is optional offscreen attribution; removal of overlay
+fills is still a pixel-changing diagnostic, not an accepted rendering change.
+Native palette appearance, focus, input, presentation and CP-18 remain manual
+or separately qualified evidence.
+The palette's graphics-only textureless frame/shadow path has automated exact
+RGBA comparisons for dark/light/short/query states at 100%, 125%, 150% and
+200%, plus root opacity, nonzero origin, palette transform, secondary viewport
+and translucent-frame fallback. Candidate geometry, invisible/root-transform
+guards, current-renderer reinstallation and absent-renderer fallback are also
+deterministic. Existing palette focus/navigation/dispatch tests remain separate
+from graphics. `FESTERM_TUI_PROFILE_PALETTE_FRAME=0|1` is an opt-in test-only
+same-source comparison; unset uses the production path. Automatic copy and
+retention must still decline the overlay. Offscreen savings do not replace
+native visual/input, sustained-resource, graphics-recovery, mixed-monitor or
+physical presentation-latency evidence.
 The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
 CPU; its campaign stopped at a later foreground-activation failure. Streaming,
 full-redraw, force-full-repaint control and repeated parity evidence remain

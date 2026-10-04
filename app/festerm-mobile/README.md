@@ -66,9 +66,22 @@ selected runtime/model, process IDs and screenshot dimensions. A process can
 remain alive while rendering incorrectly: a passing result requires visual
 review and does not qualify keyboard/IME, gestures or background/resume.
 
-The iOS workflow publishes these files as `festerm-ios-simulator-evidence`,
-including partial evidence on failure. The opt-in aggregate validation scripts
-run this suite on macOS and report it skipped on other platforms.
+The iOS workflow runs this smoke nightly at 08:17 UTC on the default branch
+and through its manual **Run workflow** action. It publishes these files as
+`festerm-ios-simulator-evidence`, including partial evidence on failure.
+Affected PRs still run mobile unit/dependency checks, device compilation and
+Simulator app builds, but skip native preparation and runtime smoke.
+Their check stays `simulator-build`; nightly/manual runs use the distinct
+`experimental-simulator-smoke` check, including manual runs on a PR branch.
+The opt-in aggregate validation scripts run the suite on macOS and report it
+skipped on other platforms.
+
+This separates experimental Simulator/hosted-runner failures from desktop
+merge gates; it does not call a failed smoke successful. Scheduled/manual
+smoke failures still fail their runs and remain tracked in #303, with no
+retry or relaxed deadlines, device ownership, UI/liveness or capture checks.
+Restore an explicit runtime merge gate through review when mobile product
+support is accepted; passing screenshots alone do not accept that support.
 
 ## Portable checks and desktop harness
 
@@ -134,7 +147,8 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   memory pressure and process death need native evidence under `MOB-01`–`04`.
 
 `.github/workflows/ios-spike.yml` checks device compilation and builds the
-Simulator bundle, then runs the isolated launch evidence suite. Build or
+Simulator bundle on affected PRs; nightly/manual runs additionally execute
+the isolated launch evidence suite. Build or
 process-survival success is not a passed native interaction gate. Use
 the scenarios in [manual validation](../../docs/manual-validation.md); record
 failures and reassess the hosting path before Phase 2 if input/lifecycle would

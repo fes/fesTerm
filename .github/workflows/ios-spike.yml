@@ -19,6 +19,8 @@ on:
       - 'scripts/smoke-ios-simulator.py'
       - 'scripts/tests/test_ios_simulator_smoke.py'
       - '.github/workflows/ios-spike.yml'
+  schedule:
+    - cron: '17 8 * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,6 +28,7 @@ permissions:
 
 jobs:
   simulator-build:
+    name: ${{ github.event_name == 'pull_request' && 'simulator-build' || 'experimental-simulator-smoke' }}
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -42,6 +45,7 @@ jobs:
         with:
           key: ios-spike
       - name: Prepare the selected CoreSimulator service before compilation
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 4
         run: python3 scripts/smoke-ios-simulator.py --prepare-only
       - run: cargo test --locked -p festerm-mobile --lib
@@ -49,16 +53,19 @@ jobs:
       - run: cargo check --locked -p festerm-mobile --target aarch64-apple-ios
       - run: python3 scripts/build-ios-spike.py
       - name: Launch and relaunch on isolated iPhone and iPad Simulators
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 12
         run: python3 scripts/smoke-ios-simulator.py --run
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - name: Upload Simulator app bundle
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()
         with:
           name: festerm-ios-simulator-spike
           path: target/ios-spike/fesTermSpike-simulator.tar.gz
           if-no-files-found: error
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        if: always()
+      - name: Upload Simulator smoke evidence
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         with:
           name: festerm-ios-simulator-evidence
           path: target/ios-smoke/
