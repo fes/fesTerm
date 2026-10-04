@@ -77,6 +77,13 @@ remain active rolling qualification but do not independently keep M6 open.
 | Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
 
+Accepted window/application teardown now has deterministic document-registry
+evidence for CP-13/CP-15: releasing all remaining owned views, preserving a
+sibling's unsaved text and undo/redo, avoiding double release after ordinary tab
+close, and keeping a moved editor registered when its empty source window ends.
+This automates ownership bookkeeping, not native close-dialog delivery,
+cross-window pointer behavior, caret/focus, or usability acceptance.
+
 ## iOS Phase 1 feasibility (ADR 0042)
 
 The isolated spike is implemented for review. The following evidence is

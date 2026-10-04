@@ -3765,3 +3765,19 @@ anchor and zoom, and does not send input, resize or daemon recovery controls.
 Deterministic coverage checks unchanged-row rebuilding, complete native
 pixel replacement, one-shot reuse recovery, command routing and Ctrl+L/Ctrl+R
 delivery. Native desktop feel remains separate manual evidence.
+
+## Closing a window without orphaning shared documents
+
+The allocation/lifecycle audit in [#320](https://github.com/fes/fesTerm/issues/320)
+found a mismatch between tab close and whole-window teardown: tab close released
+its document view, but dropping a secondary window did not. The primary window's
+shared registry could therefore keep text, undo and syntax state alive and
+continue checking documents nobody was viewing.
+
+Window-local application state now releases only the document views still in
+its tab list when that owner ends. Already-closed tabs are absent, and moved
+tabs belong to their destination, so neither is released twice. Model
+regressions reproduce the original retention and preserve sibling unsaved
+text/undo, moved tabs and primary/application teardown. Dirty-close decisions
+remain in the existing command policy; native close and multi-window usability
+evidence remain CP-13/CP-15 rather than being claimed by headless ownership tests.

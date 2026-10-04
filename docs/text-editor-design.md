@@ -39,7 +39,9 @@ Consequences that follow from that and are worth stating plainly:
   committed as one transaction.
 - Closing a view does not close the document. The document is forgotten when
   the last view goes, which is also the only point at which the dirty-close
-  question is worth asking.
+  question is worth asking. Accepted window teardown releases every document
+  view still inside that window exactly once. Tabs moved out of the window
+  keep their registration with their new owner.
 - **Save As is not a rename.** The saving view follows the file it wrote; any
   other view still holding the original carries on looking at the original.
 - Saving onto a file that is already open binds the view to that **existing**
