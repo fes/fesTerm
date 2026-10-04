@@ -49,7 +49,9 @@ also match the old preparation. The tests create no graphics device.
 
 Drawing, clipping, damage/culling, texture revisions/uploads, published image
 lifetime, retention budgets and ordinary fallback remain unchanged. Windows
-CI's existing native self-test runner includes these allocation checks. This is
+CI's existing native self-test runner includes these allocation checks. Native
+renderer-only changes also trigger package smoke, protected by a portable
+workflow regression. This is
 a bounded source-backed heap-churn improvement for #267/#297/#298, not a claim
 of process-CPU, native-window or latency improvement, and not attribution of
 #297's long-lived plateau. CP-18 remains open; the saved comparison protocol

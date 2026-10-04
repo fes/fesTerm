@@ -9,6 +9,7 @@ on:
       - 'Cargo.lock'
       - 'Cargo.toml'
       - 'app/festerm/**'
+      - 'crates/festerm-windows-direct2d/**'
       - 'assets/app-icon/**'
       - 'packaging/**'
       - 'scripts/check_packaging.py'
