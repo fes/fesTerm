@@ -591,6 +591,13 @@ fn profile_terminal_residual_cpu() {
         _ => panic!("FESTERM_TUI_PROFILE_PALETTE_FRAME expects 0, 1, or unset"),
     };
     crate::software_background::set_palette_frame_enabled(&context, palette_frame_textureless);
+    let palette_fills_textureless = match std::env::var_os("FESTERM_TUI_PROFILE_PALETTE_FILLS") {
+        None => true,
+        Some(value) if value == "0" => false,
+        Some(value) if value == "1" => true,
+        _ => panic!("FESTERM_TUI_PROFILE_PALETTE_FILLS expects 0, 1, or unset"),
+    };
+    crate::software_background::set_palette_fills_enabled(&context, palette_fills_textureless);
     let status = super::native::install_with_host_copy(&context, &state, host_copy).unwrap();
     state.renderer.write().retained_composition_enabled = retained_composition;
     let mut retained_ui = egui_wgpu::RetainedUi::default();
@@ -697,11 +704,21 @@ fn profile_terminal_residual_cpu() {
     } else {
         0
     };
+    let palette_fill_conversions = if scene == "application-palette" {
+        crate::software_background::palette_fill_conversions(&context)
+    } else {
+        0
+    };
     if scene == "application-palette" {
         assert_eq!(
             palette_frame_conversions > 0,
             palette_frame_textureless,
             "profile must exercise the selected actual palette frame renderer",
+        );
+        assert_eq!(
+            palette_fill_conversions > 0,
+            palette_frame_textureless && palette_fills_textureless,
+            "profile must exercise the selected actual palette fill renderer",
         );
     }
     let surface = status.last_surface.lock().unwrap().clone().unwrap();
@@ -1164,6 +1181,8 @@ fn profile_terminal_residual_cpu() {
                 "textureless_mesh_probe":textureless_mesh,
                 "palette_frame_textureless":palette_frame_textureless,
                 "palette_frame_conversions_before_sampling":palette_frame_conversions,
+                "palette_fills_textureless":palette_fills_textureless,
+                "palette_fill_conversions_before_sampling":palette_fill_conversions,
                 "retained_composition_probe":retained_composition,
                 "scene":scene, "removed_fill_triangles":removed_fill_triangles,
                 "primitives":metadata, "measurements":measurements,
