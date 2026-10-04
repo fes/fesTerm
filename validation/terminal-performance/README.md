@@ -105,6 +105,9 @@ resource sampling without rebuilding first. Submitted work is completed before
 teardown observations. The old instance remains alive only to report its
 registries; a rebuilt renderer uses a new instance. Historical receipts without
 the explicit registry schema remain valid but have no retirement observations.
+Each held window records both monotonic duration and UTC endpoints. The checker
+admits external samples only inside those endpoints; subsequent destruction or
+renderer initialization cannot contaminate the held-window distribution.
 
 These counters describe allocated IDs, IDs retained from user handles, and
 vacant registry slots. In wgpu 30, `num_released_from_user` counts vacant slots,

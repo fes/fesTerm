@@ -250,9 +250,26 @@ fn observe_teardown(
     seconds: usize,
 ) {
     assert!(instance.poll_all(true), "teardown work must complete");
-    observe_registry(observations, instance, name);
+    let registries = resource_snapshot(instance);
     phase_marker(directory, name);
+    let unix_ms = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    };
+    let started_unix_ms = unix_ms();
+    let started = Instant::now();
     thread::sleep(Duration::from_secs(seconds as u64));
+    observations.push(serde_json::json!({
+        "name": name,
+        "registries": registries,
+        "window": {
+            "started_unix_ms": started_unix_ms,
+            "completed_unix_ms": unix_ms(),
+            "wall_seconds": started.elapsed().as_secs_f64(),
+        },
+    }));
 }
 
 fn measured_phase(
@@ -546,6 +563,7 @@ fn profile_six_session_aging() {
         "renderer-dropped",
         idle_seconds,
     );
+    phase_marker(&directory, "dropping-fixture");
     drop(fixture);
     observe_teardown(
         &mut registries,
@@ -554,6 +572,7 @@ fn profile_six_session_aging() {
         "fixture-dropped",
         idle_seconds,
     );
+    phase_marker(&directory, "creating-rebuilt");
     drop(old_instance);
     let mut fixture = Fixture::new();
     let mut renderer = Renderer::new(&fixture.context);
@@ -575,6 +594,7 @@ fn profile_six_session_aging() {
         "rebuilt-renderer-dropped",
         idle_seconds,
     );
+    phase_marker(&directory, "dropping-rebuilt-fixture");
     drop(fixture);
     observe_teardown(
         &mut registries,
@@ -583,12 +603,12 @@ fn profile_six_session_aging() {
         "rebuilt-fixture-dropped",
         idle_seconds,
     );
+    phase_marker(&directory, "validating-pixels");
     std::fs::write(
         directory.join("registries.json"),
         serde_json::to_vec_pretty(&registries).unwrap(),
     )
     .unwrap();
-    phase_marker(&directory, "validating-pixels");
     let reference = image::open(directory.join("fresh-normalized.png"))
         .unwrap()
         .into_rgba8();

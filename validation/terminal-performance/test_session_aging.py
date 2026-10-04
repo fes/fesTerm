@@ -116,7 +116,7 @@ class SessionAgingTests(unittest.TestCase):
         self.assertEqual(result["retained_rebuilt_frames"], 0)
 
     def registry_records(self, names):
-        return [
+        records = [
             {
                 "name": name,
                 "registries": {
@@ -129,6 +129,12 @@ class SessionAgingTests(unittest.TestCase):
             }
             for name in names
         ]
+        for record in records:
+            if record["name"] in aging.TEARDOWN_POINTS:
+                record["window"] = {
+                    "started_unix_ms": 1000, "completed_unix_ms": 2000, "wall_seconds": 1,
+                }
+        return records
 
     def test_registry_checkpoints_reject_missing_reversed_and_invalid_counters(self):
         records = self.registry_records([
@@ -136,7 +142,7 @@ class SessionAgingTests(unittest.TestCase):
             "rebuilt", *aging.TEARDOWN_POINTS[2:],
         ])
         # Vacant IDs and retained public IDs are observations, not a memory-budget verdict.
-        self.assertEqual(aging.check_registries(records, 25), records)
+        self.assertEqual(aging.check_registries(records, 25, 1), records)
         mutations = [
             lambda data: data.pop(),
             lambda data: data.reverse(),
@@ -144,13 +150,16 @@ class SessionAgingTests(unittest.TestCase):
             lambda data: data[0]["registries"]["textures"].update(num_allocated=True),
             lambda data: data[0]["registries"]["textures"].update(num_kept_from_user=-1),
             lambda data: data[0]["registries"]["textures"].update(element_size=0),
+            lambda data: data[4]["window"].update(wall_seconds=0.5),
+            lambda data: data[4]["window"].update(completed_unix_ms=999),
+            lambda data: data[4]["window"].update(completed_unix_ms=3000),
         ]
         for mutate in mutations:
             with self.subTest(mutation=mutate):
                 malformed = copy.deepcopy(records)
                 mutate(malformed)
                 with self.assertRaises(ValueError):
-                    aging.check_registries(malformed, 25)
+                    aging.check_registries(malformed, 25, 1)
 
     def test_complete_source_bound_matrix_keeps_adverse_results(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -207,9 +216,17 @@ class SessionAgingTests(unittest.TestCase):
                 aging.validate(root)
             manifest.update(registry_schema=1, registry_interval=20)
             (probe / "manifest.json").write_text(json.dumps(manifest))
+            (root / "resources.jsonl").write_text(
+                "".join(json.dumps(item) + "\n" for item in [
+                    resource,
+                    {**resource, "phase": "fixture-dropped", "unix_ms": 1500},
+                    {**resource, "phase": "fixture-dropped", "unix_ms": 2500, "private_bytes": 9000},
+                ])
+            )
             result = aging.validate(root)
             self.assertEqual(result["registry_observations"], registry_records)
-            self.assertEqual(result["teardown_resources"]["fixture-dropped"]["sample_count"], 0)
+            self.assertEqual(result["teardown_resources"]["fixture-dropped"]["sample_count"], 1)
+            self.assertEqual(result["teardown_resources"]["fixture-dropped"]["private_bytes"]["median"], 200)
             (probe / "registries.json").write_text(json.dumps(registry_records[:-1]))
             with self.assertRaisesRegex(ValueError, "registry"):
                 aging.validate(root)

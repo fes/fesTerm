@@ -27,7 +27,7 @@ TEARDOWN_POINTS = (
 )
 
 
-def check_registries(records, cycles):
+def check_registries(records, cycles, idle_seconds):
     churn_points = sorted(set(range(20, cycles + 1, 20)) | {cycles})
     expected = (
         ["fresh"] + [f"churn-{cycle}" for cycle in churn_points]
@@ -50,6 +50,19 @@ def check_registries(records, cycles):
                 "registry counters must be nonnegative integers",
             )
             require(registry["element_size"] > 0, "registry element size must be positive")
+        if name in TEARDOWN_POINTS:
+            window = record["window"]
+            started, completed = window["started_unix_ms"], window["completed_unix_ms"]
+            require(
+                type(started) is int and type(completed) is int and 0 <= started <= completed,
+                "invalid registry observation window",
+            )
+            elapsed = number(window["wall_seconds"], "registry observation duration")
+            require(elapsed >= idle_seconds, "truncated registry observation window")
+            require(
+                math.isclose(elapsed, (completed - started) / 1000, rel_tol=0, abs_tol=0.002),
+                "inconsistent registry observation clocks",
+            )
     return records
 
 
@@ -240,14 +253,21 @@ def validate(directory):
     }
     registry_path = probe / "registries.json"
     if "registry_schema" in manifest:
-        require(manifest["registry_schema"] == 1, "unsupported registry schema")
+        require(type(manifest["registry_schema"]) is int and manifest["registry_schema"] == 1, "unsupported registry schema")
         require(manifest["registry_interval"] == 20, "changed registry checkpoint interval")
         result["registry_observations"] = check_registries(
-            json.loads(registry_path.read_text()), binding["cycles"],
+            json.loads(registry_path.read_text()), binding["cycles"], binding["idle_seconds"],
         )
         result["teardown_resources"] = {}
         for name in TEARDOWN_POINTS:
-            selected = [sample for sample in resources if sample["phase"] == name]
+            window = next(
+                record["window"] for record in result["registry_observations"] if record["name"] == name
+            )
+            selected = [
+                sample for sample in resources
+                if sample["phase"] == name
+                and window["started_unix_ms"] <= sample["unix_ms"] <= window["completed_unix_ms"]
+            ]
             result["teardown_resources"][name] = {
                 "sample_count": len(selected),
                 **{
