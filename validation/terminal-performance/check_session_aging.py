@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+import re
 import statistics
 
 from PIL import Image
@@ -39,13 +40,23 @@ def distribution(values):
 
 
 def check_phase(summary, samples, frames, idle_seconds):
+    require(summary["schema"] == 1, "unsupported phase schema")
     mode = summary["mode"]
     require(mode in MODES, "unknown phase mode")
     require(summary["completed_frames"] == len(samples), "missing/extra completed frames")
     require(summary["event_driven"] == (mode == "idle"), "incorrect demand classification")
     elapsed = number(summary["wall_seconds"], "phase wall seconds")
     require(elapsed > 0, "empty phase")
-    number(summary["process_cpu_ms"], "phase CPU")
+    cpu = number(summary["process_cpu_ms"], "phase CPU")
+    hz = number(summary["completed_hz"], "completed cadence")
+    require(math.isclose(hz, len(samples) / elapsed), "incorrect completed cadence")
+    if samples:
+        mean = number(summary["cpu_ms_per_completed_frame"], "completed-frame CPU")
+        require(math.isclose(mean, cpu / len(samples)), "incorrect completed-frame CPU")
+    else:
+        require(summary["cpu_ms_per_completed_frame"] is None, "empty idle CPU is not per-frame evidence")
+    for field in ("immediate_repaint_callbacks", "delayed_repaint_callbacks"):
+        number(summary[field], field)
     require(summary["pending_events"] == [0] * 6, "undrained synthetic events")
     if mode == "idle":
         require(elapsed >= idle_seconds, "truncated idle window")
@@ -93,12 +104,17 @@ def check_phase(summary, samples, frames, idle_seconds):
 def validate(directory):
     probe = directory / "probe"
     binding = json.loads((directory / "source.json").read_text(encoding="utf-8-sig"))
+    require(binding["schema"] == 1 and binding["exit_code"] == 0, "failed or unsupported source receipt")
+    for field in ("source_head", "source_tree"):
+        require(re.fullmatch(r"[0-9a-f]{40}", binding[field]) is not None, f"invalid {field}")
+    require(binding["profile"] in ("debug", "release"), "unknown build profile")
     executable = directory / "festerm-aging-probe.exe"
     require(
         digest(executable).upper() == binding["executable_sha256"],
         "executable hash mismatch",
     )
     manifest = json.loads((probe / "manifest.json").read_text())
+    require(manifest["schema"] == 1, "unsupported probe schema")
     require(manifest["states"] == list(STATES) and manifest["modes"] == list(MODES), "incomplete matrix")
     require(manifest["session_count"] == 6, "not a six-session fixture")
     require(manifest["normalized_pixels_equal"] is True, "pixel oracle failed")
@@ -114,7 +130,7 @@ def validate(directory):
             require(list(image.size) == manifest["physical_size"], "incorrect oracle geometry")
     for key, maximum in (("cycles", 2000), ("frames", 1000), ("idle_seconds", 300)):
         value = binding[key]
-        require(isinstance(value, int) and 1 <= value <= maximum, f"invalid bounded {key}")
+        require(type(value) is int and 1 <= value <= maximum, f"invalid bounded {key}")
     require(manifest["churn_cycles"] == binding["cycles"], "cycle mismatch")
     require(manifest["churn_submitted_frames"] == binding["cycles"] * 6, "churn frame mismatch")
     require(manifest["frames_per_paced_phase"] == binding["frames"], "frame declaration mismatch")
@@ -123,6 +139,10 @@ def validate(directory):
     require(
         {path.name for path in probe.glob("*-*.json")} == expected_files,
         "missing or unexpected phase summary",
+    )
+    require(
+        {path.name for path in probe.glob("*.jsonl")} == {name + "l" for name in expected_files},
+        "missing or unexpected frame log",
     )
     phases = {}
     for state in STATES:
@@ -135,7 +155,7 @@ def validate(directory):
     resources = [json.loads(line) for line in (directory / "resources.jsonl").read_text().splitlines()]
     require(resources, "missing process resource observations")
     pids = {sample["pid"] for sample in resources}
-    require(len(pids) == 1, "mixed process resource observations")
+    require(pids == {binding["process_id"]}, "mixed process resource observations")
     for sample in resources:
         for field in ("unix_ms", "elapsed_seconds", "process_cpu_ms"):
             number(sample[field], field)

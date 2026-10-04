@@ -24,6 +24,9 @@ $tree = (& git rev-parse 'HEAD^{tree}').Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source tree.' }
 if (& git status --porcelain) { throw 'Run from a clean committed checkout.' }
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
+if (-not [System.IO.Path]::IsPathFullyQualified($OutputDirectory)) {
+    throw 'Use an absolute output directory.'
+}
 if (Test-Path -LiteralPath $output) { throw 'Use a new output directory.' }
 New-Item -ItemType Directory -Path $output | Out-Null
 
@@ -43,11 +46,26 @@ $executable = Join-Path $output 'festerm-aging-probe.exe'
 Copy-Item -LiteralPath $artifacts[0] -Destination $executable
 $binaryHash = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
 $testName = 'app::tests::session_aging::profile_six_session_aging'
-$inventory = @(& $executable --list)
-if ($LASTEXITCODE -ne 0 -or $inventory -notcontains "${testName}: test") {
+$inventoryPath = Join-Path $output 'tests.txt'
+# Release tests use the GUI subsystem: explicitly wait and redirect both handles.
+$inventoryProcess = Start-Process -FilePath $executable -PassThru -NoNewWindow `
+    -ArgumentList '--list' -RedirectStandardOutput $inventoryPath `
+    -RedirectStandardError (Join-Path $output 'tests.stderr.log')
+try {
+    if (-not $inventoryProcess.WaitForExit(30000)) { throw 'Test inventory exceeded its deadline.' }
+    $inventoryProcess.WaitForExit()
+    if ($inventoryProcess.ExitCode -ne 0) { throw 'Test inventory failed; inspect tests.stderr.log.' }
+} finally {
+    $inventoryProcess.Refresh()
+    if (-not $inventoryProcess.HasExited) {
+        Stop-Process -Id $inventoryProcess.Id
+        $inventoryProcess.WaitForExit()
+    }
+}
+$inventory = @(Get-Content -LiteralPath $inventoryPath)
+if ($inventory -notcontains "${testName}: test") {
     throw 'Archived executable lacks the exact aging test.'
 }
-$inventory | Set-Content -LiteralPath (Join-Path $output 'tests.txt')
 $binding = @{
     schema = 1; source_head = $head; source_tree = $tree; profile = $Profile
     compiler_executable = $artifacts[0]; executable_sha256 = $binaryHash
@@ -126,9 +144,10 @@ if ((& git rev-parse HEAD).Trim() -ne $head -or (& git status --porcelain)) {
 if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $binaryHash) {
     throw 'Archived executable changed during the probe.'
 }
-& python (Join-Path $root 'validation\terminal-performance\check_session_aging.py') $output
-if ($LASTEXITCODE -ne 0) { throw 'Aging evidence validation failed.' }
 $binding.completed_utc = [DateTime]::UtcNow.ToString('o')
 $binding.exit_code = 0
+$binding.process_id = $process.Id
 $binding | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'source.json')
+& python (Join-Path $root 'validation\terminal-performance\check_session_aging.py') $output
+if ($LASTEXITCODE -ne 0) { throw 'Aging evidence validation failed.' }
 Write-Output "Aging probe completed: $output"
