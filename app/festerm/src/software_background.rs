@@ -157,12 +157,12 @@ fn palette_frame_disabled_id() -> egui::Id {
     egui::Id::new("festerm::test-ordinary-palette-frame")
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows, target_arch = "x86_64"))]
 pub(crate) fn set_palette_frame_enabled(context: &egui::Context, enabled: bool) {
     context.data_mut(|data| data.insert_temp(palette_frame_disabled_id(), !enabled));
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows, target_arch = "x86_64"))]
 pub(crate) fn palette_frame_conversions(context: &egui::Context) -> usize {
     context
         .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
@@ -465,6 +465,7 @@ impl PanelTestProbe {
         })
     }
 
+    #[cfg(all(windows, target_arch = "x86_64"))]
     pub(crate) fn white_mesh_shape(
         &self,
         viewport: egui::Rect,
