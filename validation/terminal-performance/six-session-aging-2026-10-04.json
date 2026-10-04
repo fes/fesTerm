@@ -1,0 +1,2056 @@
+{
+  "schema": 1,
+  "purpose": "Bounded owned Windows/WARP six-session aging discriminator for issue 297, not a performance optimization.",
+  "shipping_baseline": "667bd9a91d76e4b847cd6da869ac6af4a0a1246f",
+  "profile": "release",
+  "physical_size": [
+    2058,
+    1658
+  ],
+  "measurement_scale": 2.0,
+  "session_count": 6,
+  "requested_non_idle_cadence_ms": 100,
+  "runs": [
+    {
+      "churn_cycles": 120,
+      "churn_submitted_frames": 720,
+      "source_head": "c257d312e397384e4ab30b3fe70d7351dec60919",
+      "source_tree": "ff6ec1e814f6b30122c19ea82d9e33aa2818b58e",
+      "executable_sha256": "2F843A6E874B617FB525798C718C7829397951438359887BBE64826B7693428C",
+      "started_utc": "2026-10-04T05:16:35.7373159Z",
+      "completed_utc": "2026-10-04T05:19:15.3686679Z",
+      "frames_per_paced_phase": 100,
+      "idle_seconds": 10,
+      "normalized_png_sha256": {
+        "fresh": "524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b",
+        "churned": "524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b",
+        "rebuilt": "524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b"
+      },
+      "phases": {
+        "fresh-frozen": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999728807354744,
+            "cpu_ms_per_completed_frame": 16.25,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 0,
+            "mode": "frozen",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-frozen",
+            "process_cpu_ms": 1625.0,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0002712
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 15.625,
+            "maximum": 31.25
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.1252,
+            "median": 17.8716,
+            "maximum": 19.8854
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 262144,
+            "median": 262144.0,
+            "maximum": 262144
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 166707200,
+              "median": 181698560.0,
+              "maximum": 181710848
+            },
+            "private_bytes": {
+              "minimum": 549330944,
+              "median": 549330944.0,
+              "maximum": 549396480
+            },
+            "peak_working_set_bytes": {
+              "minimum": 182534144,
+              "median": 182534144.0,
+              "maximum": 182534144
+            },
+            "handles": {
+              "minimum": 282,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24.0,
+              "maximum": 24
+            }
+          }
+        },
+        "fresh-active": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.99992750052562,
+            "cpu_ms_per_completed_frame": 48.4375,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "active",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-active",
+            "process_cpu_ms": 4843.75,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 100,
+            "wall_seconds": 10.0000725
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 31.25,
+            "maximum": 187.5
+          },
+          "work_ms_per_frame": {
+            "minimum": 24.5797,
+            "median": 25.90965,
+            "maximum": 109.95570000000001
+          },
+          "updated_pixels": {
+            "minimum": 21042,
+            "median": 21105.0,
+            "maximum": 2982063
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 8912896,
+          "uploaded_textures": 17,
+          "retained_reused_frames": 83,
+          "retained_rebuilt_frames": 17,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 209403904,
+              "median": 226131968,
+              "maximum": 231079936
+            },
+            "private_bytes": {
+              "minimum": 576966656,
+              "median": 580464640,
+              "maximum": 589385728
+            },
+            "peak_working_set_bytes": {
+              "minimum": 220725248,
+              "median": 237539328,
+              "maximum": 239878144
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24,
+              "maximum": 24
+            }
+          }
+        },
+        "fresh-background": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999800203991924,
+            "cpu_ms_per_completed_frame": 19.0625,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "background",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-background",
+            "process_cpu_ms": 1906.25,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 500,
+            "wall_seconds": 10.0001998
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 78.125
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.9443,
+            "median": 18.5278,
+            "maximum": 40.6295
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 96248,
+            "median": 96248.0,
+            "maximum": 96248
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 99,
+          "retained_rebuilt_frames": 1,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 198946816,
+              "median": 198946816.0,
+              "maximum": 219492352
+            },
+            "private_bytes": {
+              "minimum": 555810816,
+              "median": 555810816.0,
+              "maximum": 576376832
+            },
+            "peak_working_set_bytes": {
+              "minimum": 239878144,
+              "median": 239878144.0,
+              "maximum": 239878144
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24.0,
+              "maximum": 26
+            }
+          }
+        },
+        "fresh-idle": {
+          "summary": {
+            "completed_frames": 0,
+            "completed_hz": 0.0,
+            "cpu_ms_per_completed_frame": null,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": true,
+            "immediate_repaint_callbacks": 0,
+            "mode": "idle",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-idle",
+            "process_cpu_ms": 0.0,
+            "requested_cadence_ms": null,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0096228
+          },
+          "cpu_ms_per_frame": null,
+          "work_ms_per_frame": null,
+          "updated_pixels": null,
+          "retained_texture_bytes": null,
+          "retained_signature_bytes": null,
+          "font_atlas_bytes": null,
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 0,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 199012352,
+              "median": 199012352,
+              "maximum": 199012352
+            },
+            "private_bytes": {
+              "minimum": 555872256,
+              "median": 555872256,
+              "maximum": 555872256
+            },
+            "peak_working_set_bytes": {
+              "minimum": 239878144,
+              "median": 239878144,
+              "maximum": 239878144
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 283,
+              "maximum": 283
+            },
+            "thread_count": {
+              "minimum": 26,
+              "median": 26,
+              "maximum": 26
+            }
+          }
+        },
+        "churned-frozen": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999945800293764,
+            "cpu_ms_per_completed_frame": 18.4375,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 0,
+            "mode": "frozen",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-frozen",
+            "process_cpu_ms": 1843.75,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0000542
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 31.25
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.1583,
+            "median": 17.826500000000003,
+            "maximum": 19.8665
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 1048576,
+            "median": 1048576.0,
+            "maximum": 1048576
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 248885248,
+              "median": 248885248.0,
+              "maximum": 264548352
+            },
+            "private_bytes": {
+              "minimum": 604004352,
+              "median": 604004352.0,
+              "maximum": 619687936
+            },
+            "peak_working_set_bytes": {
+              "minimum": 280305664,
+              "median": 280305664.0,
+              "maximum": 280305664
+            },
+            "handles": {
+              "minimum": 284,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 27,
+              "median": 27.0,
+              "maximum": 27
+            }
+          }
+        },
+        "churned-active": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999489026110766,
+            "cpu_ms_per_completed_frame": 28.75,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "active",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-active",
+            "process_cpu_ms": 2875.0,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 100,
+            "wall_seconds": 10.000511
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 31.25,
+            "maximum": 62.5
+          },
+          "work_ms_per_frame": {
+            "minimum": 24.1619,
+            "median": 25.323750000000004,
+            "maximum": 32.6515
+          },
+          "updated_pixels": {
+            "minimum": 21042,
+            "median": 21105.0,
+            "maximum": 95948
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 1048576,
+            "median": 1048576.0,
+            "maximum": 1048576
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 252592128,
+              "median": 257069056,
+              "maximum": 257069056
+            },
+            "private_bytes": {
+              "minimum": 605851648,
+              "median": 612220928,
+              "maximum": 612229120
+            },
+            "peak_working_set_bytes": {
+              "minimum": 280305664,
+              "median": 280305664,
+              "maximum": 280305664
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 27,
+              "median": 27,
+              "maximum": 27
+            }
+          }
+        },
+        "churned-background": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.99974830633513,
+            "cpu_ms_per_completed_frame": 20.15625,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "background",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-background",
+            "process_cpu_ms": 2015.625,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 500,
+            "wall_seconds": 10.0002517
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 15.625,
+            "maximum": 125.0
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.8084,
+            "median": 18.45915,
+            "maximum": 40.9095
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 96248,
+            "median": 96248.0,
+            "maximum": 96248
+          },
+          "font_atlas_bytes": {
+            "minimum": 1048576,
+            "median": 1048576.0,
+            "maximum": 1048576
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 99,
+          "retained_rebuilt_frames": 1,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 239910912,
+              "median": 239910912.0,
+              "maximum": 253497344
+            },
+            "private_bytes": {
+              "minimum": 597241856,
+              "median": 597241856.0,
+              "maximum": 610902016
+            },
+            "peak_working_set_bytes": {
+              "minimum": 280305664,
+              "median": 280305664.0,
+              "maximum": 280305664
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 27,
+              "median": 27.0,
+              "maximum": 27
+            }
+          }
+        },
+        "churned-idle": {
+          "summary": {
+            "completed_frames": 0,
+            "completed_hz": 0.0,
+            "cpu_ms_per_completed_frame": null,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": true,
+            "immediate_repaint_callbacks": 0,
+            "mode": "idle",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-idle",
+            "process_cpu_ms": 0.0,
+            "requested_cadence_ms": null,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0022135
+          },
+          "cpu_ms_per_frame": null,
+          "work_ms_per_frame": null,
+          "updated_pixels": null,
+          "retained_texture_bytes": null,
+          "retained_signature_bytes": null,
+          "font_atlas_bytes": null,
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 0,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 239910912,
+              "median": 239910912.0,
+              "maximum": 239910912
+            },
+            "private_bytes": {
+              "minimum": 597241856,
+              "median": 597241856.0,
+              "maximum": 597241856
+            },
+            "peak_working_set_bytes": {
+              "minimum": 280305664,
+              "median": 280305664.0,
+              "maximum": 280305664
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 283.0,
+              "maximum": 283
+            },
+            "thread_count": {
+              "minimum": 27,
+              "median": 27.0,
+              "maximum": 27
+            }
+          }
+        },
+        "rebuilt-frozen": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999486926325812,
+            "cpu_ms_per_completed_frame": 18.4375,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 0,
+            "mode": "frozen",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-frozen",
+            "process_cpu_ms": 1843.75,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0005131
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 31.25
+          },
+          "work_ms_per_frame": {
+            "minimum": 16.8742,
+            "median": 17.57135,
+            "maximum": 18.9514
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 262144,
+            "median": 262144.0,
+            "maximum": 262144
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 331476992,
+              "median": 331476992.0,
+              "maximum": 331620352
+            },
+            "private_bytes": {
+              "minimum": 568619008,
+              "median": 568619008.0,
+              "maximum": 569024512
+            },
+            "peak_working_set_bytes": {
+              "minimum": 348487680,
+              "median": 348487680.0,
+              "maximum": 348487680
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 30,
+              "median": 30.0,
+              "maximum": 30
+            }
+          }
+        },
+        "rebuilt-active": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999640212945138,
+            "cpu_ms_per_completed_frame": 52.96875,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "active",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-active",
+            "process_cpu_ms": 5296.875,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 100,
+            "wall_seconds": 10.0003598
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 31.25,
+            "maximum": 359.375
+          },
+          "work_ms_per_frame": {
+            "minimum": 23.747799999999998,
+            "median": 25.228899999999996,
+            "maximum": 105.6144
+          },
+          "updated_pixels": {
+            "minimum": 21042,
+            "median": 21105.0,
+            "maximum": 2982063
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 8912896,
+          "uploaded_textures": 17,
+          "retained_reused_frames": 83,
+          "retained_rebuilt_frames": 17,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 353742848,
+              "median": 375001088,
+              "maximum": 377081856
+            },
+            "private_bytes": {
+              "minimum": 589271040,
+              "median": 599031808,
+              "maximum": 603770880
+            },
+            "peak_working_set_bytes": {
+              "minimum": 361377792,
+              "median": 375083008,
+              "maximum": 377937920
+            },
+            "handles": {
+              "minimum": 282,
+              "median": 284,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 28,
+              "median": 30,
+              "maximum": 30
+            }
+          }
+        },
+        "rebuilt-background": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999612415022794,
+            "cpu_ms_per_completed_frame": 19.6875,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "background",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-background",
+            "process_cpu_ms": 1968.75,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 500,
+            "wall_seconds": 10.0003876
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 109.375
+          },
+          "work_ms_per_frame": {
+            "minimum": 18.0546,
+            "median": 18.49455,
+            "maximum": 40.207600000000006
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 96248,
+            "median": 96248.0,
+            "maximum": 96248
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 99,
+          "retained_rebuilt_frames": 1,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 346091520,
+              "median": 346091520.0,
+              "maximum": 378744832
+            },
+            "private_bytes": {
+              "minimum": 571162624,
+              "median": 571162624.0,
+              "maximum": 603873280
+            },
+            "peak_working_set_bytes": {
+              "minimum": 378531840,
+              "median": 378744832.0,
+              "maximum": 378744832
+            },
+            "handles": {
+              "minimum": 282,
+              "median": 282.0,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 28,
+              "median": 28.0,
+              "maximum": 28
+            }
+          }
+        },
+        "rebuilt-idle": {
+          "summary": {
+            "completed_frames": 0,
+            "completed_hz": 0.0,
+            "cpu_ms_per_completed_frame": null,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": true,
+            "immediate_repaint_callbacks": 0,
+            "mode": "idle",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-idle",
+            "process_cpu_ms": 0.0,
+            "requested_cadence_ms": null,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.013367
+          },
+          "cpu_ms_per_frame": null,
+          "work_ms_per_frame": null,
+          "updated_pixels": null,
+          "retained_texture_bytes": null,
+          "retained_signature_bytes": null,
+          "font_atlas_bytes": null,
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 0,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 346042368,
+              "median": 346042368.0,
+              "maximum": 346091520
+            },
+            "private_bytes": {
+              "minimum": 571068416,
+              "median": 571068416.0,
+              "maximum": 571162624
+            },
+            "peak_working_set_bytes": {
+              "minimum": 378744832,
+              "median": 378744832.0,
+              "maximum": 378744832
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 281.0,
+              "maximum": 281
+            },
+            "thread_count": {
+              "minimum": 25,
+              "median": 25.0,
+              "maximum": 28
+            }
+          }
+        }
+      },
+      "raw_artifact_sha256": {
+        "churned-active.jsonl": "099c3b3ac1783f4fb412b6ced87e9d9f75c0af45f281ab052ce8c54d68cd3d3c",
+        "churned-background.jsonl": "525706554e91a4209dabed9edfb8c34af3a9ed69adaa1c838e848f4eda948bab",
+        "churned-frozen.jsonl": "9f29502aac15bffea6b7ed6b7c54ff1e88e078d5f7dcdf3bbc71f673c5fc937e",
+        "churned-idle.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "fresh-active.jsonl": "efd2bd7efcc473f3ab8bc202708b8f33bb0e4d57e234ece7ceef42a85f556e80",
+        "fresh-background.jsonl": "6bb355f7d865c42b6077df7c4e17e4ade54bcb26c3d66dd7ac9c2852c6e41afc",
+        "fresh-frozen.jsonl": "e031fee3e7f71601a6e7c541b2d669e1baddd52dd4086f7abf493ee8ba0be172",
+        "fresh-idle.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rebuilt-active.jsonl": "33f9d23cb2ab78f535336fd819f942a0f1f631eada4085d570a030af4355aaef",
+        "rebuilt-background.jsonl": "9a332ac49119a17a385f249455ed30ab805e9109f4393708e0e6cb5569cb9913",
+        "rebuilt-frozen.jsonl": "6286ec716a2145954b2ca81fce0771ad8dd8160b4d37109fe07f7b1cea9e0042",
+        "rebuilt-idle.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "resources.jsonl": "9f95522cf6210c8d1f5afd92c4bb34b6264bed43bf2d7da2bb73ee317f3bf2d9"
+      }
+    },
+    {
+      "churn_cycles": 400,
+      "churn_submitted_frames": 2400,
+      "source_head": "c257d312e397384e4ab30b3fe70d7351dec60919",
+      "source_tree": "ff6ec1e814f6b30122c19ea82d9e33aa2818b58e",
+      "executable_sha256": "2F843A6E874B617FB525798C718C7829397951438359887BBE64826B7693428C",
+      "started_utc": "2026-10-04T05:20:09.3930983Z",
+      "completed_utc": "2026-10-04T05:24:02.5576638Z",
+      "frames_per_paced_phase": 100,
+      "idle_seconds": 10,
+      "normalized_png_sha256": {
+        "fresh": "524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b",
+        "churned": "524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b",
+        "rebuilt": "524b1c77bc45f375e01bb884332f785b060f0c76bdccf4bb4c81133d158b265b"
+      },
+      "phases": {
+        "fresh-frozen": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999835902692837,
+            "cpu_ms_per_completed_frame": 18.125,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 0,
+            "mode": "frozen",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-frozen",
+            "process_cpu_ms": 1812.5,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0001641
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 46.875
+          },
+          "work_ms_per_frame": {
+            "minimum": 16.8708,
+            "median": 17.8071,
+            "maximum": 19.8055
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 262144,
+            "median": 262144.0,
+            "maximum": 262144
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 181256192,
+              "median": 181256192,
+              "maximum": 181321728
+            },
+            "private_bytes": {
+              "minimum": 548216832,
+              "median": 548216832,
+              "maximum": 548282368
+            },
+            "peak_working_set_bytes": {
+              "minimum": 182128640,
+              "median": 182128640,
+              "maximum": 182128640
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24,
+              "maximum": 24
+            }
+          }
+        },
+        "fresh-active": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999819003276041,
+            "cpu_ms_per_completed_frame": 50.78125,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "active",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-active",
+            "process_cpu_ms": 5078.125,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 100,
+            "wall_seconds": 10.000181
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 31.25,
+            "maximum": 359.375
+          },
+          "work_ms_per_frame": {
+            "minimum": 23.9758,
+            "median": 25.5178,
+            "maximum": 110.0642
+          },
+          "updated_pixels": {
+            "minimum": 21042,
+            "median": 21105.0,
+            "maximum": 2982063
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 8912896,
+          "uploaded_textures": 17,
+          "retained_reused_frames": 83,
+          "retained_rebuilt_frames": 17,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 184291328,
+              "median": 225024000.0,
+              "maximum": 227504128
+            },
+            "private_bytes": {
+              "minimum": 564359168,
+              "median": 580108288.0,
+              "maximum": 587755520
+            },
+            "peak_working_set_bytes": {
+              "minimum": 184291328,
+              "median": 234469376.0,
+              "maximum": 236687360
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24.0,
+              "maximum": 24
+            }
+          }
+        },
+        "fresh-background": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.99979460421883,
+            "cpu_ms_per_completed_frame": 19.375,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "background",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-background",
+            "process_cpu_ms": 1937.5,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 500,
+            "wall_seconds": 10.0002054
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 15.625,
+            "maximum": 62.5
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.979200000000002,
+            "median": 18.74375,
+            "maximum": 38.626599999999996
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 96248,
+            "median": 96248.0,
+            "maximum": 96248
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 99,
+          "retained_rebuilt_frames": 1,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 197083136,
+              "median": 197083136.0,
+              "maximum": 217628672
+            },
+            "private_bytes": {
+              "minimum": 553541632,
+              "median": 553549824.0,
+              "maximum": 574119936
+            },
+            "peak_working_set_bytes": {
+              "minimum": 236687360,
+              "median": 236687360.0,
+              "maximum": 236687360
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 284.0,
+              "maximum": 284
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24.0,
+              "maximum": 24
+            }
+          }
+        },
+        "fresh-idle": {
+          "summary": {
+            "completed_frames": 0,
+            "completed_hz": 0.0,
+            "cpu_ms_per_completed_frame": null,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": true,
+            "immediate_repaint_callbacks": 0,
+            "mode": "idle",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "fresh-idle",
+            "process_cpu_ms": 0.0,
+            "requested_cadence_ms": null,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0087752
+          },
+          "cpu_ms_per_frame": null,
+          "work_ms_per_frame": null,
+          "updated_pixels": null,
+          "retained_texture_bytes": null,
+          "retained_signature_bytes": null,
+          "font_atlas_bytes": null,
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 0,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 197087232,
+              "median": 197087232,
+              "maximum": 197087232
+            },
+            "private_bytes": {
+              "minimum": 553541632,
+              "median": 553541632,
+              "maximum": 553541632
+            },
+            "peak_working_set_bytes": {
+              "minimum": 236687360,
+              "median": 236687360,
+              "maximum": 236687360
+            },
+            "handles": {
+              "minimum": 283,
+              "median": 283,
+              "maximum": 283
+            },
+            "thread_count": {
+              "minimum": 24,
+              "median": 24,
+              "maximum": 24
+            }
+          }
+        },
+        "churned-frozen": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999523022751815,
+            "cpu_ms_per_completed_frame": 18.59375,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 0,
+            "mode": "frozen",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-frozen",
+            "process_cpu_ms": 1859.375,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.000477
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 46.875
+          },
+          "work_ms_per_frame": {
+            "minimum": 16.6718,
+            "median": 17.238149999999997,
+            "maximum": 18.3988
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 1048576,
+            "median": 1048576.0,
+            "maximum": 1048576
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 278708224,
+              "median": 278708224.0,
+              "maximum": 294109184
+            },
+            "private_bytes": {
+              "minimum": 632217600,
+              "median": 632217600.0,
+              "maximum": 647639040
+            },
+            "peak_working_set_bytes": {
+              "minimum": 310796288,
+              "median": 310796288.0,
+              "maximum": 310796288
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 282.0,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 21,
+              "median": 21.0,
+              "maximum": 21
+            }
+          }
+        },
+        "churned-active": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999477327320102,
+            "cpu_ms_per_completed_frame": 28.125,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "active",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-active",
+            "process_cpu_ms": 2812.5,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 100,
+            "wall_seconds": 10.0005227
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 31.25,
+            "maximum": 62.5
+          },
+          "work_ms_per_frame": {
+            "minimum": 23.7195,
+            "median": 24.8634,
+            "maximum": 31.1296
+          },
+          "updated_pixels": {
+            "minimum": 21042,
+            "median": 21105.0,
+            "maximum": 95948
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 1048576,
+            "median": 1048576.0,
+            "maximum": 1048576
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 275173376,
+              "median": 275226624,
+              "maximum": 286875648
+            },
+            "private_bytes": {
+              "minimum": 628654080,
+              "median": 628654080,
+              "maximum": 640425984
+            },
+            "peak_working_set_bytes": {
+              "minimum": 310796288,
+              "median": 310796288,
+              "maximum": 310796288
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 282,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 21,
+              "median": 21,
+              "maximum": 21
+            }
+          }
+        },
+        "churned-background": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999585117213487,
+            "cpu_ms_per_completed_frame": 18.90625,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "background",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-background",
+            "process_cpu_ms": 1890.625,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 500,
+            "wall_seconds": 10.0004149
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 62.5
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.640900000000002,
+            "median": 18.364449999999998,
+            "maximum": 37.5355
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 96248,
+            "median": 96248.0,
+            "maximum": 96248
+          },
+          "font_atlas_bytes": {
+            "minimum": 1048576,
+            "median": 1048576.0,
+            "maximum": 1048576
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 99,
+          "retained_rebuilt_frames": 1,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 262692864,
+              "median": 262692864.0,
+              "maximum": 276299776
+            },
+            "private_bytes": {
+              "minimum": 618409984,
+              "median": 618409984.0,
+              "maximum": 632070144
+            },
+            "peak_working_set_bytes": {
+              "minimum": 310796288,
+              "median": 310796288.0,
+              "maximum": 310796288
+            },
+            "handles": {
+              "minimum": 282,
+              "median": 282.0,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 21,
+              "median": 21.0,
+              "maximum": 21
+            }
+          }
+        },
+        "churned-idle": {
+          "summary": {
+            "completed_frames": 0,
+            "completed_hz": 0.0,
+            "cpu_ms_per_completed_frame": null,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": true,
+            "immediate_repaint_callbacks": 0,
+            "mode": "idle",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "churned-idle",
+            "process_cpu_ms": 0.0,
+            "requested_cadence_ms": null,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0093107
+          },
+          "cpu_ms_per_frame": null,
+          "work_ms_per_frame": null,
+          "updated_pixels": null,
+          "retained_texture_bytes": null,
+          "retained_signature_bytes": null,
+          "font_atlas_bytes": null,
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 0,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 262692864,
+              "median": 262692864,
+              "maximum": 262692864
+            },
+            "private_bytes": {
+              "minimum": 618409984,
+              "median": 618409984,
+              "maximum": 618409984
+            },
+            "peak_working_set_bytes": {
+              "minimum": 310796288,
+              "median": 310796288,
+              "maximum": 310796288
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 281,
+              "maximum": 281
+            },
+            "thread_count": {
+              "minimum": 21,
+              "median": 21,
+              "maximum": 21
+            }
+          }
+        },
+        "rebuilt-frozen": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999568218644319,
+            "cpu_ms_per_completed_frame": 17.96875,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 0,
+            "mode": "frozen",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-frozen",
+            "process_cpu_ms": 1796.875,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0004318
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 0.0,
+            "median": 15.625,
+            "maximum": 31.25
+          },
+          "work_ms_per_frame": {
+            "minimum": 16.9595,
+            "median": 17.54775,
+            "maximum": 21.7848
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 262144,
+            "median": 262144.0,
+            "maximum": 262144
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 100,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 334032896,
+              "median": 334032896,
+              "maximum": 334176256
+            },
+            "private_bytes": {
+              "minimum": 577347584,
+              "median": 577347584,
+              "maximum": 577753088
+            },
+            "peak_working_set_bytes": {
+              "minimum": 350560256,
+              "median": 350560256,
+              "maximum": 350560256
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 282,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 26,
+              "median": 26,
+              "maximum": 26
+            }
+          }
+        },
+        "rebuilt-active": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999463828749501,
+            "cpu_ms_per_completed_frame": 49.375,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "active",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-active",
+            "process_cpu_ms": 4937.5,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 100,
+            "wall_seconds": 10.0005362
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 31.25,
+            "maximum": 328.125
+          },
+          "work_ms_per_frame": {
+            "minimum": 24.1152,
+            "median": 25.14695,
+            "maximum": 103.936
+          },
+          "updated_pixels": {
+            "minimum": 21042,
+            "median": 21105.0,
+            "maximum": 2982063
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 89148,
+            "median": 89148.0,
+            "maximum": 89148
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 8912896,
+          "uploaded_textures": 17,
+          "retained_reused_frames": 83,
+          "retained_rebuilt_frames": 17,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 363802624,
+              "median": 383285248.0,
+              "maximum": 388792320
+            },
+            "private_bytes": {
+              "minimum": 604635136,
+              "median": 612331520.0,
+              "maximum": 617275392
+            },
+            "peak_working_set_bytes": {
+              "minimum": 363802624,
+              "median": 383285248.0,
+              "maximum": 388792320
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 282.0,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 26,
+              "median": 26.0,
+              "maximum": 26
+            }
+          }
+        },
+        "rebuilt-background": {
+          "summary": {
+            "completed_frames": 100,
+            "completed_hz": 9.999467628343465,
+            "cpu_ms_per_completed_frame": 19.21875,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": false,
+            "immediate_repaint_callbacks": 100,
+            "mode": "background",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-background",
+            "process_cpu_ms": 1921.875,
+            "requested_cadence_ms": 100,
+            "schema": 1,
+            "supplied_events": 500,
+            "wall_seconds": 10.0005324
+          },
+          "cpu_ms_per_frame": {
+            "minimum": 15.625,
+            "median": 15.625,
+            "maximum": 62.5
+          },
+          "work_ms_per_frame": {
+            "minimum": 17.668,
+            "median": 18.28145,
+            "maximum": 37.675599999999996
+          },
+          "updated_pixels": {
+            "minimum": 0,
+            "median": 0.0,
+            "maximum": 0
+          },
+          "retained_texture_bytes": {
+            "minimum": 13648656,
+            "median": 13648656.0,
+            "maximum": 13648656
+          },
+          "retained_signature_bytes": {
+            "minimum": 96248,
+            "median": 96248.0,
+            "maximum": 96248
+          },
+          "font_atlas_bytes": {
+            "minimum": 524288,
+            "median": 524288.0,
+            "maximum": 524288
+          },
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 99,
+          "retained_rebuilt_frames": 1,
+          "sampled_resources": {
+            "sample_count": 19,
+            "working_set_bytes": {
+              "minimum": 357847040,
+              "median": 357847040,
+              "maximum": 390500352
+            },
+            "private_bytes": {
+              "minimum": 584572928,
+              "median": 584572928,
+              "maximum": 617275392
+            },
+            "peak_working_set_bytes": {
+              "minimum": 390500352,
+              "median": 390500352,
+              "maximum": 390500352
+            },
+            "handles": {
+              "minimum": 282,
+              "median": 282,
+              "maximum": 282
+            },
+            "thread_count": {
+              "minimum": 26,
+              "median": 26,
+              "maximum": 26
+            }
+          }
+        },
+        "rebuilt-idle": {
+          "summary": {
+            "completed_frames": 0,
+            "completed_hz": 0.0,
+            "cpu_ms_per_completed_frame": null,
+            "delayed_repaint_callbacks": 0,
+            "event_driven": true,
+            "immediate_repaint_callbacks": 0,
+            "mode": "idle",
+            "pending_events": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "phase": "rebuilt-idle",
+            "process_cpu_ms": 0.0,
+            "requested_cadence_ms": null,
+            "schema": 1,
+            "supplied_events": 0,
+            "wall_seconds": 10.0064937
+          },
+          "cpu_ms_per_frame": null,
+          "work_ms_per_frame": null,
+          "updated_pixels": null,
+          "retained_texture_bytes": null,
+          "retained_signature_bytes": null,
+          "font_atlas_bytes": null,
+          "font_atlas_cloned_bytes": 0,
+          "uploaded_textures": 0,
+          "retained_reused_frames": 0,
+          "retained_rebuilt_frames": 0,
+          "sampled_resources": {
+            "sample_count": 20,
+            "working_set_bytes": {
+              "minimum": 357847040,
+              "median": 357847040.0,
+              "maximum": 357847040
+            },
+            "private_bytes": {
+              "minimum": 584572928,
+              "median": 584572928.0,
+              "maximum": 584572928
+            },
+            "peak_working_set_bytes": {
+              "minimum": 390500352,
+              "median": 390500352.0,
+              "maximum": 390500352
+            },
+            "handles": {
+              "minimum": 281,
+              "median": 281.0,
+              "maximum": 281
+            },
+            "thread_count": {
+              "minimum": 26,
+              "median": 26.0,
+              "maximum": 26
+            }
+          }
+        }
+      },
+      "raw_artifact_sha256": {
+        "churned-active.jsonl": "ae4be0e4c8aca9b59e270b59e7972484fee9172ea0803c2494a3ad3db9ef44c9",
+        "churned-background.jsonl": "1a8e25e3806c8c0c4d9d5e15f62a434e762911f8a352828320de1b5eca94b289",
+        "churned-frozen.jsonl": "40d9aed3ab5c3947a95a4aca650e5fcf22a75ddee2bb0ca2cb350904a058f106",
+        "churned-idle.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "fresh-active.jsonl": "02f64029050d5d0733308eb1593c5e2bc0c896a0abbf2f826839506622410122",
+        "fresh-background.jsonl": "56f08c925bde15a9006f2779b73ee8a28a2d7629dd6b57398ddf5b4098ba171a",
+        "fresh-frozen.jsonl": "d7d980889048ee03f106c279bdbbc8f9b106967bbe286e7943a306750300e168",
+        "fresh-idle.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "rebuilt-active.jsonl": "c6d5513b8361e9abfd73ccbf88d12e6dc3b65822f66766e74e9c386c8d369706",
+        "rebuilt-background.jsonl": "6d5bd8861323a371a3aba55953bb64d1f21c927b4d94cfd555021b6d540e2bb3",
+        "rebuilt-frozen.jsonl": "bac34f6bb573a92a5576f07ffeb66fd4b123fa720a463b486a3619f107436daa",
+        "rebuilt-idle.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "resources.jsonl": "4349431df996663e343e5652b9be0d0c7a22c3ea44e212130fbb0946710fafc8"
+      }
+    }
+  ],
+  "failed_attempts_retained": [
+    {
+      "source_head": "63f184d37fe8bff3eebe02283d7d9ef72cb74357",
+      "stage": "release-test-inventory",
+      "measurement_started": false,
+      "cause": "Windows GUI-subsystem test executable needed awaited file-redirected standard handles."
+    },
+    {
+      "source_head": "e5a5339f5463791743f483c99bab974a3373aefb",
+      "stage": "normalized-pixel-oracle",
+      "measurement_admitted": false,
+      "cause": "Ordinary zoom notice had not expired during optimized fixed-frame warmup.",
+      "difference_bbox": [
+        885,
+        32,
+        1192,
+        118
+      ],
+      "changed_pixels": 25253
+    }
+  ],
+  "limitations": [
+    "No multi-day plateau reproduced; short churn neither proves nor disproves issue 297.",
+    "Non-idle frames are forced/paced completed offscreen work, not native event-driven presentation.",
+    "Idle follows egui demand; no production notifier, cadence, queue or terminal ownership policy was changed.",
+    "Fresh/rebuilt first-active atlas growth remains recorded; cheaper warmed churned active work is not an optimization claim.",
+    "Observed process memory grew moderately; current cache storage excludes queued/in-flight and total GPU allocations.",
+    "In-process synthetic GUI rebuild is not a full process restart or real persistent-shell reconnect.",
+    "Thread counters are content-free and do not identify WARP/main threads without stack attribution.",
+    "Background processes were accepted; adverse observations and unfiltered raw phase/resource artifacts were preserved."
+  ]
+}

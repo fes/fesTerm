@@ -1670,6 +1670,8 @@ pub(crate) mod fake {
         lifecycle: Mutex<SessionLifecycle>,
         events: Mutex<VecDeque<SessionEvent>>,
         operations: Mutex<Vec<FakeSshOperation>>,
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
     }
 
     #[derive(Clone)]
@@ -1686,6 +1688,8 @@ pub(crate) mod fake {
                     lifecycle: Mutex::new(SessionLifecycle::Running),
                     events: Mutex::new(events.into_iter().collect()),
                     operations: Mutex::new(Vec::new()),
+                    #[cfg(all(windows, target_arch = "x86_64"))]
+                    notifier: Mutex::new(None),
                 }),
             }
         }
@@ -1702,6 +1706,19 @@ pub(crate) mod fake {
             self.inner.sent.lock().expect("fake ssh sent lock").clone()
         }
 
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        pub fn set_notifier_for_test(
+            &self,
+            notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+        ) {
+            *self.inner.notifier.lock().expect("fake ssh notifier lock") = Some(notifier);
+        }
+
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        pub fn pending_events_for_test(&self) -> usize {
+            self.inner.events.lock().expect("fake ssh event lock").len()
+        }
+
         pub fn push_event(&self, event: SessionEvent) {
             if let SessionEvent::Lifecycle(lifecycle) = &event {
                 *self
@@ -1715,6 +1732,16 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh event lock")
                 .push_back(event);
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            if let Some(notifier) = self
+                .inner
+                .notifier
+                .lock()
+                .expect("fake ssh notifier lock")
+                .as_ref()
+            {
+                notifier.notify();
+            }
         }
 
         pub fn reconnect_available(&self) -> bool {

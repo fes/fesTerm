@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(crate) mod aging;
+
 pub(super) struct Sink;
 impl EncodedInputSink for Sink {
     fn record_encoded_input(&mut self, _: &[u8]) {}
