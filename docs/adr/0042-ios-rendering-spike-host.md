@@ -52,6 +52,20 @@ Simulator packaging is a separate unsigned-distribution development script
 (ad-hoc code signature only), not a modification of desktop release trust.
 No signing credentials, provisioning profiles or store uploads are involved.
 
+**Experimental CI policy (owner-approved 2026-10-03):** affected PRs retain
+mobile unit/dependency checks, device compilation and Simulator app builds.
+CoreSimulator preparation and isolated launch/relaunch/screenshot smoke run
+only nightly on the default branch or via manual dispatch, not as desktop PR
+merge gates. PR build checks retain the `simulator-build` name; nightly/manual
+runs use `experimental-simulator-smoke` so runtime evidence cannot overwrite
+the build-check context when dispatched on a PR branch.
+Runtime failures still fail those runs and preserve receipts;
+no retry, deadline, ownership, first-UI/liveness or capture guard is relaxed.
+This changes when experimental evidence is collected, not mobile feasibility
+acceptance or desktop branch protection. Review an explicit runtime merge gate
+when mobile product support is accepted; #303 remains the runner-stability
+tracker and `MOB-01`–`05` remain native qualification gates.
+
 The same portrait/landscape/Split View arrangement is used on iPhone and
 iPad: terminal, docked terminal-key row, native system keyboard. Keyboard
 requests persist for the active terminal. `festerm-ios-window` is a narrow,
@@ -209,12 +223,17 @@ accessibility and physical-device acceptance remain open on iPad.
   `markdown_fixture_uses_shared_parser_and_has_navigable_contents`;
   `scripts/build-ios-spike.py --check-dependencies`; iOS workflow build/link;
   portable Simulator policy regressions
+  `test_ios_pr_build_checks_remain_unconditional`,
+  `test_ios_native_smoke_runs_only_on_schedule_or_manual_dispatch`,
+  `test_ios_scheduled_smoke_preserves_failures_evidence_and_toolchain`,
+  `test_ios_pr_paths_preserve_mobile_and_shared_source_coverage`;
+  preparation regressions
   `test_ios_smoke_read_only_preparation_is_not_application_evidence` and
   `test_ios_smoke_preparation_cannot_build_or_run_an_application`;
   `scripts/tests/test_ios_simulator_smoke.py` for isolated device ownership,
   runtime selection, failure/cleanup behavior and live-process-without-UI rejection; `scripts/smoke-ios-simulator.py
-  --run` for iPhone/iPad launch-survival, first UI callback, terminate/relaunch
-  and PNG capture.
+  --run` in nightly/manual CI or opt-in local validation for iPhone/iPad
+  launch-survival, first UI callback, terminate/relaunch and PNG capture.
   Only devices created by that invocation may be shut down/deleted. Artifacts
   identify the commit/runtime and never count screenshots as visual acceptance.
 - **Native/manual evidence required:** `MOB-01` through `MOB-05` in

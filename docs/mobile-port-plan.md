@@ -43,9 +43,14 @@ accepted as the reference design. No implementation in this phase.
 
 The first iOS host is `app/festerm-mobile`; build/run instructions and current
 limits are in its README. It uses the pinned eframe/winit public host API,
-the shared renderer/core, and no session backend. The iOS CI workflow builds
-a Simulator bundle and checks device compilation; native acceptance remains
-`MOB-01`–`04` in `docs/manual-validation.md`.
+the shared renderer/core, and no session backend. Affected PRs keep mobile
+unit/dependency checks, device compilation and Simulator app builds. The iOS
+workflow runs isolated launch/relaunch and screenshot smoke nightly/manual
+only while this is an experiment, not a desktop merge gate. Failed smoke
+runs retain their status and artifacts (#303), with unchanged bounds and
+ownership checks. Native acceptance remains `MOB-01`–`04` in
+`docs/manual-validation.md`; accepting mobile product support requires an
+explicit review of the runtime merge gate.
 
 Goal: prove `egui` can host on iOS and Android with acceptable touch input
 and lifecycle behavior before committing to further phases.

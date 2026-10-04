@@ -17,7 +17,9 @@ The first input surface uses the same terminal-above-persistent-keyboard
 layout on iPhone and iPad, with sticky Ctrl/Alt and a docked terminal-key row.
 Long-press/drag sends arrows with a temporary helper and three repeat speeds.
 Two-finger pinch scales terminal text within the shared zoom limits.
-The iOS workflow collects isolated iPhone/iPad launch and screenshot evidence.
+Affected PRs retain mobile unit/dependency checks, device compilation and
+Simulator app builds. Nightly/manual iOS runs collect isolated iPhone/iPad
+launch and screenshot evidence without gating desktop PRs.
 It is an offline development harness; native iOS feasibility remains pending
 and SSH/mobile product support is not yet implemented.
 

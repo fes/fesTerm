@@ -25,6 +25,8 @@ Read `README.md`, then use the document that matches the task:
 
 - `app/festerm-mobile`: experimental iOS Phase 1 rendering/lifecycle host;
   offline fixture only, governed by ADR 0042 and `MOB-01`–`04` native gates.
+  Affected PRs retain mobile build/tests; Simulator runtime smoke runs only
+  nightly/manually and does not gate desktop merges while iOS is experimental.
 - `crates/festerm-ios-window`: main-thread UIKit keyboard geometry and
   notification adapter; shared core/renderer contain no native FFI.
 
