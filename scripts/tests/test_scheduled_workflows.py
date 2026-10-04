@@ -96,6 +96,11 @@ class IosSpikeWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", bundle)
 
     def test_ios_native_smoke_runs_only_on_schedule_or_manual_dispatch(self):
+        self.assertIn(
+            "name: ${{ github.event_name == 'pull_request' && 'simulator-build' || "
+            "'experimental-simulator-smoke' }}",
+            self.workflow,
+        )
         condition = (
             "if: github.event_name == 'schedule' || "
             "github.event_name == 'workflow_dispatch'"

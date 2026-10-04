@@ -152,7 +152,8 @@ Affected PRs retain mobile unit/dependency checks, device compilation and
 Simulator app builds, including vendor-only epaint edits; they skip
 CoreSimulator preparation and runtime smoke while iOS is experimental.
 Nightly/manual failures retain their failed status and artifacts (#303), not
-desktop merge vetoes. Workflow-policy and preparation/non-app-evidence
+desktop merge vetoes; their `experimental-simulator-smoke` check is distinct
+from the PR's `simulator-build` context. Workflow-policy and preparation/non-app-evidence
 regressions are named in ADR 0042. Native feasibility gates remain open;
 review an explicit runtime merge gate when mobile product support is accepted.
 The mobile device descriptor requests downlevel GPU limits to accommodate the

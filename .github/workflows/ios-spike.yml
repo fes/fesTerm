@@ -28,6 +28,7 @@ permissions:
 
 jobs:
   simulator-build:
+    name: ${{ github.event_name == 'pull_request' && 'simulator-build' || 'experimental-simulator-smoke' }}
     runs-on: macos-15
     timeout-minutes: 30
     env:

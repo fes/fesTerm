@@ -71,6 +71,8 @@ and through its manual **Run workflow** action. It publishes these files as
 `festerm-ios-simulator-evidence`, including partial evidence on failure.
 Affected PRs still run mobile unit/dependency checks, device compilation and
 Simulator app builds, but skip native preparation and runtime smoke.
+Their check stays `simulator-build`; nightly/manual runs use the distinct
+`experimental-simulator-smoke` check, including manual runs on a PR branch.
 The opt-in aggregate validation scripts run the suite on macOS and report it
 skipped on other platforms.
 

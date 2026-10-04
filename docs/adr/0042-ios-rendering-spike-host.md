@@ -56,7 +56,10 @@ No signing credentials, provisioning profiles or store uploads are involved.
 mobile unit/dependency checks, device compilation and Simulator app builds.
 CoreSimulator preparation and isolated launch/relaunch/screenshot smoke run
 only nightly on the default branch or via manual dispatch, not as desktop PR
-merge gates. Runtime failures still fail those runs and preserve receipts;
+merge gates. PR build checks retain the `simulator-build` name; nightly/manual
+runs use `experimental-simulator-smoke` so runtime evidence cannot overwrite
+the build-check context when dispatched on a PR branch.
+Runtime failures still fail those runs and preserve receipts;
 no retry, deadline, ownership, first-UI/liveness or capture guard is relaxed.
 This changes when experimental evidence is collected, not mobile feasibility
 acceptance or desktop branch protection. Review an explicit runtime merge gate
