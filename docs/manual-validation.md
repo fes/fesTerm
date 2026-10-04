@@ -786,6 +786,17 @@ triangle counts. This is optional offscreen attribution; removal of overlay
 fills is still a pixel-changing diagnostic, not an accepted rendering change.
 Native palette appearance, focus, input, presentation and CP-18 remain manual
 or separately qualified evidence.
+The palette's graphics-only textureless frame/shadow path has automated exact
+RGBA comparisons for dark/light/short/query states at 100%, 125%, 150% and
+200%, plus root opacity, nonzero origin, palette transform, secondary viewport
+and translucent-frame fallback. Candidate geometry, invisible/root-transform
+guards, current-renderer reinstallation and absent-renderer fallback are also
+deterministic. Existing palette focus/navigation/dispatch tests remain separate
+from graphics. `FESTERM_TUI_PROFILE_PALETTE_FRAME=0|1` is an opt-in test-only
+same-source comparison; unset uses the production path. Automatic copy and
+retention must still decline the overlay. Offscreen savings do not replace
+native visual/input, sustained-resource, graphics-recovery, mixed-monitor or
+physical presentation-latency evidence.
 The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
 CPU; its campaign stopped at a later foreground-activation failure. Streaming,
 full-redraw, force-full-repaint control and repeated parity evidence remain

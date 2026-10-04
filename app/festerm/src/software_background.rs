@@ -162,6 +162,15 @@ pub(crate) fn set_palette_frame_enabled(context: &egui::Context, enabled: bool) 
     context.data_mut(|data| data.insert_temp(palette_frame_disabled_id(), !enabled));
 }
 
+#[cfg(test)]
+pub(crate) fn palette_frame_conversions(context: &egui::Context) -> usize {
+    context
+        .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+        .expect("palette probe requires the installed eligible panel renderer")
+        .palette_frames
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn use_panel_pipeline(
     windows: bool,
     device_type: wgpu::DeviceType,
@@ -289,10 +298,7 @@ impl PanelRenderer {
             [egui::ClippedPrimitive {
                 primitive: egui::epaint::Primitive::Mesh(mesh),
                 ..
-            }] if white_mesh_geometry(mesh) =>
-            {
-                std::mem::take(mesh)
-            }
+            }] if white_mesh_geometry(mesh) => std::mem::take(mesh),
             [] => return egui::Shape::Noop,
             _ => {
                 tracing::warn!(target: "festerm::rendering", "retaining standard panel painting for unexpected geometry");
@@ -303,11 +309,7 @@ impl PanelRenderer {
             .unwrap_or(shape)
     }
 
-    fn mesh_shape(
-        self: &Arc<Self>,
-        viewport: egui::Rect,
-        mesh: egui::Mesh,
-    ) -> Option<egui::Shape> {
+    fn mesh_shape(self: &Arc<Self>, viewport: egui::Rect, mesh: egui::Mesh) -> Option<egui::Shape> {
         let Ok(index_count) = u32::try_from(mesh.indices.len()) else {
             tracing::warn!(target: "festerm::rendering", "retaining standard panel painting for oversized geometry");
             return None;
@@ -588,6 +590,7 @@ fn create_callback(render_state: &egui_wgpu::RenderState) -> Option<egui::PaintC
 }
 
 pub(crate) fn install(context: &egui::Context, render_state: &egui_wgpu::RenderState) {
+    context.data_mut(|data| data.remove::<Arc<PanelRenderer>>(panel_renderer_id()));
     if render_state.adapter.get_info().device_type == wgpu::DeviceType::Cpu {
         let Some(callback) = create_callback(render_state) else {
             tracing::info!(
@@ -640,6 +643,75 @@ mod tests {
 
     impl EncodedInputSink for Sink {
         fn record_encoded_input(&mut self, _bytes: &[u8]) {}
+    }
+
+    #[test]
+    fn palette_frame_plugin_reinstallation_uses_current_renderer_and_declines_missing_renderer() {
+        let state = create_render_state(default_wgpu_setup(), Default::default());
+        let context = egui::Context::default();
+        context.set_visuals(festerm_ui_egui::theme::default_visuals());
+        context.all_styles_mut(|style| style.animation_time = 0.0);
+        let old = PanelRenderer::new(&state, true).unwrap();
+        let current = PanelRenderer::new(&state, true).unwrap();
+        assert!(!Arc::ptr_eq(&old.paint_namespace, &current.paint_namespace));
+        context.add_plugin(PaletteFrameBackground);
+        let mut palette = festerm_ui_egui::palette::PaletteState::default();
+        palette.open();
+        let items = [festerm_ui_egui::palette::PaletteItem {
+            id: 1,
+            label: "Settings".into(),
+            hint: None,
+            is_tab: false,
+            shortcut_label: None,
+        }];
+        let mut draw = || {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 480.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = festerm_ui_egui::palette::show(ui.ctx(), &mut palette, &items);
+                },
+            );
+            output.textures_delta.clear();
+        };
+        context.data_mut(|data| data.insert_temp(panel_renderer_id(), Arc::clone(&old)));
+        for _ in 0..4 {
+            draw();
+        }
+        let old_count = old
+            .palette_frames
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(old_count > 0);
+        context.data_mut(|data| data.insert_temp(panel_renderer_id(), Arc::clone(&current)));
+        context.add_plugin(PaletteFrameBackground);
+        draw();
+        assert_eq!(
+            old.palette_frames
+                .load(std::sync::atomic::Ordering::Relaxed),
+            old_count
+        );
+        let current_count = current
+            .palette_frames
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(current_count > 0);
+        let mut unsupported = state.clone();
+        unsupported.target_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        install(&context, &unsupported);
+        assert!(context
+            .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+            .is_none());
+        draw();
+        assert_eq!(
+            current
+                .palette_frames
+                .load(std::sync::atomic::Ordering::Relaxed),
+            current_count
+        );
     }
 
     #[test]

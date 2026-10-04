@@ -507,6 +507,27 @@ fn application_profile_scene(scene: &str) -> Result<bool, &'static str> {
     }
 }
 
+fn profile_requires_retention(scene: &str, case: &str) -> bool {
+    scene != "application-palette"
+        && matches!(case, "frozen-all" | "localized-all" | "frozen-all-repeat")
+}
+
+#[test]
+fn residual_profile_palette_preserves_overlay_fallback_under_automatic_policy() {
+    for scene in ["terminal", "application", "application-palette"] {
+        for case in ["frozen-all", "localized-all", "frozen-all-repeat"] {
+            assert_eq!(
+                profile_requires_retention(scene, case),
+                scene != "application-palette",
+                "{scene}, {case}"
+            );
+        }
+        for case in ["localized-ui-only", "meshes-only", "sleep-only"] {
+            assert!(!profile_requires_retention(scene, case));
+        }
+    }
+}
+
 #[test]
 fn residual_profile_scene_preserves_controls_and_accepts_production_palette() {
     assert_eq!(application_profile_scene("terminal"), Ok(false));
@@ -577,6 +598,10 @@ fn profile_terminal_residual_cpu() {
         .map(|value| value.into_string().expect("profile scene must be UTF-8"))
         .unwrap_or_else(|| "terminal".into());
     let application_scene = application_profile_scene(&scene).expect("valid profile scene");
+    assert!(
+        scene != "application-palette" || !direct_copy,
+        "a palette overlay cannot use a final-terminal direct-copy probe"
+    );
     let mut application = application_scene.then(|| {
         let (mut app, _, transport) = crate::app::FesTermApp::for_test_with_fake_ssh_session([]);
         if scene == "application-palette" {
@@ -667,6 +692,18 @@ fn profile_terminal_residual_cpu() {
             "profile requires the actual production command palette"
         );
     }
+    let palette_frame_conversions = if scene == "application-palette" {
+        crate::software_background::palette_frame_conversions(&context)
+    } else {
+        0
+    };
+    if scene == "application-palette" {
+        assert_eq!(
+            palette_frame_conversions > 0,
+            palette_frame_textureless,
+            "profile must exercise the selected actual palette frame renderer",
+        );
+    }
     let surface = status.last_surface.lock().unwrap().clone().unwrap();
     let native_index = primitives
         .iter()
@@ -694,7 +731,11 @@ fn profile_terminal_residual_cpu() {
                     [0.0; 4],
                     Some(&mut retained_ui),
                 ),
-                (true, expected),
+                if scene == "application-palette" {
+                    (false, None)
+                } else {
+                    (true, expected)
+                },
                 "{:?}",
                 retained_ui.stats(),
             );
@@ -920,10 +961,7 @@ fn profile_terminal_residual_cpu() {
                 Some(callback.clone())
             });
         }
-        let requires_retention = matches!(
-            name.as_str(),
-            "frozen-all" | "localized-all" | "frozen-all-repeat"
-        );
+        let requires_retention = profile_requires_retention(&scene, &name);
         let mut last_composited_frame = None;
         let mut frame = |retained_ui: &mut egui_wgpu::RetainedUi| {
             if name == "sleep-only" {
@@ -998,7 +1036,13 @@ fn profile_terminal_residual_cpu() {
                             [0.0; 4],
                             Some(retained_ui),
                         );
-                        if host_copy {
+                        if scene == "application-palette" {
+                            assert_eq!(
+                                (copied, retained),
+                                (false, None),
+                                "palette overlay must retain ordered ordinary composition",
+                            );
+                        } else if host_copy {
                             assert!(copied, "host-copy probe silently fell back");
                         }
                         if retained_composition && requires_retention {
@@ -1020,6 +1064,15 @@ fn profile_terminal_residual_cpu() {
                     [0.0; 4],
                     Some(retained_ui),
                 );
+                if scene == "application-palette"
+                    && matches!(name.as_str(), "frozen-all" | "frozen-all-repeat")
+                {
+                    assert_eq!(
+                        (copied, retained),
+                        (false, None),
+                        "palette overlay must retain ordered ordinary composition",
+                    );
+                }
                 if retained_composition && requires_retention {
                     assert!(
                         copied && retained.is_some(),
@@ -1110,6 +1163,7 @@ fn profile_terminal_residual_cpu() {
                 "host_copy_probe":host_copy,
                 "textureless_mesh_probe":textureless_mesh,
                 "palette_frame_textureless":palette_frame_textureless,
+                "palette_frame_conversions_before_sampling":palette_frame_conversions,
                 "retained_composition_probe":retained_composition,
                 "scene":scene, "removed_fill_triangles":removed_fill_triangles,
                 "primitives":metadata, "measurements":measurements,
