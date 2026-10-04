@@ -842,6 +842,41 @@ comparisons remain the exact-pixel oracle. No installed session or user terminal
 content was accessed. Sustained resources, physical latency, mixed-DPI/recovery,
 hardware-GPU behavior and the multi-day #297 cause remain open under CP-18/#282.
 
+#### Release attribution of remaining costs
+
+The [complete subsequent release attribution](residual-release-attribution-2026-10-04.json)
+executes archived `C08952DB2BDE4623FF87033F3BEA0351F2514182719338533FF1BEFE30B29882`
+at `f7f19c992e9e5cc4ab2e808f37cbd4fa06990c64`; its later documentation does not
+relabel that execution. Eight full-application, five palette and three
+fill-omission controls preserve every score and host observation.
+
+| Scene | Case | CPU-ms/frame | Completed-work ms/frame |
+| --- | --- | ---: | ---: |
+| Application | Frozen | 7.50 | 8.54 |
+| Application | Localized | 26.88 | 22.05 |
+| Application | Localized without composition | 10.16 | 10.27 |
+| Application | Native immutable image copy | 2.97 | 1.91 |
+| Application | Allocate and copy | 3.13 | 2.01 |
+| Application | Solid native patch | 2.19 | 0.99 |
+| Application | UI-only, native pixels frozen | Below CPU-counter resolution | 1.43 |
+| Application | Unchanged native-frame validation | Below CPU-counter resolution | 1.22 |
+| Palette | Frozen | 507.34 | 48.15 |
+| Palette | Ordinary meshes only | 454.53 | 47.54 |
+| Palette | Localized | 530.78 | 62.94 |
+| Palette | Localized without composition | 14.84 | 11.62 |
+| Palette | Frozen repeat | 522.66 | 48.67 |
+
+The palette still correctly declined automatic copy/retention. Omitting opaque
+white-texture fill triangles subsequently reduced frozen work from roughly
+460-476 to 179 CPU-ms/frame, but changed pixels and is **only attribution**.
+It includes ordinary meshes outside the palette as well, so it does not alone
+prove a palette-only change wins. UI/native-frame validation below finite
+Windows CPU-counter resolution does not mean zero work. Isolated costs need not
+add because batching, worker scheduling and warmed state differ. These are
+forced offscreen controls, not native presentation, physical latency or a
+resource acceptance. The narrow palette-fill follow-up has its own independent
+exact and native evidence; neither this attribution nor that work is a #297 fix.
+
 `profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
 completed-draw wall time and primitive identities. Individual cases include
 clear/sleep controls, frozen whole-frame and single-primitive composition,
