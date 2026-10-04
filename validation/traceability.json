@@ -932,11 +932,11 @@
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",
         "profile_terminal_residual_cpu",
         "profile_case_filter_preserves_order_and_rejects_incomplete_inputs",
-        "host_copy_defaults_on_and_rejects_invalid_values",
+        "automatic_warp_composition_preserves_platform_adapter_and_format_policy",
+        "automatic_rgba_native_painting_keeps_shader_composition",
+        "automatic_warp_installation_enables_copy_and_retention_without_settings",
         "host_copy_preserves_pixels_dpi_resize_overlays_and_fallback",
         "host_copy_capture_tracks_usage_size_and_format",
-        "retained_composition_defaults_follow_host_copy_and_preserve_explicit_overrides",
-        "composition_defaults_and_opt_outs_never_force_unsupported_routing",
         "retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement",
         "retained_prefix_keeps_queued_images_immutable_after_rebuild_and_clear",
         "retained_prefix_declines_signature_overflow_and_recovers",
@@ -968,8 +968,6 @@
         "pending_terminal_resize_rearms_an_early_frame",
         "session_notifier_wakes_one_frame_without_a_settling_repaint",
         "direct2d_selection_preserves_hardware_other_backends_and_srgb",
-        "direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy",
-        "direct2d_invalid_overrides_do_not_enable_the_default",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
         "unsupported_native_palette_returns_to_native_painting",
@@ -1056,8 +1054,8 @@
       "prerequisites": [
         "IME and complete selection semantics remain platform/capability work",
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
-        "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards",
-        "ADR-0040/0041 default-on evidence and architectural/default-selection decision: https://github.com/fes/fesTerm/issues/282"
+        "CP-17/18 native CPU evidence requires application-window identity and recorded input/geometry/cadence guards; noisy shared-host results are approximate, not strict benchmarks",
+        "ADR-0039/0040/0041 owner-approved automatic WARP rollout without switches; native/resource/latency qualification remains follow-up work: https://github.com/fes/fesTerm/issues/282"
       ]
     },
     {

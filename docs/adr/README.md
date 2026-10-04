@@ -35,6 +35,9 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0037: Reverse Wraparound Climbs Only the Line It Is On](0037-reverse-wraparound-bounds.md) — implements `DECSET 45` with xterm's post-383 bounds and retires stale soft-wrap marks on explicit line breaks
 - [ADR 0038: Authoritative Terminal Snapshots for `festerm-sessiond` Reattach Recovery](0038-sessiond-terminal-recovery-snapshots.md) — updates ADR 0025's recovery model to use protocol-v2 terminal snapshots rather than raw replay tails
 - [ADR 0043: Immutable Native Font Atlas Snapshots](0043-immutable-native-font-atlas-snapshots.md) - narrowly vendored non-consuming identity and bounded context snapshot ownership only; native CPU/resource/presentation/latency qualification remains open under #298 and CP-18
+- [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) - automatic supported-route policy and ownership; broader native qualification remains open
+- [ADR 0040: Automatic Final-Target Terminal Copy](0040-opt-in-final-target-terminal-copy.md) - owner-approved bounded WARP rollout without production switches
+- [ADR 0041: Automatic Retained Window Prefix](0041-opt-in-retained-window-prefix.md) - owner-approved exact immutable prefix reuse; resource/native/latency follow-ups remain in #282
 
 ## Superseded Decisions
 
@@ -44,9 +47,6 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0042: Isolated iOS Rendering Spike Host](0042-ios-rendering-spike-host.md) — Phase 1 implementation for review; native feasibility pending
 
-- [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) — Proposed; owner-approved default selection is bounded to supported Windows x64 WARP, while CP-18 and issue #244 qualification remain open
-- [ADR 0040: Opt-in Final-Target Terminal Copy](0040-opt-in-final-target-terminal-copy.md) — default-off WARP prototype extending the renderer host; issue #267
-- [ADR 0041: Opt-in Retained Window Prefix](0041-opt-in-retained-window-prefix.md) — separately authorized default-off experiment retaining unchanged chrome before the terminal copy; architectural review and native qualification remain required
 - [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
 - [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38
 - [ADR 0028: Text-Mode SFTP Session Tabs via `russh-sftp`](0028-text-mode-sftp-session-tabs-via-russh-sftp.md)

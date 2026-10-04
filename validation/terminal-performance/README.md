@@ -1,18 +1,33 @@
 # Terminal TUI performance
 
-## Current unmerged composition candidate
+## Automatic WARP composition rollout
 
 PR #281 consolidates the stacked follow-on and reviewed shipping main. At the
-owner's request it stages default-on host-copy and retained-prefix eligibility
+owner's request it enables automatic host-copy and retained-prefix eligibility
 for Windows x64 DX12 CPU/BGRA gamma and compatible opaque-root targets only.
-Host-copy `0` disables both by default; retention `0` selects host-copy alone.
-Explicit `1` cannot force unsupported paths, and invalid values disable the
-affected path. Shipping main remains unchanged until merge.
+All three former renderer/composition environment switches are removed and
+ignored. Compatibility, exact-pixel, ownership, resource and lifecycle
+fallbacks remain required; there is no production opt-out or force-on switch.
 
 The existing source-pinned observations below remain historical evidence,
-not a rerun on this integrated source. Issue #282 lists the WARP gates required
-before merge/default rollout. Qualification must exercise the unset/default
-policy as well as explicit A `0,0`, B `1,0`, C `1,1` controls and opt-outs.
+not a rerun on this final no-switch source. The owner accepts repeated 34-76%
+combined-versus-baseline active CPU savings despite recorded shared-host noise
+as practical rollout evidence, not precise benchmark qualification. Source
+reviews and exact-head CI gate merge; #282 retains broader native/resource/
+latency qualification as follow-up work without claiming those checks passed.
+
+The current native driver measures only automatic `current` mode.
+It builds/stages its clean checkout before desktop access and accepts only
+that checkout's release executable, checking source stability across the build
+and binary stability across cases. Arbitrary/prebuilt historical executables
+cannot be attributed to current source. OS-input `-SkipBuild` receipts retain
+the executable hash and runner SHA but mark binary source/policy unverified.
+`-QualifyCopyModes` fails before desktop access; historical A/B/C and off/on
+commands below require their pinned historical driver and application.
+The offscreen test executable keeps separate `FESTERM_TUI_PROFILE_HOST_COPY`
+and `FESTERM_TUI_PROFILE_RETAINED_COMPOSITION` controls for pixel/mechanism
+comparisons; production binaries do not read them. Historical settings, raw
+scores, noisy/failed intervals and hashes remain unchanged.
 
 This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
@@ -721,6 +736,11 @@ live localized-native cases; unrelated diagnostic cases report null.
 
 ### Default-off final-target host-copy prototype
 
+**Historical prototype policy:** the switches and commands in this section
+apply only to its pinned historical binaries/drivers. Current production
+selection is automatic; current offscreen comparisons use the test-only
+controls described at the top of this document.
+
 **Applicability: Windows x64 DX12 WARP / DevBox only.** The owner authorized
 vendoring pinned egui-wgpu 0.36.1 to test the real application. Proposed
 [ADR-0040](../../docs/adr/0040-opt-in-final-target-terminal-copy.md) describes
@@ -870,6 +890,9 @@ negative-routing, native screenshot/overlay review, latency and full CP-18
 qualification remain open in #267/#244; dragging remains separate in #263.
 
 ### Default-off retained-window prefix prototype
+
+**Historical prototype policy:** these production switch instructions require
+the recorded historical binaries/drivers; they cannot toggle current builds.
 
 The owner separately authorized Proposed
 [ADR-0041](../../docs/adr/0041-opt-in-retained-window-prefix.md), extending the

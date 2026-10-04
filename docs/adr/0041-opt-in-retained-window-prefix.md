@@ -1,9 +1,9 @@
-# ADR 0041: Opt-in Retained Window Prefix
+# ADR 0041: Automatic Retained Window Prefix
 
-- **Status:** Proposed
+- **Status:** Accepted (bounded WARP rollout; broader native qualification remains open)
 - **Date:** 2026-09-29
 - **Supersedes:** None; extends the experimental host seam in ADR 0040
-- **Scope:** Owner-authorized default-on staging in unmerged #281; #282 gates merge/rollout
+- **Scope:** Owner-authorized automatic eligible WARP rollout, without production switches
 
 ## Context
 
@@ -15,22 +15,16 @@ retained-window experiment after reviewing that existing scope boundary.
 
 The experiment must isolate the additional saving over host-copy alone.
 It does not replace eframe, introduce partial presentation, skip UI updates,
-change terminal ownership, or relax native measurement guards.
+change terminal ownership, or weaken correctness/ownership guards.
 
 ## Decision
 
-The owner requested completing #281 with default-on eligibility/tests staged
-for WARP qualification, not merging or granting rollout approval now.
-Shipping main is unchanged until the remaining #282 gates pass.
-
-Unset `FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION` follows the selected
-host-copy request, which also defaults on in this PR. Explicit `0` disables
-prefix retention while retaining eligible host-copy; host-copy `0` disables
-both by default. Explicit `1` cannot bypass the Windows x64 DX12 CPU-adapter/
-BGRA gamma policy or its host-copy prerequisite. Invalid values warn and
-disable the affected path. The native host restricts both paths to compatible
+On 2026-10-03 the owner approved merging the pipeline and removing all three
+production switches. Host-copy and prefix retention are automatic only on the
+Windows x64 DX12 CPU-adapter/BGRA gamma route. Retired environment overrides
+cannot disable or force it. The native host restricts both paths to compatible
 opaque-root targets without MSAA or depth; unsupported routes retain ordinary
-rendering. Policy staging is not architectural or default-selection acceptance.
+rendering. Correctness and lifecycle fallbacks remain intrinsic safeguards.
 
 The host may retain only the complete paint prefix preceding an eligible
 final image-copy callback. On a miss it clears and paints that prefix into a
@@ -102,17 +96,20 @@ callback contract and maintenance burden require architectural review before
 merge. A successful CPU experiment does not establish presentation/input
 latency, device recovery, hardware-GPU benefit, or Windows Terminal parity.
 
-Default enablement is a separate decision tracked in
-[#282](https://github.com/fes/fesTerm/issues/282). It requires comparison with
-the shipping default, not only host-copy alone. Both policies are now staged
-together at the owner's request, but neither may merge before the recorded
-native, architecture and rollout gates pass.
+The rollout decision is tracked in [#282](https://github.com/fes/fesTerm/issues/282).
+The owner accepts the repeatable 34-76% shared-host combined-versus-baseline CPU
+benefit as practical evidence, with noisy percentages explicitly approximate.
+Changing chrome has no useful incremental gain over host-copy alone; quiet
+and palette controls show no useful benefit. Independent source reviews and
+exact-head CI remain merge requirements. Broader native/resource/latency
+campaigns are follow-up qualification, not a claim of completed acceptance.
+Off/on controls remain only inside test executables, not production binaries.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** Explicit immutable callback signatures;
   one bounded private prefix image; exact texture/geometry/lifecycle
-  invalidation; staged tightly eligible default-on policy with opt-outs;
+  invalidation; tightly eligible automatic policy without switches;
   unchanged preparation, output cadence and ownership.
 - **GUI/action edges affected:** `TERM-01`; existing overlay, selection and
   terminal-input behavior remains unchanged.
@@ -122,8 +119,8 @@ native, architecture and rollout gates pass.
   textures; exported or rebound managed textures; size/signature thresholds;
   retained-image immutability; screenshot and ordinary-renderer fallback.
   Selection additionally requires
-  `retained_composition_defaults_follow_host_copy_and_preserve_explicit_overrides`
-  and `composition_defaults_and_opt_outs_never_force_unsupported_routing`.
+  `automatic_warp_composition_preserves_platform_adapter_and_format_policy`
+  and `automatic_warp_installation_enables_copy_and_retention_without_settings`.
 - **Native/manual evidence required:** `CP-18`; matching host-copy-only versus
   retained-prefix CPU/cadence comparisons, actual reuse counters, focus/resize
   and screenshots. Mixed-monitor, recovery, hardware-negative-routing and

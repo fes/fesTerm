@@ -245,12 +245,7 @@ if ($env:OS -eq 'Windows_NT') {
         $status = 'fail'
     }
     try {
-        $renderingOptions = @{}
-        if ($env:FESTERM_EXPERIMENTAL_DIRECT2D -eq '1') {
-            $renderingOptions.DenseOutput = $true
-            $renderingOptions.RequireDirect2D = $true
-        }
-        & "$PSScriptRoot\check-windows-idle-rendering.ps1" -IncludeSustainedOutput @renderingOptions
+        & "$PSScriptRoot\check-windows-idle-rendering.ps1" -IncludeSustainedOutput
         Add-Content -Path $ResultPath -Value "`nsuite=windows-idle-rendering status=pass"
     } catch {
         Write-Warning $_

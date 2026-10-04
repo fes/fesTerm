@@ -1,110 +1,22 @@
 use eframe::{egui, egui_wgpu, wgpu};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Preference {
-    Automatic,
-    Disabled,
-    Enabled,
-}
-
-impl Preference {
-    fn from_environment(value: Option<&std::ffi::OsStr>) -> Result<Self, &'static str> {
-        match value {
-            None => Ok(Self::Automatic),
-            Some(value) if value == "0" => Ok(Self::Disabled),
-            Some(value) if value == "1" => Ok(Self::Enabled),
-            _ => Err("FESTERM_EXPERIMENTAL_DIRECT2D expects 0 or 1; retaining egui-wgpu"),
-        }
-    }
-
-    fn selects(
-        self,
-        windows_x64: bool,
-        device: wgpu::DeviceType,
-        backend: wgpu::Backend,
-        format: wgpu::TextureFormat,
-    ) -> bool {
-        self != Self::Disabled && windows_x64 && eligible(device, backend, format)
-    }
-}
-
 pub(crate) fn install_from_environment(
     context: &egui::Context,
     state: Option<&egui_wgpu::RenderState>,
 ) {
-    let host_copy_value = std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY");
-    let host_copy_explicit = host_copy_value.as_deref() == Some(std::ffi::OsStr::new("1"));
-    let host_copy = match host_copy_requested(host_copy_value.as_deref()) {
-        Ok(requested) => requested,
-        Err(message) => {
-            tracing::warn!(target: "festerm::rendering", "{message}");
-            false
-        }
-    };
-    let retained_composition = match retained_composition_requested(
-        std::env::var_os("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION").as_deref(),
-        host_copy,
-    ) {
-        Ok(requested) => requested,
-        Err(message) => {
-            tracing::warn!(target: "festerm::rendering", "{message}");
-            false
-        }
-    };
-    if retained_composition && !host_copy {
-        tracing::warn!(target: "festerm::rendering",
-            "retained composition requires FESTERM_EXPERIMENTAL_HOST_COPY=1; retaining existing rendering");
-    }
-    let preference = match Preference::from_environment(
-        std::env::var_os("FESTERM_EXPERIMENTAL_DIRECT2D").as_deref(),
-    ) {
-        Ok(Preference::Disabled) => {
-            if host_copy_explicit {
-                tracing::info!(target: "festerm::rendering",
-                    "host copy requires Direct2D; retaining ordinary rendering");
-            }
-            return;
-        }
-        Ok(preference) => preference,
-        Err(message) => {
-            tracing::warn!(target: "festerm::rendering", "{message}");
-            return;
-        }
-    };
     let Some(state) = state else {
-        if preference == Preference::Enabled || host_copy_explicit {
-            tracing::warn!(target: "festerm::rendering", "Direct2D requires wgpu; retaining the current renderer");
-        }
         return;
     };
     let info = state.adapter.get_info();
-    if !preference.selects(
-        cfg!(all(windows, target_arch = "x86_64")),
-        info.device_type,
-        info.backend,
-        state.target_format,
-    ) {
-        if preference == Preference::Enabled || host_copy_explicit {
-            tracing::info!(target: "festerm::rendering",
-                "Direct2D requires Windows x64, a DX12 CPU adapter and 8-bit gamma target; retaining egui-wgpu");
-        }
-        return;
-    }
-    if host_copy && state.target_format != wgpu::TextureFormat::Bgra8Unorm {
-        tracing::info!(target: "festerm::rendering",
-            "host copy requires a BGRA target; retaining shader composition");
-    }
-    let composition = CompositionSelection {
-        host_copy,
-        retained_composition,
-    }
-    .selects(
-        preference,
+    let composition = CompositionSelection::for_adapter(
         cfg!(all(windows, target_arch = "x86_64")),
         info.device_type,
         info.backend,
         state.target_format,
     );
+    if !composition.native {
+        return;
+    }
     #[cfg(all(windows, target_arch = "x86_64"))]
     match native::install_with_host_copy(context, state, composition.host_copy) {
         Ok(_) => {
@@ -112,9 +24,9 @@ pub(crate) fn install_from_environment(
             state.renderer.write().retained_composition_enabled = retained;
             if retained {
                 tracing::info!(target: "festerm::rendering",
-                    "experimental retained window prefix enabled; ineligible frames retain ordinary composition");
+                    "retained window prefix enabled; ineligible frames retain ordinary composition");
             }
-            tracing::info!(target: "festerm::rendering", ?preference, "Direct2D terminal painter enabled")
+            tracing::info!(target: "festerm::rendering", "Direct2D terminal painter enabled")
         }
         Err(error) => tracing::warn!(target: "festerm::rendering", %error,
             "Direct2D initialization failed; retaining egui-wgpu"),
@@ -123,48 +35,26 @@ pub(crate) fn install_from_environment(
     let _ = (context, composition);
 }
 
-fn host_copy_requested(value: Option<&std::ffi::OsStr>) -> Result<bool, &'static str> {
-    match value {
-        None => Ok(true),
-        Some(value) if value == "0" => Ok(false),
-        Some(value) if value == "1" => Ok(true),
-        _ => Err("FESTERM_EXPERIMENTAL_HOST_COPY expects 0 or 1; retaining shader composition"),
-    }
-}
-
-fn retained_composition_requested(
-    value: Option<&std::ffi::OsStr>,
-    host_copy: bool,
-) -> Result<bool, &'static str> {
-    match value {
-        None => Ok(host_copy),
-        Some(value) if value == "0" => Ok(false),
-        Some(value) if value == "1" => Ok(true),
-        _ => Err("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION expects 0 or 1; retaining existing composition"),
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CompositionSelection {
+    native: bool,
     host_copy: bool,
     retained_composition: bool,
 }
 
 impl CompositionSelection {
-    fn selects(
-        self,
-        preference: Preference,
+    fn for_adapter(
         windows_x64: bool,
         device: wgpu::DeviceType,
         backend: wgpu::Backend,
         format: wgpu::TextureFormat,
     ) -> Self {
-        let host_copy = self.host_copy
-            && preference.selects(windows_x64, device, backend, format)
-            && format == wgpu::TextureFormat::Bgra8Unorm;
+        let native = windows_x64 && eligible(device, backend, format);
+        let host_copy = native && format == wgpu::TextureFormat::Bgra8Unorm;
         Self {
+            native,
             host_copy,
-            retained_composition: host_copy && self.retained_composition,
+            retained_composition: host_copy,
         }
     }
 }
@@ -576,7 +466,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         state.renderer.write().final_callback_copy_enabled = host_copy;
         if host_copy {
             tracing::info!(target: "festerm::rendering",
-                "experimental final-target host copy enabled; ineligible frames retain shader composition");
+                "final-target host copy enabled; ineligible frames retain shader composition");
         }
         Ok(status)
     }
@@ -587,147 +477,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_copy_defaults_on_and_rejects_invalid_values() {
-        for (value, expected) in [(None, true), (Some("0"), false), (Some("1"), true)] {
-            assert_eq!(
-                host_copy_requested(value.map(std::ffi::OsStr::new)).unwrap(),
-                expected
-            );
-        }
-        for value in ["", "true", "2", " 1"] {
-            assert!(host_copy_requested(Some(std::ffi::OsStr::new(value))).is_err());
-        }
-    }
-
-    #[test]
-    fn retained_composition_defaults_follow_host_copy_and_preserve_explicit_overrides() {
-        for host_copy in [false, true] {
-            for (value, expected) in [(None, host_copy), (Some("0"), false), (Some("1"), true)] {
-                assert_eq!(
-                    retained_composition_requested(value.map(std::ffi::OsStr::new), host_copy)
-                        .unwrap(),
-                    expected
-                );
-            }
-            for value in ["", "true", "2", " 1"] {
-                assert!(retained_composition_requested(
-                    Some(std::ffi::OsStr::new(value)),
-                    host_copy
-                )
-                .is_err());
-            }
-        }
-    }
-
-    #[test]
-    fn composition_defaults_and_opt_outs_never_force_unsupported_routing() {
-        for host_value in [None, Some("0"), Some("1")] {
-            let host_copy = host_copy_requested(host_value.map(std::ffi::OsStr::new)).unwrap();
-            for retained_value in [None, Some("0"), Some("1")] {
-                let requested = CompositionSelection {
-                    host_copy,
-                    retained_composition: retained_composition_requested(
-                        retained_value.map(std::ffi::OsStr::new),
-                        host_copy,
-                    )
-                    .unwrap(),
-                };
-                for preference in [
-                    Preference::Automatic,
-                    Preference::Disabled,
-                    Preference::Enabled,
+    fn automatic_warp_composition_preserves_platform_adapter_and_format_policy() {
+        for windows_x64 in [false, true] {
+            for device in [
+                wgpu::DeviceType::Cpu,
+                wgpu::DeviceType::DiscreteGpu,
+                wgpu::DeviceType::IntegratedGpu,
+                wgpu::DeviceType::VirtualGpu,
+                wgpu::DeviceType::Other,
+            ] {
+                for backend in [
+                    wgpu::Backend::Dx12,
+                    wgpu::Backend::Metal,
+                    wgpu::Backend::Vulkan,
+                    wgpu::Backend::Gl,
                 ] {
-                    for windows_x64 in [false, true] {
-                        for device in [
-                            wgpu::DeviceType::Cpu,
-                            wgpu::DeviceType::DiscreteGpu,
-                            wgpu::DeviceType::IntegratedGpu,
-                            wgpu::DeviceType::VirtualGpu,
-                            wgpu::DeviceType::Other,
-                        ] {
-                            for backend in [
-                                wgpu::Backend::Dx12,
-                                wgpu::Backend::Metal,
-                                wgpu::Backend::Vulkan,
-                                wgpu::Backend::Gl,
-                            ] {
-                                for format in [
-                                    wgpu::TextureFormat::Bgra8Unorm,
-                                    wgpu::TextureFormat::Rgba8Unorm,
-                                    wgpu::TextureFormat::Bgra8UnormSrgb,
-                                    wgpu::TextureFormat::Rgba8UnormSrgb,
-                                    wgpu::TextureFormat::Rgba16Float,
-                                ] {
-                                    let selected = requested.selects(
-                                        preference,
-                                        windows_x64,
-                                        device,
-                                        backend,
-                                        format,
-                                    );
-                                    let eligible = preference != Preference::Disabled
-                                        && windows_x64
-                                        && device == wgpu::DeviceType::Cpu
-                                        && backend == wgpu::Backend::Dx12
-                                        && format == wgpu::TextureFormat::Bgra8Unorm;
-                                    assert_eq!(selected.host_copy, host_copy && eligible);
-                                    assert_eq!(
-                                        selected.retained_composition,
-                                        requested.retained_composition && selected.host_copy
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy() {
-        for (value, preference) in [
-            (None, Preference::Automatic),
-            (Some("0"), Preference::Disabled),
-            (Some("1"), Preference::Enabled),
-        ] {
-            let parsed = Preference::from_environment(value.map(std::ffi::OsStr::new)).unwrap();
-            assert_eq!(parsed, preference);
-            for windows_x64 in [false, true] {
-                for device in [
-                    wgpu::DeviceType::Cpu,
-                    wgpu::DeviceType::DiscreteGpu,
-                    wgpu::DeviceType::IntegratedGpu,
-                    wgpu::DeviceType::VirtualGpu,
-                    wgpu::DeviceType::Other,
-                ] {
-                    for backend in [
-                        wgpu::Backend::Dx12,
-                        wgpu::Backend::Metal,
-                        wgpu::Backend::Vulkan,
-                        wgpu::Backend::Gl,
+                    for format in [
+                        wgpu::TextureFormat::Bgra8Unorm,
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        wgpu::TextureFormat::Bgra8UnormSrgb,
+                        wgpu::TextureFormat::Rgba8UnormSrgb,
+                        wgpu::TextureFormat::Rgba16Float,
                     ] {
-                        for format in [
-                            wgpu::TextureFormat::Bgra8Unorm,
-                            wgpu::TextureFormat::Rgba8Unorm,
-                            wgpu::TextureFormat::Bgra8UnormSrgb,
-                            wgpu::TextureFormat::Rgba8UnormSrgb,
-                            wgpu::TextureFormat::Rgba16Float,
-                        ] {
-                            assert_eq!(
-                                parsed.selects(windows_x64, device, backend, format),
-                                preference != Preference::Disabled
-                                    && windows_x64
-                                    && device == wgpu::DeviceType::Cpu
-                                    && backend == wgpu::Backend::Dx12
-                                    && matches!(
-                                        format,
-                                        wgpu::TextureFormat::Bgra8Unorm
-                                            | wgpu::TextureFormat::Rgba8Unorm
-                                    ),
-                                "{value:?}, {windows_x64}, {device:?}, {backend:?}, {format:?}",
+                        let selected =
+                            CompositionSelection::for_adapter(windows_x64, device, backend, format);
+                        let native = windows_x64
+                            && device == wgpu::DeviceType::Cpu
+                            && backend == wgpu::Backend::Dx12
+                            && matches!(
+                                format,
+                                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
                             );
-                        }
+                        assert_eq!(selected.native, native);
+                        let copied = native && format == wgpu::TextureFormat::Bgra8Unorm;
+                        assert_eq!(selected.host_copy, copied);
+                        assert_eq!(selected.retained_composition, copied);
                     }
                 }
             }
@@ -735,23 +519,20 @@ mod tests {
     }
 
     #[test]
-    fn direct2d_invalid_overrides_do_not_enable_the_default() {
-        for value in ["", "true", "false", "auto", "2", " 1", "0 "] {
-            assert!(Preference::from_environment(Some(std::ffi::OsStr::new(value))).is_err());
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            assert!(
-                Preference::from_environment(Some(std::ffi::OsStr::from_bytes(&[0xff]))).is_err()
-            );
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStringExt;
-            let value = std::ffi::OsString::from_wide(&[0xd800]);
-            assert!(Preference::from_environment(Some(&value)).is_err());
-        }
+    fn automatic_rgba_native_painting_keeps_shader_composition() {
+        assert_eq!(
+            CompositionSelection::for_adapter(
+                true,
+                wgpu::DeviceType::Cpu,
+                wgpu::Backend::Dx12,
+                wgpu::TextureFormat::Rgba8Unorm
+            ),
+            CompositionSelection {
+                native: true,
+                host_copy: false,
+                retained_composition: false,
+            }
+        );
     }
 
     #[test]

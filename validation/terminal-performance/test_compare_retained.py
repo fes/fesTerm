@@ -202,8 +202,8 @@ class RetainedComparisonTests(unittest.TestCase):
         for index, ((arguments, environment), (name, mode)) in enumerate(zip(observed, comparison.RUNS)):
             self.assertEqual(arguments[1:], [comparison.TEST, "--exact", "--ignored", "--nocapture", "--test-threads=1"])
             self.assertEqual(Path(environment["FESTERM_TUI_PROFILE_OUT"]).name, name)
-            self.assertEqual(environment["FESTERM_EXPERIMENTAL_HOST_COPY"], "1")
-            self.assertEqual(environment["FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION"], "1" if mode == "on" else "0")
+            self.assertEqual(environment["FESTERM_TUI_PROFILE_HOST_COPY"], "1")
+            self.assertEqual(environment["FESTERM_TUI_PROFILE_RETAINED_COMPOSITION"], "1" if mode == "on" else "0")
             self.assertEqual(environment["FESTERM_TUI_PROFILE_SCENE"], "application")
             self.assertEqual(environment["FESTERM_TUI_PROFILE_CASES"], ",".join(comparison.CASES))
             self.assertNotIn("FESTERM_TUI_PROFILE_COPY", environment)

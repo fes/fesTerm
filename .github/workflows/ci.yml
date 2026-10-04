@@ -125,6 +125,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Probe dependency installation failed.' }
           $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
           .\validation\direct2d\run.ps1 -ResultDirectory "$env:RUNNER_TEMP\direct2d-probe" -SelfTestOnly
+      - name: Check native comparison declarations without desktop access
+        if: matrix.os == 'windows-latest'
+        run: python -m unittest discover -s validation/terminal-performance -p "test_*.py" -v
       - if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:

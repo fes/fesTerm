@@ -246,13 +246,13 @@ def run_comparison(probe, directory, source_label):
     environment.update({
         "FESTERM_TUI_PROFILE_SCENE": "application",
         "FESTERM_TUI_PROFILE_CASES": ",".join(CASES),
-        "FESTERM_EXPERIMENTAL_HOST_COPY": "1",
+        "FESTERM_TUI_PROFILE_HOST_COPY": "1",
     })
     for key in ("FESTERM_TUI_PROFILE_COPY", "FESTERM_TUI_PROFILE_SAMPLER", "FESTERM_TUI_PROFILE_REFERENCE"):
         environment.pop(key, None)
     for index, (name, mode) in enumerate(RUNS):
         require(digest(probe) == sha, "Probe executable changed during the comparison")
-        environment["FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION"] = "1" if mode == "on" else "0"
+        environment["FESTERM_TUI_PROFILE_RETAINED_COMPOSITION"] = "1" if mode == "on" else "0"
         environment["FESTERM_TUI_PROFILE_OUT"] = str(directory / name)
         if index:
             environment["FESTERM_TUI_PROFILE_REFERENCE"] = str(directory / RUNS[0][0] / "original.png")

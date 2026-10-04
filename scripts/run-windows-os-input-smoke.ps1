@@ -140,15 +140,30 @@ function Send-SmokeKeys([string] $Keys) {
 }
 
 $executable = Join-Path $repositoryRoot "target\$($Configuration.ToLowerInvariant())\festerm.exe"
+$runnerSource = & git -C $repositoryRoot rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Cannot identify OS-input runner source.' }
+$runnerDirty = @(& git -C $repositoryRoot status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot record OS-input source cleanliness.' }
 if (-not $SkipBuild) {
-    $buildArguments = @('build','--workspace')
+    $buildArguments = @('build','--locked','--workspace',
+        '--manifest-path',(Join-Path $repositoryRoot 'Cargo.toml'),
+        '--target-dir',(Join-Path $repositoryRoot 'target'))
     if ($Configuration -eq 'Release') { $buildArguments += '--release' }
     cargo @buildArguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $builtSource = & git -C $repositoryRoot rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or $builtSource -ne $runnerSource) {
+        throw 'OS-input source changed during build.'
+    }
+    $builtDirty = @(& git -C $repositoryRoot status --porcelain)
+    if ($LASTEXITCODE -ne 0 -or ($builtDirty -join "`n") -ne ($runnerDirty -join "`n")) {
+        throw 'OS-input checkout changed during build.'
+    }
 }
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "The selected $Configuration application has not been built: $executable"
 }
+$executableHash = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
 if (Test-Path -LiteralPath $nativeResultPath) { throw 'Use a fresh OS-input result path; attempts are not overwritten.' }
 if ($CaptureDirectory) {
     if (Test-Path -LiteralPath $CaptureDirectory) { throw 'Use a fresh native capture directory.' }
@@ -288,24 +303,27 @@ try {
     }
     if ($CaptureDirectory) {
         [pscustomobject]@{
-            SourceSha=(& git -C $repositoryRoot rev-parse HEAD)
-            DirtyChanges=@(& git -C $repositoryRoot status --porcelain)
+            SourceSha=$(if ($SkipBuild) { $null } else { $runnerSource })
+            RunnerSourceSha=$runnerSource
+            DirtyChanges=$runnerDirty
             Configuration=$Configuration;SkipBuild=[bool]$SkipBuild
-            ExecutableSha256=(Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
-            HostCopy=$env:FESTERM_EXPERIMENTAL_HOST_COPY
-            Retention=$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
+            ExecutableSha256=$executableHash
+            SourceAttribution=$(if ($SkipBuild) { 'unverified-prebuilt-executable' } else { 'runner-build-with-recorded-dirty-state' })
+            CompositionPolicy=$(if ($SkipBuild) { 'unverified-executable' } else { 'automatic-warp' })
             Lifecycle=$lifecycle;Status='pass'
             Boundary='Independent native OS input and external desktop captures, not a CPU sample'
         } | ConvertTo-Json -Depth 6 | Set-Content "$CaptureDirectory\manifest.json"
     }
 } catch {
     [pscustomobject]@{
-        SourceSha=(& git -C $repositoryRoot rev-parse HEAD)
+        SourceSha=$(if ($SkipBuild) { $null } else { $runnerSource })
+        RunnerSourceSha=$runnerSource
+        DirtyChanges=$runnerDirty
         Configuration=$Configuration;SkipBuild=[bool]$SkipBuild
-        ExecutableSha256=(Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
+        ExecutableSha256=$executableHash
         ProcessId=$process.Id;Status='fail';Error=$_.ToString()
-        HostCopy=$env:FESTERM_EXPERIMENTAL_HOST_COPY
-        Retention=$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
+        SourceAttribution=$(if ($SkipBuild) { 'unverified-prebuilt-executable' } else { 'runner-build-with-recorded-dirty-state' })
+        CompositionPolicy=$(if ($SkipBuild) { 'unverified-executable' } else { 'automatic-warp' })
     } | ConvertTo-Json -Depth 5 | Set-Content "$nativeResultPath.failure.json"
     throw
 } finally {

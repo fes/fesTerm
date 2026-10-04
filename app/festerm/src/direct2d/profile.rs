@@ -418,6 +418,58 @@ fn select_cases(
 }
 
 #[test]
+fn profile_copy_modes_are_test_only_and_preserve_diagnostic_exclusivity() {
+    use std::ffi::OsStr;
+    for (direct, host, retained, expected) in [
+        (false, None, None, (true, true)),
+        (false, Some("0"), None, (false, false)),
+        (false, Some("1"), Some("0"), (true, false)),
+        (true, None, None, (false, false)),
+    ] {
+        assert_eq!(
+            profile_copy_modes(direct, host.map(OsStr::new), retained.map(OsStr::new)),
+            Ok(expected)
+        );
+    }
+    for (direct, host, retained) in [
+        (false, Some("0"), Some("1")),
+        (true, Some("1"), None),
+        (false, Some("invalid"), None),
+        (false, None, Some("invalid")),
+    ] {
+        assert!(
+            profile_copy_modes(direct, host.map(OsStr::new), retained.map(OsStr::new)).is_err()
+        );
+    }
+}
+
+fn profile_copy_modes(
+    direct_copy: bool,
+    host: Option<&std::ffi::OsStr>,
+    retained: Option<&std::ffi::OsStr>,
+) -> Result<(bool, bool), &'static str> {
+    let host = match host {
+        None => !direct_copy,
+        Some(value) if value == "0" => false,
+        Some(value) if value == "1" => true,
+        _ => return Err("FESTERM_TUI_PROFILE_HOST_COPY expects 0, 1 or unset"),
+    };
+    let retained = match retained {
+        None => host,
+        Some(value) if value == "0" => false,
+        Some(value) if value == "1" => true,
+        _ => return Err("FESTERM_TUI_PROFILE_RETAINED_COMPOSITION expects 0, 1 or unset"),
+    };
+    if retained && !host {
+        return Err("retained composition requires the host-copy probe");
+    }
+    if direct_copy && (host || retained) {
+        return Err("legacy direct-copy and host-copy probes are exclusive");
+    }
+    Ok((host, retained))
+}
+
+#[test]
 fn profile_case_filter_preserves_order_and_rejects_incomplete_inputs() {
     let all = vec![
         ("localized-all".to_owned(), Vec::new()),
@@ -470,18 +522,12 @@ fn profile_terminal_residual_cpu() {
         Some(value) if value == "1" => true,
         _ => panic!("FESTERM_TUI_PROFILE_COPY expects 1 or unset"),
     };
-    let host_copy_value = std::env::var_os("FESTERM_EXPERIMENTAL_HOST_COPY");
-    // The legacy direct-copy probe is a separate diagnostic, not the app default.
-    let host_copy = if direct_copy && host_copy_value.is_none() {
-        false
-    } else {
-        super::host_copy_requested(host_copy_value.as_deref()).expect("valid host-copy preference")
-    };
-    let retained_composition = super::retained_composition_requested(
-        std::env::var_os("FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION").as_deref(),
-        host_copy,
+    let (host_copy, retained_composition) = profile_copy_modes(
+        direct_copy,
+        std::env::var_os("FESTERM_TUI_PROFILE_HOST_COPY").as_deref(),
+        std::env::var_os("FESTERM_TUI_PROFILE_RETAINED_COMPOSITION").as_deref(),
     )
-    .expect("valid retained-composition preference");
+    .expect("valid test-only copy modes");
     assert!(
         !retained_composition || host_copy,
         "retained composition requires the host-copy probe"

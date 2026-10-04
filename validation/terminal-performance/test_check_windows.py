@@ -179,7 +179,40 @@ class NativePaletteProbeTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required for pure native-guard predicate")
 class NativeWarmupPredicateTests(unittest.TestCase):
-    def test_native_run_declarations_keep_single_and_balanced_modes_as_arrays(self):
+    def test_historical_executable_is_rejected_without_desktop_access(self):
+        script = r"""
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $env:FESTERM_COMPARISON_DRIVER, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Comparison driver does not parse.' }
+$functions = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Assert-NativeCandidateExecutable'
+}, $true))
+if ($functions.Count -ne 1) { throw 'Expected one candidate executable guard.' }
+. ([scriptblock]::Create($functions[0].Extent.Text))
+$expected = Join-Path ([IO.Path]::GetTempPath()) 'current-festerm.exe'
+Assert-NativeCandidateExecutable $expected $expected
+try {
+    Assert-NativeCandidateExecutable ($expected + '.historical') $expected
+    throw 'Historical executable was accepted.'
+} catch {
+    if ($_.Exception.Message -notmatch 'freshly built checkout executable') { throw }
+}
+Write-Output 'Historical executable rejected without desktop access.'
+"""
+        environment = os.environ.copy()
+        environment["FESTERM_COMPARISON_DRIVER"] = str(Path(__file__).with_name("compare-windows.ps1"))
+        result = subprocess.run(
+            [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
+            env=environment, capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_native_run_declarations_keep_automatic_mode_as_an_array(self):
         script = r"""
 $ErrorActionPreference = 'Stop'
 $tokens = $null
@@ -192,13 +225,13 @@ $modes = @($statements | Where-Object {
     $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and
     $_.Left.Extent.Text -eq '$modes'
 })
-$source = @($statements | Where-Object {
+$end = @($statements | Where-Object {
     $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-    $_.Left.Extent.Text -eq '$source'
+    $_.Left.Extent.Text -eq '$executableHash'
 })
-if ($modes.Count -ne 1 -or $source.Count -ne 1) { throw 'Expected one run declaration.' }
+if ($modes.Count -ne 1 -or $end.Count -ne 1) { throw 'Expected one run declaration.' }
 $declaration = $ast.Extent.Text.Substring($modes[0].Extent.StartOffset,
-    $source[0].Extent.StartOffset - $modes[0].Extent.StartOffset)
+    $end[0].Extent.StartOffset - $modes[0].Extent.StartOffset)
 $probe = [scriptblock]::Create(@'
 param(
     [switch] $QualifyCopyModes,
@@ -213,8 +246,6 @@ Set-StrictMode -Version Latest
 $results = @(
     & $probe -FesTermOnly -Workloads localized
     & $probe -FesTermOnly
-    & $probe -FesTermOnly -QualifyCopyModes
-    & $probe -FesTermOnly -QualifyCopyModes -Workloads localized
     & $probe -Workloads quiet,localized -IncludeFullRepaintControl
 )
 ConvertTo-Json -InputObject $results -Depth 6
@@ -227,13 +258,11 @@ ConvertTo-Json -InputObject $results -Depth 6
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         observed = json.loads(result.stdout)
-        self.assertEqual(len(observed), 5)
+        self.assertEqual(len(observed), 3)
         workloads = ("quiet", "localized", "streaming", "full-redraw")
         scenarios = (
             (["current"], ("localized",), ("festerm",), False),
             (["current"], workloads, ("festerm",), False),
-            (list(checker.MODES), (*workloads, "changing-chrome"), ("festerm",), False),
-            (list(checker.MODES), ("localized",), ("festerm",), False),
             (["current"], ("quiet", "localized"), ("festerm", "windows-terminal"), True),
         )
         for declaration, (modes, selected, hosts, control) in zip(observed, scenarios):
@@ -296,7 +325,7 @@ Write-Output 'External stop was rejected.'
         self.assertIn("invalid-external-cpu", source)
         self.assertIn("Close-FesTermOwnedApplication -Process $process", source)
 
-    def test_native_copy_requests_follow_staged_defaults_and_preserve_opt_outs(self):
+    def test_native_copy_requests_ignore_retired_settings(self):
         script = r"""
 $ErrorActionPreference = 'Stop'
 $tokens = $null
@@ -313,33 +342,18 @@ if ($functions.Count -ne 1) { throw 'Expected one pure copy request function.' }
 . ([scriptblock]::Create($functions[0].Extent.Text))
 $cases = $env:FESTERM_COPY_CASES | ConvertFrom-Json
 $results = @(foreach ($case in $cases) {
-    try {
-        Get-NativeCopyRequest -HostCopySetting $case.host -RetainedCompositionSetting $case.retained
-    } catch {
-        [pscustomobject]@{ Error = $_.Exception.Message }
+    foreach ($suffix in @('DIRECT2D','HOST_COPY','RETAINED_COMPOSITION')) {
+        [Environment]::SetEnvironmentVariable('FESTERM_EXPERIMENTAL_' + $suffix, $case.setting)
     }
+    Get-NativeCopyRequest
 })
 ConvertTo-Json -InputObject $results
 """
-        cases = (
-            (None, None, (True, True)),
-            (None, "0", (True, False)),
-            (None, "1", (True, True)),
-            ("0", None, (False, False)),
-            ("0", "0", (False, False)),
-            ("1", None, (True, True)),
-            ("1", "0", (True, False)),
-            ("1", "1", (True, True)),
-            ("0", "1", "requires host-copy"),
-            ("", None, "HOST_COPY must be"),
-            ("invalid", None, "HOST_COPY must be"),
-            (None, "", "RETAINED_COMPOSITION must be"),
-            (None, "invalid", "RETAINED_COMPOSITION must be"),
-        )
+        cases = (None, "0", "1", "", "invalid")
         environment = os.environ.copy()
         environment["FESTERM_COMPARISON_DRIVER"] = str(Path(__file__).with_name("compare-windows.ps1"))
         environment["FESTERM_COPY_CASES"] = json.dumps([
-            {"host": host, "retained": retained} for host, retained, _ in cases
+            {"setting": value} for value in cases
         ])
         result = subprocess.run(
             [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", script],
@@ -348,27 +362,34 @@ ConvertTo-Json -InputObject $results
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         observed = json.loads(result.stdout)
         self.assertEqual(len(observed), len(cases))
-        for (_, _, expected), request in zip(cases, observed):
-            with self.subTest(expected=expected):
-                if isinstance(expected, str):
-                    self.assertIn(expected, request["Error"])
-                else:
-                    self.assertEqual(
-                        (request["HostCopy"], request["RetainedComposition"]), expected
-                    )
+        for value, request in zip(cases, observed):
+            with self.subTest(value=value):
+                self.assertEqual((request["HostCopy"], request["RetainedComposition"]), (True, True))
 
-    def test_driver_records_raw_settings_and_uses_resolved_default_requests(self):
+    def test_driver_does_not_report_removed_settings_as_active_controls(self):
         source = Path(__file__).with_name("compare-windows.ps1").read_text(encoding="utf-8")
         self.assertIn(
-            "$copyRequest = Get-NativeCopyRequest -HostCopySetting $env:FESTERM_EXPERIMENTAL_HOST_COPY",
+            "$copyRequest = Get-NativeCopyRequest",
             source,
         )
         self.assertIn("$hostCopy = $copyRequest.HostCopy", source)
         self.assertIn("$retainedComposition = $copyRequest.RetainedComposition", source)
-        self.assertIn("InitialHostCopySetting=$oldHostCopy", source)
-        self.assertIn("InitialRetainedCompositionSetting=$oldRetention", source)
-        self.assertIn("HostCopySetting=$(if($isFesTerm)", source)
-        self.assertIn("RetainedCompositionSetting=$(if($isFesTerm)", source)
+        self.assertIn("CompositionPolicy='automatic-warp'", source)
+        for suffix in ("DIRECT2D", "HOST_COPY", "RETAINED_COMPOSITION"):
+            self.assertNotIn("$env:FESTERM_EXPERIMENTAL_" + suffix, source)
+
+    def test_removed_native_abcs_fail_before_desktop_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "must-not-be-created"
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File",
+                 str(Path(__file__).with_name("compare-windows.ps1")),
+                 "-ResultDirectory", str(output), "-FesTermOnly", "-QualifyCopyModes"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Native A/B/C switches have been removed", result.stdout + result.stderr)
+            self.assertFalse(output.exists())
 
     def test_unchanged_mouse_tick_foreground_and_geometry_are_independent(self):
         script = r"""

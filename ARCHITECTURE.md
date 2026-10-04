@@ -57,30 +57,31 @@ festerm-document -----> (no workspace dependencies)
 The Windows Direct2D experiment adds an app-owned
 `festerm-windows-direct2d` graphics boundary consuming egui primitives, not
 terminal state. On supported Windows x64 DX12 CPU-adapter targets with
-`Bgra8Unorm` or `Rgba8Unorm`, it is now the default root-terminal path when
-`FESTERM_EXPERIMENTAL_DIRECT2D` is unset or `1`; `0`, invalid values,
-hardware adapters, unsupported formats, and other platforms retain ordinary
+`Bgra8Unorm` or `Rgba8Unorm`, it is the automatic root-terminal path without
+a setting. Hardware adapters, unsupported formats, and other platforms retain ordinary
 egui-wgpu. The UI retains layout, input, fonts and paint order; the native
-crate owns SDK interop and immutable shared surfaces. See proposed
+crate owns SDK interop and immutable shared surfaces. See accepted
 [ADR 0039](docs/adr/0039-opt-in-direct2d-terminal-composition.md).
 The native renderer retains one frame's pixels and bounded presentation-region
 snapshots. Small changes redraw damaged regions and copy them into a new
 immutable frame; unchanged frames share their existing texture. This does not
 move terminal ownership or introduce a partial-present/window backend.
 
-The complete unmerged #281 vendors pinned egui-wgpu 0.36.1 and stages eligible
-default-on host-copy and retained-prefix selection at the owner's request.
-Both unset flags request the supported Windows x64 DX12 CPU/BGRA gamma path;
-host-copy `0` disables both by default, retention `0` keeps host-copy alone,
-and explicit `1` cannot force unsupported routing. Shipping main remains
-unchanged until native/architecture/rollout gates in #282 pass.
+Pinned egui-wgpu 0.36.1 supports automatic host-copy and retained-prefix
+composition on the Windows x64 DX12 CPU/BGRA gamma path. The owner approved
+rollout without production switches; the former Direct2D, host-copy and
+retention environment overrides are removed. Hardware, ARM64, other platforms
+and incompatible targets never gain this route. Resource limits, exact pixels,
+callback ownership and same-frame fallback remain required. Shared-host CPU
+noise limits benchmark precision, not the owner's bounded rollout decision;
+broader resource/native/latency qualification remains tracked in #282/CP-18.
 The eligible app may advertise an immutable terminal image as an exact substitute
 for its final callback. The host validates the actual opaque root target,
 ends the preceding UI pass, and copies that image before its normal submission
 and presentation. Unsupported surfaces, overlays, clipping or geometry
 mismatches retain ordinary callback painting in the same frame. Layout, input,
 terminal ownership and hardware-GPU selection are unchanged; this is not
-partial presentation or a replacement window backend. See proposed
+partial presentation or a replacement window backend. See
 [ADR 0040](docs/adr/0040-opt-in-final-target-terminal-copy.md) and
 [ADR 0041](docs/adr/0041-opt-in-retained-window-prefix.md), with exact bounded
 immutable signatures for the preceding UI and ordinary same-frame fallback, and

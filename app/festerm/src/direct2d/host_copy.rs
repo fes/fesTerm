@@ -58,6 +58,16 @@ fn render_state() -> egui_wgpu::RenderState {
 }
 
 #[test]
+fn automatic_warp_installation_enables_copy_and_retention_without_settings() {
+    let state = render_state();
+    let context = egui::Context::default();
+    super::install_from_environment(&context, Some(&state));
+    let renderer = state.renderer.read();
+    assert!(renderer.final_callback_copy_enabled);
+    assert!(renderer.retained_composition_enabled);
+}
+
+#[test]
 fn host_copy_preserves_pixels_dpi_resize_overlays_and_fallback() {
     let state = render_state();
     let mut uploader = WgpuTestRenderer::from_render_state(state.clone());

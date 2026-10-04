@@ -288,17 +288,9 @@ eight-bit gamma framebuffers. No saved setting, output throttling, or
 resolution reduction is involved. Running Sessions
 discovery continues in the background without redrawing unchanged inventory.
 
-`FESTERM_EXPERIMENTAL_DIRECT2D` is a compatibility environment override, not a
-saved TOML setting. When it is unset, fesTerm now defaults to Direct2D only on
+fesTerm automatically uses Direct2D only on
 Windows x64 with a DX12 CPU adapter and an eight-bit gamma terminal target
-(`Bgra8Unorm` or `Rgba8Unorm`). `FESTERM_EXPERIMENTAL_DIRECT2D=1` requests that
-same supported path and is retained for compatibility; it cannot force
-hardware adapters, unsupported platforms, or unsupported formats. `0`
-explicitly disables Direct2D and keeps ordinary egui-wgpu. Invalid or
-non-Unicode override values warn and retain ordinary egui-wgpu. In automatic
-unset mode, unsupported adapters, platforms, and formats stay on ordinary
-egui-wgpu without a selection warning; explicit `1` still reports why the
-request was ineligible. Hardware GPUs, other backends/formats, secondary
+(`Bgra8Unorm` or `Rgba8Unorm`). Hardware GPUs, other backends/formats, secondary
 windows, translucent/transformed painters, unsupported content, and same-frame
 native rejections retain ordinary painting. Initialization failure or a logged
 native error disables the optional painter for the rest of that process while
@@ -308,16 +300,16 @@ terminal semantics or output/frame scheduling. See
 [the investigation](../validation/direct2d/README.md); native qualification
 remains open under CP-18 and issue #244.
 
-The complete unmerged #281 stages `FESTERM_EXPERIMENTAL_HOST_COPY` and
-`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION` as eligible default-on policies,
-not saved TOML settings. Unset requests both only on Windows x64 DX12 CPU/
-BGRA gamma with compatible opaque-root targets. Host-copy `0` disables both
-by default; retention `0` selects host-copy alone. Explicit `1` cannot bypass
-Direct2D eligibility, target/lifecycle safeguards or the host-copy prerequisite;
-invalid values warn and disable the affected path. Ineligible frames preserve
-ordinary composition. The owner authorized staging, not qualification or
-merge: shipping main remains unchanged until #282's WARP and architectural/
-rollout gates pass. See Proposed ADRs 0040/0041 for resource and ownership limits.
+Host-copy and retained-prefix composition are also automatic on Windows x64
+DX12 CPU/BGRA gamma with compatible opaque-root targets. There is no UI, TOML or
+environment on/off setting for this pipeline. The retired
+`FESTERM_EXPERIMENTAL_DIRECT2D`, `FESTERM_EXPERIMENTAL_HOST_COPY` and
+`FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION` variables are ignored, even if set
+to `0`. Eligibility, target/lifecycle checks and ordinary same-frame fallback
+remain correctness safeguards, not toggles. The owner approved this bounded
+rollout based on repeated substantial CPU savings despite shared-host noise;
+precise benchmark, resources and native/latency follow-ups remain documented
+in #282/CP-18. See ADRs 0040/0041 for ownership and cache limits.
 
 By default, choosing **Local Shell** starts the
 platform shell immediately in the user's home directory.

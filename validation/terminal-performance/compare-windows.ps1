@@ -17,26 +17,17 @@ param(
 )
 
 function Get-NativeCopyRequest {
-    param(
-        [AllowNull()][object] $HostCopySetting,
-        [AllowNull()][object] $RetainedCompositionSetting
-    )
-    if ($null -ne $HostCopySetting -and $HostCopySetting -notin @('0','1')) {
-        throw 'FESTERM_EXPERIMENTAL_HOST_COPY must be unset, 0, or 1.'
-    }
-    if ($null -ne $RetainedCompositionSetting -and $RetainedCompositionSetting -notin @('0','1')) {
-        throw 'FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION must be unset, 0, or 1.'
-    }
-    $hostCopy = $null -eq $HostCopySetting -or $HostCopySetting -eq '1'
-    $retainedComposition = if ($null -eq $RetainedCompositionSetting) {
-        $hostCopy
-    } else { $RetainedCompositionSetting -eq '1' }
-    if ($retainedComposition -and -not $hostCopy) {
-        throw 'Retained composition requires host-copy to be requested.'
-    }
     [pscustomobject]@{
-        HostCopy = $hostCopy
-        RetainedComposition = $retainedComposition
+        HostCopy = $true
+        RetainedComposition = $true
+    }
+}
+
+function Assert-NativeCandidateExecutable {
+    param([string] $Requested, [string] $Expected)
+    if (-not [IO.Path]::GetFullPath($Requested).Equals(
+        [IO.Path]::GetFullPath($Expected), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The automatic-mode driver only measures its freshly built checkout executable. Other binaries require their pinned historical driver.'
     }
 }
 
@@ -49,6 +40,9 @@ function Assert-NativeGuardClear {
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($QualifyCopyModes) {
+    throw 'Native A/B/C switches have been removed. Use the automatic current mode; historical comparisons require their pinned driver and binary.'
+}
 if ($env:OS -ne 'Windows_NT' -or $env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'This native desktop probe requires Windows and FESTERM_RUN_OPTIONAL_VALIDATION=1.'
 }
@@ -58,21 +52,41 @@ if (-not $FesTermOnly -and -not $RegisterBundledFont) {
 if ($FesTermOnly -and $IncludeFullRepaintControl) {
     throw 'The Windows Terminal full-repaint control cannot run with FesTermOnly.'
 }
-if (($QualifyCopyModes -or $OverlayControl) -and -not $FesTermOnly) {
-    throw 'Copy qualification and overlay controls require FesTermOnly.'
+if ($OverlayControl -and -not $FesTermOnly) {
+    throw 'Overlay controls require FesTermOnly.'
 }
 if ($ProducerFrames * 0.1 -lt $SampleSeconds + 7 -or
     $ProducerFrames * 0.1 -gt $SampleSeconds + 35) {
     throw 'The producer must cover warmup/sampling and complete within the post-sample deadline.'
 }
-if ($null -ne $env:FESTERM_EXPERIMENTAL_DIRECT2D -and $env:FESTERM_EXPERIMENTAL_DIRECT2D -ne '1') {
-    throw 'The fesTerm comparison requires automatic Direct2D selection (unset or 1).'
-}
-$copyRequest = Get-NativeCopyRequest -HostCopySetting $env:FESTERM_EXPERIMENTAL_HOST_COPY `
-    -RetainedCompositionSetting $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
+$copyRequest = Get-NativeCopyRequest
 $hostCopy = $copyRequest.HostCopy
 $retainedComposition = $copyRequest.RetainedComposition
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+if (-not [IO.Path]::IsPathRooted($FesTerm)) { $FesTerm = Join-Path $root $FesTerm }
+Assert-NativeCandidateExecutable $FesTerm (Join-Path $root 'target\release\festerm.exe')
+if ($env:CARGO_TARGET_DIR) {
+    $cargoTarget = $env:CARGO_TARGET_DIR
+    if (-not [IO.Path]::IsPathRooted($cargoTarget)) { $cargoTarget = Join-Path $root $cargoTarget }
+    Assert-NativeCandidateExecutable $cargoTarget (Join-Path $root 'target')
+}
+$source = & git -C $root rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the source to build.' }
+$dirty = @(& git -C $root status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot record source cleanliness.' }
+if ($dirty.Count -gt 0) { throw 'Automatic native measurements require a committed clean checkout.' }
+$oldTargetDirectory = $env:CARGO_TARGET_DIR
+try {
+    $env:CARGO_TARGET_DIR = Join-Path $root 'target'
+    & "$root\scripts\stage-conpty.ps1" -Configuration Release
+    if ($LASTEXITCODE -ne 0) { throw 'Current-source release build/staging failed.' }
+} finally {
+    $env:CARGO_TARGET_DIR = $oldTargetDirectory
+}
+$builtSource = & git -C $root rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $builtSource -ne $source) { throw 'Source changed during the release build.' }
+$builtDirty = @(& git -C $root status --porcelain)
+if ($LASTEXITCODE -ne 0 -or $builtDirty.Count -gt 0) { throw 'Checkout changed during the release build.' }
 if ($GuardStopFile) {
     $GuardStopFile = [IO.Path]::GetFullPath($GuardStopFile)
     Assert-NativeGuardClear $GuardStopFile
@@ -83,7 +97,6 @@ if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 
     -not [Environment]::Is64BitProcess) {
     throw 'This performance comparison requires native Windows x64.'
 }
-if (-not [IO.Path]::IsPathRooted($FesTerm)) { $FesTerm = Join-Path $root $FesTerm }
 $FesTerm = (Resolve-Path -LiteralPath $FesTerm).Path
 if (-not $FesTermOnly) {
     if (-not $WindowsTerminal) { throw 'Supply a portable Windows Terminal path or use -FesTermOnly.' }
@@ -213,16 +226,9 @@ function Get-NativeWarmupGuard {
 
 $oldConfig = $env:FESTERM_CONFIG_PATH
 $oldLog = $env:RUST_LOG
-$oldHostCopy = $env:FESTERM_EXPERIMENTAL_HOST_COPY
-$oldRetention = $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION
 $fonts = [Collections.Generic.List[string]]::new()
 $results = [Collections.Generic.List[object]]::new()
-$modes = @(if ($QualifyCopyModes) {
-    @('A','B','C','C','B','A','C','B','A','A','B','C')
-} else { 'current' })
-if ($QualifyCopyModes -and -not $PSBoundParameters.ContainsKey('Workloads')) {
-    $Workloads += 'changing-chrome'
-}
+$modes = @('current')
 $runs = @(
     for ($sequence = 0; $sequence -lt $modes.Count; $sequence++) {
         foreach ($workload in $Workloads) {
@@ -245,11 +251,6 @@ if ($IncludeFullRepaintControl) {
         Mode='current';Sequence=1
     }
 }
-$source = & git -C $root rev-parse HEAD
-if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the measured source.' }
-$dirty = @(& git -C $root status --porcelain)
-if ($LASTEXITCODE -ne 0) { throw 'Cannot record source cleanliness.' }
-if ($QualifyCopyModes -and $dirty.Count -gt 0) { throw 'Qualification requires a committed clean candidate.' }
 $executableHash = (Get-FileHash -LiteralPath $FesTerm -Algorithm SHA256).Hash
 $producerHash = (Get-FileHash -LiteralPath $child -Algorithm SHA256).Hash
 [pscustomobject]@{
@@ -257,7 +258,9 @@ $producerHash = (Get-FileHash -LiteralPath $child -Algorithm SHA256).Hash
     FesTermSha256=$executableHash;ProducerSha256=$producerHash
     DriverSha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
     DeclaredUtc=[DateTime]::UtcNow.ToString('o');Modes=$modes;Runs=$runs
-    InitialHostCopySetting=$oldHostCopy;InitialRetainedCompositionSetting=$oldRetention
+    InitialHostCopySetting=$null;InitialRetainedCompositionSetting=$null
+    CompositionPolicy='automatic-warp'
+    SourceAttribution='driver-built-clean-checkout'
     ExternalGuardStopFile=$GuardStopFile
     OverlayControl=[bool]$OverlayControl;SampleSeconds=$SampleSeconds;ProducerFrames=$ProducerFrames
     LogicalProcessors=[Environment]::ProcessorCount
@@ -279,15 +282,7 @@ try {
             (Get-FileHash -LiteralPath $child -Algorithm SHA256).Hash -ne $producerHash) {
             throw 'A measured executable changed; the series stops without retry.'
         }
-        if ($QualifyCopyModes) {
-            $hostCopy = $run.Mode -ne 'A'
-            $retainedComposition = $run.Mode -eq 'C'
-            $env:FESTERM_EXPERIMENTAL_HOST_COPY = $(if ($hostCopy) { '1' } else { '0' })
-            $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION = $(if ($retainedComposition) { '1' } else { '0' })
-        }
-        $name = if ($QualifyCopyModes) {
-            '{0:00}-{1}-{2}-{3}' -f $run.Sequence,$run.Mode,$run.Host,$run.Workload
-        } else { "$($run.Host)-$($run.Workload)" }
+        $name = "$($run.Host)-$($run.Workload)"
         $directory = Join-Path $ResultDirectory $name
         New-Item -ItemType Directory -Path $directory | Out-Null
         $start = "$directory\start"
@@ -549,10 +544,10 @@ terminal_ligatures = false
                 GuiFramesPerSecond=$(if($isFesTerm){($afterFrames-$beforeFrames)/$elapsed}else{$null})
                 Direct2DFramesPerSecond=$(if($isFesTerm){($nativeAfter-$nativeBefore)/$elapsed}else{$null})
                 HostCopyRequested=($isFesTerm -and $hostCopy)
-                HostCopySetting=$(if($isFesTerm){$env:FESTERM_EXPERIMENTAL_HOST_COPY}else{$null})
+                HostCopySetting=$null
                 HostCopyFramesPerSecond=$(if($isFesTerm -and $hostCopy){($copyAfter-$copyBefore)/$elapsed}else{$null})
                 RetainedCompositionRequested=($isFesTerm -and $retainedComposition)
-                RetainedCompositionSetting=$(if($isFesTerm){$env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION}else{$null})
+                RetainedCompositionSetting=$null
                 RetainedUiFramesPerSecond=$(if($isFesTerm -and $retainedComposition){($retainedAfter-$retainedBefore)/$elapsed}else{$null})
                 RetainedUiRebuildsPerSecond=$(if($isFesTerm -and $retainedComposition){($rebuiltAfter-$rebuiltBefore)/$elapsed}else{$null})
                 Producer=$producer;Intervals=$intervals
@@ -598,8 +593,6 @@ terminal_ligatures = false
 } finally {
     $env:FESTERM_CONFIG_PATH=$oldConfig
     $env:RUST_LOG=$oldLog
-    $env:FESTERM_EXPERIMENTAL_HOST_COPY=$oldHostCopy
-    $env:FESTERM_EXPERIMENTAL_RETAINED_COMPOSITION=$oldRetention
     $cleanupErrors = @()
     foreach ($font in $fonts) {
         try { [TuiComparisonNative]::RemoveFont($font) }

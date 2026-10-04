@@ -1,9 +1,9 @@
-# ADR 0040: Opt-in Final-Target Terminal Copy
+# ADR 0040: Automatic Final-Target Terminal Copy
 
-- **Status:** Proposed
+- **Status:** Accepted (bounded WARP rollout; broader native qualification remains open)
 - **Date:** 2026-09-28
 - **Supersedes:** None; extends the experimental integration in ADR 0039
-- **Scope:** Owner-authorized default-on staging in unmerged #281; #282 gates merge/rollout
+- **Scope:** Owner-authorized automatic eligible WARP rollout, without production switches
 
 ## Context
 
@@ -23,18 +23,16 @@ The prototype must preserve those boundaries and the complete existing UI.
 Vendor pinned egui-wgpu 0.36.1 with its licenses and a small documented host
 extension, using the same workspace patch pattern as egui-winit. The owner
 approved testing this in the real application rather than a standalone host.
-Architectural approval before merge remains distinct from prototype permission.
+Independent source review and exact-head CI remain required before merge.
 
-The owner requested staging the default-on policy in #281 without merging it
-until WARP qualification passes. This is not completed native qualification
-or architectural/rollout approval; shipping main remains unchanged.
-
-Unset `FESTERM_EXPERIMENTAL_HOST_COPY` now requests the path in this PR;
-explicit `1` remains compatible and `0` retains existing shader composition.
-Invalid values warn and do not enable it.
-Selection additionally requires the existing Windows x64 DX12 CPU-adapter
+On 2026-10-03 the owner approved merging the supported WARP pipeline and
+removing its production on/off settings. Repeated source-bound shared-host
+measurements show substantial practical CPU savings; external CPU flags limit
+precise benchmark claims rather than automatically vetoing rollout.
+Selection requires the Windows x64 DX12 CPU-adapter
 Direct2D policy and a BGRA gamma target. Hardware GPUs, Windows ARM64, other
-platforms, and disabled/failed Direct2D retain their existing rendering.
+platforms and failed Direct2D retain their existing rendering.
+The old host-copy, retention and Direct2D environment switches are ignored.
 
 A callback may describe an immutable image exactly equivalent to its entire
 unblended paint operation. The host may replace only the final paint primitive,
@@ -79,22 +77,22 @@ throttling, queued-frame policy or claim of Windows Terminal parity.
 CPU/frame cadence and exact pixels must be measured together. Lower offscreen
 CPU is not native presentation-latency or device-recovery qualification.
 
-The separate default-selection decision and its concrete evidence gates are
-tracked in [#282](https://github.com/fes/fesTerm/issues/282), including the
-dependent retained-prefix experiment in ADR 0041. The staged default-on change
-must not merge until those gates and the architectural/rollout decision pass.
+The owner-approved rollout decision and remaining follow-up qualification are
+tracked in [#282](https://github.com/fes/fesTerm/issues/282), including ADR 0041.
+Historical noise, failures and unmeasured native/resource/latency cases remain
+visible; approval does not relabel them as passed or establish #297's cause.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** Optional host access to the final target;
   immutable, exact, final-only copy descriptors; same-frame shader fallback;
-  preserved UI, terminal ownership and paint ordering; staged eligible default
-  with explicit opt-out and unchanged unsupported rendering.
+  preserved UI, terminal ownership and paint ordering; automatic eligible
+  selection without switches and unchanged unsupported rendering.
 - **GUI/action edges affected:** `TERM-01`; existing terminal input/selection
   edges and overlay behavior remain unchanged.
 - **Automated tests required:**
-  `host_copy_defaults_on_and_rejects_invalid_values`,
-  `composition_defaults_and_opt_outs_never_force_unsupported_routing`,
+  `automatic_warp_composition_preserves_platform_adapter_and_format_policy`,
+  `automatic_warp_installation_enables_copy_and_retention_without_settings`,
   `host_copy_preserves_pixels_dpi_resize_overlays_and_fallback`,
   `host_copy_capture_tracks_usage_size_and_format`,
   existing Direct2D adapter/default-policy and retained-image regressions,

@@ -3,6 +3,31 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Shipping the supported WARP pipeline without switches
+
+The owner accepted the repeated material CPU reductions despite shared-host
+noise and explicitly requested merge rather than an indefinite compound
+qualification gate. The supported WARP pipeline now selects Direct2D, host-copy
+and retained composition automatically. All three production environment
+switches are removed, including the master renderer disable switch; old values
+cannot disable or force the path.
+
+Hardware, ARM64, other platforms/formats and incompatible targets keep ordinary
+rendering. Exact signatures, immutable queued images, cache limits, preparation,
+input/output cadence and error/lifecycle fallbacks remain correctness safeguards,
+not toggles. A Windows regression invokes the real installer and requires both
+copy and retention; the exhaustive policy matrix protects unsupported routes.
+Native probes report automatic mode and reject obsolete A/B/C declarations
+before desktop access. They build their clean checkout rather than attributing
+arbitrary historical bytes to current source; OS-input skip-build receipts mark
+binary source/policy unverified. Separate offscreen controls remain test-only.
+
+ADRs 0039/0040/0041 accept the bounded ownership/rollout decision. Independent
+source reviews and green exact-head CI remain merge gates. Noisy percentages
+are approximate; absent default-smoke, broad visual, sustained-resource,
+physical-latency and #297 cause evidence are not relabeled as passed. The
+following historical stages and source-pinned receipts remain unchanged.
+
 ## Recording shared-host WARP evidence without calling it qualification
 
 The repaired integrated #281 application completed 60 balanced native cases
