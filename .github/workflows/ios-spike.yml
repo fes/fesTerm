@@ -10,6 +10,7 @@ on:
       - 'crates/festerm-syntax/**'
       - 'crates/festerm-ui-egui/**'
       - 'vendor/egui-winit/**'
+      - 'vendor/egui-wgpu/**'
       - 'vendor/epaint/**'
       - 'assets/fonts/**'
       - 'Cargo.toml'

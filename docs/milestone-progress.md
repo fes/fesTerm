@@ -29,6 +29,199 @@ a bounded source-backed heap-churn improvement for #267/#297/#298, not a claim
 of process-CPU, native-window or latency improvement, and not attribution of
 #297's long-lived plateau. CP-18 remains open; the saved comparison protocol
 includes capture and native preparation rather than timing only replayed draws.
+## Shipping the supported WARP pipeline without switches
+
+The owner accepted the repeated material CPU reductions despite shared-host
+noise and explicitly requested merge rather than an indefinite compound
+qualification gate. The supported WARP pipeline now selects Direct2D, host-copy
+and retained composition automatically. All three production environment
+switches are removed, including the master renderer disable switch; old values
+cannot disable or force the path.
+
+Hardware, ARM64, other platforms/formats and incompatible targets keep ordinary
+rendering. Exact signatures, immutable queued images, cache limits, preparation,
+input/output cadence and error/lifecycle fallbacks remain correctness safeguards,
+not toggles. A Windows regression invokes the real installer and requires both
+copy and retention; the exhaustive policy matrix protects unsupported routes.
+Native probes report automatic mode and reject obsolete A/B/C declarations
+before desktop access. They build their clean checkout rather than attributing
+arbitrary historical bytes to current source; OS-input skip-build receipts mark
+binary source/policy unverified. Separate offscreen controls remain test-only.
+
+ADRs 0039/0040/0041 accept the bounded ownership/rollout decision. Independent
+source reviews and green exact-head CI remain merge gates. Noisy percentages
+are approximate; absent default-smoke, broad visual, sustained-resource,
+physical-latency and #297 cause evidence are not relabeled as passed. The
+following historical stages and source-pinned receipts remain unchanged.
+
+## Recording shared-host WARP evidence without calling it qualification
+
+The repaired integrated #281 application completed 60 balanced native cases
+and 12 separate palette controls. Earlier quiet-host attempts had stopped
+before any app case; after the owner explained intermittent background work,
+the new controller recorded CPU noise instead of aborting for that alone.
+Input, desktop, geometry, producer delivery and normal cleanup remained hard
+guards. Every completed case encountered a flagged CPU interval during sampling,
+so these observations remain exploratory, not strict performance acceptance.
+
+Combined retention used less process CPU than explicit A in all four ordered
+blocks of every active workload. Changing chrome still offered no consistent
+advantage over host-copy alone; quiet differences were near counter granularity.
+Palette fallback correctly disabled copying/retention but remained expensive,
+with no optimization win. All 72 captured trees exited normally, and all 216
+old app/producer/ConPTY identities were independently absent.
+
+The final unset/default declaration then failed before launching an app:
+PowerShell unwrapped its one mode to a string and strict `.Count` access failed.
+Capturing the branch as an array fixes that seam. A regression first reproduced
+the failure, then exercised the actual declarations for single/multiple
+workloads, balanced orders, overlay and Windows Terminal controls without a
+desktop. The zero-case failure and completed series remain separate; explicit C
+is not substituted for unset/default evidence. The
+[performance record](../validation/terminal-performance/README.md#2026-10-03-shared-host-exploratory-evidence)
+retains all case scores and noise exposure. No #282 gate or #297 attribution
+claim is closed by this run.
+
+## Completing the composition candidate without claiming rollout
+
+The complete #281 now contains its stacked qualification automation/evidence
+and the latest independently reviewed shipping main, including shared modal
+accessibility and native refusal recovery. Historical v0.7.1 CPU/capture
+receipts remain pinned to their original application bytes; integration does
+not turn them into measurements of this source.
+
+The owner chose to stage default-on host-copy and prefix retention for eligible
+Windows x64 DX12 CPU/BGRA gamma, with explicit opt-outs and unchanged negative
+routing. A deterministic policy matrix covers those choices; native target,
+ordering and lifecycle fallback still apply. The PR stays unmerged and ADRs
+0040/0041 remain Proposed until #282's current-source WARP performance,
+resource, recovery, visual/routing, independent latency and approval gates pass.
+This is source completion and policy staging, not qualification or rollout.
+
+The native qualification driver still treated unset copy settings as the older
+default-off policy, even after staging changed production defaults. Its pure
+request resolver now follows the candidate, with a complete valid-setting and
+rejection matrix, and records raw settings separately from resolved requests.
+Explicit balanced A/B/C runs and their guards are unchanged. This repairs the
+unset/default evidence seam; it does not make the candidate merge-ready or
+relabel historical measurements.
+
+## Completing the guarded native comparison without hiding its control failure
+
+Keeping the remote desktop connected and quiet allowed the source-pinned
+Windows WARP prototype to complete all 60 balanced shipping/host-copy/combined
+cases. Independent saved validation agreed, full-resolution capture review
+covered every image through exact duplicate hashes, and every owned process
+tree exited normally. Active-workload CPU improved on this host, but combined
+retention was worse than host-copy alone for changing chrome and quiet results
+remained near counter granularity; both adverse cases stay in the evidence.
+
+The separate palette control then failed before sampling. An untimed observer
+showed the original shortcut had opened the palette: the harness's exact UIA
+query used a lowercase **palette**, while the production title was **Command
+Palette**. Correcting that query and coupling it to the real title with a
+portable regression fixes the measurement seam without changing application
+behavior, shortcut delivery or guards. The completed balanced series and failed
+control are physically sealed separately from any replacement control. The
+fresh corrected control completed A but stopped in B on a changed input tick;
+foreground and geometry stayed stable, both owned trees exited normally, and
+the incomplete series was rejected without a retry within that attempt.
+
+A separately authorized fresh control then completed all 12 palette cases
+with unchanged application bytes and strict guards. Host-copy and retained
+prefix counters stayed inactive under the overlay, both independent saved
+validations agreed, all owned trees exited normally, and actual capture review
+covered every image through exact duplicate hashes. Ordinary composition still
+used about 77% system-normalized process CPU in every mode; the control shows
+correct fallback, not an overlay performance win. Some captures lagged the
+producer's last frame, so displayed delivery and latency are not inferred.
+The completed comparison and control remain separately source-pinned, with
+earlier failures preserved and no rerun of the accepted 60 cases. Broader
+hardware, recovery, resources, latency and default-on decisions remain open;
+details remain in the
+[performance record](../validation/terminal-performance/README.md#2026-10-02-connected-single-host-balanced-evidence).
+
+## Keeping accessibility actions with foreground confirmations
+
+The first connected native CPU case passed its interval guards but could not
+quit normally. Its unique owned UIA invocation returned and focused **Quit
+fesTerm**, yet the confirmation stayed open. An untimed observer reproduced
+this without measurement retries; follow-up cleanup through a second close
+request was recorded separately, not treated as confirmation acceptance.
+
+The terminal's modal blackout was deleting every global accessibility request
+before the foreground dialog rendered. egui had already processed accessibility
+focus, explaining why the button focused without clicking. Two deterministic
+accessibility regressions reproduced both broken Quit and broken Cancel.
+The view now defers those requests while its background controls render, then
+restores them for foreground widgets. A view-level regression proves background
+history and terminal bytes remain blocked, including simultaneous background
+and foreground invocations. Safe-default focus and the existing quit policy
+remain unchanged. The clean committed `537bbcc` shipping-A release subsequently
+exited normally in under one second after one owned UIA invocation. Actual
+before-close and safe-default confirmation captures were reviewed; the app and
+both captured descendants were independently absent, with no second close or
+forced termination. This is a single connected 200% Windows functional proof,
+not native performance evidence or closure of the broader #282 gates.
+
+## Focusing the restored OS-input fixture without stealing another window
+
+A connected DevBox reproduced the native restore blocker even with both WARP
+experiments disabled. An untimed observer found a visible, enabled, responsive
+restored window with local keyboard focus, while the console retained global
+foreground ownership. Waiting did not change that state. An owned-client click
+probe correctly refused an obscured center, and the UIA window root did not
+support keyboard focus; neither failed attempt became passing evidence.
+
+The OS-input smoke now uses its already-planned mouse-input path at a verified
+visible terminal point, with bounded selection, physical DPI coordinates and
+process/root checks before input. It still requires real foreground, exact
+restore geometry, the PTY acknowledgment and normal whole-tree exit. The private
+shipping-mode proof passed all four resize generations without modifying the
+application. The permanent runner then passed the same functional lifecycle in
+shipping A (`0`,`0`) and requested combined C (`1`,`1`), with eight actual
+owned-client captures reviewed and normal child-tree exit in both cases.
+These untimed input runs do not establish native CPU savings or cache eligibility.
+The shared no-input activation helper, native CPU interval guards,
+experiment defaults and remaining #282 acceptance gates are unchanged.
+
+## Turning native performance attempts into auditable qualification
+
+The retained-prefix experiment's offscreen savings did not answer the
+default-on question: native attempts stopped at desktop guards, and its CPU
+fixture windows repeatedly needed forced cleanup. The qualification runner now
+declares shipping/host-copy/combined settings in balanced reversed order and
+retains every process, producer, guard and resource interval. A changing-title
+fixture and separate palette fallback control make adverse cases visible
+instead of measuring only the cache's favorable reuse path.
+
+The shutdown investigation found a harness-policy mismatch rather than
+permission to remove a safety prompt: per-tab close confirmation does not
+disable primary-window Quit confirmation. The driver explicitly confirms only
+its own unique Quit button and distinguishes normal whole-tree exit from forced
+cleanup. The independent input runner can use staged release binaries and
+external owned-client captures. None of these automation seams is native
+qualification by itself; #282 still owns the incomplete equipment, resource,
+latency and maintainer-approval boundaries.
+
+The first execution exposed a separately threaded Windows foreground-activation
+case. The shared helper now temporarily joins the caller, foreground and owned
+target GUI queues, verifies actual foreground ownership and always detaches.
+That correction obtained controlled initial/maximized production captures
+without input injection, but minimized-window restoration still failed focus.
+Correcting restore-to-maximized and subsequent restore-to-normal expectations
+does not establish that the native focus defect is resolved.
+
+A fresh authorized performance series then stopped before launching a workload:
+the interactive session had disconnected. Desktop availability is now checked
+throughout warmup, every sampling interval and completion, not only at startup.
+The clean `5f2d601` source completed separate offscreen reversed-order comparisons
+and complementary release software-GPU/ConPTY/replay checks; its localized
+offscreen reduction was 61.47%, not a native shipping-default or latency result.
+The [qualification evidence](https://github.com/fswiderski/fesTerm/releases/tag/qualification-x64-20260930-5f2d601)
+retains failed attempts and separate binary hashes. The CPU fixture's explicit
+Quit-confirmation path, restored native focus, resources/latency, broader
+hardware and maintainer decisions remain open, with both experiments default-off.
 
 ## Reusing native font snapshots without borrowing renderer-owned deltas
 
@@ -478,6 +671,61 @@ oracles and separate production-widget galleries protect presentation;
 the measurements, unchanged controls and native-evidence boundaries are in
 `validation/terminal-performance/README.md`. Neither this slice nor the earlier
 directory/editor changes establish Windows Terminal parity.
+
+## Retaining unchanged chrome without retaining old terminal pixels
+
+The next terminal experiment asks whether the host needs to rasterize unchanged
+window chrome on every terminal update. The owner authorized a separate,
+default-off prototype under Proposed ADR-0041, keeping host-copy enabled in both
+comparison modes. Egui still constructs the UI and prepares every callback;
+only an exactly matching paint prefix before the terminal copy may reuse pixels.
+The current terminal image is copied afterward, so moving it cannot expose an
+old terminal image inside the cache.
+
+One private image is bounded to 64 MiB and exact signature data to 1 MiB.
+Geometry, clips, clear color, scale, format, managed textures and explicitly
+immutable callbacks determine reuse. Unknown callbacks and external resources
+fall back normally; lifecycle changes discard retained state. Regression tests
+include older queued copies submitted after cache replacement/destruction,
+signature-overflow recovery, both preparation phases on cache hits and exact
+ordinary pixels across texture, DPI, layout, overlay and capture changes.
+
+After the owner merged the narrow-damage preparation fix, a fresh complete
+offscreen ABBA/BAAB series reduced localized mean CPU from 59.45 to 29.65
+CPU-ms/frame, 50.1% lower. A later release rebuild after the context-menu and
+Markdown merges measured 63.40 to 30.04 CPU-ms/frame, 52.6% lower, in another
+complete balanced series. Both preserved approximately 10 Hz cadence, reused
+93 of 100 localized prefixes and matched initial/final complete pixels.
+The no-composition control increased 12.8% in the first series and decreased
+12.6% in the second; it performs no prefix reuse, so no independent native-draw
+or UI-construction saving is qualified. All source baselines remain separate.
+
+An initial native foreground failure and a later input-invalidated, explicitly
+reauthorized attempt are preserved; the latter completed off-mode controls but
+no matched active on-mode sample, so it does not establish native CPU savings.
+Full ranges, hashes, controls and reproduction are in
+`validation/terminal-performance/README.md`. The experiment does not enable
+defaults, close CP-18, establish Windows Terminal parity or replace
+architectural review.
+
+## Making performance evidence repeatable and default decisions explicit
+
+The comparison probes and pixel regressions were already repository-owned,
+but balanced offscreen orchestration and cross-run validation still lived in
+the campaign session. They now have a reusable runner that waits for each
+release test process and rejects mixed binaries, changed images/geometry,
+missing frames/reuse, invalid timing and exceeded cache bounds. Synthetic
+tests cover both orders, environment/reference handling, failure preservation
+and adverse controls without turning variable CPU percentages into CI gates.
+
+The publication build also passed native focus/resize smokes with retention
+off/on and actual enabled reuse. Its fresh CPU attempt nevertheless stopped
+on input before an active on-mode sample, so native savings remain unqualified.
+Issue #282 makes the evidence needed to promote either copy experiment explicit,
+including the shipping-default comparison, latency, recovery, peak/in-flight
+resources, fallback and architectural decisions. The PR template now asks every
+default-off change for those gates or a linked issue; merging a prototype is
+not an implicit decision to enable it.
 
 ## Keeping large documents and directories out of each frame
 

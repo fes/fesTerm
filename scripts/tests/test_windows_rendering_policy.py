@@ -11,6 +11,27 @@ import unittest
 
 
 class Direct2DFallbackDiagnosticTests(unittest.TestCase):
+    def test_automatic_native_evidence_binds_source_before_desktop_access(self):
+        root = Path(__file__).resolve().parents[2]
+        driver = (root / "validation/terminal-performance/compare-windows.ps1").read_text()
+        desktop = driver.index("[FesTermApplicationWindow]::RequireInteractiveDesktop()")
+        build = driver.index('& "$root\\scripts\\stage-conpty.ps1" -Configuration Release')
+        self.assertLess(driver.index("Assert-NativeCandidateExecutable $FesTerm"), build)
+        self.assertLess(driver.index("if ($dirty.Count -gt 0)"), build)
+        self.assertLess(build, desktop)
+        self.assertLess(driver.index("$builtSource -ne $source"), desktop)
+        self.assertIn("SourceAttribution='driver-built-clean-checkout'", driver)
+        smoke = (root / "scripts/run-windows-os-input-smoke.ps1").read_text()
+        self.assertIn("SourceSha=$(if ($SkipBuild) { $null }", smoke)
+        self.assertIn("CompositionPolicy=$(if ($SkipBuild) { 'unverified-executable' }", smoke)
+        self.assertIn("'unverified-prebuilt-executable'", smoke)
+
+    def test_production_warp_installation_does_not_read_retired_switches(self):
+        source = (Path(__file__).resolve().parents[2] / "app/festerm/src/direct2d.rs").read_text()
+        for suffix in ("DIRECT2D", "HOST_COPY", "RETAINED_COMPOSITION"):
+            self.assertNotIn("FESTERM_EXPERIMENTAL_" + suffix, source)
+        self.assertIn("CompositionSelection::for_adapter(", source)
+
     def test_native_required_probes_reject_unsupported_frame_transitions(self):
         root = Path(__file__).resolve().parents[2]
         source = (root / "app" / "festerm" / "src" / "direct2d.rs").read_text(
@@ -38,7 +59,7 @@ class Direct2DFallbackDiagnosticTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "win32", "Windows rendering probe")
 class Direct2DProbePolicyTests(unittest.TestCase):
-    def test_default_and_explicit_selection_reach_executable_validation(self):
+    def test_retired_renderer_settings_do_not_change_probe_preconditions(self):
         shell = shutil.which("pwsh")
         self.assertIsNotNone(shell, "PowerShell 7 is required for native probe tests")
         script = (
@@ -73,17 +94,8 @@ class Direct2DProbePolicyTests(unittest.TestCase):
                     )
                     output = result.stdout + result.stderr
                     self.assertNotEqual(result.returncode, 0, output)
-                    if value in (None, "1"):
-                        self.assertIn(missing_executable.name, output)
-                        self.assertNotIn(
-                            "RequireDirect2D requires FESTERM_EXPERIMENTAL_DIRECT2D",
-                            output,
-                        )
-                    else:
-                        self.assertIn(
-                            "RequireDirect2D requires FESTERM_EXPERIMENTAL_DIRECT2D",
-                            output,
-                        )
+                    self.assertIn(missing_executable.name, output)
+                    self.assertNotIn("RequireDirect2D requires FESTERM_EXPERIMENTAL_DIRECT2D", output)
 
 
 if __name__ == "__main__":

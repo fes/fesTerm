@@ -469,16 +469,14 @@ performance and visual evidence.
 
 On supported Windows x64 DX12 CPU-adapter targets with `Bgra8Unorm` or
 `Rgba8Unorm`, Direct2D now replaces eligible root terminal content with an
-immutable shared surface by default unless
-`FESTERM_EXPERIMENTAL_DIRECT2D=0` disables it; an explicit `1` requests the
-same bounded path. Chrome and composition remain in egui-wgpu, reusing the
+immutable shared surface automatically. No renderer/composition on/off
+setting remains. Chrome and composition remain in egui-wgpu, reusing the
 existing glyph/emoji pixels and cell geometry. The ordinary full background
 still clears old content before the cropped native surface is composed.
 Hardware, secondary windows, translucent or transformed painters, invalid
-environment values, and rejected native frames retain ordinary painting.
+and rejected native frames retain ordinary painting.
 Automatic unsupported-adapter cases stay quiet and keep ordinary painting;
-explicit `1` still explains why the request was ineligible. Input, session
-ownership and frame scheduling do not change. See proposed
+Input, session ownership and frame scheduling do not change. See
 ADR-0039 and CP-18; issue #244 keeps native qualification open.
 
 ### Launcher lifecycle

@@ -32,10 +32,12 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path vendor/egui-wgpu/Cargo.toml -- --check
       - run: cargo fmt --manifest-path vendor/epaint/Cargo.toml -- --check
       - run: python -m unittest discover -s scripts/tests -p "test_*.py"
       - run: python -m pip install -r validation/direct2d/requirements.txt
       - run: python -m unittest discover -s validation/direct2d -p "test_*.py"
+      - run: python -m unittest discover -s validation/terminal-performance -p "test_*.py"
       - run: python scripts/manage_bundled_font.py
       - run: python scripts/check_unicode_emoji_data.py
       - run: python scripts/validate-icons.py --check
@@ -108,6 +110,8 @@ jobs:
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Check retained composition invariants in the vendored renderer
+        run: cargo test -p egui-wgpu --lib retained::tests
       - name: Check the excluded vendored font-atlas invariants
         run: cargo test --locked --manifest-path vendor/epaint/Cargo.toml --lib texture_atlas::tests
       - name: Check Windows window selection and rendering policies
@@ -121,6 +125,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Probe dependency installation failed.' }
           $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
           .\validation\direct2d\run.ps1 -ResultDirectory "$env:RUNNER_TEMP\direct2d-probe" -SelfTestOnly
+      - name: Check native comparison declarations without desktop access
+        if: matrix.os == 'windows-latest'
+        run: python -m unittest discover -s validation/terminal-performance -p "test_*.py" -v
       - if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:

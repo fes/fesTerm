@@ -11,10 +11,11 @@ SPEC = importlib.util.spec_from_file_location("check_packaging", SCRIPT)
 packaging = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(packaging)
+BASH = shutil.which("bash")
 
 
 class PackagingMetadataTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("bash"), "Linux package smoke requires bash")
+    @unittest.skipUnless(BASH, "Linux package smoke requires bash")
     def test_linux_appimage_smoke_has_valid_shell_and_heredoc_syntax(self):
         workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(
             encoding="utf-8"
@@ -22,12 +23,14 @@ class PackagingMetadataTests(unittest.TestCase):
         step = workflow.split("      - name: Build unsigned Linux AppImage\n", 1)[1]
         step = step.split("\n      - name:", 1)[0]
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        assert BASH is not None
         result = subprocess.run(
-            ["bash", "-n"],
+            [BASH, "-n"],
             input=script,
             text=True,
             capture_output=True,
             check=False,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("here-document", result.stderr)
