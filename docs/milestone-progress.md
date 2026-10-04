@@ -28,6 +28,11 @@ production mesh clone. The optional same-source control is test-only, and
 palette overlays must still decline automatic copy/retention. Source-pinned
 offscreen CPU observations do not qualify native presentation, sustained
 resources, physical latency or the multi-day #297 cause.
+After integrating the shipped allocation and live-binding fixes, reversed
+same-source controls still used roughly 77-80% less completed-render CPU and
+held the requested 10 Hz with exact pixels. All 1,200 frames and noisy cases
+remain in the [source-pinned performance record](../validation/terminal-performance/README.md#reversed-controls-after-the-shipping-allocationbinding-merge);
+this is an exploratory efficiency result, not a precise native percentage.
 
 ## Reading live keyboard preferences without rebuilding saved settings
 

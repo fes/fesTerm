@@ -755,6 +755,47 @@ session's `warp-palette-integrated-debug-abba-*` receipts and
 `warp-palette-current-main-built-debug-1` archive. This series predates the
 subsequent #308/#309 merge; it must not be relabeled as that newer source.
 
+#### Reversed controls after the shipping allocation/binding merge
+
+The independently merged #308/#309 baseline `9f04f5d` was integrated into
+`5af5e55613480e94cb8e0deaab1784d4ab422395` and fully requalified before a
+fresh BAAB series. This source uses both shipped optimizations in both frame
+controls, so their savings are not conflated with the palette shader change.
+The same twelve-case/1,200-frame, dimensions, requested cadence, driver,
+copy/retention refusal and exact-pixel guards all passed.
+
+| Run | Frame path | Case | CPU-ms/frame | Completed-ms/frame | Completed Hz |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Textureless | Frozen | 440.31 | 48.04 | 9.9996 |
+| 1 | Textureless | Localized | 488.12 | 82.42 | 9.9997 |
+| 1 | Textureless | Frozen repeat | 439.22 | 47.19 | 9.9995 |
+| 2 | Ordinary | Frozen | 2020.16 | 162.44 | 6.1560 |
+| 2 | Ordinary | Localized | 1955.78 | 189.03 | 5.2900 |
+| 2 | Ordinary | Frozen repeat | 1926.56 | 155.57 | 6.4278 |
+| 3 | Ordinary | Frozen | 2236.72 | 176.59 | 5.6626 |
+| 3 | Ordinary | Localized | 2252.66 | 208.38 | 4.7988 |
+| 3 | Ordinary | Frozen repeat | 2116.56 | 178.54 | 5.6009 |
+| 4 | Textureless | Frozen | 422.97 | 46.44 | 9.9996 |
+| 4 | Textureless | Localized | 481.88 | 79.70 | 9.9996 |
+| 4 | Textureless | Frozen repeat | 442.19 | 45.80 | 9.9999 |
+
+Equal-frame-count means again show a material practical improvement: roughly
+77-80% less CPU work per completed frame, and the requested 10 Hz versus
+4.8-6.4 Hz for ordinary painting. These approximate unoptimized offscreen
+results do not assert that native production windows save that percentage.
+All cases, including the slower third control, remain in the record; there
+is no clean-subset selection or aggregate across the two different sources.
+Aggregate host peaks were 72.1-95.3%, including the probe itself, not external
+CPU attribution. Sustained resources, native presentation/input/visual
+qualification and #297's multi-day cause remain open.
+
+Executable SHA256:
+`457BFCEE8DFFE19E27DA3DF49EB78A3164B8DA2CF81C1AB8CFA824A7DF728DB5`.
+All four current-source initial PNGs also match the earlier recorded PNG hash
+exactly. The archived compiler/source binding and test inventory are in
+`warp-palette-current-main-built-debug-2`; unfiltered receipts and the all-case
+summary are `warp-palette-integrated-current-debug-baab-*` in the session.
+
 `profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
 completed-draw wall time and primitive identities. Individual cases include
 clear/sleep controls, frozen whole-frame and single-primitive composition,
