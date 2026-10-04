@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.9.1: less work while the Windows WARP palette is open
+
+This performance patch packages the palette frame/shadow and opaque
+search/selection-rectangle optimizations merged after v0.9.0. Both reuse the
+existing textureless shader while preserving exact pixels, paint order and
+ordinary fallbacks. Hardware-accelerated rendering, layout, focus, commands and
+repaint policy are unchanged.
+
+Separate source-bound native comparisons observed roughly 44% less application
+CPU for the frame/shadow change and 42% for the rectangle follow-up. These
+shared-host results are not additive or universal guarantees. The release also
+includes owned six-session aging diagnostics, deterministic UTF-8 layout
+coverage and the experimental iOS build/runtime CI separation; it does not
+introduce a supported mobile product. Native resource/presentation qualification
+and the multi-day CPU-growth cause in #297 remain open. Release preparation
+changes version metadata only, with no dependency or runtime changes.
+
 ## Reusing the palette shader for opaque search and selection rectangles
 
 Release attribution after the shipped shadow fix still found most palette
