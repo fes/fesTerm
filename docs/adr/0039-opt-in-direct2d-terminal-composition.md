@@ -1,6 +1,6 @@
 # ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP
 
-- **Status:** Proposed
+- **Status:** Accepted (supported-route policy and ownership; native qualification remains open)
 - **Date:** 2026-09-26
 - **Supersedes:** None
 - **Owner-approved amendment:** 2026-09-26 bounded default selection on the
@@ -9,6 +9,8 @@
 - **Owner-approved amendment:** 2026-10-02 distinguish unsupported-frame
   refusal from native failure; preserve same-frame fallback and resume native
   painting when supported content returns. CP-18 qualification remains open.
+- **Owner-approved amendment:** 2026-10-03 automatic supported WARP pipeline;
+  remove all three production renderer/composition switches.
 
 ## Context
 
@@ -32,18 +34,12 @@ under the architecture-stability policy.
 
 ## Decision
 
-Add an **experimental** terminal painter that is selected by default only when
+Select the terminal painter automatically only when
 all of the following are true: the process is running on Windows x64, wgpu is
 using a DX12 CPU adapter, the terminal target is `Bgra8Unorm` or
-`Rgba8Unorm`, and `FESTERM_EXPERIMENTAL_DIRECT2D` is either unset or `1`.
-`FESTERM_EXPERIMENTAL_DIRECT2D=0` explicitly disables the painter and keeps the
-ordinary egui-wgpu renderer. `FESTERM_EXPERIMENTAL_DIRECT2D=1` is retained for
-compatibility and requests the same supported path, but cannot force hardware
-adapters, unsupported platforms, unsupported formats, or other ineligible
-conditions. Invalid or non-Unicode override values warn and retain ordinary
-egui-wgpu. Automatic unset mode quietly keeps ordinary egui-wgpu on unsupported
-adapters, platforms, or formats; explicit `1` still reports why selection was
-ineligible.
+`Rgba8Unorm`. The former `FESTERM_EXPERIMENTAL_DIRECT2D` switch is removed and
+ignored; no production setting can disable or force this route. Unsupported
+adapters, platforms and formats quietly retain ordinary egui-wgpu.
 Preserve egui-wgpu for chrome, composition, hardware adapters, other
 platforms, secondary viewports, translucent or transformed painters,
 unsupported content, and failure recovery.
@@ -194,8 +190,9 @@ because the supported WARP path now defaults on.
   `session_notifier_wakes_one_frame_without_a_settling_repaint`,
   `drained_terminal_output_does_not_request_a_redundant_frame`,
   `pending_terminal_resize_rearms_an_early_frame`,
-  `direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy`,
-  `direct2d_invalid_overrides_do_not_enable_the_default`,
+  `automatic_warp_composition_preserves_platform_adapter_and_format_policy`,
+  `automatic_rgba_native_painting_keeps_shader_composition`,
+  `automatic_warp_installation_enables_copy_and_retention_without_settings`,
   `integrated_direct2d_matches_terminal_pixels_and_translucent_fallback`,
   `unsupported_native_palette_keeps_the_current_frame_pixels`,
   `unsupported_native_palette_returns_to_native_painting`,

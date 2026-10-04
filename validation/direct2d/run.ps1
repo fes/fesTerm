@@ -7,7 +7,8 @@ param(
     [ValidateRange(5, 30)][int] $SampleSeconds = 10,
     [string] $Python = 'python',
     [switch] $CaptureOnly,
-    [switch] $SelfTestOnly
+    [switch] $SelfTestOnly,
+    [switch] $QuadSelfTestOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,10 +19,6 @@ if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $output = [System.IO.Path]::GetFullPath($ResultDirectory)
 New-Item -ItemType Directory -Path $output -Force | Out-Null
-& $Python -c 'import PIL'
-if ($LASTEXITCODE -ne 0) {
-    throw "Install the probe dependencies: $Python -m pip install -r validation\direct2d\requirements.txt"
-}
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio Installer is required.' }
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -30,6 +27,18 @@ $vcvars = Join-Path $installation 'VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path -LiteralPath $vcvars)) { throw 'The x64 C++ toolchain was not found.' }
 $native = Join-Path $output 'direct2d-probe.exe'
 $setup = "set `"PATH=$([IO.Path]::GetDirectoryName($vswhere));%PATH%`" && call `"$vcvars`" >nul"
+$quadTest = Join-Path $output 'direct2d-quad-test.exe'
+$quadSource = Join-Path $repo 'crates\festerm-windows-direct2d\native\quad_tests.cpp'
+$quadCompile = "$setup && cl /nologo /std:c++20 /EHsc /W4 /WX /Od /MD `"$quadSource`" /Fo`"$output\direct2d-quad-test.obj`" /Fe`"$quadTest`" /link d2d1.lib d3d11.lib dxgi.lib"
+& $env:ComSpec /c $quadCompile
+if ($LASTEXITCODE -ne 0) { throw 'Quad preparation test compilation failed.' }
+& $quadTest
+if ($LASTEXITCODE -ne 0) { throw 'Quad preparation checks failed.' }
+if ($QuadSelfTestOnly) { return }
+& $Python -c 'import PIL'
+if ($LASTEXITCODE -ne 0) {
+    throw "Install the probe dependencies: $Python -m pip install -r validation\direct2d\requirements.txt"
+}
 $compile = "$setup && cl /nologo /std:c++20 /EHsc /W4 /WX /O2 /MD `"$PSScriptRoot\render_probe.cpp`" /Fo`"$output\direct2d-probe.obj`" /Fe`"$native`" /link d2d1.lib d3d11.lib dxgi.lib psapi.lib"
 & $env:ComSpec /c $compile
 if ($LASTEXITCODE -ne 0) { throw 'Direct2D probe compilation failed.' }

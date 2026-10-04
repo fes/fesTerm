@@ -13,9 +13,9 @@ documented in [`../terminal-performance/README.md`](../terminal-performance/READ
 **Go for a bounded Windows terminal-only implementation that defaults on only
 for the supported Windows x64 WARP path.** Keep egui-wgpu for window
 composition, chrome, other platforms, hardware adapters, unsupported surfaces,
-and failure recovery. `FESTERM_EXPERIMENTAL_DIRECT2D=0` remains the ordinary
-egui-wgpu baseline, and `1` remains a compatibility request for the same
-supported path. A full egui-backend replacement is not justified by this
+and failure recovery. Direct2D, host-copy and retained composition are now
+automatic on their supported routes, without production switches. The former
+three `FESTERM_EXPERIMENTAL_*` controls are ignored. A full egui-backend replacement is not justified by this
 experiment.
 
 The implementation below adds immutable shared-surface composition and
@@ -24,13 +24,18 @@ qualification remain open under CP-18 and issue #244.
 
 ## Current implementation
 
-The application now includes an experimental root-terminal painter:
+The application uses the automatic root-terminal painter:
 
 ```powershell
 # Supported default path
-Remove-Item Env:FESTERM_EXPERIMENTAL_DIRECT2D -ErrorAction SilentlyContinue
 cargo run --release -p festerm
 ```
+
+Environment-based baseline/candidate commands in historical sections below
+require their pinned historical binary and driver; they do not toggle the
+current application. The owner's 2026-10-03 rollout accepts repeatable practical
+CPU savings despite shared-host noise, not complete resource/native/latency
+qualification. Test-only offscreen controls use `FESTERM_TUI_PROFILE_*`.
 
 It is eligible only on Windows x64, a DX12 CPU adapter, and an 8-bit gamma
 framebuffer. It reuses existing egui layout and glyph/emoji pixels, draws into
@@ -53,13 +58,9 @@ a later paint. Integrated pixel tests exercise the actual callback/composition
 path, verify it really ran, and separately verify same-frame ordinary painting
 when the native palette budget is exceeded.
 
-The environment variable is not persisted. Unset now selects Direct2D only on
-that supported path. `0` explicitly keeps ordinary egui-wgpu. `1` requests the
-same supported path but cannot force hardware adapters, unsupported formats, or
-unsupported platforms. Invalid or non-Unicode override values warn and retain
-ordinary egui-wgpu. Automatic unset mode quietly keeps ordinary egui-wgpu on
-unsupported adapters, platforms, or formats; explicit `1` still reports why
-selection was ineligible. Unsupported content logs a per-frame refusal
+Selection is automatic on that supported path. Retired environment variables
+are ignored, regardless of value. Unsupported adapters, platforms and formats
+quietly retain ordinary egui-wgpu. Unsupported content logs a per-frame refusal
 transition, preserves ordinary pixels, and invalidates retained native pixels;
 the installed painter resumes when supported content returns. Real native,
 device, allocation and submission failures still disable the painter until
@@ -67,11 +68,11 @@ restart. HRESULTs alone do not distinguish these cases. Strict native CPU
 qualification rejects either refusal or permanent failure rather than
 accepting mixed-path measurements. Secondary viewports, translucent/transformed painters,
 hardware adapters and unsupported backends/formats retain the current
-renderer. This remains **experimental**, under proposed ADR-0039 and CP-18.
+renderer. ADR-0039 accepts the bounded policy; CP-18 qualification remains open.
 
 ## Actual application measurements
 
-**Current policy note (2026-09-26):** On supported Windows x64 WARP hosts, the
+**Historical policy note (2026-09-26):** On supported Windows x64 WARP hosts, the
 candidate path now defaults on when `FESTERM_EXPERIMENTAL_DIRECT2D` is unset.
 `FESTERM_EXPERIMENTAL_DIRECT2D=1` remains a compatibility request for the same
 bounded path, and `0` is the ordinary egui-wgpu baseline. The measurements
@@ -345,22 +346,20 @@ For framebuffer-only qualification:
 .\validation\direct2d\run.ps1 -ResultDirectory C:\temp\festerm-d2d-125 -PixelsPerPoint 1.25 -CaptureOnly
 ```
 
-`-SelfTestOnly` builds the C++ probe and runs native structural checks and
-Python comparator checks without GPU measurement. `-Python` selects an
+`-SelfTestOnly` builds the C++ probe and device-free quad allocation tests and
+runs native structural checks and Python comparator checks without GPU
+measurement. `-QuadSelfTestOnly` builds/runs only the device-free quad tests,
+without creating a graphics device, timing work or requiring Python packages.
+`-Python` selects an
 existing Python/virtual-environment executable. The runner does not install
 dependencies or change system settings.
 
-For the actual application comparison, first build/stage the release executable
-with `scripts\stage-conpty.ps1 -Configuration Release`, then run each mode
-sequentially on a quiet desktop:
+For a current application check, first build/stage the release executable
+with `scripts\stage-conpty.ps1 -Configuration Release`, then run on a known
+eligible Windows x64 WARP desktop:
 
 ```powershell
 $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
-$env:FESTERM_EXPERIMENTAL_DIRECT2D = '0'
-.\scripts\check-windows-idle-rendering.ps1 -Executable target\release\festerm.exe `
-  -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer `
-  -ResultPath target\direct2d-app-default.json
-Remove-Item Env:FESTERM_EXPERIMENTAL_DIRECT2D -ErrorAction SilentlyContinue
 .\scripts\check-windows-idle-rendering.ps1 -Executable target\release\festerm.exe `
   -IncludeSustainedOutput -DenseOutput -RequireSoftwareRenderer -RequireDirect2D `
   -ResultPath target\direct2d-app-native.json
@@ -370,22 +369,18 @@ Preserve failing baseline results; do not relax budgets or retry until green.
 Omit `-DenseOutput` for the existing sparse-line fixture. `-RequireDirect2D`
 requires native frame production during the measurement interval and rejects
 native initialization/render failures, so a Launcher or silently fallen-back
-run cannot stand in for a native terminal measurement. On a known eligible
-Windows x64 WARP host, use `-RequireDirect2D` with the variable unset to
-validate the automatic/default selection path; explicit `1` remains the
-retained compatibility request and should be equivalent on that same host,
-while `0` or invalid values are rejected. Results also record end-of-sample
+run cannot stand in for a native terminal measurement. Retired environment
+values do not change this request or the application. Results record end-of-sample
 process working set and private bytes, not peak memory. The aggregate optional
-Windows runner keeps this dense/native-required application check explicitly
-gated behind `FESTERM_EXPERIMENTAL_DIRECT2D=1`, so unsupported hardware or
-ARM64 machines still run their ordinary optional suite. Set
+Windows runner includes sustained output but does not implicitly require this
+dense/native-only check on unsupported hardware or ARM64. Set
 `FESTERM_RUN_DIRECT2D_PROBE=1` as well to include the isolated replay.
 
 Windows CI also runs the deterministic Python test
-`test_default_and_explicit_selection_reach_executable_validation`, which
+`test_retired_renderer_settings_do_not_change_probe_preconditions`, which
 exercises the probe's executable validation path without opening a GUI. That
-guard now accepts the supported unset default as well as explicit `1`, and
-rejects `0` or invalid overrides.
+guard accepts unset and all retired override values without changing the
+request; production selection ignores them too.
 
 Remaining evidence: broader composed application workloads; hardware GPU routing
 and performance; native resize/device-loss recovery; selection/input workflows;
@@ -393,6 +388,82 @@ mixed-DPI monitor transitions; multiple and transparent windows; actual
 presentation latency; memory characterization; and representative hardware
 qualification under issue #244. Passing this replay experiment does not mark
 those acceptance criteria complete.
+
+## Native quad scratch allocation control
+
+The production `prepare_group` path recognizes adjacent triangles as a native
+glyph/solid/bitmap quad through `quad`. Its former shared-corner vector allocated
+twice per accepted quad (capacities one then two vertices on the tested MSVC
+toolchain), even on warm unchanged frames: the retained renderer prepares before
+testing previous-image reuse. Fixed storage now borrows at most **two corner
+pointers** plus a count: 24 bytes of logical stack scratch on Windows x64, zero
+heap allocations and zero retained bytes. It neither batches native draws nor caches geometry.
+All other frame/texture/scratch budgets and preparation/draw counts are unchanged.
+
+`native/quad_tests.cpp` includes the actual production implementation and a
+frozen pre-change predicate. Its scoped allocation counter is linked only into
+this unit-test executable, never the application or timed replay probe.
+It compares complete prepared `Draw` operations and refusal types, including
+32 cold/warm/mutation cases at four scales, all 4,096 corner topologies, seven
+malformed mappings, and the real boundary's capability/native/allocation
+failure classification. The dense three-frame 120x40 fixture constructs all
+14,400 glyph operations in both versions: **28,800 -> 0** scratch allocations,
+**864,000 -> 0** cumulative allocated bytes (not retained/peak process memory).
+Solid quads, mask alpha, color bitmaps and recovery after tinted-bitmap refusal
+retain exact geometry, UVs, colors/alpha, transforms and resource references.
+Texture content/epoch handling, clipping, native damage/culling, immutable
+published images, teardown and ordinary fallback code are untouched.
+
+For the smallest deterministic check (also included in Windows CI's existing
+`-SelfTestOnly` gate):
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+.\validation\direct2d\run.ps1 -ResultDirectory target\quad-scratch-unit -QuadSelfTestOnly
+```
+
+This builds only an unoptimized C++ unit test with the installed SDK. It does
+not initialize Direct2D/WARP or run a performance probe. Allocation counts and
+identical prepared operations are the current evidence; no whole-app/native
+CPU, process-memory or latency gain is claimed, and #297 is not attributed.
+
+### Coordinator-only measurement protocol
+
+After baseline (`b6e69f76`) and candidate test binaries are built in an assigned slot,
+use the existing residual-CPU probe with only
+`FESTERM_TUI_PROFILE_CASES=localized-all`, `FESTERM_TUI_PROFILE_SCENE=terminal`,
+`FESTERM_RUN_OPTIONAL_VALIDATION=1`, and a fresh
+`FESTERM_TUI_PROFILE_OUT=target\quad-scratch-profile-<source>-<repeat>` for each
+attempt:
+
+```powershell
+$env:FESTERM_TUI_PROFILE_HOST_COPY = '0'
+$env:FESTERM_TUI_PROFILE_RETAINED_COMPOSITION = '0'
+Remove-Item Env:FESTERM_TUI_PROFILE_COPY -ErrorAction SilentlyContinue
+cargo test --release -p festerm profile_terminal_residual_cpu -- --ignored --nocapture --test-threads=1
+```
+
+Do not start a concurrent build during measurement. Keep host-copy and test
+copy experiments off using those explicit test-only controls; current production
+switches cannot select a baseline. The pinned old baseline predates these names
+and already defaults copy/retention off in its test executable. Run
+baseline/candidate in ABBA order on the same WARP
+host with unchanged synthetic grid, font, physical size and requested 10 Hz /
+100 updates. This case includes UI construction, atlas capture, the native
+`prepare`/quad stage and completed drawing/composition; the old standalone
+replay pre-prepares geometry and cannot measure this allocation fix. Record
+source/binary identities, all attempts, completed updates/cadence,
+CPU-ms/frame and shared-host variability without promising a percentage.
+Before interpreting timings, run the existing
+`shared_surfaces_preserve_pixels_and_previous_frame_ownership`,
+`texture_identity_and_equal_replacement_preserve_uploads_and_pixels`,
+`narrow_retained_updates_match_full_pixels_with_overlap_erasure_and_dpi` and
+`scattered_retained_damage_prepares_full_geometry_only_once` renderer tests
+as the native pixel/lifetime/mutation/damage oracle. None was run in this
+device-free allocation investigation; the coordinator owns native slots.
+Native-window presentation, sustained resources, physical latency and #297
+degraded-process attribution remain CP-18 work.
+
 ## Native font atlas snapshot control
 
 Issue #298 and [ADR 0043](../../docs/adr/0043-immutable-native-font-atlas-snapshots.md)

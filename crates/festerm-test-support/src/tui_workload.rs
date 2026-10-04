@@ -11,14 +11,16 @@ pub enum Workload {
     Localized,
     Streaming,
     FullRedraw,
+    ChangingChrome,
 }
 
 impl Workload {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Quiet,
         Self::Localized,
         Self::Streaming,
         Self::FullRedraw,
+        Self::ChangingChrome,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -27,6 +29,7 @@ impl Workload {
             Self::Localized => "localized",
             Self::Streaming => "streaming",
             Self::FullRedraw => "full-redraw",
+            Self::ChangingChrome => "changing-chrome",
         }
     }
 
@@ -44,6 +47,9 @@ impl Workload {
         }
         output.push_str("\x1b[2J\x1b[H");
         output.push_str(&screen(0));
+        if self == Self::ChangingChrome {
+            output.push_str("\x1b]2;Qualification chrome frame 000000\x07");
+        }
         output.into_bytes()
     }
 
@@ -63,6 +69,12 @@ impl Workload {
             )
             .into_bytes(),
             Self::FullRedraw => screen(frame).into_bytes(),
+            Self::ChangingChrome => {
+                let mut output =
+                    format!("\x1b]2;Qualification chrome frame {frame:06}\x07").into_bytes();
+                output.extend(Self::Localized.update(frame));
+                output
+            }
         }
     }
 
@@ -159,5 +171,27 @@ mod tests {
         }
         assert!(Workload::parse("not-a-workload").is_err());
         assert!(Workload::Quiet.update(99).is_empty());
+    }
+
+    #[test]
+    fn changing_chrome_keeps_localized_output_and_changes_the_title_each_tick() {
+        let workload = Workload::parse("changing-chrome").unwrap();
+        assert_eq!(workload, Workload::ChangingChrome);
+        assert!(workload
+            .setup()
+            .ends_with(b"\x1b]2;Qualification chrome frame 000000\x07"));
+        for frame in [1, 2, 199, 200] {
+            let mut expected =
+                format!("\x1b]2;Qualification chrome frame {frame:06}\x07").into_bytes();
+            expected.extend(Workload::Localized.update(frame));
+            assert_eq!(workload.update(frame), expected);
+            let mut terminal = terminal();
+            terminal.ingest(&workload.setup());
+            terminal.ingest(&workload.update(frame));
+            assert!(terminal
+                .row_text(37)
+                .unwrap()
+                .contains(&format!("frame {frame:06}")));
+        }
     }
 }
