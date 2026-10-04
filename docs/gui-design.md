@@ -2496,6 +2496,13 @@ including frame margins and short-window title/search space. Long row text
 and shortcuts elide in separate columns rather than painting over each other;
 the complete stable identity and secondary text remain the accessible label.
 
+Current implementation on eligible Windows WARP roots paints the opaque palette
+frame/shadow and opaque untextured search/selection rectangles through the
+existing textureless panel shader. Egui's tessellated geometry, clips, paint
+order, layout, focus and commands are unchanged. Textured/translucent candidates
+and unsupported roots, transforms, viewports, adapters or formats retain
+ordinary painting; overlays still decline final-terminal copying/retention.
+
 With an empty query, the palette presents a **Sessions** group in chip order,
 with the active surface visibly identified, followed by an applicable
 **Commands** group. Session matching and ranking prefer stable identity over

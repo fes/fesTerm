@@ -48,6 +48,8 @@ struct PanelRenderer {
     paints: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     palette_frames: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    palette_fills: std::sync::atomic::AtomicUsize,
 }
 
 struct PanelPaint {
@@ -80,6 +82,10 @@ fn opaque_window_frame(shape: &egui::Shape) -> bool {
         [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)]
             if shadow.brush.is_none() && frame.brush.is_none() && frame.fill.is_opaque()
     ))
+}
+
+fn opaque_palette_fill(shape: &egui::Shape) -> bool {
+    matches!(shape, egui::Shape::Rect(rect) if rect.brush.is_none() && rect.fill.is_opaque())
 }
 
 fn palette_frame_layer() -> egui::LayerId {
@@ -122,34 +128,83 @@ impl egui::Plugin for PaletteFrameBackground {
         else {
             return;
         };
-        let frame = context.graphics(|graphics| {
-            graphics
-                .get(layer)?
-                .all_entries()
-                .enumerate()
-                .find_map(|(index, entry)| {
-                    opaque_window_frame(&entry.shape)
-                        .then(|| (egui::layers::ShapeIdx(index), entry.clone()))
-                })
+        let fills_enabled = palette_fills_enabled(context);
+        let backgrounds = context.graphics(|graphics| {
+            Some(
+                graphics
+                    .get(layer)?
+                    .all_entries()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        let window_frame = opaque_window_frame(&entry.shape);
+                        (window_frame || fills_enabled && opaque_palette_fill(&entry.shape))
+                            .then(|| (egui::layers::ShapeIdx(index), entry.clone(), window_frame))
+                    })
+                    .collect::<Vec<_>>(),
+            )
         });
-        let Some((index, frame)) = frame else {
+        let Some(backgrounds) = backgrounds else {
             return;
         };
-        // Tessellation takes the context lock; never do it while editing graphics.
-        let shape = renderer.shape_for_clip(context, frame.clip_rect, frame.shape);
-        #[cfg(test)]
-        if matches!(shape, egui::Shape::Callback(_)) {
-            renderer
-                .palette_frames
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !backgrounds.iter().any(|(_, _, frame)| *frame) {
+            return;
         }
-        context.graphics_mut(|graphics| {
-            graphics
-                .get_mut(layer)
-                .expect("captured palette paint list remains present in the same pass")
-                .set(index, frame.clip_rect, shape);
-        });
+        // Tessellation takes the context lock; never do it while editing graphics.
+        for (index, background, window_frame) in backgrounds {
+            let shape = renderer.shape_for_clip(context, background.clip_rect, background.shape);
+            #[cfg(test)]
+            if matches!(shape, egui::Shape::Callback(_)) {
+                let counter = if window_frame {
+                    &renderer.palette_frames
+                } else {
+                    &renderer.palette_fills
+                };
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            #[cfg(not(test))]
+            let _ = window_frame;
+            context.graphics_mut(|graphics| {
+                graphics
+                    .get_mut(layer)
+                    .expect("captured palette paint list remains present in the same pass")
+                    .set(index, background.clip_rect, shape);
+            });
+        }
     }
+}
+
+fn palette_fills_enabled(_context: &egui::Context) -> bool {
+    #[cfg(test)]
+    {
+        _context.data(|data| {
+            !data
+                .get_temp::<bool>(palette_fills_disabled_id())
+                .unwrap_or(false)
+        })
+    }
+    #[cfg(not(test))]
+    {
+        true
+    }
+}
+
+#[cfg(test)]
+fn palette_fills_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-palette-fills")
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn set_palette_fills_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(palette_fills_disabled_id(), !enabled));
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn palette_fill_conversions(context: &egui::Context) -> usize {
+    context
+        .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+        .expect("palette probe requires the installed eligible panel renderer")
+        .palette_fills
+        .load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -274,6 +329,8 @@ impl PanelRenderer {
             paints: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             palette_frames: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            palette_fills: std::sync::atomic::AtomicUsize::new(0),
         }))
     }
 
@@ -688,6 +745,8 @@ mod tests {
             .palette_frames
             .load(std::sync::atomic::Ordering::Relaxed);
         assert!(old_count > 0);
+        let old_fills = old.palette_fills.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(old_fills > 0);
         context.data_mut(|data| data.insert_temp(panel_renderer_id(), Arc::clone(&current)));
         context.add_plugin(PaletteFrameBackground);
         draw();
@@ -696,10 +755,18 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             old_count
         );
+        assert_eq!(
+            old.palette_fills.load(std::sync::atomic::Ordering::Relaxed),
+            old_fills
+        );
         let current_count = current
             .palette_frames
             .load(std::sync::atomic::Ordering::Relaxed);
         assert!(current_count > 0);
+        let current_fills = current
+            .palette_fills
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(current_fills > 0);
         let mut unsupported = state.clone();
         unsupported.target_format = wgpu::TextureFormat::Bgra8UnormSrgb;
         install(&context, &unsupported);
@@ -712,6 +779,12 @@ mod tests {
                 .palette_frames
                 .load(std::sync::atomic::Ordering::Relaxed),
             current_count
+        );
+        assert_eq!(
+            current
+                .palette_fills
+                .load(std::sync::atomic::Ordering::Relaxed),
+            current_fills
         );
     }
 
@@ -733,6 +806,31 @@ mod tests {
             egui::Shape::Noop,
             egui::Shape::Noop,
         ])));
+    }
+
+    #[test]
+    fn palette_fills_accept_only_opaque_untextured_rectangles() {
+        let rect = egui::Rect::from_min_size(egui::pos2(11.0, 17.0), egui::vec2(210.0, 30.0));
+        assert!(opaque_palette_fill(&egui::Shape::rect_filled(
+            rect,
+            3.0,
+            egui::Color32::from_rgb(31, 43, 61),
+        )));
+        assert!(!opaque_palette_fill(&egui::Shape::rect_filled(
+            rect,
+            3.0,
+            egui::Color32::from_black_alpha(160),
+        )));
+        assert!(!opaque_palette_fill(&egui::Shape::Noop));
+        assert!(!opaque_palette_fill(
+            &egui::Frame::window(&egui::Style::default()).paint(rect)
+        ));
+        let mut textured = egui::epaint::RectShape::filled(rect, 3.0, egui::Color32::WHITE);
+        textured.brush = Some(Arc::new(egui::epaint::Brush {
+            fill_texture_id: egui::TextureId::Managed(1),
+            uv: egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        }));
+        assert!(!opaque_palette_fill(&egui::Shape::Rect(textured)));
     }
 
     #[test]
@@ -909,6 +1007,14 @@ mod tests {
                     > 0,
                 enabled && matches!(case, "dark" | "light" | "short" | "query"),
                 "the pixel comparison must exercise the actual selected path: {case}, {scale}",
+            );
+            assert_eq!(
+                panel
+                    .palette_fills
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    > 0,
+                enabled && matches!(case, "dark" | "light" | "short" | "query"),
+                "the pixel comparison must exercise selected/search fills: {case}, {scale}",
             );
             image
         };

@@ -978,6 +978,69 @@ exactly. The archived compiler/source binding and test inventory are in
 `warp-palette-current-main-built-debug-2`; unfiltered receipts and the all-case
 summary are `warp-palette-integrated-current-debug-baab-*` in the session.
 
+#### Opaque palette rectangle follow-up
+
+New release attribution showed ordinary palette meshes still dominating after
+the shipped frame/shadow conversion. Omitting opaque white-texture triangles
+reduced frozen CPU work from roughly 460-476 to 179 ms/frame, but changed pixels
+and was rejected as a production optimization. The rectangle follow-up instead
+uses unchanged egui geometry/colors/indices/clips through the existing shader,
+only for opaque untextured rectangles on the eligible opaque palette layer.
+Glyphs, brushes, translucent fills, root/viewport/transform/adapter/format
+fallbacks, commands, focus and repaint policy are unchanged.
+
+The [complete same-source release record](palette-solid-fills-release-2026-10-04.json)
+executes `444733c3f1c0fbf55a383d67aa917c43b897f51a`, archived executable SHA256
+`4C4CF8868F9881314AB3D275EA6DA4738DF1D0912E78A26AC28CC2AC057FE17A`.
+`FESTERM_TUI_PROFILE_PALETTE_FILLS=0|1` changes only the **test executable**;
+production never reads it. Unset uses the candidate. The shipping shadow shader
+stays on in all four baseline/candidate/candidate/baseline controls. All initial
+PNGs have SHA256
+`549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64`;
+existing deterministic comparisons cover sixteen theme/height/query/DPI scenes
+and five fallbacks, with real frame/fill conversion asserted.
+
+| Case | Baseline mean CPU-ms/frame | Candidate mean CPU-ms/frame | Reduction |
+| --- | ---: | ---: | ---: |
+| Frozen | 457.89 | 232.19 | 49.3% |
+| Localized | 486.88 | 242.03 | 50.3% |
+| Frozen repeat | 480.94 | 229.22 | 52.3% |
+
+All twelve scores/1,200 frames, exact final pixel comparisons, host observations
+and adverse repeats remain in the record. Completed cadence held approximately
+10 Hz; these are forced offscreen measurements, not native presentation.
+
+The [separate native release BAAB record](native-palette-solid-fills-2026-10-04.json)
+compares shipping `1680a02` with `444733c` using the unchanged guarded native
+driver and canonically staged clean sources. All four cases use 120x40 cells,
+2058x1658 client pixels, 192 DPI, bundled JetBrains Mono NL without ligatures,
+and all 200 ordered producer updates/23,790 bytes. Independently built producer
+hashes differ but verified producer/fixture/dependency Git objects are identical;
+both build identities are retained.
+
+| Order | Source | System-normalized app CPU | Constructed GUI frames/s |
+| --- | --- | ---: | ---: |
+| 1 | Shipping shadow | 44.60% | 16.56 |
+| 2 | Opaque rectangle candidate | 24.56% | 15.87 |
+| 3 | Opaque rectangle candidate | 27.00% | 18.29 |
+| 4 | Shipping shadow | 43.86% | 15.91 |
+
+Means give **41.7% less app CPU** (44.23% to 25.78%), with mean constructed GUI
+frame rates of 16.24/17.08 Hz. The first candidate's lower frame rate remains an
+explicit adverse observation; there is no per-case cadence improvement claim.
+CPU is normalized across 16 logical processors; counters are not physical
+display FPS or input latency. Coarse aggregate host busy means were about
+59.6/37.9% across baseline/candidate runs, including owned and other work.
+No owned build/test overlapped timing. Desktop, input, foreground, geometry,
+output, CPU-adapter, Direct2D, zero overlay copy/retention and ordinary-cleanup
+guards all passed; no owned descendants survived. External final synthetic
+captures were reviewed, not asserted pixel-identical.
+
+This is one noisy native series plus one same-source completed-work series,
+not precise statistical qualification, Windows Terminal parity, a resource
+budget, hardware performance or a multi-day cause/fix. CP-18/#267/#282/#297
+remain open. Later documentation heads do not relabel these executions.
+
 #### 2026-10-04 guarded native palette comparison
 
 The [complete machine-readable record](native-palette-2026-10-04-observations.json)

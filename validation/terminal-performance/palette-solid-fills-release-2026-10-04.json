@@ -1,0 +1,1804 @@
+{
+  "schema": 1,
+  "purpose": "Same release executable BAAB control of textureless opaque palette rectangles, with the shipping shadow path enabled throughout.",
+  "means_of_run_scores": {
+    "frozen-all": {
+      "baseline_cpu_ms_per_frame": 457.890625,
+      "candidate_cpu_ms_per_frame": 232.1875,
+      "cpu_reduction_percent": 49.29192970482853
+    },
+    "localized-all": {
+      "baseline_cpu_ms_per_frame": 486.875,
+      "candidate_cpu_ms_per_frame": 242.03125,
+      "cpu_reduction_percent": 50.28883183568678
+    },
+    "frozen-all-repeat": {
+      "baseline_cpu_ms_per_frame": 480.9375,
+      "candidate_cpu_ms_per_frame": 229.21875,
+      "cpu_reduction_percent": 52.33918128654971
+    }
+  },
+  "runs": [
+    {
+      "name": "baseline-1",
+      "source_head": "444733c3f1c0fbf55a383d67aa917c43b897f51a",
+      "source_profile_sha256": "943CEFB5374C50165362CC5C1C890B0314DB61917AD8BE59E136733B01CEAA2F",
+      "executable_sha256": "4C4CF8868F9881314AB3D275EA6DA4738DF1D0912E78A26AC28CC2AC057FE17A",
+      "started_utc": "2026-10-04T08:05:56.6275241Z",
+      "completed_utc": "2026-10-04T08:06:33.7756837Z",
+      "host_cpu_samples": [
+        {
+          "utc": "2026-10-04T08:05:57.6670696Z",
+          "aggregate_host_busy_percent": 75.63261480787253
+        },
+        {
+          "utc": "2026-10-04T08:05:58.6840533Z",
+          "aggregate_host_busy_percent": 72.5
+        },
+        {
+          "utc": "2026-10-04T08:05:59.7910299Z",
+          "aggregate_host_busy_percent": 61.75687666370896
+        },
+        {
+          "utc": "2026-10-04T08:06:00.7978554Z",
+          "aggregate_host_busy_percent": 40.56147144240077
+        },
+        {
+          "utc": "2026-10-04T08:06:01.8082058Z",
+          "aggregate_host_busy_percent": 42.596153846153854
+        },
+        {
+          "utc": "2026-10-04T08:06:02.8403312Z",
+          "aggregate_host_busy_percent": 46.40151515151515
+        },
+        {
+          "utc": "2026-10-04T08:06:03.8554527Z",
+          "aggregate_host_busy_percent": 40.67307692307692
+        },
+        {
+          "utc": "2026-10-04T08:06:04.8616786Z",
+          "aggregate_host_busy_percent": 39.55078125
+        },
+        {
+          "utc": "2026-10-04T08:06:05.8728884Z",
+          "aggregate_host_busy_percent": 36.15384615384616
+        },
+        {
+          "utc": "2026-10-04T08:06:06.8810315Z",
+          "aggregate_host_busy_percent": 40.28846153846154
+        },
+        {
+          "utc": "2026-10-04T08:06:07.8905121Z",
+          "aggregate_host_busy_percent": 42.28515625
+        },
+        {
+          "utc": "2026-10-04T08:06:08.9043027Z",
+          "aggregate_host_busy_percent": 32.49999999999999
+        },
+        {
+          "utc": "2026-10-04T08:06:09.9259103Z",
+          "aggregate_host_busy_percent": 36.92307692307693
+        },
+        {
+          "utc": "2026-10-04T08:06:10.9379147Z",
+          "aggregate_host_busy_percent": 37.69230769230769
+        },
+        {
+          "utc": "2026-10-04T08:06:11.9495979Z",
+          "aggregate_host_busy_percent": 30.28846153846154
+        },
+        {
+          "utc": "2026-10-04T08:06:12.9588281Z",
+          "aggregate_host_busy_percent": 52.88461538461539
+        },
+        {
+          "utc": "2026-10-04T08:06:13.9884179Z",
+          "aggregate_host_busy_percent": 46.057692307692314
+        },
+        {
+          "utc": "2026-10-04T08:06:14.9981458Z",
+          "aggregate_host_busy_percent": 55.57692307692308
+        },
+        {
+          "utc": "2026-10-04T08:06:16.0060142Z",
+          "aggregate_host_busy_percent": 38.942307692307686
+        },
+        {
+          "utc": "2026-10-04T08:06:17.0171458Z",
+          "aggregate_host_busy_percent": 40.13671875
+        },
+        {
+          "utc": "2026-10-04T08:06:18.0269426Z",
+          "aggregate_host_busy_percent": 44.32692307692307
+        },
+        {
+          "utc": "2026-10-04T08:06:19.0380735Z",
+          "aggregate_host_busy_percent": 41.385948026948995
+        },
+        {
+          "utc": "2026-10-04T08:06:20.0489143Z",
+          "aggregate_host_busy_percent": 41.75609756097561
+        },
+        {
+          "utc": "2026-10-04T08:06:21.0545732Z",
+          "aggregate_host_busy_percent": 53.46153846153846
+        },
+        {
+          "utc": "2026-10-04T08:06:22.0611181Z",
+          "aggregate_host_busy_percent": 46.19140625
+        },
+        {
+          "utc": "2026-10-04T08:06:23.0665855Z",
+          "aggregate_host_busy_percent": 45.5078125
+        },
+        {
+          "utc": "2026-10-04T08:06:24.0746887Z",
+          "aggregate_host_busy_percent": 47.78846153846153
+        },
+        {
+          "utc": "2026-10-04T08:06:25.0880101Z",
+          "aggregate_host_busy_percent": 42.11538461538461
+        },
+        {
+          "utc": "2026-10-04T08:06:26.1004624Z",
+          "aggregate_host_busy_percent": 39.691714836223504
+        },
+        {
+          "utc": "2026-10-04T08:06:27.1085448Z",
+          "aggregate_host_busy_percent": 46.68615984405457
+        },
+        {
+          "utc": "2026-10-04T08:06:28.1213048Z",
+          "aggregate_host_busy_percent": 36.63461538461539
+        },
+        {
+          "utc": "2026-10-04T08:06:29.1585408Z",
+          "aggregate_host_busy_percent": 47.95821462488129
+        },
+        {
+          "utc": "2026-10-04T08:06:30.1626392Z",
+          "aggregate_host_busy_percent": 35.66634707574304
+        },
+        {
+          "utc": "2026-10-04T08:06:31.1739096Z",
+          "aggregate_host_busy_percent": 34.1796875
+        },
+        {
+          "utc": "2026-10-04T08:06:32.1828841Z",
+          "aggregate_host_busy_percent": 33.94230769230769
+        }
+      ],
+      "normalized_png_sha256": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+      "profile": {
+        "adapter": "AdapterInfo { name: \"Microsoft Basic Render Driver\", vendor: 5140, device: 140, device_type: Cpu, device_pci_bus_id: \"\", driver: \"10.0.26100.9278\", driver_info: \"\", backend: Dx12, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None }",
+        "direct_copy_probe": false,
+        "exact_interpolated_pixels": true,
+        "exact_sampled_pixels": true,
+        "grid": [
+          120,
+          40
+        ],
+        "host_copy_probe": true,
+        "interval_ms": 100,
+        "logical_processors": 16,
+        "measurements": [
+          {
+            "case": "frozen-all",
+            "completed_draw_ms_per_frame": 46.137011,
+            "cpu_ms": 44984.375,
+            "cpu_ms_per_frame": 449.84375,
+            "cpu_percent": 28.11486044735605,
+            "frames": 100,
+            "frames_per_second": 9.999867001768877,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.133
+          },
+          {
+            "case": "localized-all",
+            "completed_draw_ms_per_frame": 61.107591,
+            "cpu_ms": 47359.375,
+            "cpu_ms_per_frame": 473.59375,
+            "cpu_percent": 29.598567505423812,
+            "frames": 100,
+            "frames_per_second": 9.999648012389965,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": {
+              "last_surface_pixels": 2982063,
+              "last_updated_pixels": 21105
+            },
+            "wall_ms": 10000.351999999999
+          },
+          {
+            "case": "frozen-all-repeat",
+            "completed_draw_ms_per_frame": 46.361852,
+            "cpu_ms": 47625.0,
+            "cpu_ms_per_frame": 476.25,
+            "cpu_percent": 29.763970718507462,
+            "frames": 100,
+            "frames_per_second": 9.999444230889646,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.5558
+          }
+        ],
+        "palette_fill_conversions_before_sampling": 0,
+        "palette_fills_textureless": false,
+        "palette_frame_conversions_before_sampling": 5,
+        "palette_frame_textureless": true,
+        "physical_size": [
+          2058,
+          1658
+        ],
+        "pixels_per_point": 2.0,
+        "primitives": [
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 0,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[7.7 7.7] - [1014.9 36.2]]",
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 1,
+            "indices": 3285,
+            "kind": "mesh",
+            "opaque_white_triangles": 327,
+            "vertices": 826
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 2,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[-0.2 804.2] - [1029.2 820.0]]",
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 3,
+            "indices": 441,
+            "kind": "mesh",
+            "opaque_white_triangles": 17,
+            "vertices": 218
+          },
+          {
+            "callback_viewport_pixels": 3152856.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 4,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 39.0] - [1029.0 805.0]]"
+          },
+          {
+            "callback_viewport_pixels": 3039000.0,
+            "clip": "[[0.0 39.0] - [1029.0 805.0]]",
+            "index": 5,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1021.0 797.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2985900.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 6,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1016.8 787.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2982063.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 7,
+            "kind": "callback",
+            "native_image": true,
+            "rect": "[[8.0 47.0] - [1017.5 785.5]]"
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 8,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[304.2 47.8] - [724.8 107.8]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 9,
+            "indices": 1062,
+            "kind": "mesh",
+            "opaque_white_triangles": 116,
+            "vertices": 316
+          },
+          {
+            "bounds": "[[314.2 88.8] - [316.8 107.2]]",
+            "clip": "[[314.5 89.5] - [496.2 106.5]]",
+            "index": 10,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "bounds": "[[311.2 112.8] - [717.8 114.2]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 11,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "bounds": "[[311.2 119.2] - [717.8 147.8]]",
+            "clip": "[[305.5 119.5] - [723.5 339.5]]",
+            "index": 12,
+            "indices": 534,
+            "kind": "mesh",
+            "opaque_white_triangles": 58,
+            "vertices": 120
+          },
+          {
+            "bounds": "[[318.5 128.0] - [709.5 138.0]]",
+            "clip": "[[311.5 119.5] - [717.5 147.5]]",
+            "index": 13,
+            "indices": 138,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 92
+          },
+          {
+            "bounds": "[[317.5 159.0] - [708.5 169.0]]",
+            "clip": "[[311.5 150.5] - [717.5 178.5]]",
+            "index": 14,
+            "indices": 162,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 108
+          },
+          {
+            "bounds": "[[318.5 190.0] - [394.5 200.0]]",
+            "clip": "[[311.5 181.5] - [717.5 209.5]]",
+            "index": 15,
+            "indices": 54,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 36
+          },
+          {
+            "bounds": "[[318.5 221.0] - [707.5 231.0]]",
+            "clip": "[[311.5 212.5] - [717.5 240.5]]",
+            "index": 16,
+            "indices": 168,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 112
+          },
+          {
+            "bounds": "[[317.5 252.0] - [709.5 262.0]]",
+            "clip": "[[311.5 243.5] - [717.5 271.5]]",
+            "index": 17,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[317.5 283.0] - [709.5 293.0]]",
+            "clip": "[[311.5 274.5] - [717.5 302.5]]",
+            "index": 18,
+            "indices": 102,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 68
+          },
+          {
+            "bounds": "[[318.5 314.0] - [709.0 324.0]]",
+            "clip": "[[311.5 305.5] - [717.5 333.5]]",
+            "index": 19,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[311.5 319.5] - [717.5 339.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 20,
+            "indices": 6,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 4
+          }
+        ],
+        "removed_fill_triangles": 522,
+        "retained_composition_probe": true,
+        "scene": "application-palette",
+        "target_format": "Bgra8Unorm",
+        "textureless_mesh_probe": null
+      },
+      "raw_artifact_sha256": {
+        "original.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "profile.json": "464cf3a1448bc968cdf32aec5b05eadf6fc1598d3e8797a4e9262fe9ca60a89b",
+        "sampled.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "receipt.json": "772ff29fc6e469a7a6910afc37bef79473846fdfbad3c0f03f5bd8347684b080"
+      }
+    },
+    {
+      "name": "current-1",
+      "source_head": "444733c3f1c0fbf55a383d67aa917c43b897f51a",
+      "source_profile_sha256": "943CEFB5374C50165362CC5C1C890B0314DB61917AD8BE59E136733B01CEAA2F",
+      "executable_sha256": "4C4CF8868F9881314AB3D275EA6DA4738DF1D0912E78A26AC28CC2AC057FE17A",
+      "started_utc": "2026-10-04T08:06:34.0857287Z",
+      "completed_utc": "2026-10-04T08:07:09.9182991Z",
+      "host_cpu_samples": [
+        {
+          "utc": "2026-10-04T08:06:35.1232849Z",
+          "aggregate_host_busy_percent": 75.14231499051233
+        },
+        {
+          "utc": "2026-10-04T08:06:36.1332675Z",
+          "aggregate_host_busy_percent": 60.65259117082533
+        },
+        {
+          "utc": "2026-10-04T08:06:37.1410757Z",
+          "aggregate_host_busy_percent": 54.1015625
+        },
+        {
+          "utc": "2026-10-04T08:06:38.1647146Z",
+          "aggregate_host_busy_percent": 14.678030303030297
+        },
+        {
+          "utc": "2026-10-04T08:06:39.1677385Z",
+          "aggregate_host_busy_percent": 20.80078125
+        },
+        {
+          "utc": "2026-10-04T08:06:40.1807049Z",
+          "aggregate_host_busy_percent": 17.11538461538461
+        },
+        {
+          "utc": "2026-10-04T08:06:41.1939336Z",
+          "aggregate_host_busy_percent": 16.85934489402697
+        },
+        {
+          "utc": "2026-10-04T08:06:42.2034932Z",
+          "aggregate_host_busy_percent": 23.489278752436647
+        },
+        {
+          "utc": "2026-10-04T08:06:43.2139211Z",
+          "aggregate_host_busy_percent": 26.82692307692308
+        },
+        {
+          "utc": "2026-10-04T08:06:44.2239797Z",
+          "aggregate_host_busy_percent": 20.8984375
+        },
+        {
+          "utc": "2026-10-04T08:06:45.2349676Z",
+          "aggregate_host_busy_percent": 18.365384615384617
+        },
+        {
+          "utc": "2026-10-04T08:06:46.2475797Z",
+          "aggregate_host_busy_percent": 18.942307692307693
+        },
+        {
+          "utc": "2026-10-04T08:06:47.2660403Z",
+          "aggregate_host_busy_percent": 20.57692307692308
+        },
+        {
+          "utc": "2026-10-04T08:06:48.2743978Z",
+          "aggregate_host_busy_percent": 18.75
+        },
+        {
+          "utc": "2026-10-04T08:06:49.2850415Z",
+          "aggregate_host_busy_percent": 15.52734375
+        },
+        {
+          "utc": "2026-10-04T08:06:50.3019927Z",
+          "aggregate_host_busy_percent": 24.230769230769234
+        },
+        {
+          "utc": "2026-10-04T08:06:51.3126458Z",
+          "aggregate_host_busy_percent": 19.90384615384615
+        },
+        {
+          "utc": "2026-10-04T08:06:52.3282675Z",
+          "aggregate_host_busy_percent": 19.42307692307692
+        },
+        {
+          "utc": "2026-10-04T08:06:53.3329876Z",
+          "aggregate_host_busy_percent": 30.859375
+        },
+        {
+          "utc": "2026-10-04T08:06:54.3443770Z",
+          "aggregate_host_busy_percent": 22.499999999999996
+        },
+        {
+          "utc": "2026-10-04T08:06:55.3445190Z",
+          "aggregate_host_busy_percent": 20.60546875
+        },
+        {
+          "utc": "2026-10-04T08:06:56.3555888Z",
+          "aggregate_host_busy_percent": 28.846153846153843
+        },
+        {
+          "utc": "2026-10-04T08:06:57.3685594Z",
+          "aggregate_host_busy_percent": 20.480769230769237
+        },
+        {
+          "utc": "2026-10-04T08:06:58.3836910Z",
+          "aggregate_host_busy_percent": 17.78846153846154
+        },
+        {
+          "utc": "2026-10-04T08:06:59.3989860Z",
+          "aggregate_host_busy_percent": 15.000000000000002
+        },
+        {
+          "utc": "2026-10-04T08:07:00.4108356Z",
+          "aggregate_host_busy_percent": 17.96875
+        },
+        {
+          "utc": "2026-10-04T08:07:01.4230544Z",
+          "aggregate_host_busy_percent": 18.173076923076927
+        },
+        {
+          "utc": "2026-10-04T08:07:02.4470513Z",
+          "aggregate_host_busy_percent": 25.662878787878785
+        },
+        {
+          "utc": "2026-10-04T08:07:03.4464355Z",
+          "aggregate_host_busy_percent": 26.171875
+        },
+        {
+          "utc": "2026-10-04T08:07:04.4610738Z",
+          "aggregate_host_busy_percent": 17.78846153846154
+        },
+        {
+          "utc": "2026-10-04T08:07:05.4755645Z",
+          "aggregate_host_busy_percent": 17.901828681424448
+        },
+        {
+          "utc": "2026-10-04T08:07:06.4915060Z",
+          "aggregate_host_busy_percent": 17.13185755534168
+        },
+        {
+          "utc": "2026-10-04T08:07:07.5067912Z",
+          "aggregate_host_busy_percent": 18.26923076923077
+        },
+        {
+          "utc": "2026-10-04T08:07:08.5194698Z",
+          "aggregate_host_busy_percent": 20.85769980506823
+        },
+        {
+          "utc": "2026-10-04T08:07:09.5337465Z",
+          "aggregate_host_busy_percent": 18.653846153846153
+        }
+      ],
+      "normalized_png_sha256": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+      "profile": {
+        "adapter": "AdapterInfo { name: \"Microsoft Basic Render Driver\", vendor: 5140, device: 140, device_type: Cpu, device_pci_bus_id: \"\", driver: \"10.0.26100.9278\", driver_info: \"\", backend: Dx12, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None }",
+        "direct_copy_probe": false,
+        "exact_interpolated_pixels": true,
+        "exact_sampled_pixels": true,
+        "grid": [
+          120,
+          40
+        ],
+        "host_copy_probe": true,
+        "interval_ms": 100,
+        "logical_processors": 16,
+        "measurements": [
+          {
+            "case": "frozen-all",
+            "completed_draw_ms_per_frame": 27.169202,
+            "cpu_ms": 23750.0,
+            "cpu_ms_per_frame": 237.5,
+            "cpu_percent": 14.843020762389944,
+            "frames": 100,
+            "frames_per_second": 9.999508724136383,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.4913
+          },
+          {
+            "case": "localized-all",
+            "completed_draw_ms_per_frame": 42.760155999999995,
+            "cpu_ms": 23656.25,
+            "cpu_ms_per_frame": 236.5625,
+            "cpu_percent": 14.784910524787078,
+            "frames": 100,
+            "frames_per_second": 9.999833802762197,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": {
+              "last_surface_pixels": 2982063,
+              "last_updated_pixels": 21105
+            },
+            "wall_ms": 10000.166200000001
+          },
+          {
+            "case": "frozen-all-repeat",
+            "completed_draw_ms_per_frame": 26.682068,
+            "cpu_ms": 23281.25,
+            "cpu_ms_per_frame": 232.8125,
+            "cpu_percent": 14.55053578246135,
+            "frames": 100,
+            "frames_per_second": 9.999831302845921,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.1687
+          }
+        ],
+        "palette_fill_conversions_before_sampling": 15,
+        "palette_fills_textureless": true,
+        "palette_frame_conversions_before_sampling": 5,
+        "palette_frame_textureless": true,
+        "physical_size": [
+          2058,
+          1658
+        ],
+        "pixels_per_point": 2.0,
+        "primitives": [
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 0,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[7.7 7.7] - [1014.9 36.2]]",
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 1,
+            "indices": 3285,
+            "kind": "mesh",
+            "opaque_white_triangles": 327,
+            "vertices": 826
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 2,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[-0.2 804.2] - [1029.2 820.0]]",
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 3,
+            "indices": 441,
+            "kind": "mesh",
+            "opaque_white_triangles": 17,
+            "vertices": 218
+          },
+          {
+            "callback_viewport_pixels": 3152856.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 4,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 39.0] - [1029.0 805.0]]"
+          },
+          {
+            "callback_viewport_pixels": 3039000.0,
+            "clip": "[[0.0 39.0] - [1029.0 805.0]]",
+            "index": 5,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1021.0 797.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2985900.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 6,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1016.8 787.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2982063.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 7,
+            "kind": "callback",
+            "native_image": true,
+            "rect": "[[8.0 47.0] - [1017.5 785.5]]"
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 8,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 9,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[443.5 57.5] - [586.0 71.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 10,
+            "indices": 84,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 56
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 11,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[315.5 92.5] - [495.0 102.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 12,
+            "indices": 150,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 100
+          },
+          {
+            "bounds": "[[314.2 88.8] - [316.8 107.2]]",
+            "clip": "[[314.5 89.5] - [496.2 106.5]]",
+            "index": 13,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "bounds": "[[311.2 112.8] - [717.8 114.2]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 14,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[305.5 119.5] - [723.5 339.5]]",
+            "index": 15,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[311.2 119.2] - [717.8 147.8]]",
+            "clip": "[[305.5 119.5] - [723.5 339.5]]",
+            "index": 16,
+            "indices": 360,
+            "kind": "mesh",
+            "opaque_white_triangles": 40,
+            "vertices": 80
+          },
+          {
+            "bounds": "[[318.5 128.0] - [709.5 138.0]]",
+            "clip": "[[311.5 119.5] - [717.5 147.5]]",
+            "index": 17,
+            "indices": 138,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 92
+          },
+          {
+            "bounds": "[[317.5 159.0] - [708.5 169.0]]",
+            "clip": "[[311.5 150.5] - [717.5 178.5]]",
+            "index": 18,
+            "indices": 162,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 108
+          },
+          {
+            "bounds": "[[318.5 190.0] - [394.5 200.0]]",
+            "clip": "[[311.5 181.5] - [717.5 209.5]]",
+            "index": 19,
+            "indices": 54,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 36
+          },
+          {
+            "bounds": "[[318.5 221.0] - [707.5 231.0]]",
+            "clip": "[[311.5 212.5] - [717.5 240.5]]",
+            "index": 20,
+            "indices": 168,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 112
+          },
+          {
+            "bounds": "[[317.5 252.0] - [709.5 262.0]]",
+            "clip": "[[311.5 243.5] - [717.5 271.5]]",
+            "index": 21,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[317.5 283.0] - [709.5 293.0]]",
+            "clip": "[[311.5 274.5] - [717.5 302.5]]",
+            "index": 22,
+            "indices": 102,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 68
+          },
+          {
+            "bounds": "[[318.5 314.0] - [709.0 324.0]]",
+            "clip": "[[311.5 305.5] - [717.5 333.5]]",
+            "index": 23,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[311.5 319.5] - [717.5 339.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 24,
+            "indices": 6,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 4
+          }
+        ],
+        "removed_fill_triangles": 388,
+        "retained_composition_probe": true,
+        "scene": "application-palette",
+        "target_format": "Bgra8Unorm",
+        "textureless_mesh_probe": null
+      },
+      "raw_artifact_sha256": {
+        "original.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "profile.json": "1bc50cbe8c29a4fc14e010c1cc0cf39aba14a09363481f9d8901ab0e6526d13b",
+        "sampled.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "receipt.json": "2b4739a9311ce2a31429fd096579570b6266e08f75def869ecbdee44f9e95ab9"
+      }
+    },
+    {
+      "name": "current-2",
+      "source_head": "444733c3f1c0fbf55a383d67aa917c43b897f51a",
+      "source_profile_sha256": "943CEFB5374C50165362CC5C1C890B0314DB61917AD8BE59E136733B01CEAA2F",
+      "executable_sha256": "4C4CF8868F9881314AB3D275EA6DA4738DF1D0912E78A26AC28CC2AC057FE17A",
+      "started_utc": "2026-10-04T08:07:10.1796633Z",
+      "completed_utc": "2026-10-04T08:07:45.9865965Z",
+      "host_cpu_samples": [
+        {
+          "utc": "2026-10-04T08:07:11.1968734Z",
+          "aggregate_host_busy_percent": 75.0
+        },
+        {
+          "utc": "2026-10-04T08:07:12.2013349Z",
+          "aggregate_host_busy_percent": 69.140625
+        },
+        {
+          "utc": "2026-10-04T08:07:13.2134386Z",
+          "aggregate_host_busy_percent": 47.980769230769226
+        },
+        {
+          "utc": "2026-10-04T08:07:14.2274581Z",
+          "aggregate_host_busy_percent": 24.807692307692307
+        },
+        {
+          "utc": "2026-10-04T08:07:15.2428672Z",
+          "aggregate_host_busy_percent": 17.019230769230763
+        },
+        {
+          "utc": "2026-10-04T08:07:16.2539267Z",
+          "aggregate_host_busy_percent": 23.73046875
+        },
+        {
+          "utc": "2026-10-04T08:07:17.2676381Z",
+          "aggregate_host_busy_percent": 21.923076923076923
+        },
+        {
+          "utc": "2026-10-04T08:07:18.2801114Z",
+          "aggregate_host_busy_percent": 17.11538461538461
+        },
+        {
+          "utc": "2026-10-04T08:07:19.2963821Z",
+          "aggregate_host_busy_percent": 17.59615384615385
+        },
+        {
+          "utc": "2026-10-04T08:07:20.3076087Z",
+          "aggregate_host_busy_percent": 19.807692307692303
+        },
+        {
+          "utc": "2026-10-04T08:07:21.3173253Z",
+          "aggregate_host_busy_percent": 21.875
+        },
+        {
+          "utc": "2026-10-04T08:07:22.3307693Z",
+          "aggregate_host_busy_percent": 17.884615384615387
+        },
+        {
+          "utc": "2026-10-04T08:07:23.3424929Z",
+          "aggregate_host_busy_percent": 24.807692307692307
+        },
+        {
+          "utc": "2026-10-04T08:07:24.3545998Z",
+          "aggregate_host_busy_percent": 19.999999999999996
+        },
+        {
+          "utc": "2026-10-04T08:07:25.3676933Z",
+          "aggregate_host_busy_percent": 17.692307692307697
+        },
+        {
+          "utc": "2026-10-04T08:07:26.3803408Z",
+          "aggregate_host_busy_percent": 23.046875
+        },
+        {
+          "utc": "2026-10-04T08:07:27.3958345Z",
+          "aggregate_host_busy_percent": 19.038461538461537
+        },
+        {
+          "utc": "2026-10-04T08:07:28.4090653Z",
+          "aggregate_host_busy_percent": 21.153846153846157
+        },
+        {
+          "utc": "2026-10-04T08:07:29.4348620Z",
+          "aggregate_host_busy_percent": 22.159090909090907
+        },
+        {
+          "utc": "2026-10-04T08:07:30.4388761Z",
+          "aggregate_host_busy_percent": 16.9921875
+        },
+        {
+          "utc": "2026-10-04T08:07:31.4524377Z",
+          "aggregate_host_busy_percent": 19.90384615384615
+        },
+        {
+          "utc": "2026-10-04T08:07:32.4778542Z",
+          "aggregate_host_busy_percent": 19.12878787878788
+        },
+        {
+          "utc": "2026-10-04T08:07:33.4775351Z",
+          "aggregate_host_busy_percent": 29.1015625
+        },
+        {
+          "utc": "2026-10-04T08:07:34.4910959Z",
+          "aggregate_host_busy_percent": 19.730510105871033
+        },
+        {
+          "utc": "2026-10-04T08:07:35.5035635Z",
+          "aggregate_host_busy_percent": 27.512195121951223
+        },
+        {
+          "utc": "2026-10-04T08:07:36.5184753Z",
+          "aggregate_host_busy_percent": 27.692307692307693
+        },
+        {
+          "utc": "2026-10-04T08:07:37.5295352Z",
+          "aggregate_host_busy_percent": 21.53846153846154
+        },
+        {
+          "utc": "2026-10-04T08:07:38.5415105Z",
+          "aggregate_host_busy_percent": 28.076923076923077
+        },
+        {
+          "utc": "2026-10-04T08:07:39.5546331Z",
+          "aggregate_host_busy_percent": 23.291626564003852
+        },
+        {
+          "utc": "2026-10-04T08:07:40.5681775Z",
+          "aggregate_host_busy_percent": 29.756097560975615
+        },
+        {
+          "utc": "2026-10-04T08:07:41.5827071Z",
+          "aggregate_host_busy_percent": 22.307692307692307
+        },
+        {
+          "utc": "2026-10-04T08:07:42.6050566Z",
+          "aggregate_host_busy_percent": 22.632575757575758
+        },
+        {
+          "utc": "2026-10-04T08:07:43.6207102Z",
+          "aggregate_host_busy_percent": 36.53846153846154
+        },
+        {
+          "utc": "2026-10-04T08:07:44.6322851Z",
+          "aggregate_host_busy_percent": 24.807692307692307
+        },
+        {
+          "utc": "2026-10-04T08:07:45.6428996Z",
+          "aggregate_host_busy_percent": 28.41796875
+        }
+      ],
+      "normalized_png_sha256": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+      "profile": {
+        "adapter": "AdapterInfo { name: \"Microsoft Basic Render Driver\", vendor: 5140, device: 140, device_type: Cpu, device_pci_bus_id: \"\", driver: \"10.0.26100.9278\", driver_info: \"\", backend: Dx12, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None }",
+        "direct_copy_probe": false,
+        "exact_interpolated_pixels": true,
+        "exact_sampled_pixels": true,
+        "grid": [
+          120,
+          40
+        ],
+        "host_copy_probe": true,
+        "interval_ms": 100,
+        "logical_processors": 16,
+        "measurements": [
+          {
+            "case": "frozen-all",
+            "completed_draw_ms_per_frame": 28.07902,
+            "cpu_ms": 22687.5,
+            "cpu_ms_per_frame": 226.875,
+            "cpu_percent": 14.17913408839653,
+            "frames": 100,
+            "frames_per_second": 9.999609715232815,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.3903
+          },
+          {
+            "case": "localized-all",
+            "completed_draw_ms_per_frame": 43.548635000000004,
+            "cpu_ms": 24750.0,
+            "cpu_ms_per_frame": 247.5,
+            "cpu_percent": 15.468069095598413,
+            "frames": 100,
+            "frames_per_second": 9.999559819376751,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": {
+              "last_surface_pixels": 2982063,
+              "last_updated_pixels": 21105
+            },
+            "wall_ms": 10000.4402
+          },
+          {
+            "case": "frozen-all-repeat",
+            "completed_draw_ms_per_frame": 27.961621,
+            "cpu_ms": 22562.5,
+            "cpu_ms_per_frame": 225.625,
+            "cpu_percent": 14.101290486106523,
+            "frames": 100,
+            "frames_per_second": 9.999807103720968,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.1929
+          }
+        ],
+        "palette_fill_conversions_before_sampling": 15,
+        "palette_fills_textureless": true,
+        "palette_frame_conversions_before_sampling": 5,
+        "palette_frame_textureless": true,
+        "physical_size": [
+          2058,
+          1658
+        ],
+        "pixels_per_point": 2.0,
+        "primitives": [
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 0,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[7.7 7.7] - [1014.9 36.2]]",
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 1,
+            "indices": 3285,
+            "kind": "mesh",
+            "opaque_white_triangles": 327,
+            "vertices": 826
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 2,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[-0.2 804.2] - [1029.2 820.0]]",
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 3,
+            "indices": 441,
+            "kind": "mesh",
+            "opaque_white_triangles": 17,
+            "vertices": 218
+          },
+          {
+            "callback_viewport_pixels": 3152856.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 4,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 39.0] - [1029.0 805.0]]"
+          },
+          {
+            "callback_viewport_pixels": 3039000.0,
+            "clip": "[[0.0 39.0] - [1029.0 805.0]]",
+            "index": 5,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1021.0 797.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2985900.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 6,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1016.8 787.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2982063.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 7,
+            "kind": "callback",
+            "native_image": true,
+            "rect": "[[8.0 47.0] - [1017.5 785.5]]"
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 8,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 9,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[443.5 57.5] - [586.0 71.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 10,
+            "indices": 84,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 56
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 11,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[315.5 92.5] - [495.0 102.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 12,
+            "indices": 150,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 100
+          },
+          {
+            "bounds": "[[314.2 88.8] - [316.8 107.2]]",
+            "clip": "[[314.5 89.5] - [496.2 106.5]]",
+            "index": 13,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "bounds": "[[311.2 112.8] - [717.8 114.2]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 14,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[305.5 119.5] - [723.5 339.5]]",
+            "index": 15,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[311.2 119.2] - [717.8 147.8]]",
+            "clip": "[[305.5 119.5] - [723.5 339.5]]",
+            "index": 16,
+            "indices": 360,
+            "kind": "mesh",
+            "opaque_white_triangles": 40,
+            "vertices": 80
+          },
+          {
+            "bounds": "[[318.5 128.0] - [709.5 138.0]]",
+            "clip": "[[311.5 119.5] - [717.5 147.5]]",
+            "index": 17,
+            "indices": 138,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 92
+          },
+          {
+            "bounds": "[[317.5 159.0] - [708.5 169.0]]",
+            "clip": "[[311.5 150.5] - [717.5 178.5]]",
+            "index": 18,
+            "indices": 162,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 108
+          },
+          {
+            "bounds": "[[318.5 190.0] - [394.5 200.0]]",
+            "clip": "[[311.5 181.5] - [717.5 209.5]]",
+            "index": 19,
+            "indices": 54,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 36
+          },
+          {
+            "bounds": "[[318.5 221.0] - [707.5 231.0]]",
+            "clip": "[[311.5 212.5] - [717.5 240.5]]",
+            "index": 20,
+            "indices": 168,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 112
+          },
+          {
+            "bounds": "[[317.5 252.0] - [709.5 262.0]]",
+            "clip": "[[311.5 243.5] - [717.5 271.5]]",
+            "index": 21,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[317.5 283.0] - [709.5 293.0]]",
+            "clip": "[[311.5 274.5] - [717.5 302.5]]",
+            "index": 22,
+            "indices": 102,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 68
+          },
+          {
+            "bounds": "[[318.5 314.0] - [709.0 324.0]]",
+            "clip": "[[311.5 305.5] - [717.5 333.5]]",
+            "index": 23,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[311.5 319.5] - [717.5 339.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 24,
+            "indices": 6,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 4
+          }
+        ],
+        "removed_fill_triangles": 388,
+        "retained_composition_probe": true,
+        "scene": "application-palette",
+        "target_format": "Bgra8Unorm",
+        "textureless_mesh_probe": null
+      },
+      "raw_artifact_sha256": {
+        "original.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "profile.json": "35c3e9fc971829737865f64f31a652f82ae640ffe2292284c170a47c6265d4a5",
+        "sampled.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "receipt.json": "c625150589ca917dfa745cb294256e0d57ff10ad4b9aee6f074a948c7322e651"
+      }
+    },
+    {
+      "name": "baseline-2",
+      "source_head": "444733c3f1c0fbf55a383d67aa917c43b897f51a",
+      "source_profile_sha256": "943CEFB5374C50165362CC5C1C890B0314DB61917AD8BE59E136733B01CEAA2F",
+      "executable_sha256": "4C4CF8868F9881314AB3D275EA6DA4738DF1D0912E78A26AC28CC2AC057FE17A",
+      "started_utc": "2026-10-04T08:07:46.2621364Z",
+      "completed_utc": "2026-10-04T08:08:22.6118916Z",
+      "host_cpu_samples": [
+        {
+          "utc": "2026-10-04T08:07:47.2912134Z",
+          "aggregate_host_busy_percent": 76.75521821631878
+        },
+        {
+          "utc": "2026-10-04T08:07:48.3043376Z",
+          "aggregate_host_busy_percent": 73.03262955854126
+        },
+        {
+          "utc": "2026-10-04T08:07:49.3113649Z",
+          "aggregate_host_busy_percent": 62.109375
+        },
+        {
+          "utc": "2026-10-04T08:07:50.3222778Z",
+          "aggregate_host_busy_percent": 31.153846153846153
+        },
+        {
+          "utc": "2026-10-04T08:07:51.3362859Z",
+          "aggregate_host_busy_percent": 32.49999999999999
+        },
+        {
+          "utc": "2026-10-04T08:07:52.3502793Z",
+          "aggregate_host_busy_percent": 31.54296875
+        },
+        {
+          "utc": "2026-10-04T08:07:53.3604130Z",
+          "aggregate_host_busy_percent": 41.53846153846153
+        },
+        {
+          "utc": "2026-10-04T08:07:54.3730186Z",
+          "aggregate_host_busy_percent": 32.98076923076923
+        },
+        {
+          "utc": "2026-10-04T08:07:55.3827626Z",
+          "aggregate_host_busy_percent": 34.48940269749519
+        },
+        {
+          "utc": "2026-10-04T08:07:56.3891448Z",
+          "aggregate_host_busy_percent": 45.71150097465887
+        },
+        {
+          "utc": "2026-10-04T08:07:57.4239329Z",
+          "aggregate_host_busy_percent": 40.71969696969697
+        },
+        {
+          "utc": "2026-10-04T08:07:58.4329553Z",
+          "aggregate_host_busy_percent": 32.49999999999999
+        },
+        {
+          "utc": "2026-10-04T08:07:59.4452482Z",
+          "aggregate_host_busy_percent": 33.17307692307693
+        },
+        {
+          "utc": "2026-10-04T08:08:00.4566434Z",
+          "aggregate_host_busy_percent": 31.54296875
+        },
+        {
+          "utc": "2026-10-04T08:08:01.4687423Z",
+          "aggregate_host_busy_percent": 28.365384615384613
+        },
+        {
+          "utc": "2026-10-04T08:08:02.4780318Z",
+          "aggregate_host_busy_percent": 41.82692307692307
+        },
+        {
+          "utc": "2026-10-04T08:08:03.4845210Z",
+          "aggregate_host_busy_percent": 40.4296875
+        },
+        {
+          "utc": "2026-10-04T08:08:04.4953151Z",
+          "aggregate_host_busy_percent": 35.192307692307686
+        },
+        {
+          "utc": "2026-10-04T08:08:05.5077388Z",
+          "aggregate_host_busy_percent": 35.514918190567855
+        },
+        {
+          "utc": "2026-10-04T08:08:06.5176544Z",
+          "aggregate_host_busy_percent": 34.731707317073166
+        },
+        {
+          "utc": "2026-10-04T08:08:07.5523328Z",
+          "aggregate_host_busy_percent": 37.878787878787875
+        },
+        {
+          "utc": "2026-10-04T08:08:08.5617186Z",
+          "aggregate_host_busy_percent": 36.53846153846154
+        },
+        {
+          "utc": "2026-10-04T08:08:09.5742880Z",
+          "aggregate_host_busy_percent": 35.0
+        },
+        {
+          "utc": "2026-10-04T08:08:10.5871950Z",
+          "aggregate_host_busy_percent": 32.01923076923077
+        },
+        {
+          "utc": "2026-10-04T08:08:11.6015143Z",
+          "aggregate_host_busy_percent": 32.46124031007752
+        },
+        {
+          "utc": "2026-10-04T08:08:12.6216285Z",
+          "aggregate_host_busy_percent": 32.63358778625955
+        },
+        {
+          "utc": "2026-10-04T08:08:13.6329782Z",
+          "aggregate_host_busy_percent": 44.89402697495183
+        },
+        {
+          "utc": "2026-10-04T08:08:14.6428762Z",
+          "aggregate_host_busy_percent": 38.01169590643275
+        },
+        {
+          "utc": "2026-10-04T08:08:15.6531438Z",
+          "aggregate_host_busy_percent": 33.84615384615385
+        },
+        {
+          "utc": "2026-10-04T08:08:16.6650271Z",
+          "aggregate_host_busy_percent": 34.93743984600578
+        },
+        {
+          "utc": "2026-10-04T08:08:17.6794721Z",
+          "aggregate_host_busy_percent": 35.707410972088546
+        },
+        {
+          "utc": "2026-10-04T08:08:18.6922185Z",
+          "aggregate_host_busy_percent": 35.96491228070175
+        },
+        {
+          "utc": "2026-10-04T08:08:19.7220767Z",
+          "aggregate_host_busy_percent": 42.99242424242424
+        },
+        {
+          "utc": "2026-10-04T08:08:20.7328277Z",
+          "aggregate_host_busy_percent": 36.057692307692314
+        },
+        {
+          "utc": "2026-10-04T08:08:21.7424050Z",
+          "aggregate_host_busy_percent": 35.54913294797688
+        }
+      ],
+      "normalized_png_sha256": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+      "profile": {
+        "adapter": "AdapterInfo { name: \"Microsoft Basic Render Driver\", vendor: 5140, device: 140, device_type: Cpu, device_pci_bus_id: \"\", driver: \"10.0.26100.9278\", driver_info: \"\", backend: Dx12, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None }",
+        "direct_copy_probe": false,
+        "exact_interpolated_pixels": true,
+        "exact_sampled_pixels": true,
+        "grid": [
+          120,
+          40
+        ],
+        "host_copy_probe": true,
+        "interval_ms": 100,
+        "logical_processors": 16,
+        "measurements": [
+          {
+            "case": "frozen-all",
+            "completed_draw_ms_per_frame": 46.024354,
+            "cpu_ms": 46593.75,
+            "cpu_ms_per_frame": 465.9375,
+            "cpu_percent": 29.120677615516875,
+            "frames": 100,
+            "frames_per_second": 9.99985710204201,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.1429
+          },
+          {
+            "case": "localized-all",
+            "completed_draw_ms_per_frame": 60.010498,
+            "cpu_ms": 50015.625,
+            "cpu_ms_per_frame": 500.15625,
+            "cpu_percent": 31.25963027080093,
+            "frames": 100,
+            "frames_per_second": 9.999956700187488,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": {
+              "last_surface_pixels": 2982063,
+              "last_updated_pixels": 21105
+            },
+            "wall_ms": 10000.0433
+          },
+          {
+            "case": "frozen-all-repeat",
+            "completed_draw_ms_per_frame": 46.38569600000001,
+            "cpu_ms": 48562.5,
+            "cpu_ms_per_frame": 485.625,
+            "cpu_percent": 30.35106686707806,
+            "frames": 100,
+            "frames_per_second": 9.999836702666645,
+            "retained_prefix": {
+              "decline_reason": null,
+              "rebuilt_frames": 0,
+              "reused_frames": 0,
+              "signature_bytes": 0,
+              "texture_bytes": 0
+            },
+            "terminal_damage": null,
+            "wall_ms": 10000.1633
+          }
+        ],
+        "palette_fill_conversions_before_sampling": 0,
+        "palette_fills_textureless": false,
+        "palette_frame_conversions_before_sampling": 5,
+        "palette_frame_textureless": true,
+        "physical_size": [
+          2058,
+          1658
+        ],
+        "pixels_per_point": 2.0,
+        "primitives": [
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 0,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[7.7 7.7] - [1014.9 36.2]]",
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 1,
+            "indices": 3285,
+            "kind": "mesh",
+            "opaque_white_triangles": 327,
+            "vertices": 826
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 2,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[-0.2 804.2] - [1029.2 820.0]]",
+            "clip": "[[0.0 805.0] - [1029.0 829.0]]",
+            "index": 3,
+            "indices": 441,
+            "kind": "mesh",
+            "opaque_white_triangles": 17,
+            "vertices": 218
+          },
+          {
+            "callback_viewport_pixels": 3152856.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 4,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 39.0] - [1029.0 805.0]]"
+          },
+          {
+            "callback_viewport_pixels": 3039000.0,
+            "clip": "[[0.0 39.0] - [1029.0 805.0]]",
+            "index": 5,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1021.0 797.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2985900.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 6,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[8.0 47.0] - [1016.8 787.0]]"
+          },
+          {
+            "callback_viewport_pixels": 2982063.0,
+            "clip": "[[8.0 47.0] - [1021.0 797.0]]",
+            "index": 7,
+            "kind": "callback",
+            "native_image": true,
+            "rect": "[[8.0 47.0] - [1017.5 785.5]]"
+          },
+          {
+            "callback_viewport_pixels": 3412164.0,
+            "clip": "[[0.0 0.0] - [1029.0 829.0]]",
+            "index": 8,
+            "kind": "callback",
+            "native_image": false,
+            "rect": "[[0.0 0.0] - [1029.0 829.0]]"
+          },
+          {
+            "bounds": "[[304.2 47.8] - [724.8 107.8]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 9,
+            "indices": 1062,
+            "kind": "mesh",
+            "opaque_white_triangles": 116,
+            "vertices": 316
+          },
+          {
+            "bounds": "[[314.2 88.8] - [316.8 107.2]]",
+            "clip": "[[314.5 89.5] - [496.2 106.5]]",
+            "index": 10,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "bounds": "[[311.2 112.8] - [717.8 114.2]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 11,
+            "indices": 30,
+            "kind": "mesh",
+            "opaque_white_triangles": 2,
+            "vertices": 8
+          },
+          {
+            "bounds": "[[311.2 119.2] - [717.8 147.8]]",
+            "clip": "[[305.5 119.5] - [723.5 339.5]]",
+            "index": 12,
+            "indices": 534,
+            "kind": "mesh",
+            "opaque_white_triangles": 58,
+            "vertices": 120
+          },
+          {
+            "bounds": "[[318.5 128.0] - [709.5 138.0]]",
+            "clip": "[[311.5 119.5] - [717.5 147.5]]",
+            "index": 13,
+            "indices": 138,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 92
+          },
+          {
+            "bounds": "[[317.5 159.0] - [708.5 169.0]]",
+            "clip": "[[311.5 150.5] - [717.5 178.5]]",
+            "index": 14,
+            "indices": 162,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 108
+          },
+          {
+            "bounds": "[[318.5 190.0] - [394.5 200.0]]",
+            "clip": "[[311.5 181.5] - [717.5 209.5]]",
+            "index": 15,
+            "indices": 54,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 36
+          },
+          {
+            "bounds": "[[318.5 221.0] - [707.5 231.0]]",
+            "clip": "[[311.5 212.5] - [717.5 240.5]]",
+            "index": 16,
+            "indices": 168,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 112
+          },
+          {
+            "bounds": "[[317.5 252.0] - [709.5 262.0]]",
+            "clip": "[[311.5 243.5] - [717.5 271.5]]",
+            "index": 17,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[317.5 283.0] - [709.5 293.0]]",
+            "clip": "[[311.5 274.5] - [717.5 302.5]]",
+            "index": 18,
+            "indices": 102,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 68
+          },
+          {
+            "bounds": "[[318.5 314.0] - [709.0 324.0]]",
+            "clip": "[[311.5 305.5] - [717.5 333.5]]",
+            "index": 19,
+            "indices": 90,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 60
+          },
+          {
+            "bounds": "[[311.5 319.5] - [717.5 339.5]]",
+            "clip": "[[305.5 49.0] - [723.5 367.0]]",
+            "index": 20,
+            "indices": 6,
+            "kind": "mesh",
+            "opaque_white_triangles": 0,
+            "vertices": 4
+          }
+        ],
+        "removed_fill_triangles": 522,
+        "retained_composition_probe": true,
+        "scene": "application-palette",
+        "target_format": "Bgra8Unorm",
+        "textureless_mesh_probe": null
+      },
+      "raw_artifact_sha256": {
+        "original.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "profile.json": "2f74d38a4881aa43c4cf58a31ffc7e1a6a6123b48dbbb65043427a9f0511e70a",
+        "sampled.png": "549b3c8f8e2a65a8e92e6822e97162981446f475773ffe0d5af40bff57beab64",
+        "receipt.json": "88594089c036821d2a59526239fc801cfc6d35b6c2ad9191c5c619cbdcd71caa"
+      }
+    }
+  ],
+  "limitations": [
+    "Forced paced completed offscreen work, not native presentation or physical latency.",
+    "One noisy shared-host BAAB series; no precise statistical estimate or external-CPU attribution.",
+    "All 1,200 measured frames and adverse repeats remain explicit; no clean-subset selection.",
+    "Exact deterministic pixels include the unchanged shadow; no output/widget/layout/input policy change.",
+    "Source execution remains444733c, not a later documentation or integration head."
+  ]
+}
