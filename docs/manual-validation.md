@@ -779,6 +779,13 @@ experiment that requires exact initial/final pixels and owns the target outside
 the production callback. The same-format shader is its control; cadence and
 CPU-ms/frame must be reviewed, not CPU percentage alone. These additions do not
 qualify native presentation or change the production renderer.
+`FESTERM_TUI_PROFILE_SCENE=application-palette` opens and asserts the real
+command palette over that synthetic terminal, retaining the original
+application/terminal controls and reporting ordinary mesh bounds and solid-fill
+triangle counts. This is optional offscreen attribution; removal of overlay
+fills is still a pixel-changing diagnostic, not an accepted rendering change.
+Native palette appearance, focus, input, presentation and CP-18 remain manual
+or separately qualified evidence.
 The fresh post-chrome native pair still measures 8.602% versus 0.446% localized
 CPU; its campaign stopped at a later foreground-activation failure. Streaming,
 full-redraw, force-full-repaint control and repeated parity evidence remain

@@ -639,6 +639,26 @@ target is retained: there is no per-frame image allocation or screenshot
 readback in the measured final-composition pass. CPU-counter granularity is
 visible in very small results; a reported zero is not proof of zero work.
 
+Use `FESTERM_TUI_PROFILE_SCENE=application-palette` to keep the real command
+palette open over that same synthetic session. The probe asserts the actual
+palette window exists and preserves the original scene controls, dimensions,
+native path and producer cadence. Mesh bounds and opaque white-triangle counts
+help attribute the ordinary overlay work. Select
+`frozen-all,meshes-only,without-solid-mesh-fills,localized-all,frozen-all-repeat`
+for a bounded first investigation. The fill-removal case deliberately changes
+pixels and is an attribution control, never a proposed production optimization.
+This scene has not yet supplied a validated comparison; retain noisy/adverse
+results and distinguish completed offscreen work from native presentation.
+
+The test-only `FESTERM_TUI_PROFILE_TEXTURELESS_MESH=<primitive-index>` replaces
+one captured valid white-UV mesh with the existing textureless panel shader.
+It preserves every vertex, index, clip and color, saves the candidate image,
+and requires exact full-frame RGBA equality before timing. Only explicitly
+selected `frozen-all,frozen-all-repeat` controls are allowed; dynamic or
+partial/omitted-mesh cases would not be equivalent controls. This does not
+relax production panel opacity, shadow, root-viewport or transform guards,
+and is not production palette integration.
+
 `profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
 completed-draw wall time and primitive identities. Individual cases include
 clear/sleep controls, frozen whole-frame and single-primitive composition,

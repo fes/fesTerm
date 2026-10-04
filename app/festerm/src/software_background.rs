@@ -45,6 +45,8 @@ struct PanelRenderer {
     layout: wgpu::BindGroupLayout,
     #[cfg(test)]
     paints: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    palette_frames: std::sync::atomic::AtomicUsize,
 }
 
 struct PanelPaint {
@@ -58,6 +60,104 @@ struct PanelPaint {
 
 fn panel_renderer_id() -> egui::Id {
     egui::Id::new("festerm::software-panel-background")
+}
+
+fn white_mesh_geometry(mesh: &egui::Mesh) -> bool {
+    mesh.texture_id == egui::TextureId::default()
+        && mesh
+            .vertices
+            .iter()
+            .all(|vertex| vertex.uv == egui::epaint::WHITE_UV)
+        && !mesh.indices.is_empty()
+        && mesh.is_valid()
+}
+
+fn opaque_window_frame(shape: &egui::Shape) -> bool {
+    matches!(shape, egui::Shape::Vec(shapes) if matches!(
+        shapes.as_slice(),
+        [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)]
+            if shadow.brush.is_none() && frame.brush.is_none() && frame.fill.is_opaque()
+    ))
+}
+
+fn palette_frame_layer() -> egui::LayerId {
+    egui::LayerId::new(
+        egui::Order::Middle,
+        festerm_ui_egui::palette::PaletteState::window_id(),
+    )
+}
+
+fn supports_palette_frame(ui: &egui::Ui) -> bool {
+    supports_panel_painter(ui)
+        && ui
+            .ctx()
+            .layer_transform_to_global(palette_frame_layer())
+            .is_none()
+}
+
+struct PaletteFrameBackground;
+
+impl egui::Plugin for PaletteFrameBackground {
+    fn debug_name(&self) -> &'static str {
+        "festerm palette frame background"
+    }
+
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        if !supports_palette_frame(ui) {
+            return;
+        }
+        let context = ui.ctx();
+        let layer = palette_frame_layer();
+        #[cfg(test)]
+        if context.data(|data| {
+            data.get_temp::<bool>(palette_frame_disabled_id())
+                .unwrap_or(false)
+        }) {
+            return;
+        }
+        let Some(renderer) =
+            context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+        else {
+            return;
+        };
+        let frame = context.graphics(|graphics| {
+            graphics
+                .get(layer)?
+                .all_entries()
+                .enumerate()
+                .find_map(|(index, entry)| {
+                    opaque_window_frame(&entry.shape)
+                        .then(|| (egui::layers::ShapeIdx(index), entry.clone()))
+                })
+        });
+        let Some((index, frame)) = frame else {
+            return;
+        };
+        // Tessellation takes the context lock; never do it while editing graphics.
+        let shape = renderer.shape_for_clip(context, frame.clip_rect, frame.shape);
+        #[cfg(test)]
+        if matches!(shape, egui::Shape::Callback(_)) {
+            renderer
+                .palette_frames
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        context.graphics_mut(|graphics| {
+            graphics
+                .get_mut(layer)
+                .expect("captured palette paint list remains present in the same pass")
+                .set(index, frame.clip_rect, shape);
+        });
+    }
+}
+
+#[cfg(test)]
+fn palette_frame_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-palette-frame")
+}
+
+#[cfg(test)]
+pub(crate) fn set_palette_frame_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(palette_frame_disabled_id(), !enabled));
 }
 
 fn use_panel_pipeline(
@@ -160,37 +260,51 @@ impl PanelRenderer {
             layout,
             #[cfg(test)]
             paints: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            palette_frames: std::sync::atomic::AtomicUsize::new(0),
         }))
     }
 
     fn shape(self: &Arc<Self>, ui: &egui::Ui, shape: egui::Shape) -> egui::Shape {
-        let primitives = ui.ctx().tessellate(
+        self.shape_for_clip(ui.ctx(), ui.clip_rect(), shape)
+    }
+
+    fn shape_for_clip(
+        self: &Arc<Self>,
+        context: &egui::Context,
+        clip_rect: egui::Rect,
+        shape: egui::Shape,
+    ) -> egui::Shape {
+        let primitives = context.tessellate(
             vec![egui::epaint::ClippedShape {
-                clip_rect: ui.clip_rect(),
+                clip_rect,
                 shape: shape.clone(),
             }],
-            ui.ctx().pixels_per_point(),
+            context.pixels_per_point(),
         );
         let mesh = match primitives.as_slice() {
             [egui::ClippedPrimitive {
                 primitive: egui::epaint::Primitive::Mesh(mesh),
                 ..
-            }] if mesh.texture_id == egui::TextureId::default()
-                && mesh.vertices.iter().all(|v| v.uv == egui::epaint::WHITE_UV)
-                && !mesh.indices.is_empty()
-                && mesh.is_valid() =>
-            {
-                mesh
-            }
+            }] if white_mesh_geometry(mesh) => mesh,
             [] => return egui::Shape::Noop,
             _ => {
                 tracing::warn!(target: "festerm::rendering", "retaining standard panel painting for unexpected geometry");
                 return shape;
             }
         };
+        self.mesh_shape(context.viewport_rect(), mesh)
+            .unwrap_or(shape)
+    }
+
+    fn mesh_shape(
+        self: &Arc<Self>,
+        viewport: egui::Rect,
+        mesh: &egui::Mesh,
+    ) -> Option<egui::Shape> {
         let Ok(index_count) = u32::try_from(mesh.indices.len()) else {
             tracing::warn!(target: "festerm::rendering", "retaining standard panel painting for oversized geometry");
-            return shape;
+            return None;
         };
         let vertices = self
             .device
@@ -220,16 +334,18 @@ impl PanelRenderer {
                 resource: uniform.as_entire_binding(),
             }],
         });
-        egui::Shape::Callback(egui_wgpu::Callback::new_paint_callback(
-            ui.ctx().viewport_rect(),
-            PanelPaint {
-                renderer: Arc::clone(self),
-                vertices,
-                indices,
-                index_count,
-                uniform,
-                bindings,
-            },
+        Some(egui::Shape::Callback(
+            egui_wgpu::Callback::new_paint_callback(
+                viewport,
+                PanelPaint {
+                    renderer: Arc::clone(self),
+                    vertices,
+                    indices,
+                    index_count,
+                    uniform,
+                    bindings,
+                },
+            ),
         ))
     }
 }
@@ -325,6 +441,21 @@ impl PanelTestProbe {
         self.0.as_ref().map_or(0, |renderer| {
             renderer.paints.load(std::sync::atomic::Ordering::Relaxed)
         })
+    }
+
+    pub(crate) fn white_mesh_shape(
+        &self,
+        viewport: egui::Rect,
+        mesh: &egui::Mesh,
+    ) -> Result<egui::Shape, &'static str> {
+        if !white_mesh_geometry(mesh) {
+            return Err("textureless diagnostic requires valid, nonempty white-UV geometry");
+        }
+        self.0
+            .as_ref()
+            .ok_or("textureless diagnostic requires a supported framebuffer format")?
+            .mesh_shape(viewport, mesh)
+            .ok_or("textureless diagnostic geometry exceeded the index budget")
     }
 }
 
@@ -453,6 +584,7 @@ pub(crate) fn install(context: &egui::Context, render_state: &egui_wgpu::RenderS
                         .then(|| fills.shape(ui, egui::Shape::rect_filled(rect, 0.0, fill)))
                 });
                 context.data_mut(|data| data.insert_temp(panel_renderer_id(), renderer));
+                context.add_plugin(PaletteFrameBackground);
                 tracing::info!(target: "festerm::app", "using textureless application panel backgrounds on Windows WARP");
             }
         }
@@ -477,6 +609,265 @@ mod tests {
 
     impl EncodedInputSink for Sink {
         fn record_encoded_input(&mut self, _bytes: &[u8]) {}
+    }
+
+    #[test]
+    fn palette_frame_candidates_are_only_the_opaque_untextured_shadow_frame() {
+        let rect = egui::Rect::from_min_size(egui::pos2(11.0, 17.0), egui::vec2(210.0, 130.0));
+        let frame = egui::Frame::window(&egui::Style::default());
+        assert_ne!(frame.shadow, egui::Shadow::NONE);
+        assert!(opaque_window_frame(&frame.paint(rect)));
+        assert!(!opaque_window_frame(
+            &frame.fill(egui::Color32::from_black_alpha(120)).paint(rect)
+        ));
+        assert!(!opaque_window_frame(&egui::Shape::rect_filled(
+            rect,
+            5.0,
+            egui::Color32::WHITE,
+        )));
+        assert!(!opaque_window_frame(&egui::Shape::Vec(vec![
+            egui::Shape::Noop,
+            egui::Shape::Noop,
+        ])));
+    }
+
+    #[test]
+    fn palette_frame_retains_root_opacity_visibility_origin_and_layer_transform_guards() {
+        for case in [
+            "eligible",
+            "opacity",
+            "invisible",
+            "origin",
+            "root-transform",
+            "palette-transform",
+            "secondary",
+        ] {
+            let context = egui::Context::default();
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    if case == "origin" {
+                        egui::pos2(1.25, 2.5)
+                    } else {
+                        egui::Pos2::ZERO
+                    },
+                    egui::vec2(360.0, 240.0),
+                )),
+                ..Default::default()
+            };
+            if case == "secondary" {
+                input.viewport_id = egui::ViewportId::from_hash_of("secondary-palette-frame");
+                input
+                    .viewports
+                    .insert(input.viewport_id, Default::default());
+            }
+            let mut output = context.run_ui(input, |ui| {
+                match case {
+                    "opacity" => ui.set_opacity(0.5),
+                    "invisible" => ui.set_invisible(),
+                    "root-transform" => context.set_transform_layer(
+                        ui.layer_id(),
+                        egui::emath::TSTransform::from_translation(egui::vec2(1.0, 2.0)),
+                    ),
+                    "palette-transform" => context.set_transform_layer(
+                        palette_frame_layer(),
+                        egui::emath::TSTransform::from_translation(egui::vec2(1.0, 2.0)),
+                    ),
+                    _ => {}
+                }
+                assert_eq!(supports_palette_frame(ui), case == "eligible", "{case}");
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn textureless_palette_frame_preserves_shadow_pixels_across_dpi_and_fallback() {
+        use egui_kittest::TestRenderer;
+        let render = |enabled: bool, scale: f32, case: &str| {
+            let mut setup = default_wgpu_setup();
+            let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                unreachable!()
+            };
+            options.instance_descriptor.backends = wgpu::Backends::DX12;
+            let state = create_render_state(setup, Default::default());
+            assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let context = egui::Context::default();
+            context.set_visuals(if case == "light" {
+                egui::Visuals::light()
+            } else {
+                festerm_ui_egui::theme::default_visuals()
+            });
+            context.all_styles_mut(|style| style.animation_time = 0.0);
+            if case == "translucent-frame" {
+                context.all_styles_mut(|style| {
+                    style.visuals.window_fill = egui::Color32::from_black_alpha(160)
+                });
+            }
+            install(&context, &state);
+            set_palette_frame_enabled(&context, enabled);
+            if case == "palette-transform" {
+                context.set_transform_layer(
+                    palette_frame_layer(),
+                    egui::emath::TSTransform::from_translation(egui::vec2(1.25, 2.5)),
+                );
+            }
+            let mut palette = festerm_ui_egui::palette::PaletteState::default();
+            palette.open();
+            let items = [
+                festerm_ui_egui::palette::PaletteItem {
+                    id: 1,
+                    label: "Local fixture".into(),
+                    hint: Some("Active session".into()),
+                    is_tab: true,
+                    shortcut_label: Some("Ctrl+1".into()),
+                },
+                festerm_ui_egui::palette::PaletteItem {
+                    id: 2,
+                    label: "Open Settings".into(),
+                    hint: Some("Ctrl+Shift+S".into()),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+            ];
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    if case == "origin" {
+                        egui::pos2(1.25, 2.5)
+                    } else {
+                        egui::Pos2::ZERO
+                    },
+                    if case == "short" {
+                        egui::vec2(360.0, 240.0)
+                    } else {
+                        egui::vec2(513.0, 401.0)
+                    },
+                )),
+                time: Some(0.0),
+                max_texture_side: Some(
+                    usize::try_from(state.device.limits().max_texture_dimension_2d).unwrap(),
+                ),
+                ..Default::default()
+            };
+            if case == "secondary" {
+                input.viewport_id = egui::ViewportId::from_hash_of("secondary-palette-pixels");
+                input
+                    .viewports
+                    .insert(input.viewport_id, Default::default());
+            }
+            input
+                .viewports
+                .get_mut(&input.viewport_id)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            if case == "secondary" {
+                // The offscreen renderer queries the root after the secondary pass.
+                let mut root = input.clone();
+                root.viewport_id = egui::ViewportId::ROOT;
+                root.viewports
+                    .entry(egui::ViewportId::ROOT)
+                    .or_default()
+                    .native_pixels_per_point = Some(scale);
+                let mut output = context.run_ui(root, |_| {});
+                renderer.handle_delta(&mut output.textures_delta);
+            }
+            let mut output = None;
+            for frame in 0..8 {
+                let mut raw = input.clone();
+                if case == "query" && frame == 3 {
+                    raw.events.push(egui::Event::Text("Settings".into()));
+                }
+                let mut current = context.run_ui(raw, |ui| {
+                    if case == "opacity" {
+                        ui.set_opacity(0.5);
+                    }
+                    ui.painter().rect_filled(
+                        ui.max_rect(),
+                        0.0,
+                        egui::Color32::from_rgb(31, 43, 61),
+                    );
+                    assert!(
+                        festerm_ui_egui::palette::show(ui.ctx(), &mut palette, &items).is_none()
+                    );
+                });
+                renderer.handle_delta(&mut current.textures_delta);
+                output = Some(current);
+            }
+            let image = renderer.render(&context, &output.unwrap()).unwrap();
+            let panel = context
+                .data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+                .unwrap();
+            assert_eq!(
+                panel
+                    .palette_frames
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    > 0,
+                enabled && matches!(case, "dark" | "light" | "short" | "query"),
+                "the pixel comparison must exercise the actual selected path: {case}, {scale}",
+            );
+            image
+        };
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for case in ["dark", "light", "short", "query"] {
+                let ordinary = render(false, scale, case);
+                let actual = render(true, scale, case);
+                assert_eq!(ordinary.dimensions(), actual.dimensions());
+                assert_eq!(
+                    ordinary
+                        .pixels()
+                        .zip(actual.pixels())
+                        .filter(|(a, b)| a != b)
+                        .count(),
+                    0,
+                    "scale={scale}, case={case}",
+                );
+            }
+        }
+        for case in [
+            "opacity",
+            "origin",
+            "palette-transform",
+            "secondary",
+            "translucent-frame",
+        ] {
+            let ordinary = render(false, 1.25, case);
+            let actual = render(true, 1.25, case);
+            assert_eq!(ordinary.dimensions(), actual.dimensions());
+            assert_eq!(
+                ordinary
+                    .pixels()
+                    .zip(actual.pixels())
+                    .filter(|(a, b)| a != b)
+                    .count(),
+                0,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn white_mesh_geometry_preserves_alpha_and_rejects_textures_or_invalid_indices() {
+        let rect = egui::Rect::from_min_size(egui::pos2(2.5, 3.75), egui::vec2(18.0, 27.0));
+        let mut mesh = egui::Mesh::default();
+        mesh.add_colored_rect(rect, egui::Color32::LIGHT_BLUE);
+        mesh.add_colored_rect(
+            rect.translate(egui::vec2(4.0, 6.0)),
+            egui::Color32::from_black_alpha(64),
+        );
+        assert!(white_mesh_geometry(&mesh));
+        assert!(!white_mesh_geometry(&egui::Mesh::default()));
+        for invalid in ["texture", "uv", "indices", "empty"] {
+            let mut candidate = mesh.clone();
+            match invalid {
+                "texture" => candidate.texture_id = egui::TextureId::User(7),
+                "uv" => candidate.vertices[0].uv = egui::pos2(0.25, 0.75),
+                "indices" => candidate.indices[0] = candidate.vertices.len() as u32,
+                "empty" => candidate.indices.clear(),
+                _ => unreachable!(),
+            }
+            assert!(!white_mesh_geometry(&candidate), "{invalid}");
+        }
     }
 
     #[test]
