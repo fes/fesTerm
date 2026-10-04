@@ -1010,10 +1010,10 @@ impl FesTermApp {
             NativeMenuCommand::ToggleSessionInspector => None,
         };
         if let Some(action) = action {
-            let bindings = self.state.interface_settings().keyboard_bindings().clone();
+            let bindings = self.state.keyboard_bindings();
             // Some native integrations also surface the accelerator key.
             // Remove that counterpart before egui dispatch, not by frame time.
-            crate::keyboard::consume(context, &bindings, action);
+            crate::keyboard::consume(context, bindings, action);
             if let TabContent::Session(session) = &self.state.active_tab().content {
                 let mut recorder = session
                     .controller
@@ -1087,8 +1087,7 @@ impl FesTermApp {
         let overlays_block_terminal_input = self.overlays.blocks_terminal_input();
         let palette_open = self.palette.is_open();
         let terminal_owns_input = self.terminal_owns_input();
-        let settings = self.state.interface_settings();
-        let bindings = settings.keyboard_bindings();
+        let bindings = self.state.keyboard_bindings();
         let rebuild_shortcuts = self.native_menu_shortcut_cache.needs_rebuild(
             bindings,
             overlays_block_terminal_input,
@@ -1126,7 +1125,7 @@ impl FesTermApp {
             .set(self.native_menu_shortcut_build_count.get() + 1);
         use festerm_config::KeyboardAction as A;
         use festerm_macos_window::NativeMenuCommand as N;
-        let settings = self.state.interface_settings();
+        let bindings = self.state.keyboard_bindings();
         let shortcuts = [
             (N::NewSession, A::NewSession),
             (N::NewWindow, A::NewWindow),
@@ -1147,9 +1146,7 @@ impl FesTermApp {
                 return None;
             }
             let parsed = festerm_config::Chord::parse(
-                settings
-                    .keyboard_bindings()
-                    .effective(action, cfg!(target_os = "macos")),
+                bindings.effective(action, cfg!(target_os = "macos")),
                 cfg!(target_os = "macos"),
             )
             .ok()??;
@@ -2513,8 +2510,8 @@ impl FesTermApp {
         self.palette_build_count
             .set(self.palette_build_count.get() + 1);
         use festerm_config::KeyboardAction as A;
-        let bindings = self.state.interface_settings().keyboard_bindings().clone();
-        let binding_label = |action| crate::keyboard::label(&bindings, action);
+        let bindings = self.state.keyboard_bindings();
+        let binding_label = |action| crate::keyboard::label(bindings, action);
         const NEW_LAUNCHER_TAB: u64 = 1;
         const START_LOCAL_SESSION: u64 = 3;
         const NEW_WINDOW: u64 = 23;
@@ -2943,11 +2940,11 @@ impl FesTermApp {
             let cancelling = self.clipboard_paste.is_some();
             self.cancel_clipboard_paste(ctx);
             if cancelling {
-                let bindings = self.state.interface_settings().keyboard_bindings().clone();
+                let bindings = self.state.keyboard_bindings();
                 let scope = self.shortcut_context(ctx, false);
                 let before = events.len();
                 events.retain(|event| {
-                    scope.activates(event, &bindings, true)
+                    scope.activates(event, bindings, true)
                         || !matches!(
                             event,
                             egui::Event::Key { .. }
@@ -2984,14 +2981,14 @@ impl FesTermApp {
             let new_confirmation_action = self.clipboard_confirmation_opening(ctx)
                 && self.shortcut_context(ctx, true).activates(
                     &event,
-                    self.state.interface_settings().keyboard_bindings(),
+                    self.state.keyboard_bindings(),
                     false,
                 );
             if new_confirmation_action
                 || (self.clipboard_paste.is_some()
                     && self.shortcut_context(ctx, false).activates(
                         &event,
-                        self.state.interface_settings().keyboard_bindings(),
+                        self.state.keyboard_bindings(),
                         true,
                     ))
             {
@@ -3032,7 +3029,7 @@ impl FesTermApp {
                 )
             }) && self.shortcut_context(ctx, false).activates(
                 &event,
-                self.state.interface_settings().keyboard_bindings(),
+                self.state.keyboard_bindings(),
                 false,
             ) {
                 pending.push_front(event);
@@ -3104,7 +3101,7 @@ impl FesTermApp {
 
     fn handle_shortcut_packet(&mut self, ctx: &egui::Context) {
         self.associate_input_recorder(ctx);
-        let bindings = self.state.interface_settings().keyboard_bindings().clone();
+        let bindings = self.state.keyboard_bindings().clone();
         ctx.data_mut(|data| {
             data.insert_temp(
                 egui::Id::new("effective-keyboard-bindings"),
@@ -3480,12 +3477,12 @@ impl FesTermApp {
                     .fail_clipboard_input(origin.token, "discarded-clipboard-cancelled");
             }
             self.show_clipboard_discard_notice(origin.tab);
-            let bindings = self.state.interface_settings().keyboard_bindings().clone();
+            let bindings = self.state.keyboard_bindings();
             let scope = self.shortcut_context(context, false);
             let discarded = context.input_mut(|input| {
                 let before = input.events.len();
                 input.events.retain(|event| {
-                    scope.activates(event, &bindings, true)
+                    scope.activates(event, bindings, true)
                         || !matches!(
                             event,
                             egui::Event::Key { .. }
@@ -3606,7 +3603,7 @@ impl FesTermApp {
                 format!(
                     "Focus Mode · {} → Exit Focus Mode",
                     crate::keyboard::label(
-                        self.state.interface_settings().keyboard_bindings(),
+                        self.state.keyboard_bindings(),
                         festerm_config::KeyboardAction::CommandPalette
                     )
                     .unwrap_or_else(|| "Ctrl+Shift+F12 (Settings recovery)".into())
@@ -4793,7 +4790,6 @@ impl FesTermApp {
                         .get(index)
                         .filter(|action| {
                             self.state
-                                .interface_settings()
                                 .keyboard_bindings()
                                 .effective(**action, cfg!(target_os = "macos"))
                                 == action.default_chord(cfg!(target_os = "macos"))
@@ -5707,11 +5703,7 @@ impl FesTermApp {
                     screen_command = screens::show_settings(
                         ui,
                         screens::SettingsViewModel {
-                            keyboard_bindings: self
-                                .state
-                                .interface_settings()
-                                .keyboard_bindings()
-                                .clone(),
+                            keyboard_bindings: self.state.keyboard_bindings().clone(),
                             chip_layout,
                             status_bar_visible: self.state.status_bar_visible(),
                             show_session_details: self.state.show_session_details(),
@@ -6360,7 +6352,6 @@ impl FesTermApp {
         action: festerm_config::KeyboardAction,
     ) -> String {
         self.state
-            .interface_settings()
             .keyboard_bindings()
             .effective(action, cfg!(target_os = "macos"))
             .to_owned()
@@ -10683,6 +10674,222 @@ mod tests {
             .iter()
             .find(|chip| chip.id == ChipId(first.chip_id()))
             .is_some_and(|chip| !chip.has_unread_output));
+    }
+
+    fn background_efficiency_fixture(
+        session_count: usize,
+        context: &egui::Context,
+    ) -> (
+        FesTermApp,
+        Vec<(TabId, crate::session_controller::fake::FakeSshSession)>,
+    ) {
+        assert!(session_count > 0);
+        let (mut app, first, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut sessions = vec![(first, transport)];
+        for _ in 1..session_count {
+            app.state.dispatch(AppCommand::OpenLauncher, context);
+            let transport = crate::session_controller::fake::FakeSshSession::new([]);
+            let tab = app.state.replace_active_with_test_ssh_session(
+                transport.clone(),
+                "controlled",
+                "background.example.test",
+                22,
+            );
+            sessions.push((tab, transport));
+        }
+        for (index, (tab, _)) in sessions.iter().enumerate() {
+            app.state.dispatch(
+                AppCommand::RenameTab(*tab, format!("synthetic-{index}")),
+                context,
+            );
+        }
+        (app, sessions)
+    }
+
+    #[test]
+    fn frame_keyboard_reads_do_not_snapshot_settings_for_one_or_six_sessions() {
+        use festerm_config::{KeyboardAction, KeyboardBindings, KeyboardOverride};
+        use festerm_session::SessionEvent;
+
+        for session_count in [1, 6] {
+            let context = egui::Context::default();
+            let (mut app, sessions) = background_efficiency_fixture(session_count, &context);
+            let active = app.state.active();
+            let bindings = KeyboardBindings(
+                KeyboardAction::ALL
+                    .into_iter()
+                    .map(|action| KeyboardOverride {
+                        action,
+                        chord: action.default_chord(cfg!(target_os = "macos")).to_owned(),
+                    })
+                    .collect(),
+            );
+            app.adopt_broadcast_configuration(
+                Configuration::empty()
+                    .with_interface_settings(
+                        InterfaceSettings::DEFAULT
+                            .with_keyboard_bindings(bindings)
+                            .with_default_sftp_local_directory(Some(
+                                "synthetic-sftp-directory".to_owned(),
+                            )),
+                    )
+                    .unwrap(),
+            );
+            for frame in 0..20 {
+                for (index, (_, transport)) in sessions.iter().enumerate() {
+                    transport.push_event(SessionEvent::Output(
+                        format!("\x1b[Hsession-{index}-{frame:02}\x1b[K\x1b[6n").into_bytes(),
+                    ));
+                }
+                let mut output = context.run_ui(Default::default(), |ui| {
+                    app.pump_all_sessions(ui.ctx());
+                    app.handle_shortcuts(ui.ctx());
+                    app.update_native_menu();
+                    let (chips, active_chip) = app.chip_view_models();
+                    assert_eq!(chips.len(), session_count);
+                    assert_eq!(active_chip, ChipId(active.chip_id()));
+                    for (index, chip) in chips.iter().enumerate() {
+                        assert_eq!(chip.primary, format!("synthetic-{index}"));
+                        assert_eq!(chip.quick_switch_number, Some((index + 1) as u8));
+                        assert_eq!(chip.has_unread_output, chip.id != active_chip);
+                        assert_eq!(chip.status, ChipStatus::Connected);
+                    }
+                });
+                output.textures_delta.clear();
+                for (index, (tab, transport)) in sessions.iter().enumerate() {
+                    let session = app.state.session_tab(*tab).unwrap();
+                    assert!(session
+                        .terminal
+                        .row_text(0)
+                        .unwrap()
+                        .starts_with(&format!("session-{index}-{frame:02}")));
+                    assert_eq!(transport.sent().len(), frame + 1);
+                    assert_eq!(transport.sent().last().unwrap(), b"\x1b[1;13R");
+                }
+            }
+            assert_eq!(
+                app.palette_items()
+                    .iter()
+                    .filter(|item| item.is_tab)
+                    .count(),
+                session_count
+            );
+            assert_eq!(app.native_menu_shortcut_build_count.get(), 1);
+            assert_eq!(
+                app.state.interface_settings_snapshot_count(),
+                0,
+                "frame reads must not copy all bindings and unrelated settings"
+            );
+            assert_eq!(app.state.active(), active);
+            let persisted = app.state.interface_settings();
+            assert_eq!(app.state.interface_settings_snapshot_count(), 1);
+            assert_eq!(persisted.keyboard_bindings(), app.state.keyboard_bindings());
+            assert_eq!(
+                persisted.default_sftp_local_directory(),
+                Some(std::path::Path::new("synthetic-sftp-directory"))
+            );
+        }
+    }
+
+    #[test]
+    fn frame_keyboard_reads_preserve_hidden_session_bounded_output_and_lifecycle() {
+        use festerm_session::{SessionEvent, SessionLifecycle};
+        use festerm_ui_egui::EncodedInputSink;
+
+        let context = egui::Context::default();
+        let (mut app, sessions) = background_efficiency_fixture(6, &context);
+        let active = app.state.active();
+        app.state
+            .session_tab_mut(active)
+            .unwrap()
+            .controller
+            .record_encoded_input(b"synthetic-foreground-input");
+        for (_, transport) in &sessions {
+            for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME + 1 {
+                transport.push_event(SessionEvent::Output(b"x".to_vec()));
+            }
+            transport.push_event(SessionEvent::Lifecycle(SessionLifecycle::Stopped));
+        }
+        let mut output = context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
+        output.textures_delta.clear();
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .is_zero());
+        for (tab, _) in &sessions {
+            let session = app.state.session_tab(*tab).unwrap();
+            assert_eq!(
+                session.controller.lifecycle(),
+                Some(SessionLifecycle::Running)
+            );
+            assert_eq!(
+                session.terminal.row_text(0).unwrap().trim_end().len(),
+                crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME
+            );
+        }
+        app.pump_all_sessions(&context);
+        for (tab, transport) in &sessions {
+            let session = app.state.session_tab(*tab).unwrap();
+            assert_eq!(
+                session.controller.lifecycle(),
+                Some(SessionLifecycle::Stopped)
+            );
+            assert_eq!(
+                session.terminal.row_text(0).unwrap().trim_end().len(),
+                crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME + 1
+            );
+            assert_eq!(session.has_new_output_since_active, *tab != active);
+            assert!(!session.accepts_typed_input());
+            assert_eq!(
+                transport.sent().concat(),
+                if *tab == active {
+                    b"synthetic-foreground-input".as_slice()
+                } else {
+                    &[]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn frame_keyboard_reads_apply_live_and_broadcast_binding_changes() {
+        use festerm_config::KeyboardBindings;
+
+        let context = egui::Context::default();
+        let (mut app, sessions) = background_efficiency_fixture(2, &context);
+        let first_action = crate::keyboard::QUICK_ACTIONS[0];
+        let mut bindings = KeyboardBindings::default();
+        bindings.set(first_action, Some("Primary+Shift+1".to_owned()));
+        app.state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings.clone()), &context);
+        assert_eq!(app.chip_view_models().0[0].quick_switch_number, None);
+        app.state.dispatch(
+            AppCommand::SetKeyboardBindings(KeyboardBindings::default()),
+            &context,
+        );
+        assert_eq!(app.chip_view_models().0[0].quick_switch_number, Some(1));
+        app.adopt_broadcast_configuration(
+            Configuration::empty()
+                .with_interface_settings(
+                    InterfaceSettings::DEFAULT.with_keyboard_bindings(bindings.clone()),
+                )
+                .unwrap(),
+        );
+        assert_eq!(app.chip_view_models().0[0].quick_switch_number, None);
+        let (modifiers, key) = crate::keyboard::chord("Primary+Shift+1").unwrap();
+        let mut output = context.run_ui(
+            egui::RawInput {
+                events: vec![keyboard_event(key, modifiers)],
+                ..Default::default()
+            },
+            |ui| app.handle_shortcuts(ui.ctx()),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.state.active(), sessions[0].0);
+        assert!(sessions
+            .iter()
+            .all(|(_, transport)| transport.sent().is_empty()));
+        assert_eq!(app.state.keyboard_bindings(), &bindings);
+        assert_eq!(app.state.interface_settings_snapshot_count(), 0);
     }
 
     #[test]

@@ -604,6 +604,8 @@
         "ADR-0022"
       ],
       "automated_tests": [
+        "frame_keyboard_reads_do_not_snapshot_settings_for_one_or_six_sessions",
+        "frame_keyboard_reads_preserve_hidden_session_bounded_output_and_lifecycle",
         "chip_context_menu_targets_inactive_chip_without_activating_it",
         "dragging_one_chip_onto_another_emits_a_reorder_action",
         "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape",
@@ -824,6 +826,8 @@
       "automated_tests": [
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
         "routing_uses_core_paste_and_focus_modes",
+        "frame_keyboard_reads_do_not_snapshot_settings_for_one_or_six_sessions",
+        "frame_keyboard_reads_apply_live_and_broadcast_binding_changes",
         "the_markdown_picker_chord_works_from_a_non_terminal_surface",
         "a_focused_terminal_keeps_plain_control_o_for_the_program_inside_it",
         "the_macos_markdown_picker_chord_survives_a_focused_terminal",
@@ -968,6 +972,7 @@
         "drained_terminal_output_does_not_request_a_redundant_frame",
         "pending_terminal_resize_rearms_an_early_frame",
         "session_notifier_wakes_one_frame_without_a_settling_repaint",
+        "frame_keyboard_reads_preserve_hidden_session_bounded_output_and_lifecycle",
         "direct2d_selection_preserves_hardware_other_backends_and_srgb",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
@@ -1361,6 +1366,7 @@
         "an_interface_setting_committed_in_one_window_reaches_every_other_window",
         "a_profile_saved_in_one_window_is_visible_in_every_other_windows_launcher",
         "a_keyboard_binding_changed_in_one_window_applies_in_every_other_window",
+        "frame_keyboard_reads_apply_live_and_broadcast_binding_changes",
         "adopting_a_siblings_configuration_leaves_this_windows_tabs_untouched",
         "adopting_a_broadcast_does_not_re_broadcast_it",
         "a_secondary_window_does_not_persist_its_workspace",
