@@ -29,6 +29,10 @@ pub(crate) struct Renderer {
 }
 
 impl Renderer {
+    pub(crate) fn instance(&self) -> wgpu::Instance {
+        self.state.instance.clone()
+    }
+
     pub(crate) fn new(context: &egui::Context) -> Self {
         let mut setup = default_wgpu_setup();
         let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
@@ -144,4 +148,51 @@ impl Renderer {
     pub(crate) fn image(&self) -> image::RgbaImage {
         read_image(&self.state, &self.texture)
     }
+}
+
+pub(crate) fn resource_snapshot(instance: &wgpu::Instance) -> serde_json::Value {
+    let report = instance
+        .generate_report()
+        .expect("DX12 must support wgpu registry reports");
+    let registries = [
+        ("surfaces", &report.surfaces),
+        ("adapters", &report.hub.adapters),
+        ("devices", &report.hub.devices),
+        ("queues", &report.hub.queues),
+        ("pipeline_layouts", &report.hub.pipeline_layouts),
+        ("shader_modules", &report.hub.shader_modules),
+        ("bind_group_layouts", &report.hub.bind_group_layouts),
+        ("bind_groups", &report.hub.bind_groups),
+        ("command_encoders", &report.hub.command_encoders),
+        ("command_buffers", &report.hub.command_buffers),
+        ("render_bundles", &report.hub.render_bundles),
+        ("render_pipelines", &report.hub.render_pipelines),
+        ("compute_pipelines", &report.hub.compute_pipelines),
+        ("pipeline_caches", &report.hub.pipeline_caches),
+        ("query_sets", &report.hub.query_sets),
+        ("buffers", &report.hub.buffers),
+        ("textures", &report.hub.textures),
+        ("texture_views", &report.hub.texture_views),
+        ("external_textures", &report.hub.external_textures),
+        ("samplers", &report.hub.samplers),
+        ("render_passes", &report.hub.render_passes),
+        ("compute_passes", &report.hub.compute_passes),
+        ("render_bundle_encoders", &report.hub.render_bundle_encoders),
+    ];
+    serde_json::Value::Object(
+        registries
+            .into_iter()
+            .map(|(name, registry)| {
+                (
+                    name.to_owned(),
+                    serde_json::json!({
+                        "num_allocated": registry.num_allocated,
+                        "num_kept_from_user": registry.num_kept_from_user,
+                        "num_released_from_user": registry.num_released_from_user,
+                        "element_size": registry.element_size,
+                    }),
+                )
+            })
+            .collect(),
+    )
 }

@@ -1014,7 +1014,10 @@ The separately opt-in six-session aging probe under CP-18 automates a bounded,
 owned fresh/churned/rebuilt GUI comparison, exact normalized pixels, native
 damage, atlas/prefix reuse, completed CPU and sampled private bytes/working
 set/handles/threads. Only idle demand is event-driven; active/frozen/background
-frames are forced and paced. This replaces no degraded-user-process capture:
+frames are forced and paced. Public wgpu ID/vacant-slot snapshots and separately
+held renderer/context teardown windows add bounded retirement discriminators,
+not complete native/GPU allocation accounting or an approved resource budget.
+This replaces no degraded-user-process capture:
 multi-day behavior, native presentation, real persistent-shell reconnect,
 WARP thread-stack attribution and complete GPU resource accounting remain
 manual/native evidence under #297/#282. It never operates installed sessions.

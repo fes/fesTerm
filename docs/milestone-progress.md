@@ -36,6 +36,15 @@ more than already-warmed churned ones; this is not a new optimization claim.
 See the source-bound performance record rather than inferring a multi-day
 cause from these short controls.
 
+The memory follow-up separates dropping the test renderer from dropping the
+application/context that still owns the native painter. Public wgpu registry
+snapshots during churn and teardown reveal retained handles without pretending
+to measure every driver allocation. Vacant registry slots are not in-flight
+resources or texture bytes. Four held teardown windows allow independent
+process sampling before a replacement GUI exists. Source inspection also
+corrected an earlier caveat: the fake SSH transports ignore resize requests,
+so they do not retain the suggested resize-history allocation.
+
 ## Painting the palette shadow without the atlas texture
 
 The native palette controls correctly declined final-terminal copying and

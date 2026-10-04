@@ -14,6 +14,43 @@ from compare_retained import digest
 STATES = ("fresh", "churned", "rebuilt")
 MODES = ("frozen", "active", "background", "idle")
 TIMING_TOLERANCE_MS = 0.001
+REGISTRIES = (
+    "surfaces", "adapters", "devices", "queues", "pipeline_layouts", "shader_modules",
+    "bind_group_layouts", "bind_groups", "command_encoders", "command_buffers",
+    "render_bundles", "render_pipelines", "compute_pipelines", "pipeline_caches",
+    "query_sets", "buffers", "textures", "texture_views", "external_textures",
+    "samplers", "render_passes", "compute_passes", "render_bundle_encoders",
+)
+TEARDOWN_POINTS = (
+    "renderer-dropped", "fixture-dropped",
+    "rebuilt-renderer-dropped", "rebuilt-fixture-dropped",
+)
+
+
+def check_registries(records, cycles):
+    churn_points = sorted(set(range(20, cycles + 1, 20)) | {cycles})
+    expected = (
+        ["fresh"] + [f"churn-{cycle}" for cycle in churn_points]
+        + ["churned", *TEARDOWN_POINTS[:2], "rebuilt", *TEARDOWN_POINTS[2:]]
+    )
+    require(type(records) is list and len(records) == len(expected), "incomplete registry checkpoints")
+    for record, name in zip(records, expected):
+        require(record["name"] == name, "unordered registry checkpoint")
+        registries = record["registries"]
+        require(set(registries) == set(REGISTRIES), "incomplete wgpu registry report")
+        for registry in registries.values():
+            require(
+                set(registry) == {
+                    "num_allocated", "num_kept_from_user", "num_released_from_user", "element_size",
+                },
+                "unsupported registry fields",
+            )
+            require(
+                all(type(value) is int and value >= 0 for value in registry.values()),
+                "registry counters must be nonnegative integers",
+            )
+            require(registry["element_size"] > 0, "registry element size must be positive")
+    return records
 
 
 def require(condition, message):
@@ -201,6 +238,29 @@ def validate(directory):
         "normalized_png_sha256": png_hashes,
         "limitations": "No performance budget assertion. Non-idle frames are forced/paced offscreen work. Idle follows egui demand. Sampled process resources exclude GPU-specific and in-flight allocation accounting; rebuilt GUI is not a process restart or persistent-shell experiment.",
     }
+    registry_path = probe / "registries.json"
+    if "registry_schema" in manifest:
+        require(manifest["registry_schema"] == 1, "unsupported registry schema")
+        require(manifest["registry_interval"] == 20, "changed registry checkpoint interval")
+        result["registry_observations"] = check_registries(
+            json.loads(registry_path.read_text()), binding["cycles"],
+        )
+        result["teardown_resources"] = {}
+        for name in TEARDOWN_POINTS:
+            selected = [sample for sample in resources if sample["phase"] == name]
+            result["teardown_resources"][name] = {
+                "sample_count": len(selected),
+                **{
+                    field: distribution([number(sample[field], field) for sample in selected])
+                    for field in fields
+                },
+            }
+        result["limitations"] += (
+            " Registry reports count public wgpu IDs/vacant slots, not complete native, "
+            "queued/in-flight allocations or GPU bytes; teardown retains the reporting instance."
+        )
+    else:
+        require(not registry_path.exists(), "undeclared registry observations")
     (directory / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 

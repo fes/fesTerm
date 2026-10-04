@@ -146,6 +146,9 @@ pixels, workload, physical size and measurement DPI. Paced non-idle phases
 measure completed offscreen work; only the idle phase follows actual egui demand.
 Native updated/surface pixels, repaint callbacks, completed process CPU,
 retained-prefix/atlas counters and sampled process resources are kept distinct.
+Public wgpu registry checkpoints and separate renderer/context teardown
+observations distinguish retained handles from process residency; vacant slots
+are not in-flight allocations and these counters are not total GPU bytes.
 `FrameDiagnostics.dirty_rows` is UI-cache work, not GPU damage. No notifier,
 production cadence, terminal ownership or queue policy changes are involved.
 This is not a multi-day reproducer, real persistent-shell reconnect, native

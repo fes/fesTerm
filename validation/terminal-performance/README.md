@@ -79,9 +79,10 @@ does not include queued/in-flight or total GPU resources. The supervisor
 samples current/peak working set, private bytes, handles and thread CPU
 counters every 500ms; those counters do not identify main/WARP workers without
 separate thread-stack evidence. Very short smoke phases may have no resource
-sample and are marked explicitly, not replaced with zero. Test transports
-retain bounded-by-workload resize-operation history, so those process
-observations are not a pure graphics-allocation measurement.
+sample and are marked explicitly, not replaced with zero. These fake SSH
+transports ignore resize requests and do not accumulate resize history.
+Process observations still include the entire application, renderer and test
+harness, not just graphics allocations.
 
 `check_session_aging.py` independently verifies the complete phase matrix,
 ordered frame/event counts, zero pending events, native-copy eligibility,
@@ -96,6 +97,22 @@ in CI. A rebuilt synthetic GUI is not a real process restart or persistent-shell
 reconnect. A short churn run neither demonstrates nor disproves #297's
 multi-day plateau. Native presentation, complete GPU-resource retirement,
 real device-loss recovery and degraded-user-process attribution remain open.
+
+New runs additionally record all 23 public wgpu registries after each normalized
+state, every 20 churn cycles (plus the final cycle), and separate renderer/context
+teardown. Four teardown windows last `-IdleSeconds` each and permit external
+resource sampling without rebuilding first. Submitted work is completed before
+teardown observations. The old instance remains alive only to report its
+registries; a rebuilt renderer uses a new instance. Historical receipts without
+the explicit registry schema remain valid but have no retirement observations.
+
+These counters describe allocated IDs, IDs retained from user handles, and
+vacant registry slots. In wgpu 30, `num_released_from_user` counts vacant slots,
+**not live in-flight resources**. `element_size` describes registry elements,
+not texture payload or GPU allocation size. Even zero public IDs after context
+teardown does not establish complete driver/native resource retirement. The
+checker preserves retained IDs and adverse memory observations rather than
+asserting an unapproved process/GPU budget.
 
 ### 2026-10-04 source-bound observations
 
@@ -138,9 +155,11 @@ Memory did grow. Idle private-byte medians were roughly
 530 → 570 → 545 MiB for fresh/churned/rebuilt after 120 cycles, and
 528 → 590 → 557 MiB after 400. Working set rose as well and did not return
 to the initial footprint after an in-process GUI rebuild. This is not a pure
-leak/fragmentation or resource-retirement attribution: test resize-operation
-history, allocator residency and queued/native resources are not independently
-accounted for. Handles did not accumulate monotonically. The current atlas
+leak/fragmentation or resource-retirement attribution: allocator residency and
+queued/native resources are not independently accounted for. Subsequent source
+inspection corrected the original resize-history caveat: the fake SSH
+transports used in these runs ignore resize requests. Handles did not accumulate
+monotonically. The current atlas
 settled at 1 MiB for both churn scales, and current retained-prefix texture
 storage stayed 13,648,656 bytes. Broader GPU accounting and a real process
 restart/degraded-user capture remain necessary.

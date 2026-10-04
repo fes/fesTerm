@@ -1,6 +1,7 @@
 use super::*;
-use crate::direct2d::profile::aging::{Frame, Renderer, PHYSICAL_SIZE};
+use crate::direct2d::profile::aging::{resource_snapshot, Frame, Renderer, PHYSICAL_SIZE};
 use crate::session_controller::fake::FakeSshSession;
+use eframe::egui_wgpu::wgpu;
 use festerm_session::SessionEvent;
 use festerm_test_support::tui_workload::Workload;
 use festerm_windows_direct2d::process_cpu_time;
@@ -14,6 +15,7 @@ use std::{
 const SESSION_COUNT: usize = 6;
 const CADENCE: Duration = Duration::from_millis(100);
 const MAX_IDLE_FRAMES: usize = 10_000;
+const REGISTRY_INTERVAL: usize = 20;
 
 fn bounded_setting(value: Option<&str>, default: usize, maximum: usize) -> Result<usize, String> {
     match value {
@@ -229,6 +231,30 @@ fn phase_marker(directory: &std::path::Path, phase: &str) {
     .unwrap();
 }
 
+fn observe_registry(
+    observations: &mut Vec<serde_json::Value>,
+    instance: &wgpu::Instance,
+    name: &str,
+) {
+    observations.push(serde_json::json!({
+        "name": name,
+        "registries": resource_snapshot(instance),
+    }));
+}
+
+fn observe_teardown(
+    observations: &mut Vec<serde_json::Value>,
+    instance: &wgpu::Instance,
+    directory: &std::path::Path,
+    name: &str,
+    seconds: usize,
+) {
+    assert!(instance.poll_all(true), "teardown work must complete");
+    observe_registry(observations, instance, name);
+    phase_marker(directory, name);
+    thread::sleep(Duration::from_secs(seconds as u64));
+}
+
 fn measured_phase(
     fixture: &mut Fixture,
     renderer: &mut Renderer,
@@ -425,6 +451,22 @@ fn aging_normalization_waits_for_real_notice_expiry_without_dismissing_it() {
 }
 
 #[test]
+fn aging_fake_transports_do_not_retain_resize_history() {
+    use festerm_session::Session;
+    let fixture = Fixture::new();
+    for (_, transport) in &fixture.sessions {
+        for columns in 80..120 {
+            transport
+                .try_resize(festerm_session::TerminalSize::new(columns, 40).unwrap())
+                .unwrap();
+        }
+        assert!(transport.operations().is_empty());
+        assert!(transport.sent().is_empty());
+        assert_eq!(transport.pending_events_for_test(), 0);
+    }
+}
+
+#[test]
 #[ignore = "optional bounded six-session aging discriminator; not multi-day/native presentation evidence"]
 fn profile_six_session_aging() {
     assert_eq!(
@@ -449,6 +491,7 @@ fn profile_six_session_aging() {
     std::fs::create_dir_all(&directory).unwrap();
     let mut fixture = Fixture::new();
     let mut renderer = Renderer::new(&fixture.context);
+    let mut registries = Vec::new();
     state_phases(
         &mut fixture,
         &mut renderer,
@@ -457,6 +500,7 @@ fn profile_six_session_aging() {
         frames,
         idle_seconds,
     );
+    observe_registry(&mut registries, &renderer.instance(), "fresh");
     phase_marker(&directory, "churn");
     for cycle in 0..cycles {
         for (tab, _) in fixture.sessions.clone() {
@@ -475,6 +519,13 @@ fn profile_six_session_aging() {
             fixture.feed("all", cycle);
             fixture.draw(&mut renderer, if cycle % 2 == 0 { 1.25 } else { 2.0 });
         }
+        if (cycle + 1) % REGISTRY_INTERVAL == 0 || cycle + 1 == cycles {
+            observe_registry(
+                &mut registries,
+                &renderer.instance(),
+                &format!("churn-{}", cycle + 1),
+            );
+        }
     }
     state_phases(
         &mut fixture,
@@ -484,9 +535,26 @@ fn profile_six_session_aging() {
         frames,
         idle_seconds,
     );
+    let old_instance = renderer.instance();
+    observe_registry(&mut registries, &old_instance, "churned");
     phase_marker(&directory, "rebuilding");
     drop(renderer);
+    observe_teardown(
+        &mut registries,
+        &old_instance,
+        &directory,
+        "renderer-dropped",
+        idle_seconds,
+    );
     drop(fixture);
+    observe_teardown(
+        &mut registries,
+        &old_instance,
+        &directory,
+        "fixture-dropped",
+        idle_seconds,
+    );
+    drop(old_instance);
     let mut fixture = Fixture::new();
     let mut renderer = Renderer::new(&fixture.context);
     state_phases(
@@ -497,6 +565,29 @@ fn profile_six_session_aging() {
         frames,
         idle_seconds,
     );
+    let rebuilt_instance = renderer.instance();
+    observe_registry(&mut registries, &rebuilt_instance, "rebuilt");
+    drop(renderer);
+    observe_teardown(
+        &mut registries,
+        &rebuilt_instance,
+        &directory,
+        "rebuilt-renderer-dropped",
+        idle_seconds,
+    );
+    drop(fixture);
+    observe_teardown(
+        &mut registries,
+        &rebuilt_instance,
+        &directory,
+        "rebuilt-fixture-dropped",
+        idle_seconds,
+    );
+    std::fs::write(
+        directory.join("registries.json"),
+        serde_json::to_vec_pretty(&registries).unwrap(),
+    )
+    .unwrap();
     phase_marker(&directory, "validating-pixels");
     let reference = image::open(directory.join("fresh-normalized.png"))
         .unwrap()
@@ -517,6 +608,7 @@ fn profile_six_session_aging() {
             "churn_submitted_frames": cycles * SESSION_COUNT, "frames_per_paced_phase": frames,
             "idle_seconds": idle_seconds, "physical_size": PHYSICAL_SIZE,
             "measurement_scale": 2.0, "churn_scales": [1.25, 2.0],
+            "registry_schema": 1, "registry_interval": REGISTRY_INTERVAL,
             "states": ["fresh", "churned", "rebuilt"],
             "modes": ["frozen", "active", "background", "idle"],
             "normalized_pixels_equal": true, "installed_sessions_accessed": false,

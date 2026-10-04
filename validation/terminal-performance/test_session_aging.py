@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -114,6 +115,43 @@ class SessionAgingTests(unittest.TestCase):
         self.assertEqual(result["retained_reused_frames"], 1)
         self.assertEqual(result["retained_rebuilt_frames"], 0)
 
+    def registry_records(self, names):
+        return [
+            {
+                "name": name,
+                "registries": {
+                    registry: {
+                        "num_allocated": 2, "num_kept_from_user": 2,
+                        "num_released_from_user": 100, "element_size": 8,
+                    }
+                    for registry in aging.REGISTRIES
+                },
+            }
+            for name in names
+        ]
+
+    def test_registry_checkpoints_reject_missing_reversed_and_invalid_counters(self):
+        records = self.registry_records([
+            "fresh", "churn-20", "churn-25", "churned", *aging.TEARDOWN_POINTS[:2],
+            "rebuilt", *aging.TEARDOWN_POINTS[2:],
+        ])
+        # Vacant IDs and retained public IDs are observations, not a memory-budget verdict.
+        self.assertEqual(aging.check_registries(records, 25), records)
+        mutations = [
+            lambda data: data.pop(),
+            lambda data: data.reverse(),
+            lambda data: data[0]["registries"].pop("textures"),
+            lambda data: data[0]["registries"]["textures"].update(num_allocated=True),
+            lambda data: data[0]["registries"]["textures"].update(num_kept_from_user=-1),
+            lambda data: data[0]["registries"]["textures"].update(element_size=0),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                malformed = copy.deepcopy(records)
+                mutate(malformed)
+                with self.assertRaises(ValueError):
+                    aging.check_registries(malformed, 25)
+
     def test_complete_source_bound_matrix_keeps_adverse_results(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -159,6 +197,23 @@ class SessionAgingTests(unittest.TestCase):
             self.assertEqual(len(result["phases"]), 12)
             self.assertEqual(result["phases"]["churned-active"]["summary"]["process_cpu_ms"], 500)
             self.assertEqual(result["resources"]["rebuilt-idle"]["sample_count"], 0)
+            self.assertNotIn("registry_observations", result)
+            registry_records = self.registry_records([
+                "fresh", "churn-1", "churned", *aging.TEARDOWN_POINTS[:2],
+                "rebuilt", *aging.TEARDOWN_POINTS[2:],
+            ])
+            (probe / "registries.json").write_text(json.dumps(registry_records))
+            with self.assertRaisesRegex(ValueError, "undeclared"):
+                aging.validate(root)
+            manifest.update(registry_schema=1, registry_interval=20)
+            (probe / "manifest.json").write_text(json.dumps(manifest))
+            result = aging.validate(root)
+            self.assertEqual(result["registry_observations"], registry_records)
+            self.assertEqual(result["teardown_resources"]["fixture-dropped"]["sample_count"], 0)
+            (probe / "registries.json").write_text(json.dumps(registry_records[:-1]))
+            with self.assertRaisesRegex(ValueError, "registry"):
+                aging.validate(root)
+            (probe / "registries.json").write_text(json.dumps(registry_records))
             for change in ({"exit_code": 101}, {"source_head": "not-a-head"}, {"process_id": 8}, {"profile": "unknown"}):
                 with self.subTest(change=change):
                     (root / "source.json").write_text(json.dumps({**binding, **change}))
