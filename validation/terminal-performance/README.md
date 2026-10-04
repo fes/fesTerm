@@ -711,6 +711,50 @@ and is distinct from production palette integration. Disable actual palette
 conversion (`FESTERM_TUI_PROFILE_PALETTE_FRAME=0`) before selecting an ordinary
 captured palette mesh by index.
 
+#### 2026-10-03 source-pinned integrated palette comparison
+
+Implementation `fe09b25011a762be1ff391d7010dc09a3f47e997`, based on automatic
+WARP main `14c735a`, completed same-executable ordinary/textureless controls in
+ABBA order. All twelve cases completed 100 frames each; no noisy/adverse case
+was dropped. This is unoptimized dev/test completed offscreen work, not native
+presentation, physical latency or a precise production CPU claim.
+
+| Run | Frame path | Case | CPU-ms/frame | Completed-ms/frame | Completed Hz |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Ordinary | Frozen | 1940.31 | 158.74 | 6.2995 |
+| 1 | Ordinary | Localized | 2005.00 | 190.92 | 5.2377 |
+| 1 | Ordinary | Frozen repeat | 1920.78 | 157.49 | 6.3496 |
+| 2 | Textureless | Frozen | 443.59 | 46.25 | 9.9997 |
+| 2 | Textureless | Localized | 495.47 | 80.62 | 9.9998 |
+| 2 | Textureless | Frozen repeat | 437.50 | 46.01 | 9.9998 |
+| 3 | Textureless | Frozen | 476.72 | 50.65 | 9.9994 |
+| 3 | Textureless | Localized | 536.25 | 85.30 | 9.9997 |
+| 3 | Textureless | Frozen repeat | 501.72 | 50.08 | 9.9996 |
+| 4 | Ordinary | Frozen | 1982.19 | 167.08 | 5.9849 |
+| 4 | Ordinary | Localized | 2159.22 | 206.12 | 4.8515 |
+| 4 | Ordinary | Frozen repeat | 2112.34 | 175.47 | 5.6989 |
+
+Equal-frame-count means show approximately 75-77% less CPU work per completed
+frame in all three workloads. CPU time includes every process/WARP worker,
+so CPU-ms/frame is not wall time. The ordinary path missed the requested 10 Hz;
+the candidate maintained it without omitting any draws. Automatic host-copy
+and retention remained requested but declined under the overlay, with zero
+reuses/rebuilds/cache bytes throughout. Native terminal damage stayed
+21,105 of 2,982,063 pixels in both localized controls. The selected real frame
+path was asserted before sampling, and exact initial and final composition
+pixels were required.
+
+The 2058x1658, 200%, 120x40 Microsoft Basic Render Driver workload used executable
+SHA256 `B3D0F6791010332EDCF96AAE5BA39C94E5E94E33D32EAFFA5FDCCD4BA87F0F50`.
+All four initial PNGs were byte-identical:
+`7ac141b438775bc7eb57a60532b8c73ccac8e2b7eb135964131be50ef7760ce5`.
+Recorded aggregate host peaks ranged from 66.8% to 95.7%; these include the
+probe and are not attribution of external CPU. Compiler/source hashes,
+inventories, twelve raw scores and unfiltered host samples remain in the
+session's `warp-palette-integrated-debug-abba-*` receipts and
+`warp-palette-current-main-built-debug-1` archive. This series predates the
+subsequent #308/#309 merge; it must not be relabeled as that newer source.
+
 `profile.json` records actual cadence, CPU-ms/frame, whole-machine CPU percentage,
 completed-draw wall time and primitive identities. Individual cases include
 clear/sleep controls, frozen whole-frame and single-primitive composition,
