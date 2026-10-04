@@ -100,11 +100,16 @@ checks device compilation and Simulator linking, while the build script checks
 normal/build graph exclusions. `scripts/smoke-ios-simulator.py --run` adds
 isolated iPhone/iPad install, launch-survival, first UI callback, terminate/relaunch and screenshot
 capture for the launch portions of `MOB-01`/`MOB-03`. Its Python policy tests
-cover ownership, failure reporting and cleanup; actual execution is an iOS CI
-gate. The manifest and PNGs are review evidence, not automatic rendering,
+cover ownership, failure reporting and cleanup. Affected PRs retain mobile
+unit/dependency/build checks but skip CoreSimulator preparation/runtime smoke;
+that experimental evidence runs nightly at 08:17 UTC on the default branch
+or via manual dispatch, not as a desktop merge gate. Failures still fail those
+runs and retain their artifacts (#303); no retry or guard/deadline change.
+Review an explicit runtime merge gate when mobile product support is accepted.
+The manifest and PNGs are review evidence, not automatic rendering,
 keyboard or lifecycle acceptance. Physical-device and most interaction
-evidence above remains pending. CI pins Xcode 16.4 and runs read-only
-`--prepare-only` before compilation to initialize cold CoreSimulator caches
+evidence above remains pending. Nightly/manual CI pins Xcode 16.4 and runs
+read-only `--prepare-only` before compilation to initialize cold CoreSimulator caches
 (runner-images #12862; local tracker #303). Preparation has a separate 180-second
 bound, produces `prepared` rather than app `pass` evidence, and never retries or
 mutates existing devices. The subsequent inventory, application and capture
