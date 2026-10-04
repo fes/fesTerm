@@ -3262,10 +3262,31 @@ mod tests {
     #[test]
     fn ordered_layout_sweep_preserves_utf8_syntax_and_find_formats() {
         let text = "fn caf\u{e9}() { let value = 42; }\n".repeat(128);
-        let mut syntax =
-            festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Rust);
-        let spans = syntax.spans(&text, 0, 0..text.len()).to_vec();
-        assert!(!spans.is_empty());
+        // Layout coverage must not depend on the parser's production clock budget.
+        let mut spans: Vec<_> = [
+            ("fn", festerm_syntax::Role::Keyword),
+            ("caf\u{e9}", festerm_syntax::Role::Function),
+            ("let", festerm_syntax::Role::Keyword),
+            ("value", festerm_syntax::Role::Variable),
+            ("42", festerm_syntax::Role::Number),
+            ("(", festerm_syntax::Role::Punctuation),
+            (")", festerm_syntax::Role::Punctuation),
+            ("{", festerm_syntax::Role::Punctuation),
+            ("}", festerm_syntax::Role::Punctuation),
+            ("=", festerm_syntax::Role::Punctuation),
+        ]
+        .into_iter()
+        .flat_map(|(token, role)| {
+            text.match_indices(token)
+                .map(move |(start, matched)| festerm_syntax::Span {
+                    start,
+                    end: start + matched.len(),
+                    role,
+                })
+        })
+        .collect();
+        spans.sort_unstable_by_key(|span| span.start);
+        assert_eq!(spans.len(), 128 * 10);
         let highlights: Vec<_> = text
             .match_indices("fn caf\u{e9}")
             .enumerate()
