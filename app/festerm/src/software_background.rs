@@ -43,6 +43,7 @@ struct PanelRenderer {
     device: wgpu::Device,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    paint_namespace: Arc<()>,
     #[cfg(test)]
     paints: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -56,6 +57,7 @@ struct PanelPaint {
     index_count: u32,
     uniform: wgpu::Buffer,
     bindings: wgpu::BindGroup,
+    geometry: egui::Mesh,
 }
 
 fn panel_renderer_id() -> egui::Id {
@@ -258,6 +260,7 @@ impl PanelRenderer {
             device: device.clone(),
             pipeline,
             layout,
+            paint_namespace: Arc::new(()),
             #[cfg(test)]
             paints: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -275,18 +278,21 @@ impl PanelRenderer {
         clip_rect: egui::Rect,
         shape: egui::Shape,
     ) -> egui::Shape {
-        let primitives = context.tessellate(
+        let mut primitives = context.tessellate(
             vec![egui::epaint::ClippedShape {
                 clip_rect,
                 shape: shape.clone(),
             }],
             context.pixels_per_point(),
         );
-        let mesh = match primitives.as_slice() {
+        let mesh = match primitives.as_mut_slice() {
             [egui::ClippedPrimitive {
                 primitive: egui::epaint::Primitive::Mesh(mesh),
                 ..
-            }] if white_mesh_geometry(mesh) => mesh,
+            }] if white_mesh_geometry(mesh) =>
+            {
+                std::mem::take(mesh)
+            }
             [] => return egui::Shape::Noop,
             _ => {
                 tracing::warn!(target: "festerm::rendering", "retaining standard panel painting for unexpected geometry");
@@ -300,7 +306,7 @@ impl PanelRenderer {
     fn mesh_shape(
         self: &Arc<Self>,
         viewport: egui::Rect,
-        mesh: &egui::Mesh,
+        mesh: egui::Mesh,
     ) -> Option<egui::Shape> {
         let Ok(index_count) = u32::try_from(mesh.indices.len()) else {
             tracing::warn!(target: "festerm::rendering", "retaining standard panel painting for oversized geometry");
@@ -344,6 +350,7 @@ impl PanelRenderer {
                     index_count,
                     uniform,
                     bindings,
+                    geometry: mesh,
                 },
             ),
         ))
@@ -351,6 +358,19 @@ impl PanelRenderer {
 }
 
 impl egui_wgpu::CallbackTrait for PanelPaint {
+    fn paint_key(&self) -> Option<egui_wgpu::CallbackPaintKey> {
+        let vertices: &[u8] = bytemuck::cast_slice(&self.geometry.vertices);
+        let indices: &[u8] = bytemuck::cast_slice(&self.geometry.indices);
+        let mut bytes = Vec::with_capacity(8 + vertices.len() + indices.len());
+        bytes.extend_from_slice(&(vertices.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(vertices);
+        bytes.extend_from_slice(indices);
+        Some(egui_wgpu::CallbackPaintKey {
+            namespace: self.renderer.paint_namespace.clone(),
+            bytes: bytes.into(),
+        })
+    }
+
     fn prepare(
         &self,
         _device: &wgpu::Device,
@@ -454,7 +474,7 @@ impl PanelTestProbe {
         self.0
             .as_ref()
             .ok_or("textureless diagnostic requires a supported framebuffer format")?
-            .mesh_shape(viewport, mesh)
+            .mesh_shape(viewport, mesh.clone())
             .ok_or("textureless diagnostic geometry exceeded the index budget")
     }
 }
@@ -482,9 +502,17 @@ fn fragment() -> @location(0) vec4<f32> {
 
 struct SolidBackground {
     pipeline: wgpu::RenderPipeline,
+    paint_namespace: Arc<()>,
 }
 
 impl egui_wgpu::CallbackTrait for SolidBackground {
+    fn paint_key(&self) -> Option<egui_wgpu::CallbackPaintKey> {
+        Some(egui_wgpu::CallbackPaintKey {
+            namespace: self.paint_namespace.clone(),
+            bytes: Arc::from([]),
+        })
+    }
+
     fn paint(
         &self,
         _info: egui::PaintCallbackInfo,
@@ -552,7 +580,10 @@ fn create_callback(render_state: &egui_wgpu::RenderState) -> Option<egui::PaintC
     });
     Some(egui_wgpu::Callback::new_paint_callback(
         egui::Rect::NOTHING,
-        SolidBackground { pipeline },
+        SolidBackground {
+            pipeline,
+            paint_namespace: Arc::new(()),
+        },
     ))
 }
 

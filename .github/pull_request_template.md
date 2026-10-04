@@ -10,6 +10,7 @@
 - Automated tests added or updated:
 - Manual/native/usability scenarios added or updated:
 - Deferred prerequisites changed:
+- Default-off behavior, if any, and required evidence/approval for default enablement (or linked issue):
 - No-impact reason, if applicable:
 
 ## Checks

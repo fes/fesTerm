@@ -35,6 +35,7 @@ pub struct Painter {
     options: RendererOptions,
     support_transparent_backbuffer: bool,
     screen_capture_state: Option<CaptureState>,
+    retained_ui: crate::RetainedUi,
 
     instance: wgpu::Instance,
     render_state: Option<RenderState>,
@@ -75,6 +76,7 @@ impl Painter {
             options,
             support_transparent_backbuffer,
             screen_capture_state: None,
+            retained_ui: Default::default(),
 
             instance,
             render_state: None,
@@ -156,6 +158,7 @@ impl Painter {
         window: &Arc<winit::window::Window>,
     ) -> Result<(), crate::WgpuError> {
         profiling::function_scope!();
+        self.retained_ui.clear();
 
         let Some(old_state) = self.surfaces.remove(&viewport_id) else {
             return Ok(());
@@ -209,6 +212,7 @@ impl Painter {
         } else {
             log::warn!("No window - clearing all surfaces");
             self.surfaces.clear();
+            self.retained_ui.clear();
         }
         Ok(())
     }
@@ -238,6 +242,7 @@ impl Painter {
         } else {
             log::warn!("No window - clearing all surfaces");
             self.surfaces.clear();
+            self.retained_ui.clear();
         }
         Ok(())
     }
@@ -270,6 +275,7 @@ impl Painter {
         height: u32,
         resizing: bool,
     ) {
+        self.retained_ui.clear();
         let alpha_mode = {
             // Panic: We use the same failure mode as `resize_and_generate_depth_texture_view_and_msaa_view`
             let render_state = self
@@ -470,6 +476,7 @@ impl Painter {
         height_in_pixels: NonZeroU32,
     ) {
         profiling::function_scope!();
+        self.retained_ui.clear();
 
         if self.surfaces.contains_key(&viewport_id) {
             self.resize_and_generate_depth_texture_view_and_msaa_view(
@@ -527,6 +534,9 @@ impl Painter {
 
         let capture = !capture_data.is_empty();
         let mut vsync_sec = 0.0;
+        if viewport_id != ViewportId::ROOT {
+            self.retained_ui.clear();
+        }
 
         // If the previous frame produced `CurrentSurfaceTexture::Lost`, the action match
         // below set `needs_recreate`. Recreate the surface now, before re-borrowing
@@ -556,6 +566,7 @@ impl Painter {
         }
 
         let Some(render_state) = self.render_state.as_mut() else {
+            self.retained_ui.clear();
             return vsync_sec;
         };
 
@@ -565,6 +576,7 @@ impl Painter {
         };
 
         let Some(surface_state) = self.surfaces.get_mut(&viewport_id) else {
+            self.retained_ui.clear();
             return vsync_sec;
         };
 
@@ -614,6 +626,7 @@ impl Painter {
             }
         }
         if surface_state.needs_reconfigure {
+            self.retained_ui.clear();
             Self::configure_surface(surface_state, render_state, &self.config.surface);
             surface_state.needs_reconfigure = false;
         }
@@ -634,6 +647,7 @@ impl Painter {
                 frame
             }
             other => {
+                self.retained_ui.clear();
                 match (*self.config.on_surface_status)(&other) {
                     SurfaceErrorAction::Reconfigure => {
                         Self::configure_surface(surface_state, render_state, &self.config.surface);
@@ -684,70 +698,86 @@ impl Painter {
             } else {
                 clipped_primitives
             };
+            let retained = if final_copy.is_some() {
+                self.retained_ui.try_render(
+                    &renderer,
+                    &render_state.device,
+                    &mut encoder,
+                    clipped_primitives,
+                    &screen_descriptor,
+                    target_texture,
+                    clear_color,
+                )
+            } else {
+                self.retained_ui.clear();
+                None
+            };
 
-            let (view, resolve_target) = (self.options.msaa_samples > 1)
-                .then_some(self.msaa_texture_view.get(&viewport_id))
-                .flatten()
-                .map_or((&target_view, None), |texture_view| {
-                    (texture_view, Some(&target_view))
+            if retained.is_none() {
+                let (view, resolve_target) = (self.options.msaa_samples > 1)
+                    .then_some(self.msaa_texture_view.get(&viewport_id))
+                    .flatten()
+                    .map_or((&target_view, None), |texture_view| {
+                        (texture_view, Some(&target_view))
+                    });
+
+                let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui_render"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: clear_color[0] as f64,
+                                g: clear_color[1] as f64,
+                                b: clear_color[2] as f64,
+                                a: clear_color[3] as f64,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: self.depth_texture_view.get(&viewport_id).map(
+                        |view| wgpu::RenderPassDepthStencilAttachment {
+                            view,
+                            depth_ops: self
+                                .options
+                                .depth_stencil_format
+                                .is_some_and(|depth_stencil_format| {
+                                    depth_stencil_format.has_depth_aspect()
+                                })
+                                .then_some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0),
+                                    store: wgpu::StoreOp::Discard,
+                                }),
+                            stencil_ops: self
+                                .options
+                                .depth_stencil_format
+                                .is_some_and(|depth_stencil_format| {
+                                    depth_stencil_format.has_stencil_aspect()
+                                })
+                                .then_some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(0),
+                                    store: wgpu::StoreOp::Discard,
+                                }),
+                        },
+                    ),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
                 });
 
-            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui_render"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear_color[0] as f64,
-                            g: clear_color[1] as f64,
-                            b: clear_color[2] as f64,
-                            a: clear_color[3] as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: self.depth_texture_view.get(&viewport_id).map(|view| {
-                    wgpu::RenderPassDepthStencilAttachment {
-                        view,
-                        depth_ops: self
-                            .options
-                            .depth_stencil_format
-                            .is_some_and(|depth_stencil_format| {
-                                depth_stencil_format.has_depth_aspect()
-                            })
-                            .then_some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                // It is very unlikely that the depth buffer is needed after egui finished rendering
-                                // so no need to store it. (this can improve performance on tiling GPUs like mobile chips or Apple Silicon)
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                        stencil_ops: self
-                            .options
-                            .depth_stencil_format
-                            .is_some_and(|depth_stencil_format| {
-                                depth_stencil_format.has_stencil_aspect()
-                            })
-                            .then_some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                    }
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            // Forgetting the pass' lifetime means that we are no longer compile-time protected from
-            // runtime errors caused by accessing the parent encoder before the render pass is dropped.
-            // Since we don't pass it on to the renderer, we should be perfectly safe against this mistake here!
-            renderer.render(
-                &mut render_pass.forget_lifetime(),
-                paint_jobs,
-                &screen_descriptor,
-            );
+                renderer.render(
+                    &mut render_pass.forget_lifetime(),
+                    paint_jobs,
+                    &screen_descriptor,
+                );
+            } else {
+                let stats = self.retained_ui.stats();
+                log::debug!(target: "egui_wgpu::retained_ui",
+                    "retained_ui_reused_frames={} retained_ui_rebuilt_frames={} retained_ui_texture_bytes={} retained_ui_signature_bytes={}",
+                    stats.reused_frames, stats.rebuilt_frames, stats.texture_bytes, stats.signature_bytes);
+            }
 
             if let Some(copy) = final_copy {
                 copy.encode(&mut encoder, target_texture);
@@ -837,6 +867,9 @@ impl Painter {
     }
 
     pub fn gc_viewports(&mut self, active_viewports: &ViewportIdSet) {
+        if !active_viewports.contains(&ViewportId::ROOT) {
+            self.retained_ui.clear();
+        }
         self.surfaces.retain(|id, _| active_viewports.contains(id));
         self.depth_texture_view
             .retain(|id, _| active_viewports.contains(id));
@@ -844,8 +877,7 @@ impl Painter {
             .retain(|id, _| active_viewports.contains(id));
     }
 
-    #[expect(clippy::needless_pass_by_ref_mut, clippy::unused_self)]
     pub fn destroy(&mut self) {
-        // TODO(emilk): something here?
+        self.retained_ui.clear();
     }
 }

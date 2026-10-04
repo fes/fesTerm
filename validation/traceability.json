@@ -923,6 +923,7 @@
         "ADR-0037",
         "ADR-0039",
         "ADR-0040",
+        "ADR-0041",
         "ADR-0043"
       ],
       "automated_tests": [
@@ -931,9 +932,16 @@
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",
         "profile_terminal_residual_cpu",
         "profile_case_filter_preserves_order_and_rejects_incomplete_inputs",
-        "host_copy_is_explicitly_opt_in_and_rejects_invalid_values",
+        "automatic_warp_composition_preserves_platform_adapter_and_format_policy",
+        "automatic_rgba_native_painting_keeps_shader_composition",
+        "automatic_warp_installation_enables_copy_and_retention_without_settings",
         "host_copy_preserves_pixels_dpi_resize_overlays_and_fallback",
         "host_copy_capture_tracks_usage_size_and_format",
+        "retained_prefix_matches_host_copy_across_panels_dpi_and_terminal_movement",
+        "retained_prefix_keeps_queued_images_immutable_after_rebuild_and_clear",
+        "retained_prefix_declines_signature_overflow_and_recovers",
+        "retained_prefix_invalidates_texture_updates_removal_renderer_and_external_access",
+        "retained_prefix_declines_unkeyed_callbacks_user_textures_and_external_bindings",
         "native_solid_background_matches_terminal_pixels_across_dpi",
         "srgb_framebuffers_keep_standard_background_pixels",
         "only_eight_bit_gamma_framebuffers_use_the_solid_background_pipeline",
@@ -960,14 +968,13 @@
         "pending_terminal_resize_rearms_an_early_frame",
         "session_notifier_wakes_one_frame_without_a_settling_repaint",
         "direct2d_selection_preserves_hardware_other_backends_and_srgb",
-        "direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy",
-        "direct2d_invalid_overrides_do_not_enable_the_default",
         "integrated_direct2d_matches_terminal_pixels_and_translucent_fallback",
         "unsupported_native_palette_keeps_the_current_frame_pixels",
         "unsupported_native_palette_returns_to_native_painting",
         "unsupported_frames_are_distinct_from_native_failures",
         "replay_terminal_tui_workloads",
         "localized_tui_updates_leave_other_rows_unchanged",
+        "changing_chrome_keeps_localized_output_and_changes_the_title_each_tick",
         "tui_workloads_preserve_final_state_when_bytes_are_fragmented",
         "tui_producer_emits_exact_shared_frames_and_a_complete_report",
         "tui_producer_rejects_invalid_workloads_and_budgets",
@@ -1047,7 +1054,8 @@
       "prerequisites": [
         "IME and complete selection semantics remain platform/capability work",
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
-        "CP-17/18 native CPU evidence requires application-window identity and quiet warmup/sample guards"
+        "CP-17/18 native CPU evidence requires application-window identity and recorded input/geometry/cadence guards; noisy shared-host results are approximate, not strict benchmarks",
+        "ADR-0039/0040/0041 owner-approved automatic WARP rollout without switches; native/resource/latency qualification remains follow-up work: https://github.com/fes/fesTerm/issues/282"
       ]
     },
     {
