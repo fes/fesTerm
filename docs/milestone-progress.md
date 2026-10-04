@@ -3,6 +3,20 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.9.2: consistent identity for native persistent shells
+
+This correctness patch makes newly created native persistent local shells
+identify `TERM_PROGRAM=fesTerm` and removes an inherited `TERM_SESSION_ID`,
+matching ordinary local launches while retaining `TERM=xterm-256color`.
+It avoids stale parent-terminal identity and unwanted Apple Terminal
+session-restoration behavior. Multiplexer-owned children retain their provider
+identity; existing persistent shells keep their environment until recreated.
+
+The release also corrects the documented terminal-font identifier. It adds no
+performance optimization or fix for multi-day CPU growth in #297. Release
+preparation changes version metadata only, without dependency, protocol or
+additional runtime changes.
+
 ## v0.9.1: less work while the Windows WARP palette is open
 
 This performance patch packages the palette frame/shadow and opaque
