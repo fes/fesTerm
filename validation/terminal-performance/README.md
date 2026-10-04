@@ -167,6 +167,48 @@ settled at 1 MiB for both churn scales, and current retained-prefix texture
 storage stayed 13,648,656 bytes. Broader GPU accounting and a real process
 restart/degraded-user capture remain necessary.
 
+### Optimized public-registry and teardown follow-up
+
+The [complete resource record](six-session-resource-attribution-2026-10-04.json)
+adds 400/1,200-cycle release matrices at
+`f7f19c992e9e5cc4ab2e808f37cbd4fa06990c64`, tree
+`9ec0f831eda6cf2c7611f553e336077ae0fd91ff`, archived executable SHA256
+`C08952DB2BDE4623FF87033F3BEA0351F2514182719338533FF1BEFE30B29882`.
+These are new executions, not replacements for the original `c257d31` or
+integrated `e2a6b03` receipts. Both complete twelve-phase matrices passed the
+stricter independent checker, including all 23 public registries and held-window
+clock/sample admission. The six normalized PNGs also match the historical hash.
+All six ten-second idle windows still requested zero frames/callbacks and
+recorded zero process CPU ticks. Frozen/background native damage stayed zero;
+foreground median damage stayed 21,105 / 2,982,063 pixels.
+
+Public registries did not grow through churn: every twentieth-cycle checkpoint
+kept 19 IDs, including one device, one queue and three textures. Fresh/churned/
+rebuilt normalization kept 20 IDs. Dropping only the offscreen renderer left
+eight IDs, including the device/queue and one native texture still owned by the
+fixture/context. Dropping that entire fixture/context reduced all public IDs
+to zero. This does not count internal/native/in-flight allocations.
+
+| Churn cycles | Idle private MiB: fresh/churned/rebuilt | Renderer dropped, context alive: private MiB median | Full fixture/context dropped: private MiB median |
+| --- | --- | --- | --- |
+| 400 | 531.7 / 586.2 / 549.6 | 586.0 / 549.4 | 19.4 / 18.9 |
+| 1,200 | 528.4 / 635.3 / 571.7 | 635.1 / 571.5 | 21.5 / 21.2 |
+
+The paired teardown scores refer to churned and rebuilt owners respectively.
+Each held window contains 19-20 external samples. Initial full-teardown samples
+still reached 147-150 MiB before lower steady samples; those maxima and delayed
+release observations are preserved, not excluded. Some worker threads also
+remained after public IDs vanished. Thus neither zero IDs nor the smaller
+process footprint proves complete native/GPU retirement or a resource budget.
+Fixture destruction drops application/context state as well as its painter;
+it does not identify which surviving allocation accounts for the earlier
+memory, prove a leak, or reproduce the multi-day CPU plateau.
+
+The first phase-label-only debug smoke remains superseded diagnostic evidence:
+its teardown labels also covered replacement initialization. Separate transition
+labels and checked UTC/monotonic held endpoints corrected that attribution.
+The corrected debug smoke is not pooled with these optimized matrices.
+
 Two failed attempts remain explicit, not folded into accepted observations:
 release inventory initially failed because the GUI-subsystem executable needed
 awaited redirected handles; the next full run failed exact normalization

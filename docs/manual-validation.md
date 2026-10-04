@@ -1026,6 +1026,12 @@ The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
 normalized pixels, without reproducing the multi-day plateau. Moderate process
 memory growth remains an observation requiring separate attribution; no
 native/multi-day acceptance row is closed.
+The subsequent optimized 400/1,200-cycle matrices added all 23 public registry
+reports and four independently clipped held-teardown windows each. Counts stayed
+flat through churn; full fixture/context destruction cleared public IDs and most
+private memory, while renderer-only destruction did not. Early release spikes
+and remaining workers are recorded. This is partial ownership/lifetime evidence,
+not complete GPU retirement, a leak finding or a resource-budget acceptance.
 
 ### Desktop Markdown file associations
 

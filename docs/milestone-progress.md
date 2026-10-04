@@ -45,6 +45,17 @@ process sampling before a replacement GUI exists. Source inspection also
 corrected an earlier caveat: the fake SSH transports ignore resize requests,
 so they do not retain the suggested resize-history allocation.
 
+The optimized 400/1,200-cycle follow-ups kept public registry counts flat through
+churn while process memory still rose. Dropping only the offscreen renderer
+left the application/context-owned device, queue and native texture alive.
+Dropping the entire fixture cleared those public IDs and reduced private-memory
+medians from roughly 550-635 MiB to 19-22 MiB. Initial release spikes and surviving
+workers remain in the record: this separates ownership/lifetime observations,
+not every GPU allocation or a demonstrated leak. Exact normalized images, zero
+idle demand and narrow native damage still held; no multi-day CPU plateau was
+reproduced. See the
+[complete source-bound resource record](../validation/terminal-performance/README.md#optimized-public-registry-and-teardown-follow-up).
+
 ## Painting the palette shadow without the atlas texture
 
 The native palette controls correctly declined final-terminal copying and
