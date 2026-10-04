@@ -680,6 +680,19 @@ unchanged; no new latency budgets are implied.
 
 ### Experimental Direct2D qualification
 
+Native quad preparation has a device-free deterministic allocation control in
+`crates/festerm-windows-direct2d/native/quad_tests.cpp`. It compares the actual
+production predicate and complete prepared operations with the frozen former
+predicate over cold/warm/mutation/refusal, exhaustive topology and dense glyph
+cases. Two heap allocations per valid quad become zero, with at most two
+borrowed stack pointers and no retained allocation. Windows CI's existing
+Direct2D self-test includes this control; `-QuadSelfTestOnly` runs it without GPU
+work, timing or Python image dependencies. Exact native framebuffer tests remain
+the separate automated pixel/lifetime oracle. This allocation evidence does not
+advance CPU, native-window, sustained-resource or latency acceptance and does
+not attribute #297; a baseline/candidate coordinator slot must include actual
+capture/preparation as described in `validation/direct2d/README.md`.
+
 Issue #298's font-atlas copy mechanism has deterministic coverage for trusted
 revision invalidation, same-frame glyph pixels, DPI/font changes, unchanged
 snapshot identity, preserved ordinary font deltas, 64 MiB retention and painter

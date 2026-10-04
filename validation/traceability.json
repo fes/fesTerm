@@ -916,7 +916,8 @@
         "docs/gui-design.md#reserved-local-input-and-clipboard",
         "docs/gui-design.md#terminal-selection",
         "docs/gui-design.md#terminal-context-menu",
-        "docs/gui-design.md#explicit-terminal-hyperlinks"
+        "docs/gui-design.md#explicit-terminal-hyperlinks",
+        "validation/direct2d/README.md#native-quad-scratch-allocation-control"
       ],
       "decisions": [
         "ADR-0012",
@@ -1052,6 +1053,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Windows CI native quad scratch control (quad_tests.cpp via Direct2D SelfTestOnly) proves exact prepared operations and two avoided allocations per valid quad; capture/prepare-inclusive baseline/candidate CPU and native framebuffer qualification remain separate CP-18 evidence",
         "IME and complete selection semantics remain platform/capability work",
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
         "CP-17/18 native CPU evidence requires application-window identity and recorded input/geometry/cadence guards; noisy shared-host results are approximate, not strict benchmarks",

@@ -346,8 +346,11 @@ For framebuffer-only qualification:
 .\validation\direct2d\run.ps1 -ResultDirectory C:\temp\festerm-d2d-125 -PixelsPerPoint 1.25 -CaptureOnly
 ```
 
-`-SelfTestOnly` builds the C++ probe and runs native structural checks and
-Python comparator checks without GPU measurement. `-Python` selects an
+`-SelfTestOnly` builds the C++ probe and device-free quad allocation tests and
+runs native structural checks and Python comparator checks without GPU
+measurement. `-QuadSelfTestOnly` builds/runs only the device-free quad tests,
+without creating a graphics device, timing work or requiring Python packages.
+`-Python` selects an
 existing Python/virtual-environment executable. The runner does not install
 dependencies or change system settings.
 
@@ -385,6 +388,82 @@ mixed-DPI monitor transitions; multiple and transparent windows; actual
 presentation latency; memory characterization; and representative hardware
 qualification under issue #244. Passing this replay experiment does not mark
 those acceptance criteria complete.
+
+## Native quad scratch allocation control
+
+The production `prepare_group` path recognizes adjacent triangles as a native
+glyph/solid/bitmap quad through `quad`. Its former shared-corner vector allocated
+twice per accepted quad (capacities one then two vertices on the tested MSVC
+toolchain), even on warm unchanged frames: the retained renderer prepares before
+testing previous-image reuse. Fixed storage now borrows at most **two corner
+pointers** plus a count: 24 bytes of logical stack scratch on Windows x64, zero
+heap allocations and zero retained bytes. It neither batches native draws nor caches geometry.
+All other frame/texture/scratch budgets and preparation/draw counts are unchanged.
+
+`native/quad_tests.cpp` includes the actual production implementation and a
+frozen pre-change predicate. Its scoped allocation counter is linked only into
+this unit-test executable, never the application or timed replay probe.
+It compares complete prepared `Draw` operations and refusal types, including
+32 cold/warm/mutation cases at four scales, all 4,096 corner topologies, seven
+malformed mappings, and the real boundary's capability/native/allocation
+failure classification. The dense three-frame 120x40 fixture constructs all
+14,400 glyph operations in both versions: **28,800 -> 0** scratch allocations,
+**864,000 -> 0** cumulative allocated bytes (not retained/peak process memory).
+Solid quads, mask alpha, color bitmaps and recovery after tinted-bitmap refusal
+retain exact geometry, UVs, colors/alpha, transforms and resource references.
+Texture content/epoch handling, clipping, native damage/culling, immutable
+published images, teardown and ordinary fallback code are untouched.
+
+For the smallest deterministic check (also included in Windows CI's existing
+`-SelfTestOnly` gate):
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+.\validation\direct2d\run.ps1 -ResultDirectory target\quad-scratch-unit -QuadSelfTestOnly
+```
+
+This builds only an unoptimized C++ unit test with the installed SDK. It does
+not initialize Direct2D/WARP or run a performance probe. Allocation counts and
+identical prepared operations are the current evidence; no whole-app/native
+CPU, process-memory or latency gain is claimed, and #297 is not attributed.
+
+### Coordinator-only measurement protocol
+
+After baseline (`b6e69f76`) and candidate test binaries are built in an assigned slot,
+use the existing residual-CPU probe with only
+`FESTERM_TUI_PROFILE_CASES=localized-all`, `FESTERM_TUI_PROFILE_SCENE=terminal`,
+`FESTERM_RUN_OPTIONAL_VALIDATION=1`, and a fresh
+`FESTERM_TUI_PROFILE_OUT=target\quad-scratch-profile-<source>-<repeat>` for each
+attempt:
+
+```powershell
+$env:FESTERM_TUI_PROFILE_HOST_COPY = '0'
+$env:FESTERM_TUI_PROFILE_RETAINED_COMPOSITION = '0'
+Remove-Item Env:FESTERM_TUI_PROFILE_COPY -ErrorAction SilentlyContinue
+cargo test --release -p festerm profile_terminal_residual_cpu -- --ignored --nocapture --test-threads=1
+```
+
+Do not start a concurrent build during measurement. Keep host-copy and test
+copy experiments off using those explicit test-only controls; current production
+switches cannot select a baseline. The pinned old baseline predates these names
+and already defaults copy/retention off in its test executable. Run
+baseline/candidate in ABBA order on the same WARP
+host with unchanged synthetic grid, font, physical size and requested 10 Hz /
+100 updates. This case includes UI construction, atlas capture, the native
+`prepare`/quad stage and completed drawing/composition; the old standalone
+replay pre-prepares geometry and cannot measure this allocation fix. Record
+source/binary identities, all attempts, completed updates/cadence,
+CPU-ms/frame and shared-host variability without promising a percentage.
+Before interpreting timings, run the existing
+`shared_surfaces_preserve_pixels_and_previous_frame_ownership`,
+`texture_identity_and_equal_replacement_preserve_uploads_and_pixels`,
+`narrow_retained_updates_match_full_pixels_with_overlap_erasure_and_dpi` and
+`scattered_retained_damage_prepares_full_geometry_only_once` renderer tests
+as the native pixel/lifetime/mutation/damage oracle. None was run in this
+device-free allocation investigation; the coordinator owns native slots.
+Native-window presentation, sustained resources, physical latency and #297
+degraded-process attribution remain CP-18 work.
+
 ## Native font atlas snapshot control
 
 Issue #298 and [ADR 0043](../../docs/adr/0043-immutable-native-font-atlas-snapshots.md)

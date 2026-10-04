@@ -3,6 +3,35 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Recognizing native glyph quads without per-glyph heap scratch
+
+The shipping WARP path still prepared every glyph rectangle using a temporary
+vector to find the triangles' shared diagonal. Each valid quad pushed two
+vertices, allocating once for the first and again for the second, then released
+both allocations. Trusted immutable font snapshots (#306) remove a different
+capture cost; they do not remove this geometry-preparation work.
+The retained renderer prepares before checking previous-image reuse, so this
+heap scratch also recurred when the published native pixels did not change.
+
+Quad recognition now borrows at most two corner pointers in fixed stack storage,
+with no retained scratch or new cache. The exact old predicate remains a
+test-only allocation control: 14,400 cold/warm/recolored glyph preparations
+perform the same work and construct identical native operations while removing
+28,800 allocations and 864,000 cumulative allocated bytes on the tested MSVC
+toolchain. Exhaustive corner topologies, fractional geometry, mask/bitmap/solid
+colors and alpha, mutations, malformed mappings and typed refusal/recovery
+also match the old preparation. The tests create no graphics device.
+
+Drawing, clipping, damage/culling, texture revisions/uploads, published image
+lifetime, retention budgets and ordinary fallback remain unchanged. Windows
+CI's existing native self-test runner includes these allocation checks. Native
+renderer-only changes also trigger package smoke, protected by a portable
+workflow regression. This is
+a bounded source-backed heap-churn improvement for #267/#297/#298, not a claim
+of process-CPU, native-window or latency improvement, and not attribution of
+#297's long-lived plateau. CP-18 remains open; the saved comparison protocol
+includes capture and native preparation rather than timing only replayed draws.
+
 ## Shipping the supported WARP pipeline without switches
 
 The owner accepted the repeated material CPU reductions despite shared-host

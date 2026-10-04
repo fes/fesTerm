@@ -447,12 +447,15 @@ static bool quad(const std::array<Vertex, 6>& vertices, Draw& result, const Text
         corners[index] = &v;
     }
     for (auto corner : corners) if (!corner) return false;
-    std::vector<Vertex> shared;
+    std::array<const Vertex*, 2> shared{};
+    size_t shared_count = 0;
     for (size_t i = 0; i < 3; ++i)
         for (size_t j = 3; j < 6; ++j)
-            if (vertices[i].x == vertices[j].x && vertices[i].y == vertices[j].y)
-                shared.push_back(vertices[i]);
-    if (shared.size() != 2 || shared[0].x == shared[1].x || shared[0].y == shared[1].y)
+            if (vertices[i].x == vertices[j].x && vertices[i].y == vertices[j].y) {
+                if (shared_count == shared.size()) return false;
+                shared[shared_count++] = &vertices[i];
+            }
+    if (shared_count != 2 || shared[0]->x == shared[1]->x || shared[0]->y == shared[1]->y)
         return false;
     const auto area = [](Vertex a, Vertex b, Vertex c) {
         return std::abs((b.x-a.x)*(c.y-a.y)-(c.x-a.x)*(b.y-a.y))/2;
