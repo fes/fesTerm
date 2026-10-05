@@ -176,7 +176,9 @@ Required behavior:
   knowable;
 - allow cancellation of pending items, recursive planning, and the current
   running item;
-- keep completed/failed/cancelled terminal states queryable for the drawer;
+- keep the most recent 128 completed/failed/cancelled/skipped terminal records
+  queryable for the drawer, retiring older finished records with visible
+  accounting without evicting active or collision-paused work;
 - refresh the affected destination listing after each committed item; and
 - keep event payloads content-free, never embedding file contents.
 
@@ -185,6 +187,27 @@ Intermediate progress may be coalesced to the newest value while collision,
 terminal-state, and destination-refresh events remain ordered and lossless.
 Recursive planning has explicit item and conservative memory-proxy ceilings;
 exceeding either fails the item before destination materialization.
+
+The tab-owned command/event bridges are also bounded (64 commands, 128 events).
+Frontend polling and worker transfer-event batching each consume at most 64
+events per invocation; only adjacent same-batch/same-transfer progress is
+coalesced. Async worker sends await capacity without blocking a runtime thread.
+The dedicated local loader may block on delivery and unblocks when the receiver
+retires. Owner cancellation bypasses queue admission and interrupts those waits.
+GUI admission checks the existing 256-item transfer batch ceiling before
+retaining the batch. Refused actions use the existing nonfatal error surface:
+navigation does not change pane/history/scroll/loading state, Markdown fetch
+does not replace an admitted pending request, external drop reports failure,
+reconnect does not claim a new connection attempt, and a collision decision is
+not dismissed before admission.
+
+The finished-history window is completion-ordered, includes failures and uses
+indexed transfer-ID lookup. Exceptional row/index capacity retires with
+hysteresis. A visible cumulative retirement count explains missing old rows;
+the ordinary Clear action still preserves retained failures. A 240-logical-pixel
+scroll region bounds drawer geometry without claiming row virtualization or
+a total payload-byte budget. Aggregate snapshots/plans remain a distinct
+admission concern.
 
 #### 3. Collision-decision API
 
@@ -355,14 +378,17 @@ core transfer workflow.
   profile/trust/auth context but not tab lifecycle; queued GUI transfers never
   silently overwrite; collision approvals are batch-scoped and revalidated
   before commit; delete is absent in v1; owner cancellation preserves and reports
-  partials when race-free current ownership cannot be established.
-- **GUI/action edges affected:** Planned new edges include `LAUNCH-10` (open a
-  GUI SFTP tab from a saved SSH profile or live SSH tab), `SFTP-GUI-01`
-  (browse both panes and change sort/filter/path state), `SFTP-GUI-02` (queue
-  an upload/download and observe progress/cancel states), `SFTP-GUI-03`
-  (resolve a collision with Replace/Skip/Keep Both), and `SFTP-GUI-04`
-  (show stale remote listing and reconnect affordance after disconnect).
-  Owner teardown refines `SFTPG-08`, alongside `SFTPG-01` through `SFTPG-03`.
+  partials when race-free current ownership cannot be established; GUI bridges,
+  per-poll work and finished history are bounded with explicit admission
+  refusal and retirement accounting.
+- **GUI/action edges affected:** `LAUNCH-10` opens a GUI SFTP tab from a
+  saved SSH profile or live SSH tab. `SFTPG-01/02/03` cover browsing,
+  transfer/cancel/history and collision decisions; `SFTPG-04` retains deferred
+  stale-listing/reconnect evidence. Owner teardown refines `SFTPG-08`.
+  Bounded GUI work refines `SFTPG-01/02/03/04/05/06/08` (including reconnect,
+  Markdown fetch and drag/drop admission) without changing the
+  application/transport ownership boundary or accepting native disconnect
+  recovery.
 - **Automated tests required:** Planned coverage includes
   `sftp_directory_snapshot_contains_sortable_metadata`,
   `sftp_transfer_manager_emits_progress_and_completion`,
@@ -381,12 +407,29 @@ core transfer workflow.
   `cancelled_copy_reports_preserved_output_and_keeps_cancelled_state`,
   `live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state`,
   and `gui_sftp_preserved_output_notice_reports_a_recovery_path`.
+  Backlog/history regressions include
+  `gui_sftp_finished_history_retires_old_failures_at_the_approved_limit`,
+  `gui_sftp_history_keeps_active_rows_and_retires_by_finish_order`,
+  `gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity`,
+  `gui_sftp_history_reclaims_a_large_active_peak_and_reports_retirement`,
+  `gui_sftp_command_bridge_refuses_full_and_closed_queues_without_false_success`,
+  `gui_sftp_refused_reconnect_preserves_connection_and_spinner_until_admitted`,
+  `gui_sftp_external_drop_and_oversized_batches_refuse_before_bridge_admission`,
+  `gui_sftp_refused_navigation_preserves_back_stack_breadcrumbs_and_loading_state`,
+  `gui_sftp_admitted_back_and_ancestor_navigation_restore_scroll_after_queue_recovery`,
+  `gui_sftp_refused_markdown_read_keeps_the_previous_request_generation`,
+  `gui_sftp_event_bridge_and_poll_budget_are_exact_and_preserve_order`,
+  `gui_sftp_owner_close_preempts_a_full_async_event_bridge`,
+  `gui_sftp_local_event_producer_unblocks_when_the_frontend_closes`, and
+  `gui_sftp_progress_coalescing_keeps_the_latest_value_and_critical_barriers`.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and
   focused-pane narrow-width behavior. Stable scenario IDs should be added in
   the implementing change. `SFTP-01` retains packaged owner close/quit,
   diagnostic visibility and cleanup-notice accessibility qualification.
+  `SFTP-03` retains native long-history scrolling, full-queue refusal and
+  retirement-notice readability/accessibility qualification.
 - **Coverage superseded:** None yet. `validation/traceability.json` should be
   updated in the implementing change that wires the new GUI SFTP edges and test
   relationships into real coverage.

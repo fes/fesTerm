@@ -459,6 +459,11 @@ pub struct SftpTransferManager {
 }
 
 impl SftpTransferManager {
+    /// Existing per-batch admission bound, also used before GUI bridge enqueue.
+    pub const fn max_batch_items() -> usize {
+        MAX_TRANSFER_BATCH_ITEMS
+    }
+
     pub fn new(session: SftpSession) -> Self {
         let (command_sender, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
         let (event_sender, event_receiver) = channel(TRANSFER_EVENT_QUEUE_CAPACITY);

@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -40,6 +40,13 @@ use festerm_ui_egui::{
 /// silently reconnected in the background rather than only surfacing as a
 /// failure the next time the user tries to navigate or run a command.
 const SFTP_LIVENESS_CHECK_INTERVAL: Duration = Duration::from_secs(20);
+const GUI_SFTP_COMMAND_CAPACITY: usize = 64;
+const GUI_SFTP_EVENT_CAPACITY: usize = 128;
+const GUI_SFTP_POLL_BUDGET: usize = 64;
+const MAX_FINISHED_TRANSFER_HISTORY: usize = 128;
+
+type WorkerEventSender = tokio::sync::mpsc::Sender<WorkerEvent>;
+type WorkerEventReceiver = tokio::sync::mpsc::Receiver<WorkerEvent>;
 
 type LocalDirectoryLoadResult = Result<(SftpDirectorySnapshot, Option<SftpPathMetadata>), String>;
 
@@ -1373,8 +1380,8 @@ impl SftpPaneState {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct TransferHistoryItem {
-    pub(crate) transfer_id: SftpTransferId,
+pub(crate) struct TransferHistoryItem<Id = SftpTransferId> {
+    pub(crate) transfer_id: Id,
     pub(crate) request: SftpTransferRequest,
     pub(crate) state: SftpTransferState,
     pub(crate) destination: Option<SftpPath>,
@@ -1384,24 +1391,38 @@ pub(crate) struct TransferHistoryItem {
     pub(crate) pending_collision: Option<SftpCollision>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct TransferDrawerState {
-    pub(crate) items: Vec<TransferHistoryItem>,
+/// The private ID parameter lets storage tests preserve backend-issued ID opacity.
+#[derive(Clone, Debug)]
+pub(crate) struct TransferDrawerState<Id = SftpTransferId> {
+    items: Vec<TransferHistoryItem<Id>>,
+    indices: HashMap<Id, usize>,
+    finished_order: VecDeque<Id>,
+    finished_ids: HashSet<Id>,
+    retired_finished: u64,
 }
 
-impl TransferDrawerState {
+impl<Id> Default for TransferDrawerState<Id> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            indices: HashMap::new(),
+            finished_order: VecDeque::new(),
+            finished_ids: HashSet::new(),
+            retired_finished: 0,
+        }
+    }
+}
+
+impl<Id: Copy + Eq + std::hash::Hash> TransferDrawerState<Id> {
     fn upsert(
         &mut self,
-        transfer_id: SftpTransferId,
+        transfer_id: Id,
         request: SftpTransferRequest,
-    ) -> &mut TransferHistoryItem {
-        if let Some(index) = self
-            .items
-            .iter()
-            .position(|item| item.transfer_id == transfer_id)
-        {
+    ) -> &mut TransferHistoryItem<Id> {
+        if let Some(&index) = self.indices.get(&transfer_id) {
             return &mut self.items[index];
         }
+        self.indices.insert(transfer_id, self.items.len());
         self.items.push(TransferHistoryItem {
             transfer_id,
             request,
@@ -1421,6 +1442,63 @@ impl TransferDrawerState {
         !self.items.is_empty()
     }
 
+    fn item_mut(&mut self, transfer_id: Id) -> Option<&mut TransferHistoryItem<Id>> {
+        let index = *self.indices.get(&transfer_id)?;
+        self.items.get_mut(index)
+    }
+
+    fn retirement_notice(&self) -> Option<String> {
+        (self.retired_finished > 0).then(|| {
+            format!(
+                "{} older finished transfers retired; keeping the latest {} finished records.",
+                self.retired_finished, MAX_FINISHED_TRANSFER_HISTORY,
+            )
+        })
+    }
+
+    fn record_finished(&mut self, transfer_id: Id) {
+        if self.indices.contains_key(&transfer_id) && self.finished_ids.insert(transfer_id) {
+            self.finished_order.push_back(transfer_id);
+        }
+        let mut retired = false;
+        while self.finished_order.len() > MAX_FINISHED_TRANSFER_HISTORY {
+            let id = self
+                .finished_order
+                .pop_front()
+                .expect("history exceeds limit");
+            self.finished_ids.remove(&id);
+            if let Some(index) = self.indices.remove(&id) {
+                self.items.remove(index);
+                self.retired_finished = self.retired_finished.saturating_add(1);
+                self.rebuild_indices();
+                retired = true;
+            }
+        }
+        if retired {
+            self.reclaim_capacity();
+        }
+    }
+
+    fn rebuild_indices(&mut self) {
+        self.indices.clear();
+        self.indices.extend(
+            self.items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| (item.transfer_id, index)),
+        );
+    }
+
+    fn reclaim_capacity(&mut self) {
+        let allowance = self.items.len().max(MAX_FINISHED_TRANSFER_HISTORY);
+        if self.items.capacity() > allowance.saturating_mul(4) {
+            self.items.shrink_to(allowance.saturating_mul(2));
+        }
+        if self.indices.capacity() > allowance.saturating_mul(4) {
+            self.indices.shrink_to(allowance.saturating_mul(2));
+        }
+    }
+
     fn clear_finished(&mut self) {
         self.items.retain(|item| {
             !matches!(
@@ -1430,9 +1508,14 @@ impl TransferDrawerState {
                     | SftpTransferState::Skipped
             )
         });
+        self.rebuild_indices();
+        self.finished_order
+            .retain(|id| self.indices.contains_key(id));
+        self.finished_ids.retain(|id| self.indices.contains_key(id));
+        self.reclaim_capacity();
     }
 
-    fn active_transfer_ids(&self) -> Vec<SftpTransferId> {
+    fn active_transfer_ids(&self) -> Vec<Id> {
         self.items
             .iter()
             .filter(|item| {
@@ -1601,7 +1684,7 @@ struct SftpWorkerOwner {
 }
 
 struct SftpWorkerNotifications {
-    events: mpsc::Sender<WorkerEvent>,
+    events: WorkerEventSender,
     repaint: egui::Context,
     reporter: SftpCleanupReporter,
 }
@@ -1630,11 +1713,11 @@ pub(crate) struct SftpFileManagerTab {
     has_connected_once: bool,
     pub(crate) transfer_drawer: TransferDrawerState,
     pub(crate) collision_dialog: Option<SftpCollisionDialogState>,
-    command_sender: tokio::sync::mpsc::UnboundedSender<WorkerCommand>,
+    command_sender: tokio::sync::mpsc::Sender<WorkerCommand>,
     shutdown_sender: Option<tokio::sync::oneshot::Sender<()>>,
     cleanup_reporter: SftpCleanupReporter,
-    event_receiver: Receiver<WorkerEvent>,
-    event_sender: Sender<WorkerEvent>,
+    event_receiver: WorkerEventReceiver,
+    event_sender: WorkerEventSender,
     local_loader: LocalDirectoryLoader,
     repaint: egui::Context,
     next_local_request_id: u64,
@@ -1712,8 +1795,9 @@ impl SftpFileManagerTab {
         if let Some(key) = remote_selection {
             remote_pane.selected_paths.insert(key);
         }
-        let (command_sender, _command_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (event_sender, event_receiver) = mpsc::channel();
+        let (command_sender, _command_receiver) =
+            tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+        let (event_sender, event_receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
         Self {
             label,
             profile_identifier: None,
@@ -1758,11 +1842,12 @@ impl SftpFileManagerTab {
     ) -> Self {
         let local_pane = SftpPaneState::new(SftpPath::local(local_directory));
         let remote_pane = SftpPaneState::new(SftpPath::remote("/"));
-        let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (command_sender, command_receiver) =
+            tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let cleanup_reporter = SftpCleanupReporter::default();
         let worker_reporter = cleanup_reporter.clone();
-        let (event_sender, event_receiver) = mpsc::channel();
+        let (event_sender, event_receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
         let local_loader =
             LocalDirectoryLoader::new(format!("festerm-gui-sftp-local-{}", target.label));
         let repaint = context.clone();
@@ -1840,8 +1925,53 @@ impl SftpFileManagerTab {
     }
 
     pub(crate) fn poll(&mut self) {
-        while let Ok(event) = self.event_receiver.try_recv() {
+        for _ in 0..GUI_SFTP_POLL_BUDGET {
+            let Ok(event) = self.event_receiver.try_recv() else {
+                break;
+            };
             self.apply_event(event);
+        }
+        if !self.event_receiver.is_empty() {
+            self.repaint.request_repaint();
+        }
+    }
+
+    fn submit_worker_command(&mut self, command: WorkerCommand) -> Result<(), String> {
+        if let WorkerCommand::Enqueue(requests) = &command {
+            let maximum = SftpTransferManager::max_batch_items();
+            if requests.len() > maximum {
+                let details = format!(
+                    "The SFTP batch limit is {maximum} items; this action selected {}. \
+                     Select fewer items and try again.",
+                    requests.len(),
+                );
+                self.operation_error =
+                    Some(("Could not queue the transfer.".to_owned(), details.clone()));
+                return Err(details);
+            }
+        }
+        self.command_sender.try_send(command).map_err(|error| {
+            let details = match error {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => format!(
+                    "The SFTP command queue is full ({GUI_SFTP_COMMAND_CAPACITY} queued commands). \
+                     Try again after pending work finishes."
+                ),
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    "The SFTP worker has closed. Reopen this tab to retry.".to_owned()
+                }
+            };
+            self.operation_error = Some((
+                "Could not queue the SFTP action.".to_owned(),
+                details.clone(),
+            ));
+            details
+        })
+    }
+
+    fn request_reconnect(&mut self) {
+        if self.submit_worker_command(WorkerCommand::Reconnect).is_ok() {
+            self.connection_state = SftpConnectionState::Connecting;
+            self.remote_pane.loading = true;
         }
     }
 
@@ -2153,9 +2283,7 @@ impl SftpFileManagerTab {
     ) -> Option<crate::tabs::AppCommand> {
         let action = show_connection_status_banner_ui(ui, &self.connection_state);
         if action.retry {
-            self.connection_state = SftpConnectionState::Connecting;
-            self.remote_pane.loading = true;
-            let _ = self.command_sender.send(WorkerCommand::Reconnect);
+            self.request_reconnect();
         }
         if action.edit_connection {
             return Some(crate::tabs::AppCommand::RetrySftpFileManagerConnection {
@@ -3042,9 +3170,7 @@ impl SftpFileManagerTab {
             self.focused_pane = focus;
         }
         if request_reconnect {
-            self.connection_state = SftpConnectionState::Connecting;
-            self.remote_pane.loading = true;
-            let _ = self.command_sender.send(WorkerCommand::Reconnect);
+            self.request_reconnect();
         }
         if request_back {
             self.navigate_back(focus);
@@ -3180,6 +3306,7 @@ impl SftpFileManagerTab {
             .transfer_drawer
             .summary()
             .expect("non-empty transfer drawer has a summary");
+        let mut commands = Vec::new();
         ui.add_space(10.0);
         egui::Frame::new()
             .fill(theme::SURFACE_TERMINAL)
@@ -3203,9 +3330,7 @@ impl SftpFileManagerTab {
                             match summary.header_action {
                                 TransferDrawerHeaderAction::CancelActive => {
                                     for transfer_id in self.transfer_drawer.active_transfer_ids() {
-                                        let _ = self
-                                            .command_sender
-                                            .send(WorkerCommand::CancelTransfer(transfer_id));
+                                        commands.push(WorkerCommand::CancelTransfer(transfer_id));
                                     }
                                 }
                                 TransferDrawerHeaderAction::ClearFinished
@@ -3216,6 +3341,13 @@ impl SftpFileManagerTab {
                         }
                     });
                 });
+                if let Some(notice) = self.transfer_drawer.retirement_notice() {
+                    ui.label(
+                        RichText::new(notice)
+                            .font(font_for_text_role(SftpTextRole::TransferMeta))
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                }
                 if let Some(progress) = summary.progress {
                     ui.add(
                         egui::ProgressBar::new(progress)
@@ -3224,92 +3356,102 @@ impl SftpFileManagerTab {
                             .show_percentage(),
                     );
                 }
-                for item in &self.transfer_drawer.items {
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new(item.request.source.display())
-                                .font(font_for_text_role(SftpTextRole::TableBody))
-                                .color(theme::TEXT_PRIMARY),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "→ {}",
-                                item.destination
-                                    .as_ref()
-                                    .unwrap_or(&item.request.destination)
-                                    .display()
-                            ))
-                            .font(font_for_text_role(SftpTextRole::TableMetadata))
-                            .color(theme::TEXT_SECONDARY),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(transfer_state_label(&item.state))
-                                    .font(font_for_text_role(SftpTextRole::TransferMeta))
-                                    .color(transfer_state_color(&item.state)),
-                            );
-                        });
-                    });
-                    if let Some(total) = item.total_bytes {
-                        let progress = if total == 0 {
-                            0.0
-                        } else {
-                            item.bytes_transferred as f32 / total as f32
-                        };
-                        ui.add(
-                            egui::ProgressBar::new(progress)
-                                .desired_width(f32::INFINITY)
-                                .fill(transfer_state_color(&item.state))
-                                .text(format!(
-                                    "{} / {}",
-                                    format_size(Some(item.bytes_transferred)),
-                                    format_size(Some(total))
-                                )),
-                        );
-                    }
-                    if let Some(details) = &item.details {
-                        ui.label(
-                            RichText::new(details)
-                                .font(font_for_text_role(SftpTextRole::TransferMeta))
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
-                    ui.horizontal(|ui| {
-                        if matches!(item.state, SftpTransferState::AwaitingCollision(_))
-                            && item.pending_collision.is_some()
-                            && ui.button("Resolve…").clicked()
-                        {
-                            self.collision_dialog = Some(SftpCollisionDialogState {
-                                collision: item
-                                    .pending_collision
-                                    .clone()
-                                    .expect("checked pending collision"),
-                                apply_to_all: false,
+                ScrollArea::vertical()
+                    .id_salt("sftp_transfer_history")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for item in &self.transfer_drawer.items {
+                            ui.separator();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    RichText::new(item.request.source.display())
+                                        .font(font_for_text_role(SftpTextRole::TableBody))
+                                        .color(theme::TEXT_PRIMARY),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "→ {}",
+                                        item.destination
+                                            .as_ref()
+                                            .unwrap_or(&item.request.destination)
+                                            .display()
+                                    ))
+                                    .font(font_for_text_role(SftpTextRole::TableMetadata))
+                                    .color(theme::TEXT_SECONDARY),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(transfer_state_label(&item.state))
+                                                .font(font_for_text_role(
+                                                    SftpTextRole::TransferMeta,
+                                                ))
+                                                .color(transfer_state_color(&item.state)),
+                                        );
+                                    },
+                                );
+                            });
+                            if let Some(total) = item.total_bytes {
+                                let progress = if total == 0 {
+                                    0.0
+                                } else {
+                                    item.bytes_transferred as f32 / total as f32
+                                };
+                                ui.add(
+                                    egui::ProgressBar::new(progress)
+                                        .desired_width(f32::INFINITY)
+                                        .fill(transfer_state_color(&item.state))
+                                        .text(format!(
+                                            "{} / {}",
+                                            format_size(Some(item.bytes_transferred)),
+                                            format_size(Some(total))
+                                        )),
+                                );
+                            }
+                            if let Some(details) = &item.details {
+                                ui.label(
+                                    RichText::new(details)
+                                        .font(font_for_text_role(SftpTextRole::TransferMeta))
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            }
+                            ui.horizontal(|ui| {
+                                if matches!(item.state, SftpTransferState::AwaitingCollision(_))
+                                    && item.pending_collision.is_some()
+                                    && ui.button("Resolve…").clicked()
+                                {
+                                    self.collision_dialog = Some(SftpCollisionDialogState {
+                                        collision: item
+                                            .pending_collision
+                                            .clone()
+                                            .expect("checked pending collision"),
+                                        apply_to_all: false,
+                                    });
+                                }
+                                if matches!(
+                                    item.state,
+                                    SftpTransferState::Queued
+                                        | SftpTransferState::Planning
+                                        | SftpTransferState::Running
+                                        | SftpTransferState::AwaitingCollision(_)
+                                ) && ui.button("Cancel").clicked()
+                                {
+                                    commands.push(WorkerCommand::CancelTransfer(item.transfer_id));
+                                }
+                                if matches!(item.state, SftpTransferState::Failed { .. })
+                                    && ui.button("Retry").clicked()
+                                {
+                                    commands
+                                        .push(WorkerCommand::Enqueue(vec![item.request.clone()]));
+                                }
                             });
                         }
-                        if matches!(
-                            item.state,
-                            SftpTransferState::Queued
-                                | SftpTransferState::Planning
-                                | SftpTransferState::Running
-                                | SftpTransferState::AwaitingCollision(_)
-                        ) && ui.button("Cancel").clicked()
-                        {
-                            let _ = self
-                                .command_sender
-                                .send(WorkerCommand::CancelTransfer(item.transfer_id));
-                        }
-                        if matches!(item.state, SftpTransferState::Failed { .. })
-                            && ui.button("Retry").clicked()
-                        {
-                            let _ = self
-                                .command_sender
-                                .send(WorkerCommand::Enqueue(vec![item.request.clone()]));
-                        }
                     });
-                }
             });
+        for command in commands {
+            let _ = self.submit_worker_command(command);
+        }
         let height = ui.cursor().top() - top;
         ui.data_mut(|data| data.insert_temp(drawer_height_id, height));
     }
@@ -3432,14 +3574,17 @@ impl SftpFileManagerTab {
                     });
             });
         if let Some(decision) = decision {
-            let _ = self.command_sender.send(WorkerCommand::ResolveCollision(
-                SftpCollisionResolution {
-                    collision_id: collision.id,
-                    decision,
-                    scope: collision_scope(dialog.apply_to_all),
-                },
-            ));
-            self.collision_dialog = None;
+            let resolution = SftpCollisionResolution {
+                collision_id: collision.id,
+                decision,
+                scope: collision_scope(dialog.apply_to_all),
+            };
+            if self
+                .submit_worker_command(WorkerCommand::ResolveCollision(resolution))
+                .is_ok()
+            {
+                self.collision_dialog = None;
+            }
         } else if close || ctx.input(|input| input.key_pressed(Key::Escape)) {
             self.collision_dialog = None;
         }
@@ -3527,18 +3672,29 @@ impl SftpFileManagerTab {
     }
 
     fn navigate_back(&mut self, focus: PaneFocus) {
-        let target = pane_mut(self, focus).pop_history();
+        let pane = pane_ref(self, focus);
+        let target = pane
+            .history
+            .len()
+            .checked_sub(2)
+            .and_then(|index| pane.history.get(index))
+            .cloned();
         if let Some(target) = target {
-            load_path(self, focus, target, false);
+            if load_path(self, focus, target, false) {
+                let _ = pane_mut(self, focus).pop_history();
+            }
         }
     }
 
     fn navigate_to_path(&mut self, focus: PaneFocus, path: SftpPath) {
-        let restore_target = pane_mut(self, focus).restore_history_path(&path);
-        if let Some(target) = restore_target {
-            load_path(self, focus, target, false);
-        } else {
-            load_path(self, focus, path, true);
+        let pane = pane_ref(self, focus);
+        let restore = pane
+            .history
+            .iter()
+            .rposition(|entry| entry == &path)
+            .is_some_and(|index| index + 1 < pane.history.len());
+        if load_path(self, focus, path.clone(), !restore) && restore {
+            let _ = pane_mut(self, focus).restore_history_path(&path);
         }
     }
 
@@ -3604,19 +3760,18 @@ impl SftpFileManagerTab {
     /// `show`'s tail.
     fn request_remote_markdown_snapshot(&mut self, path: String) {
         let request_id = self.next_markdown_request_id;
-        self.next_markdown_request_id += 1;
-        self.operation_error = None;
-        self.pending_markdown_request = Some(PendingMarkdownRequest {
-            request_id,
-            path: path.clone(),
-        });
-        let _ = self
-            .command_sender
-            .send(WorkerCommand::ReadMarkdownSnapshot {
+        if self
+            .submit_worker_command(WorkerCommand::ReadMarkdownSnapshot {
                 request_id,
-                path,
+                path: path.clone(),
                 max_bytes: MarkdownBounds::default().max_source_bytes(),
-            });
+            })
+            .is_ok()
+        {
+            self.next_markdown_request_id += 1;
+            self.operation_error = None;
+            self.pending_markdown_request = Some(PendingMarkdownRequest { request_id, path });
+        }
     }
 
     /// Builds the `RemoteMarkdownSource` identity pinning a freshly fetched
@@ -3658,7 +3813,7 @@ impl SftpFileManagerTab {
             .filter_map(|item| SftpTransferRequest::new(item.path, destination_path.clone()).ok())
             .collect::<Vec<_>>();
         if !requests.is_empty() {
-            let _ = self.command_sender.send(WorkerCommand::Enqueue(requests));
+            let _ = self.submit_worker_command(WorkerCommand::Enqueue(requests));
         }
     }
 
@@ -3688,7 +3843,7 @@ impl SftpFileManagerTab {
             .collect::<Vec<_>>();
         let count = requests.len();
         if !requests.is_empty() {
-            let _ = self.command_sender.send(WorkerCommand::Enqueue(requests));
+            self.submit_worker_command(WorkerCommand::Enqueue(requests))?;
         }
         Ok(count)
     }
@@ -3810,6 +3965,13 @@ impl SftpFileManagerTab {
     }
 
     fn apply_transfer_event(&mut self, event: SftpTransferEvent) {
+        let finished_id = match &event {
+            SftpTransferEvent::ItemCompleted { transfer_id, .. }
+            | SftpTransferEvent::ItemFailed { transfer_id, .. }
+            | SftpTransferEvent::ItemCancelled { transfer_id, .. }
+            | SftpTransferEvent::ItemSkipped { transfer_id, .. } => Some(*transfer_id),
+            _ => None,
+        };
         match event {
             SftpTransferEvent::BatchQueued { .. } | SftpTransferEvent::BatchFinished { .. } => {}
             SftpTransferEvent::CleanupIncomplete { error } => {
@@ -3835,24 +3997,14 @@ impl SftpFileManagerTab {
                 total_bytes,
                 ..
             } => {
-                if let Some(item) = self
-                    .transfer_drawer
-                    .items
-                    .iter_mut()
-                    .find(|item| item.transfer_id == transfer_id)
-                {
+                if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
                     item.bytes_transferred = bytes_transferred;
                     item.total_bytes = total_bytes;
                     item.state = SftpTransferState::Running;
                 }
             }
             SftpTransferEvent::Collision(collision) => {
-                if let Some(item) = self
-                    .transfer_drawer
-                    .items
-                    .iter_mut()
-                    .find(|item| item.transfer_id == collision.transfer_id)
-                {
+                if let Some(item) = self.transfer_drawer.item_mut(collision.transfer_id) {
                     item.pending_collision = Some(collision.clone());
                     item.state = SftpTransferState::AwaitingCollision(collision.id);
                 }
@@ -3880,12 +4032,7 @@ impl SftpFileManagerTab {
                 total_bytes,
                 ..
             } => {
-                if let Some(item) = self
-                    .transfer_drawer
-                    .items
-                    .iter_mut()
-                    .find(|item| item.transfer_id == transfer_id)
-                {
+                if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
                     item.state = SftpTransferState::Completed;
                     item.destination = Some(destination);
                     item.bytes_transferred = bytes_transferred;
@@ -3899,12 +4046,7 @@ impl SftpFileManagerTab {
                 reason,
                 ..
             } => {
-                if let Some(item) = self
-                    .transfer_drawer
-                    .items
-                    .iter_mut()
-                    .find(|item| item.transfer_id == transfer_id)
-                {
+                if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
                     item.state = SftpTransferState::Failed {
                         reason: reason.clone(),
                     };
@@ -3920,12 +4062,7 @@ impl SftpFileManagerTab {
                 total_bytes,
                 ..
             } => {
-                if let Some(item) = self
-                    .transfer_drawer
-                    .items
-                    .iter_mut()
-                    .find(|item| item.transfer_id == transfer_id)
-                {
+                if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
                     item.state = SftpTransferState::Cancelled;
                     item.destination = destination;
                     item.bytes_transferred = bytes_transferred;
@@ -3938,17 +4075,15 @@ impl SftpFileManagerTab {
                 destination,
                 ..
             } => {
-                if let Some(item) = self
-                    .transfer_drawer
-                    .items
-                    .iter_mut()
-                    .find(|item| item.transfer_id == transfer_id)
-                {
+                if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
                     item.state = SftpTransferState::Skipped;
                     item.destination = destination;
                     item.pending_collision = None;
                 }
             }
+        }
+        if let Some(id) = finished_id {
+            self.transfer_drawer.record_finished(id);
         }
     }
 }
@@ -4054,6 +4189,33 @@ enum WorkerEvent {
     Transfer(SftpTransferEvent),
 }
 
+fn push_coalescing_progress<Event>(
+    events: &mut Vec<Event>,
+    event: Event,
+    key: impl Fn(&Event) -> Option<(u64, u64)>,
+) {
+    if let Some(next_key) = key(&event) {
+        if let Some(previous) = events.last_mut() {
+            if key(previous) == Some(next_key) {
+                *previous = event;
+                return;
+            }
+        }
+    }
+    events.push(event);
+}
+
+fn transfer_progress_key(event: &SftpTransferEvent) -> Option<(u64, u64)> {
+    match event {
+        SftpTransferEvent::ItemProgress {
+            batch_id,
+            transfer_id,
+            ..
+        } => Some((batch_id.raw(), transfer_id.raw())),
+        _ => None,
+    }
+}
+
 /// Waits for the next `WorkerCommand`, ignoring anything except
 /// `Reconnect` (nothing else is meaningful before the very first connect
 /// attempt has ever succeeded -- there's no session yet to load a
@@ -4061,7 +4223,7 @@ enum WorkerEvent {
 /// requested, or `false` if the command channel closed (the tab was
 /// dropped/closed), so the caller can give up instead of waiting forever.
 async fn wait_for_initial_connect_retry(
-    command_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
+    command_receiver: &mut tokio::sync::mpsc::Receiver<WorkerCommand>,
 ) -> bool {
     loop {
         match command_receiver.recv().await {
@@ -4076,8 +4238,8 @@ async fn run_worker(
     target: SftpFileManagerLaunchTarget,
     authentication: SftpFileManagerAuthentication,
     known_host_fingerprint: Option<String>,
-    command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
-    event_sender: mpsc::Sender<WorkerEvent>,
+    command_receiver: tokio::sync::mpsc::Receiver<WorkerCommand>,
+    event_sender: WorkerEventSender,
     repaint: egui::Context,
     owner: SftpWorkerOwner,
 ) {
@@ -4115,7 +4277,7 @@ async fn run_worker_operations(
     target: SftpFileManagerLaunchTarget,
     authentication: SftpFileManagerAuthentication,
     known_host_fingerprint: Option<String>,
-    mut command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
+    mut command_receiver: tokio::sync::mpsc::Receiver<WorkerCommand>,
     notifications: SftpWorkerNotifications,
     transfers: &mut Option<SftpTransferManager>,
 ) {
@@ -4150,10 +4312,12 @@ async fn run_worker_operations(
                 session
             }
             Err(error) => {
-                let _ = event_sender.send(WorkerEvent::ConnectionFailed {
-                    summary: "Could not connect the SFTP file manager.".to_owned(),
-                    details: error,
-                });
+                let _ = event_sender
+                    .send(WorkerEvent::ConnectionFailed {
+                        summary: "Could not connect the SFTP file manager.".to_owned(),
+                        details: error,
+                    })
+                    .await;
                 repaint.request_repaint();
                 if !wait_for_initial_connect_retry(&mut command_receiver).await {
                     return;
@@ -4177,10 +4341,12 @@ async fn run_worker_operations(
                 session
             }
             Err(error) => {
-                let _ = event_sender.send(WorkerEvent::ConnectionFailed {
-                    summary: "Could not start the SFTP transfer worker.".to_owned(),
-                    details: error,
-                });
+                let _ = event_sender
+                    .send(WorkerEvent::ConnectionFailed {
+                        summary: "Could not start the SFTP transfer worker.".to_owned(),
+                        details: error,
+                    })
+                    .await;
                 repaint.request_repaint();
                 if !wait_for_initial_connect_retry(&mut command_receiver).await {
                     return;
@@ -4199,13 +4365,15 @@ async fn run_worker_operations(
             .await
             .ok()
             .flatten();
-        let _ = event_sender.send(WorkerEvent::Connected {
-            remote_directory: snapshot,
-            remote_metadata: metadata,
-            verified_host_key_fingerprint: session_known_host_fingerprint
-                .clone()
-                .unwrap_or_default(),
-        });
+        let _ = event_sender
+            .send(WorkerEvent::Connected {
+                remote_directory: snapshot,
+                remote_metadata: metadata,
+                verified_host_key_fingerprint: session_known_host_fingerprint
+                    .clone()
+                    .unwrap_or_default(),
+            })
+            .await;
         repaint.request_repaint();
     }
 
@@ -4219,6 +4387,7 @@ async fn run_worker_operations(
     let mut liveness_interval = tokio::time::interval(SFTP_LIVENESS_CHECK_INTERVAL);
     liveness_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     liveness_interval.reset();
+    let mut transfer_events = Vec::with_capacity(GUI_SFTP_POLL_BUDGET);
 
     loop {
         tokio::select! {
@@ -4236,7 +4405,7 @@ async fn run_worker_operations(
                                     verified_host_key_fingerprint: session_known_host_fingerprint
                                         .clone()
                                         .unwrap_or_default(),
-                                });
+                                }).await;
                             }
                             Err(error) => {
                                 // The session may have died silently (e.g.
@@ -4273,13 +4442,13 @@ async fn run_worker_operations(
                                                     verified_host_key_fingerprint: session_known_host_fingerprint
                                                         .clone()
                                                         .unwrap_or_default(),
-                                                });
+                                                }).await;
                                             }
                                             Err(retry_error) => {
                                                 let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
                                                     summary: "Could not load the remote folder.".to_owned(),
                                                     details: retry_error.to_string(),
-                                                });
+                                                }).await;
                                             }
                                         }
                                     }
@@ -4287,7 +4456,7 @@ async fn run_worker_operations(
                                         let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
                                             summary: "Could not load the remote folder.".to_owned(),
                                             details: error.to_string(),
-                                        });
+                                        }).await;
                                     }
                                 }
                             }
@@ -4304,7 +4473,7 @@ async fn run_worker_operations(
                                     verified_host_key_fingerprint: session_known_host_fingerprint
                                         .clone()
                                         .unwrap_or_default(),
-                                });
+                                }).await;
                             }
                             Err(error) => {
                                 // Same resilience pattern as `LoadRemote`
@@ -4333,14 +4502,14 @@ async fn run_worker_operations(
                                                     verified_host_key_fingerprint: session_known_host_fingerprint
                                                         .clone()
                                                         .unwrap_or_default(),
-                                                });
+                                                }).await;
                                             }
                                             Err(retry_error) => {
                                                 let _ = event_sender.send(WorkerEvent::MarkdownSnapshotFailed {
                                                     request_id,
                                                     summary: "Could not open this file in the Markdown viewer.".to_owned(),
                                                     details: retry_error.to_string(),
-                                                });
+                                                }).await;
                                             }
                                         }
                                     }
@@ -4349,7 +4518,7 @@ async fn run_worker_operations(
                                             request_id,
                                             summary: "Could not open this file in the Markdown viewer.".to_owned(),
                                             details: error.to_string(),
-                                        });
+                                        }).await;
                                     }
                                 }
                             }
@@ -4361,7 +4530,7 @@ async fn run_worker_operations(
                             let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
                                 action: "queue the transfer",
                                 details: error.to_string(),
-                            });
+                            }).await;
                             repaint.request_repaint();
                         }
                     }
@@ -4370,7 +4539,7 @@ async fn run_worker_operations(
                             let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
                                 action: "cancel the transfer",
                                 details: error.to_string(),
-                            });
+                            }).await;
                             repaint.request_repaint();
                         }
                     }
@@ -4379,7 +4548,7 @@ async fn run_worker_operations(
                             let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
                                 action: "resolve the transfer conflict",
                                 details: error.to_string(),
-                            });
+                            }).await;
                             repaint.request_repaint();
                         }
                     }
@@ -4405,13 +4574,13 @@ async fn run_worker_operations(
                                             verified_host_key_fingerprint: session_known_host_fingerprint
                                                 .clone()
                                                 .unwrap_or_default(),
-                                        });
+                                        }).await;
                                     }
                                     Err(error) => {
                                         let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
                                             summary: "Could not reconnect the remote SFTP session.".to_owned(),
                                             details: error.to_string(),
-                                        });
+                                        }).await;
                                     }
                                 }
                             }
@@ -4419,7 +4588,7 @@ async fn run_worker_operations(
                                 let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
                                     summary: "Could not reconnect the remote SFTP session.".to_owned(),
                                     details: error,
-                                });
+                                }).await;
                             }
                         }
                         repaint.request_repaint();
@@ -4428,15 +4597,24 @@ async fn run_worker_operations(
             }
             transfer_event = transfer_manager.recv_event() => {
                 let Some(transfer_event) = transfer_event else { break; };
-                match transfer_event {
-                    SftpTransferEvent::CleanupIncomplete { error } => {
-                        reporter.report(target.label.clone(), error, &repaint);
-                    }
-                    event => {
-                        let _ = event_sender.send(WorkerEvent::Transfer(event));
-                    }
+                push_coalescing_progress(&mut transfer_events, transfer_event, transfer_progress_key);
+                for _ in 1..GUI_SFTP_POLL_BUDGET {
+                    let Ok(event) = transfer_manager.try_recv_event() else { break; };
+                    push_coalescing_progress(&mut transfer_events, event, transfer_progress_key);
                 }
-                repaint.request_repaint();
+                for event in transfer_events.drain(..) {
+                    match event {
+                        SftpTransferEvent::CleanupIncomplete { error } => {
+                            reporter.report(target.label.clone(), error, &repaint);
+                        }
+                        event => {
+                            if event_sender.send(WorkerEvent::Transfer(event)).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    repaint.request_repaint();
+                }
             }
             _ = liveness_interval.tick() => {
                 if browsing.remote_path_metadata(&current_remote).await.is_err() {
@@ -4465,7 +4643,7 @@ async fn run_worker_operations(
                                 verified_host_key_fingerprint: session_known_host_fingerprint
                                     .clone()
                                     .unwrap_or_default(),
-                            });
+                            }).await;
                             repaint.request_repaint();
                         }
                     }
@@ -4499,7 +4677,7 @@ async fn reconnect_browsing_session(
     target: &SftpFileManagerLaunchTarget,
     authentication: &SftpFileManagerAuthentication,
     known_host_fingerprint: &mut Option<String>,
-    event_sender: &mpsc::Sender<WorkerEvent>,
+    event_sender: &WorkerEventSender,
     repaint: &egui::Context,
 ) -> Result<festerm_ssh::SftpSession, String> {
     let (session, accepted_fingerprint) = connect_remote_session(
@@ -4520,7 +4698,7 @@ async fn connect_remote_session(
     target: &SftpFileManagerLaunchTarget,
     authentication: &SftpFileManagerAuthentication,
     known_host_fingerprint: Option<&str>,
-    event_sender: &mpsc::Sender<WorkerEvent>,
+    event_sender: &WorkerEventSender,
     repaint: &egui::Context,
 ) -> Result<(festerm_ssh::SftpSession, Option<String>), String> {
     let profile = target.connection_profile()?;
@@ -4578,8 +4756,9 @@ async fn connect_remote_session(
             completion,
         } => {
             let fingerprint = prompt.sha256_fingerprint().to_owned();
-            let _ =
-                event_sender.send(WorkerEvent::HostKeyVerificationRequired { prompt, resolver });
+            let _ = event_sender
+                .send(WorkerEvent::HostKeyVerificationRequired { prompt, resolver })
+                .await;
             repaint.request_repaint();
             completion.wait().await.map(|session| (session, Some(fingerprint))).map_err(
                 |error| match error {
@@ -5381,7 +5560,22 @@ fn pane_mut(tab: &mut SftpFileManagerTab, focus: PaneFocus) -> &mut SftpPaneStat
     }
 }
 
-fn load_path(tab: &mut SftpFileManagerTab, focus: PaneFocus, path: SftpPath, push_history: bool) {
+fn load_path(
+    tab: &mut SftpFileManagerTab,
+    focus: PaneFocus,
+    path: SftpPath,
+    push_history: bool,
+) -> bool {
+    if let (PaneFocus::Remote, SftpPath::Remote(remote)) = (focus, &path) {
+        if tab
+            .submit_worker_command(WorkerCommand::LoadRemote {
+                path: remote.clone(),
+            })
+            .is_err()
+        {
+            return false;
+        }
+    }
     {
         let pane = pane_mut(tab, focus);
         pane.loading = true;
@@ -5417,17 +5611,14 @@ fn load_path(tab: &mut SftpFileManagerTab, focus: PaneFocus, path: SftpPath, pus
                             details: error,
                         },
                     };
-                    let _ = event_sender.send(event);
+                    let _ = event_sender.blocking_send(event);
                     repaint.request_repaint();
                 }),
             });
         }
-        PaneFocus::Remote => {
-            if let SftpPath::Remote(path) = path {
-                let _ = tab.command_sender.send(WorkerCommand::LoadRemote { path });
-            }
-        }
+        PaneFocus::Remote => {}
     }
+    true
 }
 
 fn local_snapshot_and_metadata(
@@ -6579,8 +6770,9 @@ pub(crate) mod tests {
     /// worker thread will ever touch.
     fn test_tab() -> SftpFileManagerTab {
         let target = test_launch_target(None);
-        let (command_sender, _command_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (event_sender, event_receiver) = mpsc::channel();
+        let (command_sender, _command_receiver) =
+            tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+        let (event_sender, event_receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
         let context = egui::Context::default();
         SftpFileManagerTab {
             label: target.label.clone(),
@@ -6614,6 +6806,400 @@ pub(crate) mod tests {
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
         }
+    }
+
+    fn history_request() -> SftpTransferRequest {
+        SftpTransferRequest::new(
+            SftpPath::local("/owned-fixture/source"),
+            SftpPath::remote("/owned-fixture/destination"),
+        )
+        .expect("fixture crosses locations")
+    }
+
+    #[test]
+    fn gui_sftp_finished_history_retires_old_failures_at_the_approved_limit() {
+        let mut history = TransferDrawerState::<u64>::default();
+        for id in 0..512 {
+            history.upsert(id, history_request()).state = SftpTransferState::Failed {
+                reason: "controlled failure".to_owned(),
+            };
+            history.record_finished(id);
+        }
+        assert_eq!(history.items.len(), MAX_FINISHED_TRANSFER_HISTORY);
+        assert_eq!(history.indices.len(), MAX_FINISHED_TRANSFER_HISTORY);
+        assert_eq!(history.finished_order.len(), MAX_FINISHED_TRANSFER_HISTORY);
+        assert_eq!(history.retired_finished, 384);
+        assert!(history.item_mut(0).is_none());
+        assert!(history.item_mut(511).is_some());
+    }
+
+    #[test]
+    fn gui_sftp_history_keeps_active_rows_and_retires_by_finish_order() {
+        let mut history = TransferDrawerState::<u64>::default();
+        for id in 0..2 {
+            history.upsert(id, history_request()).state = SftpTransferState::Running;
+        }
+        for id in 2..1002 {
+            history.upsert(id, history_request()).state = SftpTransferState::Completed;
+            history.record_finished(id);
+        }
+        assert_eq!(history.items.len(), MAX_FINISHED_TRANSFER_HISTORY + 2);
+        assert!(history.item_mut(0).is_some());
+        assert!(history.item_mut(1).is_some());
+        history.item_mut(0).unwrap().state = SftpTransferState::Completed;
+        history.record_finished(0);
+        assert_eq!(history.items.len(), MAX_FINISHED_TRANSFER_HISTORY + 1);
+        assert!(
+            history.item_mut(0).is_some(),
+            "late finish is the newest, not the oldest"
+        );
+        assert!(
+            history.item_mut(1).is_some(),
+            "ongoing work cannot be retired"
+        );
+        assert!(history.item_mut(874).is_none());
+        assert_eq!(history.finished_order.back(), Some(&0));
+    }
+
+    #[test]
+    fn gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity() {
+        let mut history = TransferDrawerState::<u64>::default();
+        history.upsert(0, history_request()).state = SftpTransferState::Running;
+        for id in 1..257 {
+            history.upsert(id, history_request()).state = SftpTransferState::Completed;
+            history.record_finished(id);
+            history.record_finished(id);
+        }
+        assert_eq!(history.retired_finished, 128);
+        assert_eq!(history.finished_ids.len(), MAX_FINISHED_TRANSFER_HISTORY);
+        for item in &history.items {
+            assert_eq!(
+                history.items[history.indices[&item.transfer_id]].transfer_id,
+                item.transfer_id
+            );
+        }
+        history.clear_finished();
+        assert_eq!(history.items.len(), 1);
+        assert_eq!(history.indices.len(), 1);
+        assert!(history.item_mut(0).is_some());
+        assert!(history.finished_order.is_empty());
+        assert!(history.finished_ids.is_empty());
+        assert!(history.item_mut(256).is_none());
+    }
+
+    #[test]
+    fn gui_sftp_history_reclaims_a_large_active_peak_and_reports_retirement() {
+        let mut history = TransferDrawerState::<u64>::default();
+        for id in 0..4096 {
+            history.upsert(id, history_request()).state = SftpTransferState::Running;
+        }
+        assert!(history.items.capacity() > MAX_FINISHED_TRANSFER_HISTORY * 4);
+        for id in 0..4096 {
+            history.item_mut(id).unwrap().state = SftpTransferState::Cancelled;
+            history.record_finished(id);
+        }
+        assert_eq!(history.items.len(), MAX_FINISHED_TRANSFER_HISTORY);
+        assert!(history.items.capacity() <= MAX_FINISHED_TRANSFER_HISTORY * 4);
+        assert!(history.indices.capacity() <= MAX_FINISHED_TRANSFER_HISTORY * 4);
+        let notice = history.retirement_notice().unwrap();
+        assert!(notice.contains("3968 older finished transfers retired"));
+        assert!(notice.contains("latest 128"));
+    }
+
+    fn tab_with_command_receiver() -> (
+        SftpFileManagerTab,
+        tokio::sync::mpsc::Receiver<WorkerCommand>,
+    ) {
+        let mut tab = test_tab();
+        let (sender, receiver) = tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+        tab.command_sender = sender;
+        tab.connection_state = SftpConnectionState::Ready;
+        (tab, receiver)
+    }
+
+    fn fill_command_bridge(tab: &mut SftpFileManagerTab) {
+        for _ in 0..GUI_SFTP_COMMAND_CAPACITY {
+            tab.submit_worker_command(WorkerCommand::Reconnect).unwrap();
+        }
+    }
+
+    #[test]
+    fn gui_sftp_command_bridge_refuses_full_and_closed_queues_without_false_success() {
+        let (mut tab, mut receiver) = tab_with_command_receiver();
+        fill_command_bridge(&mut tab);
+        let error = tab
+            .submit_worker_command(WorkerCommand::Reconnect)
+            .unwrap_err();
+        assert!(error.contains("64 queued commands"));
+        assert_eq!(receiver.len(), GUI_SFTP_COMMAND_CAPACITY);
+        assert!(matches!(tab.connection_state, SftpConnectionState::Ready));
+        assert_eq!(tab.operation_error.as_ref().unwrap().1, error);
+        receiver.try_recv().unwrap();
+        tab.submit_worker_command(WorkerCommand::Reconnect).unwrap();
+        drop(receiver);
+        let error = tab
+            .submit_worker_command(WorkerCommand::Reconnect)
+            .unwrap_err();
+        assert!(error.contains("Reopen this tab"));
+        assert_eq!(tab.operation_error.as_ref().unwrap().1, error);
+    }
+
+    #[test]
+    fn gui_sftp_refused_reconnect_preserves_connection_and_spinner_until_admitted() {
+        let (mut tab, mut receiver) = tab_with_command_receiver();
+        fill_command_bridge(&mut tab);
+        tab.remote_pane.loading = false;
+        tab.request_reconnect();
+        assert!(matches!(tab.connection_state, SftpConnectionState::Ready));
+        assert!(!tab.remote_pane.loading);
+        assert!(tab.operation_error.is_some());
+        receiver.try_recv().unwrap();
+        tab.request_reconnect();
+        assert!(matches!(
+            tab.connection_state,
+            SftpConnectionState::Connecting
+        ));
+        assert!(tab.remote_pane.loading);
+        drop(receiver);
+        tab.connection_state = SftpConnectionState::Failed {
+            summary: "owned failure".to_owned(),
+            details: "owned detail".to_owned(),
+        };
+        tab.remote_pane.loading = false;
+        tab.request_reconnect();
+        assert!(matches!(
+            tab.connection_state,
+            SftpConnectionState::Failed { .. }
+        ));
+        assert!(!tab.remote_pane.loading);
+        assert!(tab
+            .operation_error
+            .as_ref()
+            .unwrap()
+            .1
+            .contains("Reopen this tab"));
+    }
+
+    #[test]
+    fn gui_sftp_external_drop_and_oversized_batches_refuse_before_bridge_admission() {
+        let (mut tab, receiver) = tab_with_command_receiver();
+        let maximum = SftpTransferManager::max_batch_items();
+        let requests = vec![history_request(); maximum + 1];
+        let error = tab
+            .submit_worker_command(WorkerCommand::Enqueue(requests))
+            .unwrap_err();
+        assert!(error.contains(&format!("batch limit is {maximum}")));
+        assert_eq!(receiver.len(), 0);
+        tab.submit_worker_command(WorkerCommand::Enqueue(vec![history_request(); maximum]))
+            .unwrap();
+        for _ in 1..GUI_SFTP_COMMAND_CAPACITY {
+            tab.submit_worker_command(WorkerCommand::Reconnect).unwrap();
+        }
+        let result = tab.enqueue_external_drop_upload(vec![PathBuf::from("/owned-fixture/file")]);
+        assert!(
+            result.is_err(),
+            "a rejected drop must not return a successful item count"
+        );
+        assert_eq!(receiver.len(), GUI_SFTP_COMMAND_CAPACITY);
+    }
+
+    #[test]
+    fn gui_sftp_refused_navigation_preserves_back_stack_breadcrumbs_and_loading_state() {
+        let (mut tab, receiver) = tab_with_command_receiver();
+        fill_command_bridge(&mut tab);
+        tab.remote_pane.push_history(SftpPath::remote("/one"));
+        tab.remote_pane.update_scroll_offset(25.0);
+        tab.remote_pane.push_history(SftpPath::remote("/one/two"));
+        tab.remote_pane.update_scroll_offset(75.0);
+        tab.remote_pane.current_path = SftpPath::remote("/one/two");
+        tab.remote_pane.loading = false;
+        let history = tab.remote_pane.history.clone();
+        let offsets = tab.remote_pane.history_scroll_offsets.clone();
+        let path = tab.remote_pane.current_path.clone();
+        tab.navigate_back(PaneFocus::Remote);
+        assert_eq!(tab.remote_pane.history, history);
+        assert_eq!(tab.remote_pane.current_path, path);
+        tab.navigate_to_path(PaneFocus::Remote, SftpPath::remote("/"));
+        assert_eq!(tab.remote_pane.history, history);
+        assert_eq!(tab.remote_pane.current_path, path);
+        assert!(!load_path(
+            &mut tab,
+            PaneFocus::Remote,
+            SftpPath::remote("/new"),
+            true
+        ));
+        assert_eq!(tab.remote_pane.history, history);
+        assert_eq!(tab.remote_pane.current_path, path);
+        assert_eq!(tab.remote_pane.history_scroll_offsets, offsets);
+        assert_eq!(tab.remote_pane.scroll_offset, 75.0);
+        assert!(!tab.remote_pane.loading);
+        assert_eq!(receiver.len(), GUI_SFTP_COMMAND_CAPACITY);
+    }
+
+    #[test]
+    fn gui_sftp_admitted_back_and_ancestor_navigation_restore_scroll_after_queue_recovery() {
+        let (mut tab, mut receiver) = tab_with_command_receiver();
+        fill_command_bridge(&mut tab);
+        tab.remote_pane.update_scroll_offset(10.0);
+        tab.remote_pane.push_history(SftpPath::remote("/one"));
+        tab.remote_pane.update_scroll_offset(25.0);
+        tab.remote_pane.push_history(SftpPath::remote("/one/two"));
+        tab.remote_pane.update_scroll_offset(75.0);
+        receiver.try_recv().unwrap();
+        tab.navigate_back(PaneFocus::Remote);
+        assert_eq!(tab.remote_pane.current_path, SftpPath::remote("/one"));
+        assert_eq!(tab.remote_pane.scroll_offset, 25.0);
+        assert_eq!(tab.remote_pane.previous_valid_scroll_offset, 75.0);
+        assert!(tab.remote_pane.loading);
+        receiver.try_recv().unwrap();
+        tab.navigate_to_path(PaneFocus::Remote, SftpPath::remote("/"));
+        assert_eq!(tab.remote_pane.current_path, SftpPath::remote("/"));
+        assert_eq!(tab.remote_pane.scroll_offset, 10.0);
+        assert_eq!(tab.remote_pane.history, vec![SftpPath::remote("/")]);
+        let mut admitted_paths = Vec::new();
+        while let Ok(command) = receiver.try_recv() {
+            if let WorkerCommand::LoadRemote { path } = command {
+                admitted_paths.push(path);
+            }
+        }
+        assert_eq!(admitted_paths, vec!["/one", "/"]);
+    }
+
+    #[test]
+    fn gui_sftp_refused_markdown_read_keeps_the_previous_request_generation() {
+        let (mut tab, _receiver) = tab_with_command_receiver();
+        fill_command_bridge(&mut tab);
+        tab.next_markdown_request_id = 12;
+        tab.pending_markdown_request = Some(PendingMarkdownRequest {
+            request_id: 11,
+            path: "/previous.md".to_owned(),
+        });
+        tab.request_remote_markdown_snapshot("/rejected.md".to_owned());
+        let pending = tab.pending_markdown_request.as_ref().unwrap();
+        assert_eq!(pending.request_id, 11);
+        assert_eq!(pending.path, "/previous.md");
+        assert_eq!(tab.next_markdown_request_id, 12);
+        assert!(tab.operation_error.is_some());
+    }
+
+    fn bridge_event(sequence: usize) -> WorkerEvent {
+        WorkerEvent::TransferCommandFailed {
+            action: "controlled fixture",
+            details: sequence.to_string(),
+        }
+    }
+
+    #[test]
+    fn gui_sftp_event_bridge_and_poll_budget_are_exact_and_preserve_order() {
+        let mut tab = test_tab();
+        let repaint_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&repaint_count);
+        tab.repaint.set_request_repaint_callback(move |_| {
+            observed.fetch_add(1, AtomicOrdering::Relaxed);
+        });
+        for index in 0..GUI_SFTP_EVENT_CAPACITY {
+            tab.event_sender.try_send(bridge_event(index)).unwrap();
+        }
+        assert!(matches!(
+            tab.event_sender
+                .try_send(bridge_event(GUI_SFTP_EVENT_CAPACITY)),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)),
+        ));
+        tab.poll();
+        assert_eq!(
+            tab.event_receiver.len(),
+            GUI_SFTP_EVENT_CAPACITY - GUI_SFTP_POLL_BUDGET
+        );
+        assert_eq!(tab.operation_error.as_ref().unwrap().1, "63");
+        assert!(
+            repaint_count.load(AtomicOrdering::Relaxed) > 0,
+            "remaining work must wake another frame"
+        );
+        tab.poll();
+        assert_eq!(tab.operation_error.as_ref().unwrap().1, "127");
+        assert!(tab.event_receiver.is_empty());
+    }
+
+    #[test]
+    fn gui_sftp_owner_close_preempts_a_full_async_event_bridge() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (sender, mut receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
+                for index in 0..GUI_SFTP_EVENT_CAPACITY {
+                    sender.try_send(bridge_event(index)).unwrap();
+                }
+                let (shutdown, mut owner) = tokio::sync::oneshot::channel();
+                let work = wait_for_sftp_tab_owner(sender.send(bridge_event(999)), &mut owner);
+                tokio::pin!(work);
+                assert!(tokio::time::timeout(Duration::from_millis(10), &mut work)
+                    .await
+                    .is_err());
+                shutdown.send(()).unwrap();
+                let result = tokio::time::timeout(Duration::from_secs(1), work)
+                    .await
+                    .unwrap();
+                assert!(matches!(result, SftpTabWork::OwnerClosed));
+                assert_eq!(receiver.len(), GUI_SFTP_EVENT_CAPACITY);
+                receiver.try_recv().unwrap();
+                sender.send(bridge_event(999)).await.unwrap();
+                assert_eq!(receiver.len(), GUI_SFTP_EVENT_CAPACITY);
+            });
+    }
+
+    #[test]
+    fn gui_sftp_local_event_producer_unblocks_when_the_frontend_closes() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
+        for index in 0..GUI_SFTP_EVENT_CAPACITY {
+            sender.try_send(bridge_event(index)).unwrap();
+        }
+        let (result_sender, result_receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            result_sender
+                .send(sender.blocking_send(bridge_event(999)).is_err())
+                .unwrap();
+        });
+        drop(receiver);
+        assert!(result_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn gui_sftp_progress_coalescing_keeps_the_latest_value_and_critical_barriers() {
+        #[derive(Debug, PartialEq)]
+        enum Event {
+            Progress(u64, u64, usize),
+            Critical(&'static str),
+        }
+        let key = |event: &Event| match event {
+            Event::Progress(batch, id, _) => Some((*batch, *id)),
+            Event::Critical(_) => None,
+        };
+        let mut events = Vec::new();
+        for sequence in 0..64 {
+            push_coalescing_progress(&mut events, Event::Progress(1, 1, sequence), key);
+        }
+        assert_eq!(events, vec![Event::Progress(1, 1, 63)]);
+        push_coalescing_progress(&mut events, Event::Critical("collision"), key);
+        push_coalescing_progress(&mut events, Event::Progress(1, 1, 64), key);
+        push_coalescing_progress(&mut events, Event::Progress(1, 2, 65), key);
+        push_coalescing_progress(&mut events, Event::Progress(2, 2, 66), key);
+        push_coalescing_progress(&mut events, Event::Critical("failed"), key);
+        assert_eq!(
+            events,
+            vec![
+                Event::Progress(1, 1, 63),
+                Event::Critical("collision"),
+                Event::Progress(1, 1, 64),
+                Event::Progress(1, 2, 65),
+                Event::Progress(2, 2, 66),
+                Event::Critical("failed"),
+            ]
+        );
     }
 
     #[test]
@@ -8478,7 +9064,8 @@ pub(crate) mod tests {
 
     #[test]
     fn enqueue_external_drop_upload_enqueues_one_request_per_dropped_path() {
-        let (command_sender, mut command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (command_sender, mut command_receiver) =
+            tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
         let mut tab = test_tab();
         tab.command_sender = command_sender;
         tab.connection_state = SftpConnectionState::Ready;
@@ -8531,7 +9118,8 @@ pub(crate) mod tests {
 
     #[test]
     fn cross_pane_drag_drop_enqueues_the_dragged_selection_but_same_pane_does_not() {
-        let (command_sender, mut command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (command_sender, mut command_receiver) =
+            tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
         let mut tab = test_tab();
         tab.command_sender = command_sender;
         tab.connection_state = SftpConnectionState::Ready;

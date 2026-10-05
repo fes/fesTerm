@@ -3,6 +3,36 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding GUI SFTP backlog and retiring finished history
+
+The allocation/lifecycle audit in #320 found unbounded GUI SFTP command/event
+bridges, unrestricted frontend event draining, and a transfer drawer whose
+completed and failed rows grew for the lifetime of the tab. Each progress event
+also searched that growing row array. A controlled failure-history regression
+retained 512 records before the fix rather than the approved 128.
+
+The GUI now uses 64-command and 128-event bridges, a 64-event poll/batch budget,
+and repaint continuation instead of draining an arbitrary backlog in one call.
+Async producers await event capacity; the dedicated local loader may block
+until capacity or receiver retirement. Adjacent progress for one batch/transfer
+is coalesced without crossing critical barriers. Owner cancellation still
+bypasses those queues. Full/closed commands and batches above the existing
+256-item backend ceiling are visibly refused before bridge retention, without
+false drop success, lost pending Markdown requests, dismissed collision
+decisions or premature reconnect/navigation-state mutations.
+
+The owner approved retaining the 128 most recently finished rows, including
+failures, and reporting retirement. Completion order preserves a long-running
+item that finishes late; active/collision-paused work is not evicted. Indexed
+lookup avoids per-progress history searches, and exceptional row/index
+capacity retires after a peak. History has a 240-logical-pixel scroll area,
+not row virtualization, and the existing Clear action still preserves retained
+failures. Deterministic churn, boundaries, ordering, admission recovery and
+full-queue teardown cover the repaired contracts. Aggregate directory/plan
+bytes and native drawer/refusal accessibility remain separate work and
+`SFTP-03` evidence. This does not prove a cause of #297 or allocator
+fragmentation.
+
 ## Keeping SSH control work independent of output gaps
 
 The allocation/lifecycle audit in #320 found that each native SSH output

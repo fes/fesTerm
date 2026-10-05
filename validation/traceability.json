@@ -1718,6 +1718,7 @@
       "requirements": [
         "docs/sftp-ui-design.md#layout-and-navigation",
         "docs/sftp-ui-design.md#transfer-behavior",
+        "docs/sftp-ui-design.md#bounded-gui-backlog-and-history",
         "docs/sftp-ui-design.md#owner-cancellation-and-cleanup",
         "docs/sftp-ui-design.md#collision-and-overwrite-policy"
       ],
@@ -1744,6 +1745,20 @@
         "gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window",
         "gui_sftp_cleanup_notices_are_bounded_without_waiting_for_a_closed_window",
         "gui_sftp_preserved_output_notice_reports_a_recovery_path",
+        "gui_sftp_finished_history_retires_old_failures_at_the_approved_limit",
+        "gui_sftp_history_keeps_active_rows_and_retires_by_finish_order",
+        "gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity",
+        "gui_sftp_history_reclaims_a_large_active_peak_and_reports_retirement",
+        "gui_sftp_command_bridge_refuses_full_and_closed_queues_without_false_success",
+        "gui_sftp_refused_reconnect_preserves_connection_and_spinner_until_admitted",
+        "gui_sftp_external_drop_and_oversized_batches_refuse_before_bridge_admission",
+        "gui_sftp_refused_navigation_preserves_back_stack_breadcrumbs_and_loading_state",
+        "gui_sftp_admitted_back_and_ancestor_navigation_restore_scroll_after_queue_recovery",
+        "gui_sftp_refused_markdown_read_keeps_the_previous_request_generation",
+        "gui_sftp_event_bridge_and_poll_budget_are_exact_and_preserve_order",
+        "gui_sftp_owner_close_preempts_a_full_async_event_bridge",
+        "gui_sftp_local_event_producer_unblocks_when_the_frontend_closes",
+        "gui_sftp_progress_coalescing_keeps_the_latest_value_and_critical_barriers",
         "late_collision_preserves_and_reports_output_without_losing_any_decision",
         "cancelled_copy_reports_preserved_output_and_keeps_cancelled_state",
         "live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state",
@@ -1801,12 +1816,14 @@
       "manual_scenarios": [
         "FD-05",
         "FD-06",
-        "SFTP-01"
+        "SFTP-01",
+        "SFTP-03"
       ],
       "status": "partial",
       "prerequisites": [
         "remote-disconnect recovery, the native Finder/Explorer drag gesture in both directions, and observing reveal-in-Finder/Explorer focus behavior still need native/manual evidence; native OS drag-out of a remote item is not implemented (egui/eframe has no drag-source primitive as of the pinned version)",
-        "SFTP-01 packaged native close/quit, surviving shell/window behavior, cleanup notice accessibility and diagnostic visibility remain unqualified"
+        "SFTP-01 packaged native close/quit, surviving shell/window behavior, cleanup notice accessibility and diagnostic visibility remain unqualified",
+        "SFTP-03 native long-history scrolling, collision decisions under saturation, OS drops, short-window notice readability and keyboard/screen-reader delivery remain unqualified; aggregate directory/plan byte budgets are separate work"
       ]
     },
     {
