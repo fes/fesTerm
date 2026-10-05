@@ -25,6 +25,8 @@ profiles and retains one latest blocked snapshot without repeated cloning.
 The manager borrows its retained list, preserves refused drafts and uses
 explicit stable row widget IDs. Oversized saved-profile launches report the
 ceiling, including the stored-password shortcut, without discarding settings.
+The launch form checks draft count before constructing row configurations, so
+an oversized draft does not allocate or validate its entire mapping prefix.
 
 The original 128/129 profile and pending-admission controls both failed.
 Deterministic churn now plateaus at 128 and releases empty storage, and 1,000

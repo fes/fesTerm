@@ -769,6 +769,9 @@ impl SshLauncherForm {
     /// `self.durable_session.automatic_recovery` is explicitly set.
     fn session_options(&self) -> Result<SshSessionOptions, String> {
         let options = self.durable_session.session_options()?;
+        if self.port_forwards.len() > festerm_ssh::MAX_SSH_PORT_FORWARD_ENTRIES {
+            return Err(festerm_ssh::SshPortForwardConfigurationError::InventoryLimit.to_string());
+        }
         let port_forwards = self
             .port_forwards
             .iter()
@@ -5428,6 +5431,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
+        form.port_forwards[0].bind_port = "0".to_owned();
         assert_eq!(
             form.submit().unwrap_err(),
             festerm_ssh::SshPortForwardConfigurationError::InventoryLimit.to_string(),
