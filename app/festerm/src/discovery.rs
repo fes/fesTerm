@@ -473,18 +473,83 @@ mod tests {
         context: &eframe::egui::Context,
         discover: fn() -> Inventory,
     ) {
+        finish_with_before_update(discovery, context, discover, |_| {});
+    }
+
+    fn finish_with_before_update(
+        discovery: &mut Discovery,
+        context: &eframe::egui::Context,
+        discover: fn() -> Inventory,
+        mut before_update: impl FnMut(&Discovery),
+    ) {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let worker = discovery.worker.as_ref().unwrap();
-            let requested_generation_finished =
-                worker.generation == discovery.generation && worker.handle.is_finished();
+            let requested_generation = worker.generation == discovery.generation;
+            let worker_id = worker.handle.thread().id();
+            before_update(discovery);
             discovery.update_with(true, context, discover);
-            if requested_generation_finished {
+            let retired = discovery
+                .worker
+                .as_ref()
+                .is_none_or(|worker| worker.handle.thread().id() != worker_id);
+            if requested_generation && retired {
                 return;
             }
             assert!(Instant::now() < deadline, "discovery worker did not finish");
             thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn finish_helper_observes_retirement_between_inspection_and_update() {
+        let context = eframe::egui::Context::default();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let (release, released) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            released.recv().unwrap();
+            sender
+                .send(Inventory {
+                    errors: vec!["controlled publication".into()],
+                    ..Default::default()
+                })
+                .unwrap();
+        });
+        let (cancel, _cancellation) = mpsc::sync_channel(1);
+        let mut discovery = Discovery {
+            enabled: true,
+            inventory: Inventory::default(),
+            generation: 0,
+            requested: false,
+            worker: Some(Worker {
+                generation: 0,
+                receiver,
+                cancel,
+                handle,
+                result: None,
+            }),
+        };
+        let mut release = Some(release);
+        let mut updates = 0;
+        finish_with_before_update(
+            &mut discovery,
+            &context,
+            || panic!("the next periodic worker must remain waiting"),
+            |discovery| {
+                updates += 1;
+                if let Some(release) = release.take() {
+                    release.send(()).unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(3);
+                    while !discovery.worker.as_ref().unwrap().handle.is_finished() {
+                        assert!(Instant::now() < deadline);
+                        thread::yield_now();
+                    }
+                }
+            },
+        );
+        assert_eq!(updates, 1);
+        assert_eq!(discovery.inventory.errors, ["controlled publication"]);
+        assert!(discovery.worker.is_some());
     }
 
     #[test]
