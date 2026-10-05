@@ -37,6 +37,12 @@ Consequences that follow from that and are worth stating plainly:
   away from the text widget, which keeps a private history of its own string
   and knows nothing about the other views, a reload, or a substitution
   committed as one transaction.
+- The body limits the widget to one baseline rather than its default 100
+  undo points; egui may also hold one transient changing state. Configuration
+  happens once, not by clearing and rebuilding the baseline on every pass.
+  Find/Replace, the column field, and the vi command field keep their local
+  undo while the view is open; closing the view removes all of its
+  text-widget state from the shared GUI context.
 - Closing a view does not close the document. The document is forgotten when
   the last view goes, which is also the only point at which the dirty-close
   question is worth asking. Accepted window teardown releases every document
