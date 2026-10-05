@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeMenuCommand {
     Paste,
+    NewTextDocument,
     NewSession,
     NewWindow,
     StartLocalShell,
@@ -38,6 +39,7 @@ pub struct NativeShortcut {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeMenuAction {
     Paste,
+    NewTextDocument,
     NewSession,
     NewWindow,
     StartLocalShell,
@@ -55,6 +57,7 @@ impl NativeMenuAction {
     const fn command(self) -> NativeMenuCommand {
         match self {
             Self::Paste => NativeMenuCommand::Paste,
+            Self::NewTextDocument => NativeMenuCommand::NewTextDocument,
             Self::NewSession => NativeMenuCommand::NewSession,
             Self::NewWindow => NativeMenuCommand::NewWindow,
             Self::StartLocalShell => NativeMenuCommand::StartLocalShell,
@@ -1050,6 +1053,10 @@ mod menu {
             fn paste_from_clipboard(&self, _sender: Option<&AnyObject>) {
                 self.emit(NativeMenuAction::Paste);
             }
+            #[unsafe(method(newTextDocument:))]
+            fn new_text_document(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuAction::NewTextDocument);
+            }
             #[unsafe(method(newSession:))]
             fn new_session(&self, _sender: Option<&AnyObject>) {
                 self.emit(NativeMenuAction::NewSession);
@@ -1134,7 +1141,9 @@ mod menu {
     }
 
     fn command_for_selector(selector: objc2::runtime::Sel) -> Option<NativeMenuCommand> {
-        if selector == sel!(newSession:) {
+        if selector == sel!(newTextDocument:) {
+            Some(NativeMenuCommand::NewTextDocument)
+        } else if selector == sel!(newSession:) {
             Some(NativeMenuCommand::NewSession)
         } else if selector == sel!(newWindow:) {
             Some(NativeMenuCommand::NewWindow)
@@ -1344,6 +1353,14 @@ mod menu {
         main.addItem(&submenu_root(mtm, "File", &file));
         file.addItem(&custom_item(
             mtm,
+            "New File",
+            "",
+            NSEventModifierFlags::empty(),
+            sel!(newTextDocument:),
+            &target,
+        ));
+        file.addItem(&custom_item(
+            mtm,
             "New Session…",
             "t",
             NSEventModifierFlags::Command,
@@ -1464,16 +1481,16 @@ mod menu {
             shortcut_items: vec![
                 ShortcutItem {
                     command: NativeMenuCommand::NewSession,
-                    item: file.itemAtIndex(0).expect("new session menu item").clone(),
+                    item: file.itemAtIndex(1).expect("new session menu item").clone(),
                 },
                 ShortcutItem {
                     command: NativeMenuCommand::NewWindow,
-                    item: file.itemAtIndex(1).expect("new window menu item").clone(),
+                    item: file.itemAtIndex(2).expect("new window menu item").clone(),
                 },
                 ShortcutItem {
                     command: NativeMenuCommand::StartLocalShell,
                     item: file
-                        .itemAtIndex(2)
+                        .itemAtIndex(3)
                         .expect("start local shell menu item")
                         .clone(),
                 },
@@ -1756,6 +1773,10 @@ mod tests {
     fn native_menu_actions_map_to_shared_commands() {
         let cases = [
             (NativeMenuAction::Paste, NativeMenuCommand::Paste),
+            (
+                NativeMenuAction::NewTextDocument,
+                NativeMenuCommand::NewTextDocument,
+            ),
             (NativeMenuAction::NewSession, NativeMenuCommand::NewSession),
             (NativeMenuAction::NewWindow, NativeMenuCommand::NewWindow),
             (

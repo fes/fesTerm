@@ -75,6 +75,8 @@ use crate::terminal_paths::{
 use crate::text_editor::TextEditorTab;
 
 const TERMINAL_HISTORY_SNAPSHOT_NAME_PREFIX: &str = "terminal-history";
+const NEW_TEXT_DOCUMENT_NAME_PREFIX: &str = "Untitled";
+const NEW_TEXT_DOCUMENT_LABEL: &str = "New unsaved file";
 
 /// Stable application-level tab identifier.
 ///
@@ -2038,6 +2040,8 @@ pub enum AppCommand {
     OpenTextEditor {
         path: PathBuf,
     },
+    /// Opens a new empty untitled document in the native editor.
+    NewTextDocument,
     /// Freezes the active terminal's retained text into a new independent
     /// editor snapshot.
     OpenTerminalHistoryInEditor,
@@ -3405,6 +3409,7 @@ impl AppState {
                     self.open_refusal = Some((path, failure));
                 }
             }
+            AppCommand::NewTextDocument => self.new_text_document(),
             AppCommand::OpenTerminalHistoryInEditor => self.open_terminal_history_snapshot(false),
             AppCommand::SaveTerminalHistoryAs => self.open_terminal_history_snapshot(true),
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
@@ -3905,22 +3910,35 @@ impl AppState {
         let opened = self.documents.borrow_mut().open_local(path);
         match opened {
             Ok(document) => {
-                let id = TabId::next();
-                let editor = TextEditorTab::with_options(
-                    document,
-                    &self.documents,
-                    crate::text_editor::EditorViewOptions::from_settings(self.editor),
-                );
-                self.tabs.push(Tab {
-                    id,
-                    content: TabContent::TextEditor(Box::new(editor)),
-                });
-                self.set_active(id);
-                self.workspace_dirty = true;
+                self.open_text_document(document);
                 None
             }
             Err(failure) => Some(failure),
         }
+    }
+
+    fn new_text_document(&mut self) {
+        let document = self.documents.borrow_mut().create_untitled(
+            NEW_TEXT_DOCUMENT_NAME_PREFIX,
+            NEW_TEXT_DOCUMENT_LABEL,
+            b"",
+        );
+        self.open_text_document(document);
+    }
+
+    fn open_text_document(&mut self, document: DocumentId) {
+        let id = TabId::next();
+        let editor = TextEditorTab::with_options(
+            document,
+            &self.documents,
+            crate::text_editor::EditorViewOptions::from_settings(self.editor),
+        );
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::TextEditor(Box::new(editor)),
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
     }
 
     fn open_terminal_history_snapshot(&mut self, save_as: bool) {
@@ -3939,18 +3957,7 @@ impl AppState {
             &label,
             snapshot.text().as_bytes(),
         );
-        let id = TabId::next();
-        let editor = TextEditorTab::with_options(
-            document,
-            &self.documents,
-            crate::text_editor::EditorViewOptions::from_settings(self.editor),
-        );
-        self.tabs.push(Tab {
-            id,
-            content: TabContent::TextEditor(Box::new(editor)),
-        });
-        self.set_active(id);
-        self.workspace_dirty = true;
+        self.open_text_document(document);
         if save_as {
             self.save_as_requested = true;
         }
@@ -3965,18 +3972,7 @@ impl AppState {
             return;
         };
         self.documents.borrow_mut().retain(document);
-        let id = TabId::next();
-        let editor = TextEditorTab::with_options(
-            document,
-            &self.documents,
-            crate::text_editor::EditorViewOptions::from_settings(self.editor),
-        );
-        self.tabs.push(Tab {
-            id,
-            content: TabContent::TextEditor(Box::new(editor)),
-        });
-        self.set_active(id);
-        self.workspace_dirty = true;
+        self.open_text_document(document);
     }
 
     fn active_terminal_history_snapshot(
@@ -4083,18 +4079,7 @@ impl AppState {
             self.workspace_dirty = true;
             return;
         }
-        let id = TabId::next();
-        let editor = TextEditorTab::with_options(
-            document,
-            &self.documents,
-            crate::text_editor::EditorViewOptions::from_settings(self.editor),
-        );
-        self.tabs.push(Tab {
-            id,
-            content: TabContent::TextEditor(Box::new(editor)),
-        });
-        self.set_active(id);
-        self.workspace_dirty = true;
+        self.open_text_document(document);
     }
 
     fn open_detected_terminal_path(&mut self, tab_id: TabId, context: &egui::Context) {
