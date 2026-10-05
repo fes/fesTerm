@@ -772,7 +772,7 @@ fn paint_grid_with_clip_override(
     let native =
         crate::native_painter::Batch::begin(&painter, painter.clip_rect(), paint.full_redraw);
     glyphs.rows.begin(dimensions.rows(), paint.full_redraw);
-    glyphs.rows.observe(paint.cache, paint.shape_cell_runs);
+    glyphs.rows.observe(paint.cache);
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {
             continue;
@@ -2665,6 +2665,15 @@ mod tests {
 
     #[test]
     fn retained_unshaped_rows_bypass_full_mutation_and_recover_exact_meshes() {
+        retained_rows_bypass_full_mutation_and_recover_exact_meshes(false);
+    }
+
+    #[test]
+    fn retained_shaped_rows_bypass_full_mutation_and_recover_exact_meshes() {
+        retained_rows_bypass_full_mutation_and_recover_exact_meshes(true);
+    }
+
+    fn retained_rows_bypass_full_mutation_and_recover_exact_meshes(shaped: bool) {
         let context = egui::Context::default();
         crate::install_terminal_fonts(&context);
         warm_row_context(&context);
@@ -2679,9 +2688,26 @@ mod tests {
         let selection = Selection::default();
         let fonts = FontSettings::default();
         let options = RowFrameOptions {
-            shaped: false,
+            shaped,
             ..Default::default()
         };
+        for frame in 0..4 {
+            terminal.ingest(format!("\x1b[2J\x1b[Hframe {frame:06}").as_bytes());
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                options,
+            );
+        }
+        terminal.ingest(b"\x1b[2J\x1b[Hframe 0123456789");
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
         for _ in 0..3 {
             row_cache_frame(
                 &context,
@@ -2707,6 +2733,11 @@ mod tests {
                 &fonts,
                 options,
             );
+            assert_eq!(
+                glyphs.font_revision,
+                Some(context.fonts_mut(|fonts| fonts.image_revision())),
+                "full-mutation oracle must use a warmed atlas"
+            );
             let actual = row_cache_frame(
                 &context,
                 &terminal,
@@ -2717,7 +2748,7 @@ mod tests {
                 options,
             );
             assert_same_row_primitives(&actual, &reference);
-            assert_eq!(glyphs.rows.diagnostics(), (0, 0, 0));
+            assert_eq!(glyphs.rows.diagnostics(), (0, 0, 0), "frame {frame}");
         }
         for _ in 0..3 {
             row_cache_frame(

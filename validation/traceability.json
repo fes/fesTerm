@@ -975,6 +975,7 @@
         "retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear",
         "profile_retained_grid_row_stages",
         "retained_unshaped_rows_bypass_full_mutation_and_recover_exact_meshes",
+        "retained_shaped_rows_bypass_full_mutation_and_recover_exact_meshes",
         "native_background_hook_preserves_rectangles_and_translucent_fallback",
         "panel_fill_callback_preserves_declined_geometry_and_color",
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",

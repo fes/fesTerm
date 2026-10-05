@@ -126,12 +126,11 @@ impl Rows {
         }
     }
 
-    pub(super) fn observe(&mut self, cache: &crate::cache::TerminalRenderCache, shaped: bool) {
+    pub(super) fn observe(&mut self, cache: &crate::cache::TerminalRenderCache) {
         if self.budget == 0 || self.entries.is_empty() {
             return;
         }
-        self.retain_frame = shaped
-            || self.previous_revisions.len() != self.entries.len()
+        self.retain_frame = self.previous_revisions.len() != self.entries.len()
             || self
                 .previous_revisions
                 .iter()

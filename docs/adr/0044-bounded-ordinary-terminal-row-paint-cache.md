@@ -37,7 +37,7 @@ unchanged. No texture delta is consumed.
 In unshaped rows, only consecutive blank, undecorated cells are pre-tessellated
 as an ordered group, so no glyph/background/decorative instruction is reordered.
 Each individual rectangle and its antialiasing seams remain intact. When every
-unshaped row changes, bypass retention for that paint; bounded previous-row
+row changes, bypass retention for that paint regardless of shaping; bounded previous-row
 identities recognize this condition and permit reuse to recover once output
 stabilizes. Shaped rows retain their existing background-before-glyph ordering.
 Monochrome Unicode uses the same managed font atlas and trusted identity;
@@ -86,7 +86,8 @@ required.
   `retained_row_clear_releases_owned_meshes`,
   `row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality`.
   `retained_unshaped_rows_bypass_full_mutation_and_recover_exact_meshes`
-  covers full-mutation bypass, quiet recovery and explicit redraw.
+  and `retained_shaped_rows_bypass_full_mutation_and_recover_exact_meshes`
+  cover full-mutation bypass, quiet recovery and explicit redraw.
   `retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear`
   compares actual atlas contents and GPU framebuffers with fresh glyph layouts
   after font-definition/text-option replacement; no manual invalidation is used.

@@ -99,12 +99,13 @@ font-image changes also clear glyph layouts before replay, preventing stale
 galleys from being stamped with a replacement atlas identity. Atlas-content and
 GPU-pixel regressions cover reset without manual invalidation.
 Unshaped blank-background groups preserve exact instruction order; full-row
-mutation bypasses retention and returns to caching when content stabilizes.
-native painting, transforms, opacity and emoji retain ordinary paths. This
+mutation bypasses retention with shaping both on and off, then returns to
+caching when content stabilizes. Native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
 The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU
-presentation. Isolated foreground macOS native CPU qualification is blocked
-while the owner's display is locked; CP-18 is not advanced by the prototype.
+presentation. Unlocked isolated macOS qualification found consistent localized
+savings but adverse shaped full-mutation cost; the shaping-independent bypass
+requires fresh native evidence. CP-18 is not advanced by the prototype.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU

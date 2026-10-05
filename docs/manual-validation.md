@@ -660,6 +660,11 @@ and high-mutation CPU samples. Preliminary results are mixed and are not accepte
 performance evidence. Matched high-resolution-bundle comparisons while the
 owner's macOS display is locked are recorded separately, never as foreground
 qualification; this repair does not unlock the screen or restart the live app.
+An authorized unlocked 14-case ABBA comparison at source `6f3667a` found
+consistent localized/Unicode savings but about 8% higher shaped foreground
+full-mutation CPU. Extending the full-mutation bypass to shaping needs fresh
+native qualification; the adverse receipts remain preserved, not superseded
+by a passing source regression.
 The shaped/unshaped static/localized/full-mutation CPU-stage diagnostic is in
 both optional runners under `FESTERM_RUN_ROW_CACHE_PROFILE=1`.
 Existing CP-16/17/18 and mixed-DPI/native-input/physical

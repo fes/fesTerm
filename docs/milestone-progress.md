@@ -3926,3 +3926,15 @@ Previous-row identities then bypass retention when all unshaped rows change,
 and recover normally after output stabilizes. The measured full-mutation
 CPU-stage regression disappears with that bounded policy; native evidence must
 still be re-collected rather than inferred from the mechanism timing.
+
+Authorized unlocked testing finally separated genuine foreground evidence
+from the earlier locked-display controls. Four matched runs in each of fourteen
+isolated cases showed consistent localized and monochrome-Unicode savings,
+near-identical unshaped full-mutation cost, and low quiet-idle CPU. Shaped
+foreground full mutation, however, cost about 8% more. Native samples caught
+eager background tessellation and row recapture on frames with no reuse.
+The same bounded previous-row identity policy now bypasses retention regardless
+of shaping. Both policies share exact-mesh, zero-capture, stabilization-recovery
+and explicit-redraw coverage; the shaped regression fails before the repair.
+Fresh native measurements and independent review are still required before
+acceptance, and the owner's installed app and profiles remain untouched.
