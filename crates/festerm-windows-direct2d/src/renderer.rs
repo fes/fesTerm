@@ -221,6 +221,8 @@ unsafe impl Send for Renderer {}
 
 impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Result<Self, Error> {
+        #[cfg(test)]
+        tests::trace("native initialization starting");
         let mut pointer = std::ptr::null_mut();
         // Borrowed native interfaces stay alive through creation; the SDK retains
         // its own references and verifies the queue belongs to this device.
@@ -248,6 +250,8 @@ impl Renderer {
         let native = NonNull::new(pointer).ok_or_else(|| {
             Error::native_failure("initialization", "native renderer missing".into())
         })?;
+        #[cfg(test)]
+        tests::trace("native initialization complete");
         Ok(Self {
             native,
             device,
@@ -981,9 +985,13 @@ fn partition_regions(
 
 impl Drop for Renderer {
     fn drop(&mut self) {
+        #[cfg(test)]
+        tests::trace("native destruction starting");
         // The bridge owns all COM references. Published textures are owned by
         // wgpu and their recorded last submission follows the native flush.
         unsafe { festerm_d2d_destroy(self.native.as_ptr()) };
+        #[cfg(test)]
+        tests::trace("native destruction complete");
     }
 }
 
@@ -1104,6 +1112,27 @@ fn trim_vec_capacity<T>(values: &mut Vec<T>, retained_capacity: usize) {
 mod tests {
     use super::*;
     use egui_kittest::wgpu::{create_render_state, default_wgpu_setup};
+
+    pub(super) fn trace(stage: &str) {
+        if std::env::var_os("FESTERM_TRACE_NATIVE_TESTS").is_some() {
+            eprintln!(
+                "{}: {stage}",
+                std::thread::current().name().unwrap_or("unnamed")
+            );
+        }
+    }
+
+    fn render_state() -> egui_wgpu::RenderState {
+        trace("DX12 render state creation starting");
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        trace("DX12 render state creation complete");
+        state
+    }
     use std::time::Duration;
 
     #[test]
@@ -1324,12 +1353,7 @@ mod tests {
 
     #[test]
     fn texture_identity_and_equal_replacement_preserve_uploads_and_pixels() {
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
+        let state = render_state();
         let mut renderer = CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
         let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
         let original = Arc::new(ColorImage::filled([1, 1], Color32::WHITE));
@@ -1395,12 +1419,7 @@ mod tests {
 
     #[test]
     fn shared_surfaces_preserve_pixels_and_previous_frame_ownership() {
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
+        let state = render_state();
         let mut renderer = Renderer::new(state.device.clone(), state.queue.clone()).unwrap();
         let textures = vec![(
             TextureId::Managed(0),
@@ -1442,12 +1461,7 @@ mod tests {
 
     #[test]
     fn narrow_retained_updates_match_full_pixels_with_overlap_erasure_and_dpi() {
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
+        let state = render_state();
         let pixels = |surface: &Surface| {
             read_pixels(
                 &state.device,
@@ -1619,12 +1633,7 @@ mod tests {
 
     #[test]
     fn scattered_retained_damage_prepares_full_geometry_only_once() {
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
+        let state = render_state();
         let textures = [(
             TextureId::Managed(0),
             Arc::new(ColorImage::new(
@@ -1712,12 +1721,7 @@ mod tests {
 
     #[test]
     fn retained_geometry_and_raster_budgets_preserve_valid_frames() {
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
+        let state = render_state();
         let mut renderer = CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
         let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(256.0, 512.0));
         let textures = [(
@@ -1819,12 +1823,7 @@ mod tests {
 
     #[test]
     fn retained_frames_update_only_changed_regions_and_preserve_older_pixels() {
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
+        let state = render_state();
         let mut renderer = CachedRenderer::new(state.device.clone(), state.queue.clone()).unwrap();
         let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(256.0, 512.0));
         let textures = vec![(
