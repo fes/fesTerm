@@ -330,7 +330,8 @@ fn fixture_profile(port: u16) -> SshConnectionProfile {
 
 #[test]
 fn cancelling_gui_connect_wait_closes_the_dedicated_transport_thread() {
-    let (server, port, subsystem_started) = start_server(SubsystemBehavior::Stall);
+    let (server, port, subsystem_started) =
+        start_server(SubsystemBehavior::Stall, ShellBehavior::Quiet);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -374,7 +375,8 @@ fn cancelling_gui_connect_wait_closes_the_dedicated_transport_thread() {
 
 #[test]
 fn text_sftp_shutdown_interrupts_a_stalled_download_and_removes_its_partial_file() {
-    let (server, port, activity) = start_server(SubsystemBehavior::StallFileReads);
+    let (server, port, activity) =
+        start_server(SubsystemBehavior::StallFileReads, ShellBehavior::Quiet);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
