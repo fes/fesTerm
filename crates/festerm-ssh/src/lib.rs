@@ -2858,17 +2858,20 @@ impl SftpTerminalSession {
                     .build()
                     .map_err(|_| sftp_failure(&shared, "SFTP runtime could not start"))
                     .and_then(|runtime| {
-                        runtime.block_on(sftp_worker(
-                            profile,
-                            authentication,
-                            local_working_directory,
-                            known_host_fingerprint,
-                            worker_working_directories,
-                            shared,
-                            command_receiver,
-                            worker_host_key_gate,
-                            worker_password_gate,
-                        ))
+                        Self::run_sftp_worker_runtime(
+                            runtime,
+                            sftp_worker(
+                                profile,
+                                authentication,
+                                local_working_directory,
+                                known_host_fingerprint,
+                                worker_working_directories,
+                                shared,
+                                command_receiver,
+                                worker_host_key_gate,
+                                worker_password_gate,
+                            ),
+                        )
                     });
                 let _ = completion_sender.send(result);
             })
@@ -2884,6 +2887,16 @@ impl SftpTerminalSession {
             completion_receiver: Mutex::new(completion_receiver),
             completion: Mutex::new(None),
         })
+    }
+
+    fn run_sftp_worker_runtime<T>(
+        runtime: tokio::runtime::Runtime,
+        work: impl std::future::Future<Output = T>,
+    ) -> T {
+        let result = runtime.block_on(work);
+        // A dropped filesystem future can leave a blocking call running.
+        runtime.shutdown_background();
+        result
     }
 
     /// Returns a resolver for the current host-key verification request.
@@ -7803,6 +7816,43 @@ mod tests {
                 let _ = sender.send(());
             }
         }
+    }
+
+    #[test]
+    fn text_sftp_runtime_reports_completion_without_waiting_for_blocking_io() {
+        let (started, start) = mpsc::sync_channel(1);
+        let (release, blocked) = mpsc::sync_channel(1);
+        let (finished, finish) = mpsc::sync_channel(1);
+        let (completed, completion) = mpsc::sync_channel(1);
+        let owner = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let timed_out = SftpTerminalSession::run_sftp_worker_runtime(runtime, async {
+                let operation = tokio::task::spawn_blocking(move || {
+                    started.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    finished.send(()).unwrap();
+                });
+                tokio::time::timeout(SFTP_CANCELLATION_CLEANUP_TIMEOUT, operation)
+                    .await
+                    .is_err()
+            });
+            completed.send(timed_out).unwrap();
+        });
+        start.recv_timeout(Duration::from_secs(3)).unwrap();
+        let result = completion.recv_timeout(Duration::from_secs(3));
+        let still_blocked = matches!(finish.try_recv(), Err(TryRecvError::Empty));
+        release.send(()).unwrap();
+        finish.recv_timeout(Duration::from_secs(3)).unwrap();
+        owner.join().unwrap();
+        assert!(still_blocked);
+        assert_eq!(
+            result,
+            Ok(true),
+            "text completion must not wait for an already-started blocking call"
+        );
     }
 
     #[test]

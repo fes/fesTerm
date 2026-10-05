@@ -520,42 +520,21 @@ impl SftpSession {
     }
 
     pub(crate) async fn cleanup_interrupted_transfer(&mut self) -> Result<(), SftpSessionError> {
-        let Some(partial) = &self.partial_file else {
+        let Some(partial) = self.partial_file.take() else {
             return Ok(());
         };
-        if !partial.owned {
-            let error = SftpSessionError::PartialFileOwnershipUnconfirmed {
-                path: partial.path.display(),
-            };
-            self.partial_file = None;
-            return Err(error);
+        if partial.owned {
+            if let Some(destination) = partial.commit_destination {
+                return Err(SftpSessionError::TransferCommitInterrupted {
+                    temporary: partial.path.display(),
+                    destination: destination.display(),
+                });
+            }
         }
-        if let Some(destination) = &partial.commit_destination {
-            let error = SftpSessionError::TransferCommitInterrupted {
-                temporary: partial.path.display(),
-                destination: destination.display(),
-            };
-            self.partial_file = None;
-            return Err(error);
-        }
-        let result = match &partial.path {
-            SftpPath::Local(path) => match fs::remove_file(path).await {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(local_error("remove partial file", path, error)),
-            },
-            SftpPath::Remote(path) => match self.client.try_exists(path.clone()).await {
-                Ok(false) => Ok(()),
-                Ok(true) => self
-                    .client
-                    .remove_file(path.clone())
-                    .await
-                    .map_err(|error| remote_error("remove partial file", path, error)),
-                Err(error) => Err(remote_error("inspect partial file", path, error)),
-            },
-        };
-        self.partial_file = None;
-        result
+        // Creation acknowledgement cannot prove what a mutable path names now.
+        Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
+            path: partial.path.display(),
+        })
     }
 
     /// Parses and runs one text-mode SFTP command line.
@@ -2020,7 +1999,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_cleanup_removes_a_confirmed_local_partial_file() {
+    fn cancellation_cleanup_preserves_a_confirmed_local_partial_file() {
         let root = unique_test_directory("confirmed-partial");
         create_directory(&root);
         let path = root.join("partial.bin");
@@ -2032,9 +2011,103 @@ mod tests {
                 commit_destination: None,
             })
             .await;
-            session.cleanup_interrupted_transfer().await.unwrap();
+            assert!(matches!(
+                session.cleanup_interrupted_transfer().await,
+                Err(SftpSessionError::PartialFileOwnershipUnconfirmed { .. })
+            ));
             assert!(session.partial_file.is_none());
-            assert!(!path.exists());
+            assert_eq!(stdfs::read(&path).unwrap(), b"incomplete output");
+            session
+                .begin_partial_file(SftpPath::local(root.join("unrelated.bin")))
+                .unwrap();
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn cancellation_cleanup_preserves_a_replaced_local_leaf() {
+        let root = unique_test_directory("replaced-partial");
+        create_directory(&root);
+        let path = root.join("partial.bin");
+        let original = root.join("original-partial.bin");
+        stdfs::write(&path, b"incomplete output").unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = partial_file_session(PartialFile {
+                path: SftpPath::local(path.clone()),
+                owned: true,
+                commit_destination: None,
+            })
+            .await;
+            stdfs::rename(&path, &original).unwrap();
+            stdfs::write(&path, b"unrelated replacement").unwrap();
+            let result = session.cleanup_interrupted_transfer().await;
+            assert_eq!(stdfs::read(&path).unwrap(), b"unrelated replacement");
+            assert_eq!(stdfs::read(&original).unwrap(), b"incomplete output");
+            assert!(matches!(
+                result,
+                Err(SftpSessionError::PartialFileOwnershipUnconfirmed { .. })
+            ));
+            assert!(session.partial_file.is_none());
+            server.abort();
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement() {
+        let root = unique_test_directory("redirected-partial");
+        create_directory(&root);
+        let selected = root.join("selected");
+        let original = root.join("original");
+        let private = root.join("private");
+        stdfs::create_dir(&selected).unwrap();
+        stdfs::create_dir(&private).unwrap();
+        let path = selected.join("report.bin");
+        stdfs::write(&path, b"incomplete output").unwrap();
+        stdfs::write(private.join("report.bin"), b"unrelated private output").unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = partial_file_session(PartialFile {
+                path: SftpPath::local(path),
+                owned: true,
+                commit_destination: None,
+            })
+            .await;
+            stdfs::rename(&selected, &original).unwrap();
+            std::os::unix::fs::symlink(&private, &selected).unwrap();
+            let result = session.cleanup_interrupted_transfer().await;
+            assert_eq!(
+                stdfs::read(private.join("report.bin")).unwrap(),
+                b"unrelated private output"
+            );
+            assert_eq!(
+                stdfs::read(original.join("report.bin")).unwrap(),
+                b"incomplete output"
+            );
+            assert!(matches!(
+                result,
+                Err(SftpSessionError::PartialFileOwnershipUnconfirmed { .. })
+            ));
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn cancellation_cleanup_preserves_a_confirmed_remote_partial_file() {
+        test_runtime().block_on(async {
+            let (mut session, server) = partial_file_session(PartialFile {
+                path: SftpPath::remote("/fixture/partial.bin"),
+                owned: true,
+                commit_destination: None,
+            })
+            .await;
+            assert!(matches!(
+                session.cleanup_interrupted_transfer().await,
+                Err(SftpSessionError::PartialFileOwnershipUnconfirmed { .. })
+            ));
+            assert!(session.partial_file.is_none());
+            session
+                .begin_partial_file(SftpPath::remote("/fixture/unrelated.bin"))
+                .unwrap();
             server.abort();
         });
     }

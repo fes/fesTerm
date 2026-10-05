@@ -374,7 +374,7 @@ fn cancelling_gui_connect_wait_closes_the_dedicated_transport_thread() {
 }
 
 #[test]
-fn text_sftp_shutdown_interrupts_a_stalled_download_and_removes_its_partial_file() {
+fn text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file() {
     let (server, port, activity) =
         start_server(SubsystemBehavior::StallFileReads, ShellBehavior::Quiet);
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -413,12 +413,27 @@ fn text_sftp_shutdown_interrupts_a_stalled_download_and_removes_its_partial_file
         .unwrap();
     activity.recv_timeout(Duration::from_secs(3)).unwrap();
     assert!(directory.join("cancelled.bin").exists());
-    session.shutdown(Duration::from_secs(5)).unwrap();
-    assert!(!directory.join("cancelled.bin").exists());
+    assert_eq!(
+        session.shutdown(Duration::from_secs(5)).unwrap(),
+        ShutdownResult::Stopped
+    );
+    assert!(directory.join("cancelled.bin").exists());
+    let mut cleanup_reported = false;
+    while let Ok(event) = session.try_recv_event() {
+        if let SessionEvent::Error(error) = event {
+            cleanup_reported |= error.message().contains("file was not removed")
+                && error.message().contains("cancelled.bin");
+        }
+    }
+    assert!(
+        cleanup_reported,
+        "preserved partial output must be reported"
+    );
     server
         .connection_closed
         .recv_timeout(Duration::from_secs(3))
         .unwrap();
+    std::fs::remove_file(directory.join("cancelled.bin")).unwrap();
     std::fs::remove_dir(&directory).unwrap();
 }
 

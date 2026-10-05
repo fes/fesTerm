@@ -70,7 +70,14 @@ transport runtime. Text SFTP interrupts commands without draining queued input.
 
 The approved cleanup policy allows two seconds, not an unbounded network wait.
 A one-file ledger records exclusive creation acknowledgements: unknown
-ownership is reported rather than deleted. Review also exposed a destructive
+current ownership is reported rather than deleted. Creation acknowledgement
+alone cannot justify unlinking a mutable path. Independent security review
+demonstrated ancestor and leaf replacement deleting unrelated files; the owner
+approved preserving/reporting uncertain partials with the current local and
+remote APIs rather than expanding this fix into a private-staging design.
+Independent reliability review also found that the text runtime could wait
+for blocking I/O after the cleanup deadline. Text runtime retirement now uses
+non-waiting shutdown, like the GUI owners. Review also exposed a destructive
 Replace boundary, where removing the completed temporary during cancellation
 could discard the only replacement copy. That temporary is preserved and both
 paths are reported as uncertain; an already-sent rename may still complete.
@@ -81,10 +88,18 @@ Cleanup failures survive tab close through a bounded application-owned notice
 channel that follows a moved tab to its current window. Content-free durable
 diagnostics remain when GUI delivery is unavailable; final process exit cannot
 guarantee completion of asynchronous cleanup. Deterministic and owned loopback
-fixtures cover cancellation, safe partial removal, replacement recovery,
+fixtures cover cancellation, preserved/reported partials, replacement recovery,
 continuing unrelated transfers and notice routing. Packaged close/quit,
 accessibility and sibling-window behavior remain native evidence in `SFTP-01`.
 This repairs a concrete ownership defect, not a demonstrated cause of #297.
+
+Review regressions reproduced three unsafe/unproven cleanup outcomes and one
+runtime-completion timeout before the fixes. The repaired suite contains 125
+SSH unit cases on Unix (124 on Windows; the ancestor-symlink fixture is
+Unix-only); the local Unix unit suite and all five owned loopback cases pass.
+A controlled, already-started
+blocking task proves completion is published without waiting for that task;
+it is released and joined by the fixture, not presented as forced I/O abortion.
 
 ## v0.9.1: less work while the Windows WARP palette is open
 

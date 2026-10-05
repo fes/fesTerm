@@ -58,10 +58,15 @@ SFTP shutdown also interrupts an awaited command without consuming queued input.
 
 After dropping the interrupted operation and its file handles, cleanup gets at
 most **two seconds**, then teardown proceeds with an explicit incomplete-cleanup
-result. Only destinations whose exclusive creation was acknowledged are eligible
-for removal. Already-started blocking filesystem calls cannot be forcibly
-aborted; runtime teardown does not wait indefinitely for those calls.
-A pending creation with unconfirmed ownership is reported, not
+result. Exclusive creation acknowledges ownership at creation, not the current
+identity of a mutable local or remote pathname. A metadata check followed by
+unlink is not race-free. The current filesystem/SFTP APIs cannot establish safe
+conditional deletion, so canceled/failed partial output is preserved and its
+path reported for inspection and manual cleanup, even after acknowledged
+creation. No cleanup operation follows a replaced ancestor or deletes a
+replacement leaf. Already-started blocking filesystem calls cannot be forcibly
+aborted; GUI and text runtime retirement do not wait indefinitely for those
+calls. A pending creation with unconfirmed ownership is also reported, not
 deleted. If an approved Replace is interrupted after its destructive commit
 starts, the completed temporary is not removed: inspect both temporary and
 destination because an already-sent rename may still complete. Reported recovery

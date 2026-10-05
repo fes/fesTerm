@@ -2596,6 +2596,7 @@ mod tests {
     struct TestBackend {
         delay_per_chunk_ms: u64,
         cleanup_delay_ms: u64,
+        retain_uncertain_partial: bool,
         partial_file: Option<PathBuf>,
         commit_destination: Option<PathBuf>,
         replacement_removed: Option<Arc<Notify>>,
@@ -2629,6 +2630,11 @@ mod tests {
                     return Err(error);
                 }
                 if let Some(path) = self.partial_file.take() {
+                    if self.retain_uncertain_partial {
+                        return Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
+                            path: display_path(&path),
+                        });
+                    }
                     match fs::remove_file(&path).await {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -2980,7 +2986,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_shutdown_interrupts_copy_and_cleans_only_the_owned_partial_file() {
+    fn owner_shutdown_interrupts_copy_and_reports_uncertain_partial_output() {
         let root = unique_test_directory("owner-cancel");
         recreate_directory(&root);
         let source = root.join("source.bin");
@@ -2997,6 +3003,7 @@ mod tests {
             let worker = tokio::spawn(run_owned_transfer_worker(
                 TestBackend {
                     delay_per_chunk_ms: 10,
+                    retain_uncertain_partial: true,
                     ..Default::default()
                 },
                 Arc::clone(&snapshot),
@@ -3020,16 +3027,18 @@ mod tests {
             shutdown
                 .send(tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT)
                 .unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(3), worker)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
+            assert!(matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Err(SftpSessionError::PartialFileOwnershipUnconfirmed { .. })
+            ));
             assert!(snapshot.lock().unwrap().items.is_empty());
         });
         assert_eq!(stdfs::read(&unrelated).unwrap(), b"not this transfer");
         assert!(!destination.join("source.bin").exists());
-        assert_eq!(stdfs::read_dir(&destination).unwrap().count(), 1);
+        assert_eq!(stdfs::read_dir(&destination).unwrap().count(), 2);
     }
 
     #[test]
