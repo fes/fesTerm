@@ -1476,7 +1476,8 @@
         "EDIT-12",
         "EDIT-13",
         "EDIT-14",
-        "EDIT-15"
+        "EDIT-15",
+        "EDIT-17"
       ],
       "requirements": [
         "docs/gui-design.md#approved-native-text-editing",
@@ -1520,6 +1521,7 @@
         "saving_somewhere_else_writes_there_and_leaves_the_original_alone",
         "saving_onto_an_already_open_file_binds_to_that_document_rather_than_a_second_copy",
         "create_untitled_snapshot_starts_dirty_and_saveable",
+        "untitled_names_are_sequential_per_creation_kind",
         "saving_an_untitled_snapshot_requires_save_as_instead_of_succeeding_silently",
         "untitled_snapshots_never_enter_auto_save",
         "untitled_save_as_failure_preserves_the_snapshot_and_reports_the_error",
@@ -1558,6 +1560,10 @@
         "a_substitution_without_a_pattern_is_told_what_is_missing",
         "completion_never_offers_a_bare_substitution",
         "a_picked_file_lands_in_the_surface_that_can_actually_show_it",
+        "overflow_menu_uses_context_menu_density_and_semantic_actions",
+        "new_file_actions_create_separate_empty_unsaved_documents",
+        "the_native_menu_new_file_command_opens_an_untitled_editor",
+        "native_menu_actions_map_to_shared_commands",
         "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files",
         "a_file_that_is_not_text_is_refused_by_name_rather_than_shown_as_rubble",
         "a_vi_search_and_next_walk_the_document_without_changing_it",

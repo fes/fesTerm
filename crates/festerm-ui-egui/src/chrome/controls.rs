@@ -221,6 +221,10 @@ pub(super) fn paint_overflow_menu(
             }
             ui.separator();
         }
+        if ui.button("New File").clicked() {
+            actions.push(ChromeAction::NewTextDocument);
+            ui.close();
+        }
         if ui.button("Open File…").clicked() {
             actions.push(ChromeAction::OpenMarkdownFile);
             ui.close();
@@ -288,6 +292,7 @@ mod tests {
             harness.run();
             let root = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
             for label in [
+                "New File",
                 "Open File…",
                 "Open Profiles",
                 "Open Settings",
@@ -297,12 +302,9 @@ mod tests {
                 assert!(root.contains_rect(row), "{size:?}: {label}: {row:?}");
                 assert!(row.height() >= 30.0);
             }
-            harness.get_by_label("Open File…").click();
+            harness.get_by_label("New File").click();
             harness.run();
-            assert_eq!(
-                harness.state().as_slice(),
-                &[ChromeAction::OpenMarkdownFile]
-            );
+            assert_eq!(harness.state().as_slice(), &[ChromeAction::NewTextDocument]);
         }
     }
 }
