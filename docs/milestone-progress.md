@@ -3879,3 +3879,20 @@ regressions reproduce the original retention and preserve sibling unsaved
 text/undo, moved tabs and primary/application teardown. Dirty-close decisions
 remain in the existing command policy; native close and multi-window usability
 evidence remain CP-13/CP-15 rather than being claimed by headless ownership tests.
+
+## Reducing presentation work instead of slowing terminal output
+
+The owner's macOS CPU report led to native sampling of the existing application
+without restarting it. PTY workers mostly slept; the active stacks were in grid
+painting, tessellation and Metal uploads. Dirty rows already avoided copying
+unchanged core cells, but did not avoid preparing their paint instructions.
+
+An isolated worktree and synthetic local profiles now exercise a bounded ASCII
+row-graphics prototype. Opaque presentation revisions and complete geometry/
+font/selection keys reuse unchanged instructions while the cursor stays live.
+Exact meshes are compared with the original renderer rather than assuming
+rectangle merging preserves antialiased pixels. The first foreground result
+improved, but background results varied adversely; the prototype remains a
+draft, not an accepted fix. Per-frame mechanism timings and stable native-window
+identity are being separated from startup/teardown activity before qualification.
+No output throttling, queue-policy change, live-app restart or release is involved.

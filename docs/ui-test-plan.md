@@ -321,6 +321,14 @@ of a complete line with the expected token, not merely increased output bytes.
 Tests cover startup/focus/resize output, missing/wrong/incomplete input, and
 preservation of the optional keyboard-mode palette and exact-input gates.
 
+Issue #327's ordinary row-cache repair compares complete clipped mesh vertices,
+indices, colors and UVs with cache-disabled painting across fractional DPI,
+shaping, dirty content, fonts, selection and Unicode fallback. Native CPU
+qualification must separately cover localized foreground output, background
+output with populated foreground, genuine idle and full mutation, using owned
+profiles and stable window identity/geometry. Prototype timings do not advance
+native presentation, input or physical-latency acceptance; see proposed ADR 0044.
+
 - Keep snapshots small and deterministic; use a fixed theme, scale factor,
   dimensions, renderer configuration, and bundled/test font. Record those
   choices with the snapshot harness; do not rely on an installed user font or

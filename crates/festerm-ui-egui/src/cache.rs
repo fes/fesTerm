@@ -68,10 +68,36 @@ impl RenderedCell {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 struct CachedRow {
     cells: Vec<RenderedCell>,
+    revision: RowRevision,
 }
+
+impl PartialEq for CachedRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.cells == other.cells
+    }
+}
+
+impl Eq for CachedRow {}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RowRevision(Arc<()>);
+
+impl Default for RowRevision {
+    fn default() -> Self {
+        Self(Arc::new(()))
+    }
+}
+
+impl PartialEq for RowRevision {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for RowRevision {}
 
 /// A changed-row presentation update.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -124,6 +150,7 @@ impl TerminalRenderCache {
                         .map_or_else(RenderedCell::blank, RenderedCell::from_core)
                 })
                 .collect();
+            self.rows[*row].revision = RowRevision::default();
         }
 
         RenderCacheUpdate {
@@ -138,6 +165,10 @@ impl TerminalRenderCache {
 
     pub fn row(&self, row: usize) -> Option<&[RenderedCell]> {
         self.rows.get(row).map(|row| row.cells.as_slice())
+    }
+
+    pub(crate) fn row_revision(&self, row: usize) -> Option<&RowRevision> {
+        self.rows.get(row).map(|row| &row.revision)
     }
 }
 

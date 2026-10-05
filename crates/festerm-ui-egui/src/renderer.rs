@@ -33,6 +33,7 @@ use crate::{
 };
 
 mod clip_batching;
+mod row_cache;
 
 use clip_batching::{GridGlyphClipPolicy, GridTextClipOverride, GridTextClipPainter};
 
@@ -152,13 +153,19 @@ pub(crate) struct GlyphCache {
     layouts: hashbrown::HashMap<GlyphKey, Arc<egui::Galley>, RandomState>,
     style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
+    rows: row_cache::Rows,
 }
 
 impl GlyphCache {
+    pub(crate) fn row_cache_diagnostics(&self) -> (usize, usize, usize) {
+        self.rows.diagnostics()
+    }
+
     pub(crate) fn clear(&mut self) {
         self.layouts.clear();
         self.style_hasher = None;
         self.color_emoji.clear();
+        self.rows.clear();
     }
 
     fn query_hash(&mut self, query: &GlyphQuery<'_>) -> u64 {
@@ -533,7 +540,7 @@ fn stable_text_hash(text: &str) -> u64 {
     })
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct GridLayout {
     pub(crate) rect: Rect,
     pub(crate) dimensions: Dimensions,
@@ -741,83 +748,116 @@ fn paint_grid_with_clip_override(
     crate::background::paint_background(&painter, paint.layout.rect);
     let native =
         crate::native_painter::Batch::begin(&painter, painter.clip_rect(), paint.full_redraw);
+    glyphs.rows.begin(dimensions.rows(), paint.full_redraw);
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {
             continue;
         };
-        for (column, cell) in cells.iter().enumerate() {
-            if cell.width == festerm_core::CellWidth::Continuation {
-                continue;
-            }
-            let position = CellPosition { column, row };
-            let columns = rendered_cell_columns(cell, dimensions, column);
-            let rect = grid_cell_rect(paint.layout, position, columns);
-            let (foreground, background) = cell_colors(cell);
-            let selected = rendered_cell_is_selected(selection_range, position, columns);
-            if cell_needs_background_paint(cell, selected) {
-                painter.rect_filled(
-                    rect,
-                    0.0,
-                    if selected {
-                        SELECTION_BACKGROUND
-                    } else {
-                        background
-                    },
-                );
-            }
-            if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
-                // Clip to this cell's rect. Some glyphs (notably box-drawing
-                // corners/dots in certain bundled faces) can measure taller
-                // than the "M"-derived cell height, so an unclipped paint can
-                // bleed into an adjacent row; that row's later background
-                // fill then overwrites part of the bled glyph, leaving only
-                // a flat sliver visible. The run-shaping path below already
-                // clips for the same reason.
-                let clipped_painter = painter.with_clip_rect(rect);
-                let outcome = glyphs.paint_color_emoji(
-                    &clipped_painter,
-                    &cell.text,
-                    rect,
-                    cell.attributes,
-                    paint.fonts.font_set().color_emoji(),
-                );
-                stats.record_color_emoji(outcome);
-                if !outcome.painted() {
-                    let galley = glyphs.layout(
-                        &painter,
+        let key = if native.is_none()
+            && glyphs.rows.enabled()
+            && cells.iter().all(|cell| cell.text.is_ascii())
+        {
+            paint.cache.row_revision(row).and_then(|revision| {
+                row_cache::Key::new(
+                    &painter,
+                    revision,
+                    paint.layout,
+                    paint.fonts,
+                    selection_range,
+                    paint.shape_cell_runs,
+                )
+            })
+        } else {
+            None
+        };
+        if key
+            .as_ref()
+            .is_some_and(|key| glyphs.rows.replay(&painter, row, key))
+        {
+            continue;
+        }
+        glyphs.rows.remove(row);
+        let start = painter
+            .ctx()
+            .graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx());
+        // The shaped path already paints every background before its glyph runs.
+        let cached_backgrounds = key.is_some()
+            && glyphs.rows.background_meshes
+            && paint.shape_cell_runs
+            && cells.len() <= 1024
+            && cells.iter().all(|cell| {
+                !cell.attributes.contains(Attributes::UNDERLINE)
+                    && !cell.attributes.contains(Attributes::DOUBLE_UNDERLINE)
+                    && !cell.attributes.contains(Attributes::STRIKETHROUGH)
+            });
+        if cached_backgrounds {
+            row_cache::backgrounds(&painter, cells, row, paint.layout, selection_range);
+        }
+        if !cached_backgrounds {
+            for (column, cell) in cells.iter().enumerate() {
+                if cell.width == festerm_core::CellWidth::Continuation {
+                    continue;
+                }
+                let position = CellPosition { column, row };
+                let columns = rendered_cell_columns(cell, dimensions, column);
+                let rect = grid_cell_rect(paint.layout, position, columns);
+                let (foreground, background) = cell_colors(cell);
+                let selected = rendered_cell_is_selected(selection_range, position, columns);
+                if cell_needs_background_paint(cell, selected) {
+                    painter.rect_filled(
+                        rect,
+                        0.0,
+                        if selected {
+                            SELECTION_BACKGROUND
+                        } else {
+                            background
+                        },
+                    );
+                }
+                if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
+                    // Clip to this cell's rect. Some glyphs (notably box-drawing
+                    // corners/dots in certain bundled faces) can measure taller
+                    // than the "M"-derived cell height, so an unclipped paint can
+                    // bleed into an adjacent row; that row's later background
+                    // fill then overwrites part of the bled glyph, leaving only
+                    // a flat sliver visible. The run-shaping path below already
+                    // clips for the same reason.
+                    let clipped_painter = painter.with_clip_rect(rect);
+                    let outcome = glyphs.paint_color_emoji(
+                        &clipped_painter,
                         &cell.text,
+                        rect,
                         cell.attributes,
-                        foreground,
-                        paint.fonts,
-                        rect.width(),
+                        paint.fonts.font_set().color_emoji(),
                     );
-                    let text_position = Pos2::new(
-                        rect.left(),
-                        rect.top()
-                            + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
-                    );
-                    match clip_policy.galley_painter(rect, text_position, galley.as_ref()) {
-                        GridTextClipPainter::SharedParent => {
-                            painter.galley(text_position, galley, foreground);
-                        }
-                        GridTextClipPainter::ClippedCell => {
-                            clipped_painter.galley(text_position, galley, foreground);
+                    stats.record_color_emoji(outcome);
+                    if !outcome.painted() {
+                        let galley = glyphs.layout(
+                            &painter,
+                            &cell.text,
+                            cell.attributes,
+                            foreground,
+                            paint.fonts,
+                            rect.width(),
+                        );
+                        let text_position = Pos2::new(
+                            rect.left(),
+                            rect.top()
+                                + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                        );
+                        match clip_policy.galley_painter(rect, text_position, galley.as_ref()) {
+                            GridTextClipPainter::SharedParent => {
+                                painter.galley(text_position, galley, foreground);
+                            }
+                            GridTextClipPainter::ClippedCell => {
+                                clipped_painter.galley(text_position, galley, foreground);
+                            }
                         }
                     }
                 }
-            }
-            let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
-            if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
-                let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
-                painter.line_segment(
-                    [
-                        Pos2::new(rect.left(), underline_y),
-                        Pos2::new(rect.right(), underline_y),
-                    ],
-                    Stroke::new(1.0_f32, foreground),
-                );
-                if double_underline {
-                    let underline_y = rect.bottom() - 1.0;
+                let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
+                if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
+                    let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
                     painter.line_segment(
                         [
                             Pos2::new(rect.left(), underline_y),
@@ -825,17 +865,27 @@ fn paint_grid_with_clip_override(
                         ],
                         Stroke::new(1.0_f32, foreground),
                     );
+                    if double_underline {
+                        let underline_y = rect.bottom() - 1.0;
+                        painter.line_segment(
+                            [
+                                Pos2::new(rect.left(), underline_y),
+                                Pos2::new(rect.right(), underline_y),
+                            ],
+                            Stroke::new(1.0_f32, foreground),
+                        );
+                    }
                 }
-            }
-            if cell.attributes.contains(Attributes::STRIKETHROUGH) {
-                let strikethrough_y = rect.center().y;
-                painter.line_segment(
-                    [
-                        Pos2::new(rect.left(), strikethrough_y),
-                        Pos2::new(rect.right(), strikethrough_y),
-                    ],
-                    Stroke::new(1.0_f32, foreground),
-                );
+                if cell.attributes.contains(Attributes::STRIKETHROUGH) {
+                    let strikethrough_y = rect.center().y;
+                    painter.line_segment(
+                        [
+                            Pos2::new(rect.left(), strikethrough_y),
+                            Pos2::new(rect.right(), strikethrough_y),
+                        ],
+                        Stroke::new(1.0_f32, foreground),
+                    );
+                }
             }
         }
         if paint.shape_cell_runs {
@@ -877,6 +927,9 @@ fn paint_grid_with_clip_override(
                     }
                 }
             }
+        }
+        if let Some(key) = key {
+            glyphs.rows.capture(&painter, row, key, start);
         }
     }
 
@@ -1816,6 +1869,307 @@ mod tests {
             ),
             dimensions: Dimensions::new(columns, rows).expect("valid test size"),
             metrics: CellMetrics::new(10.0, 20.0).expect("valid test cell metrics"),
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct RowFrameOptions {
+        shaped: bool,
+        full_redraw: bool,
+        screen_size: Vec2,
+    }
+
+    impl Default for RowFrameOptions {
+        fn default() -> Self {
+            Self {
+                shaped: true,
+                full_redraw: false,
+                screen_size: Vec2::new(520.0, 280.0),
+            }
+        }
+    }
+
+    fn row_cache_frame(
+        context: &egui::Context,
+        terminal: &Terminal,
+        cache: &TerminalRenderCache,
+        glyphs: &mut GlyphCache,
+        selection: &Selection,
+        fonts: &FontSettings,
+        options: RowFrameOptions,
+    ) -> Vec<egui::epaint::ClippedPrimitive> {
+        let dimensions = terminal.dimensions();
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, options.screen_size)),
+                ..Default::default()
+            },
+            |ui| {
+                paint_grid(
+                    ui.painter().clone(),
+                    GridPaint {
+                        cache,
+                        snapshot: TerminalSnapshot::from_terminal(terminal),
+                        layout: grid_layout(dimensions.columns(), dimensions.rows()),
+                        selection,
+                        fonts,
+                        focused: true,
+                        full_redraw: options.full_redraw,
+                        shape_cell_runs: options.shaped,
+                    },
+                    glyphs,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        context.tessellate(output.shapes, output.pixels_per_point)
+    }
+
+    fn assert_same_row_primitives(
+        actual: &[egui::epaint::ClippedPrimitive],
+        reference: &[egui::epaint::ClippedPrimitive],
+    ) {
+        assert_eq!(actual.len(), reference.len());
+        for (actual, reference) in actual.iter().zip(reference) {
+            assert_eq!(actual.clip_rect, reference.clip_rect);
+            match (&actual.primitive, &reference.primitive) {
+                (
+                    egui::epaint::Primitive::Mesh(actual),
+                    egui::epaint::Primitive::Mesh(reference),
+                ) => {
+                    assert_eq!(actual, reference);
+                }
+                _ => panic!("row fixture unexpectedly produced a graphics callback"),
+            }
+        }
+    }
+
+    #[test]
+    fn retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work() {
+        for pixels_per_point in [1.0, 1.25, 1.5, 2.0] {
+            for shaped in [false, true] {
+                let context = egui::Context::default();
+                context.set_pixels_per_point(pixels_per_point);
+                crate::install_terminal_fonts(&context);
+                for _ in 0..2 {
+                    context
+                        .run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::new(520.0, 280.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |_| {},
+                        )
+                        .textures_delta
+                        .clear();
+                }
+                let mut terminal = terminal(48, 12);
+                terminal.ingest(
+                    b"\x1b[?25l\x1b[48;2;24;24;24m\x1b[2J\x1b[H\
+                      ASCII text != -> ==\x1b[2;1H\x1b[1;3;38;5;81mStyled row\x1b[0m\
+                      \x1b[3;1H\x1b[4;9;48;5;24mdecorated\x1b[0m",
+                );
+                let mut cache = TerminalRenderCache::default();
+                let dirty = terminal.take_dirty_rows();
+                cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+                let mut optimized = GlyphCache::default();
+                let mut ordinary = GlyphCache::default();
+                ordinary.rows.disable();
+                let selection = Selection::default();
+                let fonts = FontSettings::default();
+                for _ in 0..3 {
+                    let reference = row_cache_frame(
+                        &context,
+                        &terminal,
+                        &cache,
+                        &mut ordinary,
+                        &selection,
+                        &fonts,
+                        RowFrameOptions {
+                            shaped,
+                            ..Default::default()
+                        },
+                    );
+                    let actual = row_cache_frame(
+                        &context,
+                        &terminal,
+                        &cache,
+                        &mut optimized,
+                        &selection,
+                        &fonts,
+                        RowFrameOptions {
+                            shaped,
+                            ..Default::default()
+                        },
+                    );
+                    assert_same_row_primitives(&actual, &reference);
+                }
+                assert_eq!(optimized.rows.reused, 12);
+                assert_eq!(optimized.rows.rebuilt, 0);
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    RowFrameOptions {
+                        shaped,
+                        ..Default::default()
+                    },
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    RowFrameOptions {
+                        shaped,
+                        full_redraw: true,
+                        ..Default::default()
+                    },
+                );
+                assert_same_row_primitives(&actual, &reference);
+                assert_eq!(optimized.rows.reused, 0);
+                assert_eq!(optimized.rows.rebuilt, 12);
+            }
+        }
+    }
+
+    #[test]
+    fn retained_grid_rows_invalidate_dirty_content_selection_fonts_and_unicode() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(b"\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[Hinitial ASCII");
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let mut optimized = GlyphCache::default();
+        let mut ordinary = GlyphCache::default();
+        ordinary.rows.disable();
+        let mut selection = Selection::default();
+        let mut fonts = FontSettings::default();
+        fonts.set_font_set(fonts.font_set().with_color_emoji(false));
+        for step in 0..8 {
+            match step {
+                1 => terminal.ingest(b"\x1b[5;1Hupdated ASCII"),
+                2 => terminal.ingest("\x1b[6;1Hwide \u{754c} emoji \u{1f916}".as_bytes()),
+                3 => fonts.size_points = 18.0,
+                4 => {
+                    context.set_pixels_per_point(1.5);
+                    for _ in 0..2 {
+                        context
+                            .run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(Rect::from_min_size(
+                                        Pos2::ZERO,
+                                        Vec2::new(520.0, 280.0),
+                                    )),
+                                    ..Default::default()
+                                },
+                                |_| {},
+                            )
+                            .textures_delta
+                            .clear();
+                    }
+                }
+                5 => {
+                    selection.begin(CellPosition { column: 2, row: 1 });
+                    selection.extend(CellPosition { column: 9, row: 4 });
+                }
+                6 => selection.clear(),
+                _ => {}
+            }
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let reference = row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                RowFrameOptions::default(),
+            );
+            let actual = row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut optimized,
+                &selection,
+                &fonts,
+                RowFrameOptions::default(),
+            );
+            assert_same_row_primitives(&actual, &reference);
+            if step == 7 {
+                assert_eq!(optimized.rows.reused, 11);
+            }
+        }
+        selection.clear();
+    }
+
+    #[test]
+    #[ignore = "opt-in diagnostic timings, not a portable performance threshold"]
+    fn profile_retained_grid_row_stages() {
+        let context = egui::Context::default();
+        context.set_pixels_per_point(2.0);
+        crate::install_terminal_fonts(&context);
+        let mut terminal = terminal(150, 42);
+        terminal.ingest(b"\x1b[?25l\x1b[48;2;24;24;24m\x1b[2J");
+        for row in 1..=40 {
+            terminal.ingest(
+                format!("\x1b[{row};1HOwned synthetic row {row:02}: ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789")
+                    .as_bytes(),
+            );
+        }
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        let options = RowFrameOptions {
+            screen_size: Vec2::new(1580.0, 980.0),
+            ..Default::default()
+        };
+        for mode in ["ordinary", "retained-rectangles", "retained-meshes"] {
+            let mut glyphs = GlyphCache::default();
+            if mode == "ordinary" {
+                glyphs.rows.disable();
+            }
+            glyphs.rows.background_meshes = mode == "retained-meshes";
+            for _ in 0..3 {
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut glyphs,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+            }
+            let started = std::time::Instant::now();
+            for _ in 0..200 {
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut glyphs,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+            }
+            eprintln!(
+                "{mode}: {:.3} ms/frame",
+                started.elapsed().as_secs_f64() * 1000.0 / 200.0
+            );
         }
     }
 

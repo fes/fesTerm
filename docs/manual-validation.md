@@ -652,6 +652,14 @@ these tests. A replacement handshake can pause daemon processing for up to
 
 ### Rendering performance
 
+Issue #327 and proposed ADR 0044 track the macOS ordinary-row-cache repair.
+Its isolated synthetic profiles use no personal shells, remote accounts,
+clipboard or secrets. Native qualification requires matched binaries, actual
+grid/window identity and geometry, output delivery, foreground/background/idle
+and high-mutation CPU samples. Preliminary results are mixed and are not accepted
+performance evidence. Existing CP-16/17/18 and mixed-DPI/native-input/physical
+latency gates remain unchanged.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | CP-16 | On a Windows software-rendered desktop, leave a maximized Launcher with unchanged Running Sessions idle, then leave a second maximized window on Launcher with an idle background PowerShell tab that has unread startup output. Confirm low CPU, preserved session discovery, and a visible static ring-and-dot unread cue. On accelerated displays, including macOS, confirm the same static cue regardless of focus and immediate clearing on tab activation. Confirm Settings has no unread-pulse control. Compare chrome, text, and window geometry before/after at ordinary and high DPI. | Native performance + visual + usability | `scripts/check-windows-idle-rendering.ps1` (also in the opt-in Windows suite) measures both cases with isolated configurations and a default 5% total-machine CPU ceiling; `-RequireSoftwareRenderer` rejects hardware-only evidence. Deterministic tests assert no animation repaint scheduling, fixed color/geometry across time and focus, activation clearing, and retired-setting migration. Native readability, mixed-DPI appearance, and accelerated-device behavior still require visual review. Sustained-output rendering cost is covered separately by CP-17, not this idle budget. |

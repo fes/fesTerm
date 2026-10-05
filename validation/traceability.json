@@ -958,9 +958,12 @@
         "ADR-0039",
         "ADR-0040",
         "ADR-0041",
-        "ADR-0043"
+        "ADR-0043",
+        "ADR-0044"
       ],
       "automated_tests": [
+        "retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work",
+        "retained_grid_rows_invalidate_dirty_content_selection_fonts_and_unicode",
         "native_background_hook_preserves_rectangles_and_translucent_fallback",
         "panel_fill_callback_preserves_declined_geometry_and_color",
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",
