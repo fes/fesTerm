@@ -294,6 +294,13 @@ bytes are durable, and says so when it has had to.
 
 ## Getting into the editor
 
+**New File** in More actions or the native File menu immediately opens a blank
+`UNTITLED` editor named `Untitled-N.txt`. Every press creates a separate
+document; it starts dirty because it has no backing file, and Auto-save stays
+unavailable until a destination exists. Plain **Save**, `:w`, and `:wq` open
+the ordinary Save As sheet on the first write. No new shortcut is claimed:
+`Cmd`+`N` remains Start Local Shell and `Cmd`+`Shift`+`N` remains New Window.
+
 **Open File…** in More actions, or `Cmd`/`Ctrl`+`O`, browses the local
 filesystem. A Markdown file opens in the Markdown viewer, whose **Edit**
 action is one press away; every other text file opens straight in the editor,
@@ -353,7 +360,10 @@ before opening a document and reports the limit without quoting the history.
    is untouched, and a second window still holding the original stays on it.
 8. Save As onto a file that is already open in another tab; confirm one buffer,
    not two, and that the other tab shows the new bytes.
-9. Open Terminal History in Editor or Save Terminal History As… from a live or
+9. Create two files with **New File**; confirm each opens as a separate blank,
+   dirty `UNTITLED` document with sequential names, Auto-save unavailable, and
+   the first Save entering the ordinary Save As sheet.
+10. Open Terminal History in Editor or Save Terminal History As… from a live or
    disconnected terminal; confirm the snapshot opens as `UNTITLED`, starts
    dirty, saves through the ordinary Save As sheet, and never changes when new
    terminal output arrives or when the saved copy is edited.
