@@ -30,7 +30,10 @@ when earlier rows retire, rather than reusing another transfer's action ID.
 History has a 240-logical-pixel scroll area,
 not row virtualization, and the existing Clear action still preserves retained
 failures. Deterministic churn, boundaries, ordering, admission recovery and
-full-queue teardown cover the repaired contracts. Aggregate directory/plan
+full-queue teardown cover the repaired contracts.
+Observed cleanup notices reach the separate bounded reporter before a
+GUI-capacity wait, rather than being discarded with an interrupted event batch.
+Aggregate directory/plan
 bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.

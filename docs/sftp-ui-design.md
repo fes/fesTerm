@@ -59,6 +59,9 @@ delivery. Each frontend poll and worker transfer-event batch handles at most
 Adjacent progress for the same batch and transfer may be replaced by its newest
 value; collision, completion, failure, cancellation, skip, cleanup and
 destination-refresh barriers remain ordered and are not coalesced.
+Observed cleanup notices enter the separate bounded cleanup reporter before
+any GUI-capacity wait; a retained barrier prevents progress folding across
+the notice, and closing the owner cannot discard an already-observed report.
 
 A full or closed command bridge reports a nonfatal refusal; it does not imply
 that the action succeeded. An unadmitted remote navigation leaves path, history,

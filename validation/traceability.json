@@ -1782,6 +1782,7 @@
         "gui_sftp_refused_markdown_read_keeps_the_previous_request_generation",
         "gui_sftp_event_bridge_and_poll_budget_are_exact_and_preserve_order",
         "gui_sftp_owner_close_preempts_a_full_async_event_bridge",
+        "gui_sftp_observed_cleanup_notice_survives_a_blocked_bridge_and_owner_close",
         "gui_sftp_local_event_producer_unblocks_when_the_frontend_closes",
         "gui_sftp_progress_coalescing_keeps_the_latest_value_and_critical_barriers",
         "late_collision_preserves_and_reports_output_without_losing_any_decision",

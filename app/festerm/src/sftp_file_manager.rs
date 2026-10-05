@@ -4228,6 +4228,26 @@ fn transfer_progress_key(event: &SftpTransferEvent) -> Option<(u64, u64)> {
     }
 }
 
+fn buffer_transfer_event(
+    events: &mut Vec<Option<SftpTransferEvent>>,
+    event: SftpTransferEvent,
+    reporter: &SftpCleanupReporter,
+    label: &str,
+    repaint: &egui::Context,
+) {
+    let event = match event {
+        SftpTransferEvent::CleanupIncomplete { error } => {
+            reporter.report(label.to_owned(), error, repaint);
+            None
+        }
+        event => Some(event),
+    };
+    // Report before a GUI-capacity await; retain a barrier so progress cannot cross the notice.
+    push_coalescing_progress(events, event, |event| {
+        event.as_ref().and_then(transfer_progress_key)
+    });
+}
+
 /// Waits for the next `WorkerCommand`, ignoring anything except
 /// `Reconnect` (nothing else is meaningful before the very first connect
 /// attempt has ever succeeded -- there's no session yet to load a
@@ -4609,20 +4629,15 @@ async fn run_worker_operations(
             }
             transfer_event = transfer_manager.recv_event() => {
                 let Some(transfer_event) = transfer_event else { break; };
-                push_coalescing_progress(&mut transfer_events, transfer_event, transfer_progress_key);
+                buffer_transfer_event(&mut transfer_events, transfer_event, &reporter, &target.label, &repaint);
                 for _ in 1..GUI_SFTP_POLL_BUDGET {
                     let Ok(event) = transfer_manager.try_recv_event() else { break; };
-                    push_coalescing_progress(&mut transfer_events, event, transfer_progress_key);
+                    buffer_transfer_event(&mut transfer_events, event, &reporter, &target.label, &repaint);
                 }
                 for event in transfer_events.drain(..) {
-                    match event {
-                        SftpTransferEvent::CleanupIncomplete { error } => {
-                            reporter.report(target.label.clone(), error, &repaint);
-                        }
-                        event => {
-                            if event_sender.send(WorkerEvent::Transfer(event)).await.is_err() {
-                                return;
-                            }
+                    if let Some(event) = event {
+                        if event_sender.send(WorkerEvent::Transfer(event)).await.is_err() {
+                            return;
                         }
                     }
                     repaint.request_repaint();
@@ -7214,6 +7229,64 @@ pub(crate) mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap());
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn gui_sftp_observed_cleanup_notice_survives_a_blocked_bridge_and_owner_close() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (sender, _receiver) = tokio::sync::mpsc::channel(GUI_SFTP_EVENT_CAPACITY);
+                for index in 0..GUI_SFTP_EVENT_CAPACITY {
+                    sender.try_send(bridge_event(index)).unwrap();
+                }
+                let reporter = SftpCleanupReporter::default();
+                let (notice_sender, notice_receiver) = mpsc::sync_channel(1);
+                reporter.set_sender(notice_sender);
+                let repaint = egui::Context::default();
+                let mut events = Vec::new();
+                buffer_transfer_event(
+                    &mut events,
+                    SftpTransferEvent::CleanupIncomplete {
+                        error: festerm_ssh::SftpSessionError::PartialFileOwnershipUnconfirmed {
+                            path: "/owned-fixture/recovery.festerm-part".to_owned(),
+                        },
+                    },
+                    &reporter,
+                    "owned transfer",
+                    &repaint,
+                );
+                assert_eq!(events.len(), 1);
+                assert!(
+                    events[0].is_none(),
+                    "reported cleanup must remain a progress barrier"
+                );
+                let (shutdown, mut owner) = tokio::sync::oneshot::channel();
+                let work = wait_for_sftp_tab_owner(sender.send(bridge_event(999)), &mut owner);
+                tokio::pin!(work);
+                assert!(tokio::time::timeout(Duration::from_millis(10), &mut work)
+                    .await
+                    .is_err());
+                shutdown.send(()).unwrap();
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(1), work)
+                        .await
+                        .unwrap(),
+                    SftpTabWork::OwnerClosed,
+                ));
+                drop(events);
+                let notice = notice_receiver.try_recv().unwrap();
+                assert_eq!(notice.name, "owned transfer");
+                assert!(notice
+                    .detail
+                    .contains("/owned-fixture/recovery.festerm-part"));
+                assert!(
+                    notice_receiver.try_recv().is_err(),
+                    "notice must not be delivered twice"
+                );
+            });
     }
 
     #[test]

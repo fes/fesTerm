@@ -194,6 +194,9 @@ events per invocation; only adjacent same-batch/same-transfer progress is
 coalesced. Async worker sends await capacity without blocking a runtime thread.
 The dedicated local loader may block on delivery and unblocks when the receiver
 retires. Owner cancellation bypasses queue admission and interrupts those waits.
+Observed cleanup notices are reported separately before awaiting GUI event
+capacity; their buffer markers remain progress barriers, so owner cancellation
+cannot discard a report already extracted from the backend.
 GUI admission checks the existing 256-item transfer batch ceiling before
 retaining the batch. Refused actions use the existing nonfatal error surface:
 navigation does not change pane/history/scroll/loading state, Markdown fetch
@@ -424,6 +427,8 @@ core transfer workflow.
   `gui_sftp_owner_close_preempts_a_full_async_event_bridge`,
   `gui_sftp_local_event_producer_unblocks_when_the_frontend_closes`, and
   `gui_sftp_progress_coalescing_keeps_the_latest_value_and_critical_barriers`.
+  `gui_sftp_observed_cleanup_notice_survives_a_blocked_bridge_and_owner_close`
+  covers the separate cleanup reporter before blocked event forwarding.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and
