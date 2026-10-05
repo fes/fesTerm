@@ -77,12 +77,13 @@ impl Default for DocumentBounds {
     }
 }
 
-/// Why a document cannot be opened for editing.
+/// Why a document cannot be opened or a change cannot be committed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RefusalReason {
     TooLarge { bytes: usize, limit: usize },
     TooManyLines { lines: usize, limit: usize },
     LineTooLong { line: usize, limit: usize },
+    UndoStorageTooLarge { bytes: usize, limit: usize },
     NotUtf8,
     BinaryContent,
 }
@@ -94,6 +95,7 @@ impl RefusalReason {
             Self::TooLarge { .. } => "This file is too large to edit",
             Self::TooManyLines { .. } => "This file has too many lines to edit",
             Self::LineTooLong { .. } => "This file has a line that is too long to edit",
+            Self::UndoStorageTooLarge { .. } => "This change exceeds the undo storage limit",
             Self::NotUtf8 => "This file is not valid UTF-8",
             Self::BinaryContent => "This file appears to be binary",
         }
@@ -114,6 +116,10 @@ impl RefusalReason {
             Self::LineTooLong { line, limit } => format!(
                 "Line {line} is longer than the {} editing limit for a single line.",
                 describe_bytes(limit)
+            ),
+            Self::UndoStorageTooLarge { bytes, limit } => format!(
+                "This change needs {bytes} bytes of undo storage, above the {} limit ({limit} bytes). Nothing changed; existing undo and redo are unchanged. Make a smaller change.",
+                describe_bytes(limit),
             ),
             Self::NotUtf8 => {
                 "fesTerm edits UTF-8 text, and rewriting this file would corrupt it.".to_owned()
@@ -178,6 +184,10 @@ mod tests {
             RefusalReason::LineTooLong {
                 line: 12,
                 limit: DocumentBounds::MAX_LINE_BYTES,
+            },
+            RefusalReason::UndoStorageTooLarge {
+                bytes: 8 * 1024 * 1024 + 1,
+                limit: crate::UndoHistory::DEFAULT_MAX_BYTES,
             },
             RefusalReason::NotUtf8,
             RefusalReason::BinaryContent,

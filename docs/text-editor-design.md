@@ -43,6 +43,13 @@ Consequences that follow from that and are worth stating plainly:
   Find/Replace, the column field, and the vi command field keep their local
   undo while the view is open; closing the view removes all of its
   text-widget state from the shared GUI context.
+- Document history retains at most 2,048 transactions and 8 MiB, charging
+  compact edit descriptors, string capacities and allocated transaction
+  slots. Oldest entries retire without shifting every survivor. Reload
+  releases slot capacity; history clones recalculate their allocation weight.
+  Saved/dirty identity remains correct at the retained base and when saving an
+  undone point. Validated no-ops preserve revision, redo and typing coalescing,
+  while returning the original operation's edit/match count.
 - Closing a view does not close the document. The document is forgotten when
   the last view goes, which is also the only point at which the dirty-close
   question is worth asking. Accepted window teardown releases every document
@@ -96,6 +103,16 @@ The editor never resolves a divergence silently.
   best-effort basis, then renamed over the target.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
+- An indivisible change whose undo record exceeds the existing 8-MiB limit
+  is refused whole, not applied without undo or retained as an oversized
+  exception. Text, revision, saved/dirty state, undo and redo are unchanged.
+  The command-result area shows the exact required bytes, limit and smaller-
+  change recovery for widget, vi and replacement commits. Optional typing
+  coalescing splits when a fitting edit would make the combined run too large.
+
+The history limit covers retained allocations, not candidate text, staged
+allocation overlap, undo/redo scratch, per-view text/layout, allocator overhead
+or process RSS. Reducing those separate transient costs remains distinct work.
 
 Auto-save runs one debounce per document and is coalesced by construction,
 because a write is only considered once the content has stopped changing.
@@ -182,6 +199,11 @@ which match of how many. An invalid or half-typed expression is reported in two
 words with the engine's full complaint on hover; it keeps the last valid
 results and neither moves the caret nor touches text. Replace All commits as
 **one** undo transaction.
+
+An edit refused during replacement is labelled **Change refused**, not
+**Invalid pattern**, and its full content-free explanation is visible in the
+command-result area rather than available only on hover. An oversized Replace
+All does not apply a prefix, discard redo or become an oversized undo exception.
 
 Undo is editor-wide, not body-only: after pressing Replace All the button holds
 focus, and Cmd+Z must still take the substitution back. The only places it is

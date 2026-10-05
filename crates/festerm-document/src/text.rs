@@ -330,6 +330,9 @@ impl TextDocument {
         if query.is_empty() {
             return Ok(0);
         }
+        if query == replacement {
+            return Ok(self.text.matches(query).count());
+        }
         let mut edits = Vec::new();
         let mut search_from = 0;
         while let Some(found) = self.text[search_from..].find(query) {
@@ -362,7 +365,10 @@ impl TextDocument {
         }
         let mut previous_end = 0usize;
         for edit in &edits {
-            let end = edit.end();
+            let end = edit
+                .start
+                .checked_add(edit.removed.len())
+                .ok_or(EditRefusal::OutOfBounds)?;
             if edit.start < previous_end {
                 return Err(EditRefusal::OutOfOrder);
             }
@@ -467,14 +473,17 @@ impl TextDocument {
         edits: Vec<TextEdit>,
         coalescable: bool,
     ) -> Result<(), RefusalReason> {
+        let Some(prepared) = self.undo.prepare(edits, coalescable)? else {
+            return Ok(());
+        };
         let mut candidate = self.text.clone();
-        for edit in edits.iter().rev() {
+        for edit in prepared.edits.iter().rev() {
             debug_assert!(edit.end() <= candidate.len());
             splice(&mut candidate, edit);
         }
         self.check_bounds(&candidate)?;
+        self.undo.commit(prepared);
         self.text = candidate;
-        self.undo.push(edits, coalescable);
         self.revision = self.revision.wrapping_add(1);
         Ok(())
     }
@@ -737,6 +746,236 @@ mod tests {
     fn document(text: &str) -> TextDocument {
         TextDocument::from_bytes(text.as_bytes(), DocumentBounds::DEFAULT)
             .expect("the fixture should be editable")
+    }
+
+    #[test]
+    fn undo_retention_noop_edits_preserve_redo_revision_and_dirty_state() {
+        let mut doc = document("seed");
+        doc.replace(0..0, "x").unwrap();
+        doc.undo();
+        let revision = doc.revision();
+        let token = doc.undo.token();
+        doc.replace(0..4, "seed").unwrap();
+        assert_eq!(doc.replace_all("e", "e").unwrap(), 2);
+        assert_eq!(
+            doc.apply_edits(vec![
+                TextEdit {
+                    start: 0,
+                    removed: String::new(),
+                    inserted: String::new()
+                };
+                128
+            ]),
+            Ok(128)
+        );
+        assert_eq!(
+            doc.revision(),
+            revision,
+            "no-op edits must not become new content revisions"
+        );
+        assert_eq!(doc.undo.token(), token);
+        assert!(!doc.is_dirty());
+        assert!(doc.can_redo(), "no-op edits must preserve the redo tail");
+        assert!(doc.redo());
+        assert_eq!(doc.text(), "xseed");
+    }
+
+    #[test]
+    fn undo_retention_front_eviction_does_not_alias_initial_clean_content() {
+        let mut doc = document("seed");
+        doc.undo = UndoHistory::with_limits(1, 1_024);
+        doc.replace(4..4, "a").unwrap();
+        doc.replace(5..5, "b").unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "seeda");
+        assert!(
+            doc.is_dirty(),
+            "the evicted base is not the initially loaded content"
+        );
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn undo_retention_evicted_saved_point_stays_clean_when_reached() {
+        let mut doc = document("seed");
+        doc.undo = UndoHistory::with_limits(1, 1_024);
+        doc.replace(4..4, "a").unwrap();
+        doc.mark_saved();
+        doc.replace(5..5, "b").unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "seeda");
+        assert!(
+            !doc.is_dirty(),
+            "the retained base still identifies the evicted saved point"
+        );
+    }
+
+    #[test]
+    fn undo_retention_saving_an_undone_point_closes_its_coalescing_run() {
+        let mut doc = document("");
+        doc.sync_from_view("a").unwrap();
+        doc.sync_from_view("a\n").unwrap();
+        doc.undo();
+        doc.mark_saved();
+        doc.sync_from_view("ab").unwrap();
+        assert!(doc.undo());
+        assert_eq!(
+            doc.text(),
+            "a",
+            "typing after save must undo back to that exact saved point"
+        );
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn undo_retention_oversized_atomic_change_preserves_text_history_and_redo() {
+        let line = format!("{}\n", "a".repeat(65_535));
+        let original = line.repeat(80);
+        let bounds = DocumentBounds::new(6 * 1024 * 1024, 100, 64 * 1024);
+        let mut doc = TextDocument::from_bytes(original.as_bytes(), bounds).unwrap();
+        doc.replace(0..1, "c").unwrap();
+        doc.replace(1..2, "d").unwrap();
+        doc.undo();
+        doc.mark_saved();
+        let before = doc.text().to_owned();
+        let revision = doc.revision();
+        let token = doc.undo.token();
+        let replacement = format!("{}\n", "b".repeat(65_535)).repeat(80);
+        assert!(
+            matches!(
+                doc.sync_from_view(&replacement),
+                Err(RefusalReason::UndoStorageTooLarge {
+                    limit: UndoHistory::DEFAULT_MAX_BYTES,
+                    ..
+                })
+            ),
+            "oversized atomic undo must refuse the entire edit"
+        );
+        assert_eq!(doc.text(), before);
+        assert_eq!(doc.revision(), revision);
+        assert_eq!(doc.undo.token(), token);
+        assert!(!doc.is_dirty());
+        assert!(doc.can_undo());
+        assert!(doc.can_redo());
+        assert!(doc.redo());
+        assert_eq!(&doc.text()[..2], "cd");
+    }
+
+    #[test]
+    fn undo_retention_noop_suppression_still_validates_stale_and_invalid_edits() {
+        let mut doc = document("seed");
+        assert_eq!(
+            doc.apply_edits(vec![TextEdit {
+                start: 0,
+                removed: "wrong".to_owned(),
+                inserted: "wrong".to_owned()
+            }]),
+            Err(EditRefusal::OutOfBounds)
+        );
+        assert_eq!(
+            doc.apply_edits(vec![TextEdit {
+                start: 0,
+                removed: "nope".to_owned(),
+                inserted: "nope".to_owned()
+            }]),
+            Err(EditRefusal::Stale)
+        );
+        assert_eq!(
+            doc.apply_edits(vec![TextEdit {
+                start: 99,
+                removed: String::new(),
+                inserted: String::new()
+            }]),
+            Err(EditRefusal::OutOfBounds)
+        );
+        assert_eq!(
+            doc.apply_edits(vec![TextEdit {
+                start: usize::MAX,
+                removed: "x".to_owned(),
+                inserted: "x".to_owned()
+            }]),
+            Err(EditRefusal::OutOfBounds)
+        );
+        assert_eq!(doc.text(), "seed");
+        assert_eq!(doc.revision(), 0);
+    }
+
+    #[test]
+    fn undo_retention_typing_splits_at_the_budget_without_refusing_fitting_edits() {
+        let mut doc = document("");
+        let budget =
+            std::mem::size_of::<crate::undo::Transaction>() + std::mem::size_of::<TextEdit>() + 8;
+        doc.undo = UndoHistory::with_limits(16, budget);
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        for end in 1..=text.len() {
+            assert_eq!(doc.sync_from_view(&text[..end]), Ok(true));
+        }
+        assert_eq!(doc.text(), text);
+        assert!(doc.undo());
+        assert_eq!(doc.text(), &text[..24]);
+        assert!(doc.is_dirty());
+        assert!(doc.redo());
+        assert_eq!(doc.text(), text);
+    }
+
+    #[test]
+    fn undo_retention_noop_does_not_close_a_valid_typing_run() {
+        let mut doc = document("");
+        doc.sync_from_view("a").unwrap();
+        doc.replace(0..1, "a").unwrap();
+        doc.sync_from_view("ab").unwrap();
+        doc.undo();
+        assert_eq!(doc.text(), "");
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn undo_retention_candidate_bounds_failure_preserves_prepared_redo_and_saved_state() {
+        let bounds = DocumentBounds::new(8, 2, 8);
+        let mut doc = TextDocument::from_bytes(b"a", bounds).unwrap();
+        doc.sync_from_view("ab").unwrap();
+        doc.replace(2..2, "c").unwrap();
+        doc.undo();
+        doc.mark_saved();
+        let token = doc.undo.token();
+        let revision = doc.revision();
+        let entries = doc.undo.len();
+        assert!(matches!(
+            doc.sync_from_view("a\nb\nc\n"),
+            Err(RefusalReason::TooManyLines { .. })
+        ));
+        assert_eq!(doc.text(), "ab");
+        assert_eq!(doc.undo.token(), token);
+        assert_eq!(doc.undo.len(), entries);
+        assert_eq!(doc.revision(), revision);
+        assert!(!doc.is_dirty());
+        assert!(doc.can_redo());
+        doc.redo();
+        assert_eq!(doc.text(), "abc");
+    }
+
+    #[test]
+    fn undo_retention_metadata_oversize_refuses_the_entire_prepared_edit_set() {
+        let mut doc = document(&"a".repeat(128));
+        doc.undo = UndoHistory::with_limits(16, 4_096);
+        let edits = (0..128)
+            .map(|start| TextEdit {
+                start,
+                removed: "a".to_owned(),
+                inserted: "b".to_owned(),
+            })
+            .collect();
+        assert!(matches!(
+            doc.apply_edits(edits),
+            Err(EditRefusal::Refused(RefusalReason::UndoStorageTooLarge {
+                limit: 4_096,
+                ..
+            }))
+        ));
+        assert_eq!(doc.text(), "a".repeat(128));
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.revision(), 0);
+        assert!(!doc.can_undo());
     }
 
     #[test]
