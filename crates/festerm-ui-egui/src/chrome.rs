@@ -302,6 +302,7 @@ pub enum ChromeAction {
     Activate(ChipId),
     Close(ChipId),
     NewTab,
+    NewTextDocument,
     OpenMarkdownFile,
     OpenSettings,
     OpenProfiles,
