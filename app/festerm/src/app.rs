@@ -5825,6 +5825,30 @@ impl FesTermApp {
                             &mut session.controller,
                             options,
                         );
+                        if tracing::enabled!(target: "festerm::render", tracing::Level::DEBUG) {
+                            let diagnostics = session.view.diagnostics();
+                            let terminal = &session.terminal;
+                            let dimensions = terminal.dimensions();
+                            let backgrounds = (0..dimensions.rows())
+                                .flat_map(|row| {
+                                    (0..dimensions.columns())
+                                        .filter_map(move |column| terminal.cell(column, row))
+                                })
+                                .filter(|cell| cell.background() != festerm_core::Color::Default)
+                                .count();
+                            tracing::debug!(
+                                target: "festerm::render",
+                                frame = ui.ctx().cumulative_frame_nr(),
+                                reused = diagnostics.retained_rows_reused,
+                                rebuilt = diagnostics.retained_rows_rebuilt,
+                                bytes = diagnostics.retained_row_bytes,
+                                dirty_rows = diagnostics.dirty_rows,
+                                columns = dimensions.columns(),
+                                rows = dimensions.rows(),
+                                backgrounds,
+                                "terminal row paint diagnostics"
+                            );
+                        }
                         if session.update_terminal_context_menu() {
                             ui.ctx().request_repaint();
                         }
