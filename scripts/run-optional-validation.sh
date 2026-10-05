@@ -117,5 +117,16 @@ else
     printf 'suite=interactive-surface-profile status=skipped reason=explicit-opt-in\n' >>"$result_path"
 fi
 
+if [ "${FESTERM_RUN_ROW_CACHE_PROFILE:-}" = "1" ]; then
+    if cargo test --release -p festerm-ui-egui --lib profile_retained_grid_row_stages -- --ignored --nocapture --test-threads=1; then
+        printf 'suite=terminal-row-cache-profile status=pass\n' >>"$result_path"
+    else
+        printf 'suite=terminal-row-cache-profile status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=terminal-row-cache-profile status=skipped reason=explicit-opt-in\n' >>"$result_path"
+fi
+
 printf 'status=%s\n' "$status" >>"$result_path"
 [ "$status" = pass ]

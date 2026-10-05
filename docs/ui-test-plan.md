@@ -277,8 +277,11 @@ tests cover the unset/`0`/`1` environment policy.
 Tests assert that native painting really executed where eligible and did not
 silently fall back. A >256-color fixture separately verifies explicit
 same-frame fallback with unchanged pixels. Surface-ownership tests retain an
-older frame while rendering the next. These checks do not replace CP-18's
-native-window, hardware, or presentation-latency evidence.
+older frame while rendering the next. A repeated parallel create/draw/drop
+test verifies that D2D views and D3D11-on-12 wrapped targets retire before the
+deferred-destruction flush and that each DX12 device remains usable.
+These checks do not replace CP-18's native-window, hardware, or
+presentation-latency evidence.
 
 Selection-policy coverage now includes deterministic default/override tests
 (`direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy`
@@ -320,6 +323,26 @@ Basic native OS-input evidence requires the controlled child's acknowledgment
 of a complete line with the expected token, not merely increased output bytes.
 Tests cover startup/focus/resize output, missing/wrong/incomplete input, and
 preservation of the optional keyboard-mode palette and exact-input gates.
+
+Issue #327's ordinary row-cache repair compares complete clipped mesh vertices,
+indices, colors and UVs with cache-disabled painting across fractional DPI,
+shaping, dirty content, fonts, selection and monochrome Unicode. Budget/teardown,
+history/resize, cursor, clip/transform/opacity and native fallback are covered;
+color-emoji and non-font textures are excluded.
+Font-definition and text-option reset coverage compares actual atlas contents
+and GPU framebuffers with fresh layouts without manually clearing caches.
+The negative control fails with font-image checkpointing disabled.
+Unshaped blank-background groups retain every rectangle's geometry and preserve
+glyph/decoration order. Full-mutation bypass and quiet/redraw recovery have
+exact-mesh coverage; source timing must retain adverse controls.
+Native CPU qualification must separately cover localized foreground output, background
+output with populated foreground, genuine idle and full mutation, using owned
+profiles and stable window identity/geometry. Prototype timings do not advance
+native presentation, input or physical-latency acceptance; see proposed ADR 0044.
+The CPU-stage diagnostic `profile_retained_grid_row_stages` covers shaped and
+unshaped static/localized/full-mutation scenes. Both aggregate runners register
+it under the additional `FESTERM_RUN_ROW_CACHE_PROFILE=1` opt-in; a completed run
+is not a portable CPU threshold or native GPU/presentation pass.
 
 - Keep snapshots small and deterministic; use a fixed theme, scale factor,
   dimensions, renderer configuration, and bundled/test font. Record those

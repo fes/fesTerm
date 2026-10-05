@@ -677,6 +677,111 @@ these tests. A replacement handshake can pause daemon processing for up to
 
 ### Rendering performance
 
+Issue #327 and proposed ADR 0044 track the macOS ordinary-row-cache repair.
+Its isolated synthetic profiles use no personal shells, remote accounts,
+clipboard or secrets. Native qualification requires matched binaries, actual
+grid/window identity and geometry, output delivery, foreground/background/idle
+and high-mutation CPU samples. Preliminary results are mixed and are not accepted
+performance evidence on their own; the completed cleanup disposition follows
+below. Matched high-resolution-bundle comparisons while the
+owner's macOS display is locked are recorded separately, never as foreground
+qualification; this repair does not unlock the screen or restart the live app.
+An authorized unlocked 14-case ABBA comparison at source `6f3667a` found
+consistent localized/Unicode savings but about 8% higher shaped foreground
+full-mutation CPU. Extending the full-mutation bypass to shaping required fresh
+native qualification; the adverse receipts remain preserved, not superseded
+by a passing source regression.
+
+The exact integrated source `58c5cd684885a9d30d44a9b384d26ff6bd8814dd`
+(release-binary SHA256
+`0ed4e813b0c2aab915a1f63211307de68ee47c6cff85ed0a021d229299309521`)
+has now completed all 56 unlocked runs. Each receipt passed copied-binary,
+on-console/foreground/unlocked, stable 1280x860 logical bounds, 2x scale,
+150x42 foreground grid and complete 10 Hz producer-delivery checks. Runs used
+15 seconds of warmup and fifteen 2-second CPU intervals. Localized/Unicode
+cases improved 14-30%; shaped full foreground was 7.863% baseline versus
+7.698% candidate (-2.1%), improving in both pairs. Visible-cursor quiet
+controls remained about 0.1-0.2% CPU; their relative percentages are not useful
+at the process-clock resolution.
+
+Unshaped full foreground was 5.875% versus 6.320% (+7.6%), with paired changes
+of +19.1% and -2.1%. These contradictory samples are retained, not averaged
+into a claimed gain or accepted as a tradeoff. Eight longer ABBA/BAAB controls
+on that exact binary used 30 seconds of warmup, thirty 2-second CPU intervals
+and a bounded 1,200-frame producer. All eight receipts passed the same native
+and geometry guards, with at least 975 producer frames and p99 intervals below
+110 ms. Baseline CPU averaged 5.763% versus 6.466% candidate (+12.2%);
+paired changes were +57.2%, +3.1%, +0.8% and +3.2%. The first baseline's
+4.124% CPU was lower than later baselines (6.239-6.352%), despite consistent
+producer delivery; its CPU intervals oscillated between about 2.5-3% and
+5-7.5%. Neither the low first baseline nor the remaining smaller differences
+has an established cause. Those controls did not clear native acceptance,
+and none of their intervals or runs is discarded.
+
+Local workspace/portable/vendor gates, independent security/reliability/scope
+reviews and all 11 integrated-head GitHub checks passed. CI success does not
+resolve the remaining native CPU uncertainty.
+Issue #334's owner-authorized cleanup removes per-rebuilt-row revision
+allocations and unconditional capture bookmarks without changing retention
+eligibility or atlas invalidation. Batch/independent-cache/clone identity and
+row-position mesh regressions pass; restoring both old policies fails four
+focused regressions.
+
+Cleanup source `86e4274bb5ebbbe5cb8423cbb24d0db34688c62c` (release-binary
+SHA256 `2e4b5f8bc88d0945cab2c3f685d254c7405e4bc46ee37d0725a0231e068f6a6b`)
+completed 52 isolated unlocked runs. Original baseline remains `d67aee3`
+with binary SHA256
+`60c9adf5b10519409a9f1994ca138094fdcb2bf00832b3c5851fd9797cdfca35`.
+The predeclared 36-run plan comprised eight longer unshaped full-foreground
+controls against the previous candidate, eight against the original baseline,
+and five focused four-run cases. Eight current-source quiet controls and,
+after the mixed short shaped-full result, eight longer shaped-full controls
+were each predeclared before launch. Candidate-first BAAB/ABBA order reversed
+the earlier first-baseline ordering; no result was removed or replaced.
+Longer runs used 30-second warmup, thirty 2-second CPU intervals and bounded
+1,200-frame producers; focused/quiet runs used 15-second warmup, fifteen
+2-second intervals and bounded 600-frame producers.
+
+All 52 receipts passed exact copied-binary, foreground/unlocked/on-console,
+input and stable 1280x860 logical bounds/2x scale/150x42 foreground-grid guards.
+Both 10 Hz producers spanned measurements, with at least 979 frames in longer
+controls and 516 in standard controls; worst per-run p99 interval was 109.93 ms.
+No app error/panic/device-loss matches were found. Background output means an
+inactive synthetic tab in the foreground owned application, not an inactive app.
+
+| Comparison / workload | Baseline CPU | Cleanup CPU | Relative change / paired changes |
+| --- | ---: | ---: | --- |
+| Previous candidate, unshaped full foreground (eight longer) | 6.475% | 5.807% | -10.31%; -33.14%, -2.81%, +0.24%, -6.15%; first-run confounded, not a causal speedup |
+| Original baseline, unshaped full foreground (eight longer) | 6.433% | 6.404% | -0.46%; +4.26%, -0.02%, -1.31%, -4.46%; approximately neutral, not parity on every run |
+| Original baseline, unshaped localized foreground | 5.524% | 4.811% | -12.90%; -20.52%, -3.94% |
+| Original baseline, unshaped localized background tab | 5.506% | 4.645% | -15.65%; -16.15%, -15.14% |
+| Original baseline, shaped localized foreground | 5.390% | 4.164% | -22.74%; -23.33%, -22.16% |
+| Original baseline, shaped full foreground (four standard) | 7.899% | 8.114% | +2.72%; -2.08%, +7.60%; retained mixed result |
+| Original baseline, unshaped Unicode foreground | 6.369% | 5.110% | -19.76%; -23.66%, -15.94% |
+| Original baseline, unshaped quiet visible cursor | 0.133% | 0.133% | unchanged low absolute CPU; relative percentages not meaningful |
+| Original baseline, shaped quiet visible cursor | 0.133% | 0.133% | unchanged low absolute CPU; relative percentages not meaningful |
+| Original baseline, shaped full foreground (eight longer) | 7.850% | 8.051% | +2.56%; +2.82%, +1.75%, +2.04%, +3.65%; all pairs adverse |
+
+The direct previous-candidate comparison includes a low first cleanup run
+(4.216%); that reproduces low-first-run behavior with the candidate first,
+but does not establish its cause. Its aggregate is not a causal 10% cleanup
+speedup. Current original-baseline controls show 13-23% savings in the tested
+localized/Unicode cases, approximately neutral unshaped heavy redraw, and a
+remaining 2.56% shaped-heavy cost (about 0.20 CPU percentage points).
+
+On 2026-10-05 the owner explicitly accepted this documented shaped-heavy
+tradeoff for PR #328 and retained #334 for residual cost and first-run variance.
+This clears that owner's native-performance decision, not a no-regression
+claim, external PR approval, deployment or general platform/latency acceptance.
+All 11 checks on measured source `86e4274` completed/SUCCESS after one bounded
+retry of jobs that never acquired hosted runners; original infrastructure
+failures remain preserved. Subsequent evidence-only heads require their own CI
+conclusions and do not change the measured source/executable identity.
+The shaped/unshaped static/localized/full-mutation CPU-stage diagnostic is in
+both optional runners under `FESTERM_RUN_ROW_CACHE_PROFILE=1`.
+Existing CP-16/17/18 and mixed-DPI/native-input/physical
+latency gates remain unchanged.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | CP-16 | On a Windows software-rendered desktop, leave a maximized Launcher with unchanged Running Sessions idle, then leave a second maximized window on Launcher with an idle background PowerShell tab that has unread startup output. Confirm low CPU, preserved session discovery, and a visible static ring-and-dot unread cue. On accelerated displays, including macOS, confirm the same static cue regardless of focus and immediate clearing on tab activation. Confirm Settings has no unread-pulse control. Compare chrome, text, and window geometry before/after at ordinary and high DPI. | Native performance + visual + usability | `scripts/check-windows-idle-rendering.ps1` (also in the opt-in Windows suite) measures both cases with isolated configurations and a default 5% total-machine CPU ceiling; `-RequireSoftwareRenderer` rejects hardware-only evidence. Deterministic tests assert no animation repaint scheduling, fixed color/geometry across time and focus, activation clearing, and retired-setting migration. Native readability, mixed-DPI appearance, and accelerated-device behavior still require visual review. Sustained-output rendering cost is covered separately by CP-17, not this idle budget. |

@@ -17,6 +17,9 @@ For `LAUNCH-12` and `LAUNCH-20`, periodic discovery must not schedule a GUI
 frame when inventory and provider errors are unchanged. Explicit refresh,
 generation invalidation, and disabled-work cancellation still apply. Visible
 relative-age labels refresh independently at minute scale.
+Discovery test synchronization observes retirement of the specific requested
+worker, including completion between inspection and update; it must not wait
+for the replacement periodic worker in the same generation.
 
 For `SET-07`, unread background output always shows a static ring-and-dot
 marker with no animation repaint scheduling. There is no setting, and older
@@ -89,6 +92,33 @@ replay checks pixels; the separately opt-in Windows Terminal comparison checks
 matched workload delivery, font, grid, native-window identity and CPU. Neither
 GUI frame counts nor offscreen timings establish physical presentation latency.
 See `validation/terminal-performance/README.md` and CP-18.
+
+Proposed ADR 0044 adds a bounded ordinary monochrome row-paint cache for issue #327.
+Exact-mesh tests compare unchanged reuse, dirty content, fonts/DPI, selection
+and monochrome Unicode against the cache-disabled renderer. Budget, teardown,
+history/resize, clip, opacity, transforms, cursor and native fallback are covered.
+Color-emoji and foreign textures are never retained. Redraw clears reuse;
+font-image changes also clear glyph layouts before replay, preventing stale
+galleys from being stamped with a replacement atlas identity. Atlas-content and
+GPU-pixel regressions cover reset without manual invalidation.
+Unshaped blank-background groups preserve exact instruction order; full-row
+mutation bypasses retention with shaping both on and off, then returns to
+caching when content stabilizes. Native painting, transforms, opacity and emoji retain ordinary paths. This
+changes neither event-driven scheduling nor the terminal/session writer.
+Issue #334's bounded cleanup shares one revision token per nonempty presentation
+update, comparing identities only at the same row position. Capture bookmarks
+are created only for eligible retained rows. Batch/clone/independent-cache
+identity, swapped-row exact meshes and zero full-mutation bookmarks are covered;
+52 isolated unlocked native runs at `86e4274` complete CPU requalification.
+The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU
+presentation. Cleanup controls against the original baseline retain 13-23%
+localized/Unicode savings, approximately neutral unshaped full foreground and
+0.133% quiet CPU in both shaping modes. Longer shaped full foreground remains
++2.56%, adverse in all four pairs; the owner explicitly accepts this bounded
+tradeoff for #328 while #334 remains open. Historical matrices and low-first-run
+outliers remain preserved, with no established cause or causal before/after
+speedup claim. External PR review remains required; CP-18, native input,
+mixed-DPI and physical latency are not advanced by these CPU measurements.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU
