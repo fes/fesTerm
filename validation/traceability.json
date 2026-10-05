@@ -520,15 +520,28 @@
         "cancellation_cleanup_preserves_a_confirmed_local_partial_file",
         "failed_text_transfer_reports_original_error_and_preserved_output",
         "cancellation_cleanup_preserves_a_replaced_local_leaf",
-        "cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement"
+        "cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement",
+        "sftp_input_accepts_exactly_256_kib_and_releases_submitted_capacity",
+        "sftp_input_refuses_the_whole_overlong_line_across_transport_chunks",
+        "sftp_input_cancel_recovers_from_refusal_and_releases_large_capacity",
+        "sftp_input_backspace_removes_complete_and_chunk_split_utf8_scalars",
+        "sftp_input_invalid_continuation_backspace_preserves_preceding_ascii",
+        "sftp_input_backspace_handles_long_invalid_runs_without_a_full_tail_scan",
+        "sftp_input_counts_utf8_bytes_not_characters",
+        "sftp_input_backspace_reclaims_exceptional_capacity_with_hysteresis",
+        "sftp_input_refusal_survives_full_queue_without_reallocating_or_failing_the_session",
+        "sftp_input_refusal_is_retried_while_a_command_waits_for_io",
+        "text_sftp_refuses_overlong_prefixes_and_fragments_then_executes_the_next_command"
       ],
       "manual_scenarios": [
-        "SFTP-01"
+        "SFTP-01",
+        "SFTP-02"
       ],
       "status": "partial",
       "prerequisites": [
         "no app-layer ignored Docker interop test currently drives the full SFTP tab worker through authentication and command execution",
-        "packaged native close/quit and cleanup diagnostic visibility remain unqualified"
+        "packaged native close/quit and cleanup diagnostic visibility remain unqualified",
+        "SFTP-02 native paste/keyboard gestures, transcript clarity and accessible input-refusal visibility remain unqualified"
       ]
     },
     {
