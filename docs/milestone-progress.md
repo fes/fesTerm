@@ -3,6 +3,29 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Keeping SSH control work independent of output gaps
+
+The allocation/lifecycle audit in #320 found that each native SSH output
+iteration recreated its 10 ms command timer. A continuously ready channel could
+therefore postpone input, resize, and shutdown indefinitely, retaining the
+worker and its resources after its frontend owner requested close. The channel
+reply and persistence-provider receive loops shared the same timer-reset shape.
+
+All three loops now retain an absolute control deadline and check due work
+before another receive; shutdown bypasses the ordinary cadence at loop entry.
+Completing control work schedules one future tick instead of catching up missed
+ticks. Idle polling, liveness policy, channel order, and existing teardown
+bounds remain unchanged.
+
+Five focused regressions cover deadline boundaries, immediately eligible
+shutdown, delayed processing, and a biased asynchronous select where ready
+traffic always beats the sleep branch. A repository-owned loopback SSH fixture
+also fills the frontend event queue while producing output, then proves queued
+input/resize progress and successful caller-bounded shutdown without draining
+that queue. These are control/lifetime regressions, not a reproduction of
+multi-day CPU growth in #297 or a universal 10 ms worker-exit claim. Native
+close/disconnect surfaces and usability remain separate validation.
+
 ## v0.9.2: consistent identity for native persistent shells
 
 This correctness patch makes newly created native persistent local shells

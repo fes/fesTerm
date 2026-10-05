@@ -1408,6 +1408,15 @@ Username, host, port, cipher, latency, and key algorithm belong in the session
 inspector rather than permanent chrome. A user rename changes only stable
 display identity, never the destination or profile.
 
+Native SSH receive loops keep the existing 10 ms command-poll deadline across
+incoming messages. Due control work runs before another receive or liveness
+probe, and a shutdown request is eligible immediately at the next loop entry.
+This applies while waiting for channel replies, probing a persistence provider,
+and running the shell; continuous output cannot require an idle gap before
+input, resize, or shutdown progresses. Network operations and teardown retain
+their existing bounds; 10 ms is a control cadence, not a whole-worker exit
+guarantee.
+
 Selecting SFTP reuses the same destination-entry, host-key verification, and
 authentication sequence, but the resulting running surface is a terminal-style
 text-mode SFTP REPL rather than a remote shell. The supported command set is
