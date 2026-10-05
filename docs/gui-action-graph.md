@@ -17,6 +17,9 @@ For `LAUNCH-12` and `LAUNCH-20`, periodic discovery must not schedule a GUI
 frame when inventory and provider errors are unchanged. Explicit refresh,
 generation invalidation, and disabled-work cancellation still apply. Visible
 relative-age labels refresh independently at minute scale.
+Discovery test synchronization observes retirement of the specific requested
+worker, including completion between inspection and update; it must not wait
+for the replacement periodic worker in the same generation.
 
 For `SET-07`, unread background output always shows a static ring-and-dot
 marker with no animation repaint scheduling. There is no setting, and older
