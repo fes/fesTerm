@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string] $ResultDirectory
+    [string] $ResultDirectory,
+    [ValidateSet('prefix', 'lifecycle')]
+    [string] $Mode = 'prefix'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,20 +30,26 @@ if (-not (Test-Path -LiteralPath $debugger)) { throw 'The SDK debugger is requir
 $env:_NT_SYMBOL_PATH = "srv*$env:RUNNER_TEMP/festerm-symbols*https://msdl.microsoft.com/download/symbols;$(Split-Path -Parent $binary)"
 Remove-Item Env:FESTERM_TRACE_NATIVE_TESTS
 
-for ($iteration = 1; $iteration -le 40; $iteration++) {
+$iterations = if ($Mode -eq 'lifecycle') { 1 } else { 40 }
+for ($iteration = 1; $iteration -le $iterations; $iteration++) {
     $output = "$ResultDirectory/iteration-$iteration.log"
     Write-Host "UI prefix plus debugger-native iteration $iteration; stop at the first failure."
-    Push-Location (Join-Path $env:GITHUB_WORKSPACE 'crates/festerm-ui-egui')
-    try {
-        & $prefix --nocapture 2>&1 | Tee-Object -FilePath "$ResultDirectory/ui-prefix-$iteration.log"
-        $prefixExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
+    $testArguments = @('--nocapture')
+    if ($Mode -eq 'prefix') {
+        Push-Location (Join-Path $env:GITHUB_WORKSPACE 'crates/festerm-ui-egui')
+        try {
+            & $prefix --nocapture 2>&1 | Tee-Object -FilePath "$ResultDirectory/ui-prefix-$iteration.log"
+            $prefixExit = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        if ($prefixExit -ne 0) { throw "The UI prefix itself failed in iteration $iteration with exit $prefixExit." }
+    } else {
+        $testArguments += @('--ignored', '--exact', 'renderer::tests::dx12_lifecycle_without_direct2d')
     }
-    if ($prefixExit -ne 0) { throw "The UI prefix itself failed in iteration $iteration with exit $prefixExit." }
     & $debugger -g -G -o -logo $output `
         -c 'sxd -c2 ".echo NATIVE_ACCESS_VIOLATION; .exr -1; .ecxr; kv; ~* k 20; lm; q" av; g' `
-        $binary --nocapture
+        $binary @testArguments
     $exitCode = $LASTEXITCODE
     @{ iteration = $iteration; exit_code = $exitCode } |
         ConvertTo-Json | Set-Content -LiteralPath "$ResultDirectory/iteration-$iteration.json"

@@ -1133,6 +1133,24 @@ mod tests {
         trace("DX12 render state creation complete");
         state
     }
+
+    #[test]
+    #[ignore = "diagnostic-only DX12 lifetime discriminator; no Direct2D calls"]
+    fn dx12_lifecycle_without_direct2d() {
+        let start = std::sync::Barrier::new(6);
+        std::thread::scope(|scope| {
+            for _ in 0..6 {
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..100 {
+                        let state = render_state();
+                        drop(state);
+                    }
+                });
+            }
+        });
+    }
     use std::time::Duration;
 
     #[test]

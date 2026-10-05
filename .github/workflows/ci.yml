@@ -15,6 +15,11 @@ on:
         description: "Diagnostic branch only: reproduce the native Direct2D crash"
         type: boolean
         default: false
+      diagnostic_mode:
+        description: "Prefix replay or DX12-only lifecycle discriminator"
+        type: choice
+        options: [prefix, lifecycle]
+        default: prefix
 
 permissions:
   contents: read
@@ -162,7 +167,7 @@ jobs:
           key: quality
       - name: Reproduce native Direct2D crash without discarding failures
         shell: pwsh
-        run: ./scripts/diagnose-windows-direct2d.ps1 -ResultDirectory "$env:RUNNER_TEMP/direct2d-crash"
+        run: ./scripts/diagnose-windows-direct2d.ps1 -ResultDirectory "$env:RUNNER_TEMP/direct2d-crash" -Mode "${{ inputs.diagnostic_mode }}"
       - name: Preserve content-free native diagnostics
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
