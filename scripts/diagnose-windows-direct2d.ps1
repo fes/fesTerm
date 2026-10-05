@@ -36,13 +36,15 @@ Remove-Item Env:FESTERM_TRACE_NATIVE_TESTS
 
 # Calibrate nonzero-exit capture separately from GPU work.
 $debugCommands = 'sxd -c2 ".echo NATIVE_ACCESS_VIOLATION; .exr -1; .ecxr; kv; ~* k 20; lm; q" av; bu ntdll!RtlExitUserProcess ".if (@ecx != 0) { .echo TEST_NONZERO_EXIT; r rcx; kv; ~* k 20; lm; q } .else { gc }"; bu ntdll!NtTerminateProcess ".if (@edx != 0) { .echo TEST_NONZERO_TERMINATION; r rcx; r rdx; kv; ~* k 20; lm; q } .else { gc }"; g'
+$debugScript = Join-Path $ResultDirectory 'capture-commands.txt'
+(".echo TRACER_CONFIGURED; " + $debugCommands) | Set-Content -LiteralPath $debugScript -Encoding ascii
 $compiler = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path -LiteralPath $compiler)) { throw 'The installed Framework C# compiler is required for exit-capture calibration.' }
 $exitProbe = Join-Path $env:RUNNER_TEMP 'festerm-exit-probe.exe'
 $probeSource = (Resolve-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'scripts/diagnose-windows-exit-probe.cs')).Path
 & $compiler /nologo /platform:x64 "/out:$exitProbe" $probeSource
 if ($LASTEXITCODE -ne 0) { throw 'Exit-capture calibration build failed.' }
-& $debugger -g -G -o -logo "$ResultDirectory/exit-probe.log" -c $debugCommands $exitProbe 2>&1 |
+& $debugger -G -o -logo "$ResultDirectory/exit-probe.log" -cf $debugScript $exitProbe 2>&1 |
     Tee-Object -FilePath "$ResultDirectory/exit-probe-console.log"
 if (-not (Select-String -LiteralPath "$ResultDirectory/exit-probe-console.log" -Pattern '^TEST_NONZERO_(EXIT|TERMINATION)' -Quiet) -or
     -not (Select-String -LiteralPath "$ResultDirectory/exit-probe-console.log" -Pattern '(rcx|rdx)=000000000000087d' -Quiet)) {
@@ -72,7 +74,7 @@ for ($iteration = 1; $iteration -le $iterations; $iteration++) {
     $testDirectory = if ($Mode -eq 'ui') { 'crates/festerm-ui-egui' } else { 'crates/festerm-windows-direct2d' }
     Push-Location (Join-Path $env:GITHUB_WORKSPACE $testDirectory)
     try {
-        & $debugger -g -G -o -logo $output -c $debugCommands `
+        & $debugger -G -o -logo $output -cf $debugScript `
             $binary @testArguments 2>&1 | Tee-Object -FilePath $console
         $exitCode = $LASTEXITCODE
     } finally {
