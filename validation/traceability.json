@@ -1003,6 +1003,7 @@
         "child_acknowledgment_requires_completed_controlled_input",
         "native_bounds_crop_sparse_paints_and_validate_indices",
         "shared_surfaces_preserve_pixels_and_previous_frame_ownership",
+        "concurrent_native_renderer_retirement_keeps_devices_usable",
         "texture_identity_and_equal_replacement_preserve_uploads_and_pixels",
         "font_snapshot_reuses_unchanged_pixels_and_refreshes_same_frame_glyphs",
         "font_snapshot_preserves_deltas_and_releases_on_painter_teardown",
