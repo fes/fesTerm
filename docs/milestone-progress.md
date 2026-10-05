@@ -33,6 +33,29 @@ bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.
 
+## Keeping vi repeat bounded without discarding edits
+
+The allocation/lifecycle audit in #320 found that Insert/Backspace and Visual
+motion churn recorded an unlimited number of keys even when the document
+stayed small. Abandoned sequences retained their allocation, and dot-repeat
+cloned the entire recorded key array before replay.
+
+The approved per-change limit is 8,192 recorded keystrokes, including mode
+entry and exit. The first excess key releases the recording; editing continues
+normally. An actual oversized change produces a visible, nonfatal warning and
+`.` refuses rather than replaying a truncated sequence or an older destructive
+change. Pure navigation and yank preserve the previous repeat. Completing a
+smaller change restores it. Exceptional scratch capacity is retired at the
+sequence boundary, while a small 32-key allocation can be reused; repeat
+borrows its bounded key array and remains one shared-document undo transaction.
+
+Deterministic churn reproduced both unlimited recordings before the repair.
+Engine and production-view regressions cover the exact limit, warning/refusal,
+capacity retirement, next-change recovery and undo. Native input, narrow-pane
+readability and accessibility remain CP-15. Document/index/undo and replay
+scratch-text costs are separate audit slices; this is not evidence for #297's
+multi-day CPU-growth cause.
+
 ## Keeping SSH control work independent of output gaps
 
 The allocation/lifecycle audit in #320 found that each native SSH output
@@ -88,6 +111,36 @@ The release also corrects the documented terminal-font identifier. It adds no
 performance optimization or fix for multi-day CPU growth in #297. Release
 preparation changes version metadata only, without dependency, protocol or
 additional runtime changes.
+
+## Bounding unfinished SFTP commands without executing fragments
+
+The #320 allocation audit found that the 64 KiB transport-chunk limit did not
+bound an unfinished SFTP command: repeated chunks could grow its byte vector
+indefinitely, and Ctrl+C only cleared the length. The approved 256 KiB line
+budget is now checked before append. Overflow drops the allocation and refuses
+the entire line through newline or Ctrl+C, including a CRLF split across chunks,
+instead of executing a truncated prefix or trailing fragment.
+
+Submit/cancel/refusal release storage. Large backspaced lines reclaim capacity
+with hysteresis rather than retaining their maximum indefinitely. The coupled
+UTF-8 eraser previously left a leading byte behind, making a correctly typed
+command fail decoding; it now removes complete or chunk-split final scalars
+with at most four bytes of lookback, including bounded handling of malformed
+continuation runs.
+
+One coalesced input-error notice survives a full frontend queue without
+reallocating on each retry. Existing queue accounting/notifiers and the worker's
+control cadence deliver it without failing the session or logging command
+contents. Echo batches preserve byte order between controls and avoid one
+event/allocation per pasted byte. An owned real SFTP loopback submits two
+overlong commands and a trailing fragment, observes only the next valid mkdir
+at the server, and completes without frontend backpressure.
+
+Old append, Ctrl+C retention and UTF-8 erase behavior fail the deterministic
+regressions; exact-boundary, capacity, queue and real-command recovery are
+automated. Native long-paste/keyboard gestures and refusal accessibility remain
+`SFTP-02` manual evidence. This bounds a concrete retention path, not a claimed
+cause or fix for #297.
 
 ## Retiring SFTP work when its owner closes
 

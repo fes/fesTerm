@@ -128,6 +128,30 @@ This first pass explicitly does **not** support:
 
 Those are future extensions, not silently omitted behavior.
 
+### Unfinished command input is bounded independently of transport chunks
+
+Each unfinished text-mode SFTP command accepts at most **256 KiB (262144
+bytes)**, including UTF-8 bytes. Transport chunks remain independently bounded
+at 64 KiB. Appending the first excess byte refuses the entire line, releases
+its allocation, and ignores subsequent bytes through a line ending or Ctrl+C.
+Neither a truncated prefix nor a remaining fragment is executed. A refused
+CRLF is one terminator even when split across chunks; the next command starts
+fresh. Ordinary command grammar, overwrite refusal and SSH-shell input are
+unchanged.
+
+Submit, cancel and refusal release accumulated storage. Backspace removes the
+last complete or unfinished UTF-8 scalar and reclaims exceptional capacity
+with hysteresis; malformed input does not cause a full-tail search. This is not
+a new grapheme-aware or display-width-aware line editor.
+
+Refusal is a nonfatal `Input` error. One coalesced, content-free pending notice
+survives frontend backpressure and uses the existing bounded event admission,
+metrics and notifier when delivered. It is retried during the existing worker
+and awaited-command control cadence, without a new polling service or an
+unbounded notification queue. Content-free diagnostics remain if the owner
+retires before delivery. Echo is grouped within a transport chunk between
+controls, preserving byte order and the existing maximum output-event size.
+
 ### A new app-level default local-directory setting defines starting `lpwd`
 
 `InterfaceSettings` gains an additive SFTP client preference for the default
@@ -245,11 +269,15 @@ correctness and easier to explain honestly in the UI.
   diagnostics never include transferred file content; owner cancellation
   preserves partials whose current ownership cannot be proven race-free and
   retires the runtime without waiting for outstanding blocking I/O.
+  Unfinished command input is limited to 256 KiB; an overlong line is refused
+  as a whole, capacity is reclaimed, and its nonfatal notice survives
+  frontend backpressure without retaining command contents in diagnostics.
 - **GUI/action edges affected:** Planned new edges `LAUNCH-09` (start a new
   SFTP session from SSH destination/profile metadata), `SSH-09` (interact with
   a live text-mode SFTP tab and run a supported command successfully), and
   `SET-09` (change the default local SFTP directory preference and verify it
-  persists without `lcd` mutating it). Owner cancellation refines `SSH-09`.
+  persists without `lcd` mutating it). Owner cancellation and bounded input
+  refusal/recovery refine `SSH-09`.
 - **Automated tests required:** Planned coverage includes
   `put_uploads_bytes_identical_to_local_source`,
   `get_downloads_bytes_identical_to_remote_source`,
@@ -264,11 +292,22 @@ correctness and easier to explain honestly in the UI.
   `failed_text_transfer_reports_original_error_and_preserved_output`,
   `cancellation_cleanup_preserves_a_replaced_local_leaf`, and the Unix-only
   `cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement`.
+  Input-budget regressions include
+  `sftp_input_accepts_exactly_256_kib_and_releases_submitted_capacity`,
+  `sftp_input_refuses_the_whole_overlong_line_across_transport_chunks`,
+  `sftp_input_cancel_recovers_from_refusal_and_releases_large_capacity`,
+  `sftp_input_backspace_removes_complete_and_chunk_split_utf8_scalars`,
+  `sftp_input_backspace_handles_long_invalid_runs_without_a_full_tail_scan`,
+  `sftp_input_refusal_survives_full_queue_without_reallocating_or_failing_the_session`,
+  `sftp_input_refusal_is_retried_while_a_command_waits_for_io`, and
+  `text_sftp_refuses_overlong_prefixes_and_fragments_then_executes_the_next_command`.
 - **Native/manual evidence required:** Manual fixture evidence is required for
   interactive command usability, local-directory defaulting, overwrite refusal,
   and transcript clarity during representative transfers. Stable scenario IDs
   should be added to `docs/manual-validation.md` in the implementing change.
   `SFTP-01` retains packaged close/quit and cleanup-diagnostic qualification.
+  `SFTP-02` retains native long-paste, refusal visibility and keyboard editing
+  usability; the byte-budget/state and owned-loopback oracles are automated.
 - **Coverage superseded:** None yet. `validation/traceability.json` must be
   updated in the implementing change that adds the real SFTP edges, tests, and
   manual scenarios.
