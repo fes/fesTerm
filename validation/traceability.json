@@ -479,7 +479,13 @@
         "reconnect_boundary_discards_pending_input_without_replaying_it",
         "disconnected_overlay_reconnects_the_same_tab_through_application_command",
         "reconnect_options_default_to_manual_plain_shell_recovery",
-        "reconnect_request_is_limited_to_running_sessions"
+        "reconnect_request_is_limited_to_running_sessions",
+        "command_poll_deadline_survives_continuously_ready_output",
+        "command_poll_shutdown_preempts_output_before_the_deadline",
+        "command_poll_progress_does_not_require_the_sleep_branch_to_win",
+        "command_poll_reschedules_only_after_control_processing",
+        "command_poll_skips_missed_ticks_without_a_busy_catch_up_loop",
+        "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue"
       ],
       "manual_scenarios": [
         "TI-07"
@@ -2086,7 +2092,10 @@
         "safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets",
         "narrow_confirmation_layout_preserves_escape_and_stale_generation_safety",
         "escape_cancels_live_close_without_closing_session",
-        "disabled_close_confirmation_closes_live_session_immediately"
+        "disabled_close_confirmation_closes_live_session_immediately",
+        "command_poll_shutdown_preempts_output_before_the_deadline",
+        "command_poll_progress_does_not_require_the_sleep_branch_to_win",
+        "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue"
       ],
       "manual_scenarios": [
         "AS-05",
