@@ -103,9 +103,12 @@ mutation bypasses retention with shaping both on and off, then returns to
 caching when content stabilizes. Native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
 The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU
-presentation. Unlocked isolated macOS qualification found consistent localized
-savings but adverse shaped full-mutation cost; the shaping-independent bypass
-requires fresh native evidence. CP-18 is not advanced by the prototype.
+presentation. The unlocked isolated 56-run macOS matrix at `58c5cd6` confirms
+localized/Unicode savings and removal of the initial shaped full-mutation
+regression. Unshaped foreground full mutation remains variable/adverse in that
+matrix; eight longer ABBA/BAAB controls did not clear the acceptance blocker.
+Historical adverse receipts remain preserved; CP-18 is not advanced by the
+prototype.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU

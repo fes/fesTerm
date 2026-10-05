@@ -681,9 +681,39 @@ owner's macOS display is locked are recorded separately, never as foreground
 qualification; this repair does not unlock the screen or restart the live app.
 An authorized unlocked 14-case ABBA comparison at source `6f3667a` found
 consistent localized/Unicode savings but about 8% higher shaped foreground
-full-mutation CPU. Extending the full-mutation bypass to shaping needs fresh
+full-mutation CPU. Extending the full-mutation bypass to shaping required fresh
 native qualification; the adverse receipts remain preserved, not superseded
 by a passing source regression.
+
+The exact integrated source `58c5cd684885a9d30d44a9b384d26ff6bd8814dd`
+(release-binary SHA256
+`0ed4e813b0c2aab915a1f63211307de68ee47c6cff85ed0a021d229299309521`)
+has now completed all 56 unlocked runs. Each receipt passed copied-binary,
+on-console/foreground/unlocked, stable 1280x860 logical bounds, 2x scale,
+150x42 foreground grid and complete 10 Hz producer-delivery checks. Runs used
+15 seconds of warmup and fifteen 2-second CPU intervals. Localized/Unicode
+cases improved 14-30%; shaped full foreground was 7.863% baseline versus
+7.698% candidate (-2.1%), improving in both pairs. Visible-cursor quiet
+controls remained about 0.1-0.2% CPU; their relative percentages are not useful
+at the process-clock resolution.
+
+Unshaped full foreground was 5.875% versus 6.320% (+7.6%), with paired changes
+of +19.1% and -2.1%. These contradictory samples are retained, not averaged
+into a claimed gain or accepted as a tradeoff. Eight longer ABBA/BAAB controls
+on that exact binary used 30 seconds of warmup, thirty 2-second CPU intervals
+and a bounded 1,200-frame producer. All eight receipts passed the same native
+and geometry guards, with at least 975 producer frames and p99 intervals below
+110 ms. Baseline CPU averaged 5.763% versus 6.466% candidate (+12.2%);
+paired changes were +57.2%, +3.1%, +0.8% and +3.2%. The first baseline's
+4.124% CPU was lower than later baselines (6.239-6.352%), despite consistent
+producer delivery; its CPU intervals oscillated between about 2.5-3% and
+5-7.5%. Neither the low first baseline nor the remaining smaller differences
+has an established cause. These controls do not clear the native acceptance
+blocker, and none of their intervals or runs is discarded.
+
+Local workspace/portable/vendor gates, independent security/reliability/scope
+reviews and all 11 integrated-head GitHub checks passed. CI success does not
+resolve the remaining native CPU uncertainty.
 The shaped/unshaped static/localized/full-mutation CPU-stage diagnostic is in
 both optional runners under `FESTERM_RUN_ROW_CACHE_PROFILE=1`.
 Existing CP-16/17/18 and mixed-DPI/native-input/physical

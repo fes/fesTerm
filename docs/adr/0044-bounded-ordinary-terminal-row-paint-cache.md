@@ -62,9 +62,15 @@ memory; the payload ceiling is not a total process-memory ceiling.
 Oversized/unsupported rows keep the original paint path. Cold/full-mutation
 work must be measured as well as steady reuse before qualification.
 
-The initial prototype has exact-mesh regressions and promising preparation
-timings, but native background results are mixed. This proposed decision does
-not establish release, performance, platform or physical-latency acceptance.
+Isolated unlocked measurements at `58c5cd6` show 14-30% lower process CPU for
+localized/monochrome-Unicode output, and the shaping-independent bypass removes
+the initial shaped full-mutation regression. Unshaped foreground full mutation
+remains variable: the 56-run matrix averages 7.6% worse, with opposite paired
+results. Eight longer ABBA/BAAB controls also remain adverse (12.2% aggregate;
+paired changes +57.2%, +3.1%, +0.8%, +3.2%). The low first baseline and the
+remaining smaller differences have no established cause; performance
+acceptance remains blocked. All adverse receipts remain preserved. This proposed
+decision does not establish release, platform or physical-latency acceptance.
 Independent security, reliability, scope and cross-platform test gates remain
 required.
 

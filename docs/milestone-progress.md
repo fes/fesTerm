@@ -3989,5 +3989,16 @@ eager background tessellation and row recapture on frames with no reuse.
 The same bounded previous-row identity policy now bypasses retention regardless
 of shaping. Both policies share exact-mesh, zero-capture, stabilization-recovery
 and explicit-redraw coverage; the shaped regression fails before the repair.
-Fresh native measurements and independent review are still required before
-acceptance, and the owner's installed app and profiles remain untouched.
+Independent security, reliability and scope review passed the incremental
+repair. After integrating reviewed main normally, all eleven GitHub checks and
+the full local gates passed. A new 56-run unlocked matrix on the exact
+`58c5cd6` binary confirmed 14-30% localized/Unicode process-CPU savings and
+removed the shaped full-foreground regression (7.863% to 7.698%, -2.1%).
+Unshaped full foreground still varied: +7.6% aggregate with opposite
++19.1%/-2.1% paired changes. Eight longer preselected ABBA/BAAB controls also
+remain adverse: 5.763% baseline versus 6.466% candidate (+12.2%), with paired
+changes of +57.2%, +3.1%, +0.8% and +3.2%. The unusually low first baseline
+has no established cause; it is preserved along with every other run, not
+discarded or used to excuse the smaller adverse differences. Performance
+acceptance remains blocked, and the owner's installed app and profiles remain
+untouched.

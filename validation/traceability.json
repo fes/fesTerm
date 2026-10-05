@@ -1125,6 +1125,7 @@
         "IME and complete selection semantics remain platform/capability work",
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
         "CP-17/18 native CPU evidence requires application-window identity and recorded input/geometry/cadence guards; noisy shared-host results are approximate, not strict benchmarks",
+        "ADR-0044 exact-source 58c5cd6 unlocked macOS 56-run matrix confirms localized/Unicode savings and repaired shaped full-mutation cost; eight longer ABBA/BAAB controls remain adverse/variable for unshaped foreground full mutation, blocking native CPU acceptance, while native input, mixed-DPI and physical latency remain separate evidence",
         "ADR-0039/0040/0041 owner-approved automatic WARP rollout without switches; native/resource/latency qualification remains follow-up work: https://github.com/fes/fesTerm/issues/282"
       ]
     },
