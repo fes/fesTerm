@@ -456,6 +456,10 @@ identity, undo and redo. There is no oversized-latest-entry exception. Optional
 typing coalescing starts a new transaction when the individual edit fits but
 the combined run does not. Validated no-ops preserve history and revision,
 including redo; callers still receive their original edit/match counts.
+Untitled snapshots have an explicit unwritten baseline, not a synthetic
+empty edit: they start dirty at revision zero with no undo entry, and undoing
+real edits cannot claim a never-saved document is saved. Successful save or
+reload establishes the written baseline.
 
 Front retirement preserves the base history identity so exhausting retained
 undo neither falsely announces the initial content as saved nor loses an
@@ -579,10 +583,10 @@ existing Markdown rendering stays out of scope.
   partial/stale repeat, pure-navigation/yank preservation, next-change recovery,
   and repeated edits as one shared undo transaction. Native keyboard/IME,
   narrow-pane readability and screen-reader delivery remain in `CP-15`.
-- **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07` and
-  `EDIT-13` add deterministic capacity/descriptor/slot accounting, exact-byte
+- **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
+  `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
   admission, churn/clone/clear, validated no-op, stable saved/base-token,
-  coalescing-split and atomic-refusal regressions. Production widget, vi edit,
+  coalescing-split, explicit unwritten-baseline and atomic-refusal regressions. Production widget, vi edit,
   Find/Replace and substitution routes preserve document/history and visibly
   report content-free refusals. Native input/IME, focus/caret, narrow-pane
   usability and screen-reader delivery remain `CP-15`; transient allocation

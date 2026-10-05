@@ -50,6 +50,9 @@ Consequences that follow from that and are worth stating plainly:
   Saved/dirty identity remains correct at the retained base and when saving an
   undone point. Validated no-ops preserve revision, redo and typing coalescing,
   while returning the original operation's edit/match count.
+- Untitled content starts unsaved without a synthetic empty edit or revision
+  bump. Undoing real changes back to its initial content keeps it unsaved
+  until a successful save or reload establishes a written baseline.
 - Closing a view does not close the document. The document is forgotten when
   the last view goes, which is also the only point at which the dirty-close
   question is worth asking. Accepted window teardown releases every document

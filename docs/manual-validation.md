@@ -474,7 +474,9 @@ record exceeds 8 MiB must leave text, revision, dirty/saved state, undo and
 redo intact and visibly state the required bytes, limit and smaller-change
 recovery. Find calls this **Change refused**, not **Invalid pattern**. Small
 typing remains usable when optional coalescing reaches its budget; no-ops
-preserve redo and match counts. Deterministic regressions cover actual
+preserve redo and match counts. New File and terminal snapshots start dirty
+without fake undo entries; undoing their real edits does not announce a
+never-saved document as saved. Deterministic regressions cover actual
 descriptor/string/slot capacity, exact-byte boundaries, churn/clone/clear,
 saved/base identity, atomic admission and production refusal routes. Native
 keyboard/paste/IME, caret/focus, narrow-window readability, high contrast and

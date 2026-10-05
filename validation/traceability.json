@@ -1500,6 +1500,7 @@
         "undo_retention_clone_recounts_compacted_allocations_without_changing_history",
         "undo_retention_churn_keeps_exact_accounting_across_redo_clone_and_clear",
         "undo_retention_noop_edits_preserve_redo_revision_and_dirty_state",
+        "undo_retention_unwritten_baseline_needs_no_synthetic_edit_and_survives_undo",
         "undo_retention_front_eviction_does_not_alias_initial_clean_content",
         "undo_retention_evicted_saved_point_stays_clean_when_reached",
         "undo_retention_saving_an_undone_point_closes_its_coalescing_run",

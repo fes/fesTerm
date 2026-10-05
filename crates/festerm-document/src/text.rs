@@ -110,7 +110,7 @@ pub enum EditRefusal {
     /// The text an edit expected to remove is not what is there any more, so
     /// the plan was built against content that has since changed.
     Stale,
-    /// The result would have breached a document bound.
+    /// The result or its history would have breached a document bound.
     Refused(RefusalReason),
 }
 
@@ -140,6 +140,12 @@ impl EditRefusal {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum SavedPoint {
+    Unwritten,
+    History(Option<u64>),
+}
+
 /// The text of one document, shared by every view of it.
 #[derive(Clone, Debug)]
 pub struct TextDocument {
@@ -149,7 +155,7 @@ pub struct TextDocument {
     indentation: Indentation,
     bounds: DocumentBounds,
     undo: UndoHistory,
-    saved_token: Option<u64>,
+    saved_point: SavedPoint,
     /// Bumped by every change to the content, including undo and redo.
     ///
     /// The undo token cannot stand in for this: a run of coalesced keystrokes
@@ -197,9 +203,17 @@ impl TextDocument {
             line_ending,
             bounds,
             undo: UndoHistory::new(),
-            saved_token: None,
+            saved_point: SavedPoint::History(None),
             revision: 0,
         })
+    }
+
+    /// Adopts unwritten content without manufacturing an undo transaction.
+    /// Only a successful save or reload establishes its clean baseline.
+    pub fn from_unsaved_bytes(bytes: &[u8], bounds: DocumentBounds) -> Result<Self, RefusalReason> {
+        let mut document = Self::from_bytes(bytes, bounds)?;
+        document.saved_point = SavedPoint::Unwritten;
+        Ok(document)
     }
 
     /// The normalised text every view reads and every find searches.
@@ -244,15 +258,17 @@ impl TextDocument {
         self.revision
     }
 
-    /// Whether the buffer differs from the content last successfully saved or
-    /// loaded.
+    /// Whether content is unwritten or differs from its loaded/saved point.
     pub fn is_dirty(&self) -> bool {
-        self.undo.token() != self.saved_token
+        match self.saved_point {
+            SavedPoint::Unwritten => true,
+            SavedPoint::History(token) => self.undo.token() != token,
+        }
     }
 
     /// Records that the current content is what the source now holds.
     pub fn mark_saved(&mut self) {
-        self.saved_token = self.undo.token();
+        self.saved_point = SavedPoint::History(self.undo.token());
         self.undo.close_transaction();
     }
 
@@ -268,7 +284,7 @@ impl TextDocument {
         self.line_ending = replacement.line_ending;
         self.indentation = replacement.indentation;
         self.undo.clear();
-        self.saved_token = None;
+        self.saved_point = SavedPoint::History(None);
         self.revision = self.revision.wrapping_add(1);
         Ok(())
     }
@@ -746,6 +762,36 @@ mod tests {
     fn document(text: &str) -> TextDocument {
         TextDocument::from_bytes(text.as_bytes(), DocumentBounds::DEFAULT)
             .expect("the fixture should be editable")
+    }
+
+    #[test]
+    fn undo_retention_unwritten_baseline_needs_no_synthetic_edit_and_survives_undo() {
+        let mut doc = TextDocument::from_unsaved_bytes(b"", DocumentBounds::default()).unwrap();
+        assert!(doc.is_dirty());
+        assert_eq!(doc.revision(), 0);
+        assert_eq!(doc.undo.len(), 0);
+        assert!(!doc.undo());
+        doc.replace(0..0, "").unwrap();
+        assert!(doc.is_dirty());
+        assert_eq!(doc.revision(), 0);
+        doc.replace(0..0, "x").unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "");
+        assert!(doc.is_dirty());
+        assert!(doc.can_redo());
+        doc.mark_saved();
+        assert!(!doc.is_dirty());
+        assert!(doc.redo());
+        assert!(doc.is_dirty());
+        assert!(doc.undo());
+        assert!(!doc.is_dirty());
+        let mut unwritten =
+            TextDocument::from_unsaved_bytes(b"seed", DocumentBounds::default()).unwrap();
+        assert!(unwritten.is_dirty());
+        assert!(unwritten.clone().is_dirty());
+        unwritten.reload_from(b"loaded").unwrap();
+        assert!(!unwritten.is_dirty());
+        assert_eq!(unwritten.undo.len(), 0);
     }
 
     #[test]

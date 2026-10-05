@@ -22,6 +22,10 @@ whole, retaining existing undo/redo; optional typing coalescing splits when
 the new edit fits alone. Saved/base identity survives retirement, saving
 closes the applied entry, validated no-ops preserve state and return counts,
 and clear releases slot allocation. Clones recalculate their compacted weight.
+Workspace coverage also caught the untitled-document factory's empty-edit
+workaround for marking content dirty. It now creates an explicit unwritten
+baseline, with no fake history or revision bump; New File, terminal snapshots,
+dirty-close and first-save routing retain their intended behaviour.
 
 Production-route checks uncovered two coupled presentation defects: ordinary
 widget errors reverted silently, and a storage refusal in Find was labelled
