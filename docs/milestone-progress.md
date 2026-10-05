@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Retiring imported Direct2D targets before teardown
+
+The intermittent Windows crash investigation in #330 exposed a concrete
+D3D11-on-12 lifetime violation. After drawing an imported DX12 target, the
+native renderer submitted its release transition and flushed while the D2D
+target bitmap, D3D11 texture view and wrapped resource were still retained.
+Those references were dropped only after the flush, so D3D11's deferred
+destruction could survive until the next frame or final device teardown.
+
+Target retirement now detaches the D2D context, releases every view and the
+wrapped reference, then flushes the immediate context in Microsoft's required
+cleanup order. Partial target setup and final renderer destruction use the same
+path. A parallel regression repeatedly creates, draws and drops native
+renderers, then verifies that every DX12 device and queue still render correct
+pixels. The separate unexplained `festerm-ui-egui` exit 2173 remains
+open under #330; this repair addresses the Direct2D access-violation path and
+does not relabel that other failure.
+
 ## Keeping vi repeat bounded without discarding edits
 
 The allocation/lifecycle audit in #320 found that Insert/Backspace and Visual

@@ -277,8 +277,11 @@ tests cover the unset/`0`/`1` environment policy.
 Tests assert that native painting really executed where eligible and did not
 silently fall back. A >256-color fixture separately verifies explicit
 same-frame fallback with unchanged pixels. Surface-ownership tests retain an
-older frame while rendering the next. These checks do not replace CP-18's
-native-window, hardware, or presentation-latency evidence.
+older frame while rendering the next. A repeated parallel create/draw/drop
+test verifies that D2D views and D3D11-on-12 wrapped targets retire before the
+deferred-destruction flush and that each DX12 device remains usable.
+These checks do not replace CP-18's native-window, hardware, or
+presentation-latency evidence.
 
 Selection-policy coverage now includes deterministic default/override tests
 (`direct2d_default_and_overrides_preserve_platform_adapter_and_format_policy`
