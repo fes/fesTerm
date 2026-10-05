@@ -3,6 +3,29 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Keeping vi repeat bounded without discarding edits
+
+The allocation/lifecycle audit in #320 found that Insert/Backspace and Visual
+motion churn recorded an unlimited number of keys even when the document
+stayed small. Abandoned sequences retained their allocation, and dot-repeat
+cloned the entire recorded key array before replay.
+
+The approved per-change limit is 8,192 recorded keystrokes, including mode
+entry and exit. The first excess key releases the recording; editing continues
+normally. An actual oversized change produces a visible, nonfatal warning and
+`.` refuses rather than replaying a truncated sequence or an older destructive
+change. Pure navigation and yank preserve the previous repeat. Completing a
+smaller change restores it. Exceptional scratch capacity is retired at the
+sequence boundary, while a small 32-key allocation can be reused; repeat
+borrows its bounded key array and remains one shared-document undo transaction.
+
+Deterministic churn reproduced both unlimited recordings before the repair.
+Engine and production-view regressions cover the exact limit, warning/refusal,
+capacity retirement, next-change recovery and undo. Native input, narrow-pane
+readability and accessibility remain CP-15. Document/index/undo and replay
+scratch-text costs are separate audit slices; this is not evidence for #297's
+multi-day CPU-growth cause.
+
 ## Keeping SSH control work independent of output gaps
 
 The allocation/lifecycle audit in #320 found that each native SSH output

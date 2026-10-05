@@ -377,6 +377,7 @@ pub struct CommandArea {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
     Message(String),
+    Warning(CommandError),
     Failed(CommandError),
 }
 
@@ -684,13 +685,17 @@ impl CommandArea {
                         .color(theme::TEXT_SECONDARY),
                 );
             }
-            Some(CommandOutcome::Failed(error)) => {
+            Some(CommandOutcome::Warning(error) | CommandOutcome::Failed(error)) => {
                 // The reason is shown, not hovered: a refusal a reader has to
                 // find with a pointer is not an honest refusal.
                 ui.label(
                     egui::RichText::new(error.headline())
                         .size(AREA_TEXT_SIZE - 1.0)
-                        .color(theme::STATUS_ERROR),
+                        .color(if matches!(self.result, Some(CommandOutcome::Warning(_))) {
+                            ui.visuals().warn_fg_color
+                        } else {
+                            theme::STATUS_ERROR
+                        }),
                 );
                 ui.label(
                     egui::RichText::new("·")

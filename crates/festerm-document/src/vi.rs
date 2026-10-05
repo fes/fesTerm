@@ -22,6 +22,9 @@
 use crate::search::SearchError;
 use crate::text::TextEdit;
 
+const MAX_VI_RECORDING_KEYS: usize = 8192;
+const SMALL_RECORDING_CAPACITY: usize = 32;
+
 /// The mode the editor is in, shown verbatim in the status bar (ADR 0034 §10).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ViMode {
@@ -108,6 +111,9 @@ pub enum ViAction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ViResponse {
     pub action: ViAction,
+    /// A nonfatal notice accompanying an accepted action, never a refusal of
+    /// the edit itself.
+    pub warning: Option<SearchError>,
     pub caret: usize,
     pub mode: ViMode,
     /// True while a multi-key command is only half-typed (`2d`, `g`, `r`), so
@@ -145,6 +151,20 @@ struct Register {
     linewise: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordingState {
+    Recording,
+    OverLimit,
+    OverLimitNotified,
+}
+
+#[derive(Clone, Debug)]
+enum LastChange {
+    None,
+    Recorded(Vec<ViKey>),
+    OverLimit,
+}
+
 /// The view-scoped state machine. One per editor view; it never outlives a
 /// keystroke's borrow of the document text.
 #[derive(Clone, Debug)]
@@ -161,7 +181,8 @@ pub struct ViEngine {
     visual_anchor: usize,
     /// Keys of the change in progress, recorded so `.` can replay it.
     record: Vec<ViKey>,
-    last_change: Option<Vec<ViKey>>,
+    recording_state: RecordingState,
+    last_change: LastChange,
     change_in_progress: bool,
     /// True while replaying a recorded change for `.`, so the replay is not
     /// itself recorded and cannot recurse.
@@ -184,7 +205,8 @@ impl ViEngine {
             register: Register::default(),
             visual_anchor: 0,
             record: Vec::new(),
-            last_change: None,
+            recording_state: RecordingState::Recording,
+            last_change: LastChange::None,
             change_in_progress: false,
             replaying: false,
         }
@@ -203,6 +225,12 @@ impl ViEngine {
     /// binding.
     pub const fn is_pending(&self) -> bool {
         !matches!(self.stage, Stage::Ready) || self.count.is_some() || self.operator_count.is_some()
+    }
+
+    /// Whether the last actual change exceeded the repeat-recording budget.
+    /// Pure navigation does not replace that change.
+    pub const fn repeat_is_refused(&self) -> bool {
+        matches!(self.last_change, LastChange::OverLimit)
     }
 
     /// Feeds one keystroke against the document's current text and caret.
@@ -227,24 +255,31 @@ impl ViEngine {
             }
         }
 
-        if !self.replaying {
-            self.record.push(key);
+        if !self.replaying && self.recording_state == RecordingState::Recording {
+            if self.record.len() == MAX_VI_RECORDING_KEYS {
+                self.record = Vec::new();
+                self.recording_state = RecordingState::OverLimit;
+            } else {
+                self.record.push(key);
+            }
         }
 
         let buf = Buffer::new(text);
         let caret = clamp_caret(&buf, caret);
         let (action, new_caret) = self.step(&buf, key, caret);
 
-        if !self.replaying {
-            self.update_recording(&action);
+        let warn = !self.replaying && self.update_recording(&action);
+        let mut response = self.respond(action, new_caret);
+        if warn {
+            response.warning = Some(Self::repeat_limit_error());
         }
-
-        self.respond(action, new_caret)
+        response
     }
 
     fn respond(&self, action: ViAction, caret: usize) -> ViResponse {
         ViResponse {
             action,
+            warning: None,
             caret,
             mode: self.mode,
             pending: self.is_pending(),
@@ -256,19 +291,39 @@ impl ViEngine {
     /// completed insert session — is the boundary of one repeatable change;
     /// anything that resolves to a pure motion is discarded so `.` keeps the
     /// *previous* change.
-    fn update_recording(&mut self, action: &ViAction) {
+    fn update_recording(&mut self, action: &ViAction) -> bool {
         let produced_edit = matches!(action, ViAction::Edit(_));
         if produced_edit {
             self.change_in_progress = true;
         }
+        let warn = self.change_in_progress && self.recording_state == RecordingState::OverLimit;
+        if warn {
+            self.recording_state = RecordingState::OverLimitNotified;
+            self.last_change = LastChange::OverLimit;
+        }
         let settled = self.mode == ViMode::Normal && !self.is_pending();
         if !settled {
-            return;
+            return warn;
         }
         if self.change_in_progress {
-            self.last_change = Some(std::mem::take(&mut self.record));
+            self.last_change = match self.recording_state {
+                RecordingState::Recording => LastChange::Recorded(std::mem::take(&mut self.record)),
+                RecordingState::OverLimit | RecordingState::OverLimitNotified => {
+                    LastChange::OverLimit
+                }
+            };
         }
-        self.record.clear();
+        self.clear_recording();
+        warn
+    }
+
+    fn clear_recording(&mut self) {
+        if self.record.capacity() > SMALL_RECORDING_CAPACITY {
+            self.record = Vec::new();
+        } else {
+            self.record.clear();
+        }
+        self.recording_state = RecordingState::Recording;
         self.change_in_progress = false;
     }
 
@@ -282,8 +337,14 @@ impl ViEngine {
     /// to one prefix/suffix diff also means a repeated insert lands as a
     /// single undo transaction, matching Vim.
     fn repeat_last_change(&mut self, text: &str, caret: usize) -> ViResponse {
-        let Some(keys) = self.last_change.clone() else {
-            return self.respond(ViAction::None, caret);
+        let keys = match &self.last_change {
+            LastChange::None => return self.respond(ViAction::None, caret),
+            LastChange::Recorded(keys) => keys,
+            LastChange::OverLimit => {
+                self.reset_pending();
+                self.clear_recording();
+                return self.respond(ViAction::Refused(Self::repeat_limit_error()), caret);
+            }
         };
 
         let mut sub = ViEngine::new();
@@ -292,7 +353,7 @@ impl ViEngine {
 
         let mut current = text.to_owned();
         let mut car = caret;
-        for key in keys {
+        for &key in keys {
             let response = sub.on_key(key, &current, car);
             car = response.caret;
             if let ViAction::Edit(edits) = response.action {
@@ -307,6 +368,16 @@ impl ViEngine {
             Some(edit) => self.respond(ViAction::Edit(vec![edit]), car),
             None => self.respond(ViAction::None, car),
         }
+    }
+
+    fn repeat_limit_error() -> SearchError {
+        SearchError::new(
+            "Repeat unavailable",
+            format!(
+                "Over {MAX_VI_RECORDING_KEYS} recorded keys; editing continues, but . cannot repeat \
+                 this change. Finish it and make a smaller change to restore repeat."
+            ),
+        )
     }
 
     fn reset_pending(&mut self) {
@@ -2343,6 +2414,228 @@ mod tests {
     }
 
     // --- Repeat ------------------------------------------------------------
+
+    fn feed(engine: &mut ViEngine, text: &mut String, caret: &mut usize, key: ViKey) -> ViResponse {
+        let response = engine.on_key(key, text, *caret);
+        if let ViAction::Edit(edits) = &response.action {
+            *text = apply_edits_to_string(text, edits);
+        }
+        *caret = response.caret;
+        response
+    }
+
+    #[test]
+    fn vi_recording_stays_bounded_during_insert_backspace_churn() {
+        let limit = MAX_VI_RECORDING_KEYS;
+        let mut engine = ViEngine::new();
+        let mut text = String::new();
+        let mut caret = 0;
+        let mut notices = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('i'));
+        for _ in 0..limit {
+            for key in [ViKey::Char('é'), ViKey::Backspace] {
+                let response = feed(&mut engine, &mut text, &mut caret, key);
+                assert!(matches!(response.action, ViAction::Edit(_)));
+                notices += usize::from(response.warning.is_some());
+                assert!(engine.record.len() <= limit);
+                assert!(engine.record.capacity() <= limit);
+            }
+            assert!(text.is_empty());
+        }
+        feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        assert_eq!(engine.record.capacity(), 0);
+        assert_eq!(notices, 1);
+        assert!(engine.repeat_is_refused());
+    }
+
+    #[test]
+    fn vi_recording_stays_bounded_during_visual_motion_churn() {
+        let limit = MAX_VI_RECORDING_KEYS;
+        let mut engine = ViEngine::new();
+        let mut text = "abcdef".to_owned();
+        let mut caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('x'));
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('v'));
+        for _ in 0..limit * 2 {
+            let response = feed(&mut engine, &mut text, &mut caret, ViKey::Char('l'));
+            assert!(response.warning.is_none());
+            assert!(engine.record.len() <= limit);
+            assert!(engine.record.capacity() <= limit);
+            assert_eq!(text, "bcdef");
+        }
+        let response = feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        assert!(response.warning.is_none());
+        assert_eq!(engine.record.capacity(), 0);
+        assert!(!engine.repeat_is_refused());
+        caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('.'));
+        assert_eq!(text, "cdef");
+    }
+
+    #[test]
+    fn vi_exact_recording_limit_repeats_as_one_edit() {
+        let mut engine = ViEngine::new();
+        let mut text = "abc".to_owned();
+        let mut caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('i'));
+        for _ in 0..MAX_VI_RECORDING_KEYS - 3 {
+            assert!(feed(&mut engine, &mut text, &mut caret, ViKey::Ctrl('a'))
+                .warning
+                .is_none());
+        }
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('😀'));
+        let response = feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        assert!(response.warning.is_none());
+        let LastChange::Recorded(keys) = &engine.last_change else {
+            panic!("exact-budget change must remain repeatable");
+        };
+        assert_eq!(keys.len(), MAX_VI_RECORDING_KEYS);
+        assert!(keys.capacity() <= MAX_VI_RECORDING_KEYS);
+        let response = feed(&mut engine, &mut text, &mut caret, ViKey::Char('.'));
+        assert!(matches!(response.action, ViAction::Edit(ref edits) if edits.len() == 1));
+        assert!(response.warning.is_none());
+        assert_eq!(text, "😀😀abc");
+        assert_eq!(engine.record.capacity(), 0);
+    }
+
+    #[test]
+    fn vi_recording_counts_escape_and_warns_without_refusing_the_edit() {
+        let mut engine = ViEngine::new();
+        let mut text = String::new();
+        let mut caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('i'));
+        for _ in 0..MAX_VI_RECORDING_KEYS - 2 {
+            feed(&mut engine, &mut text, &mut caret, ViKey::Ctrl('a'));
+        }
+        let typed = feed(&mut engine, &mut text, &mut caret, ViKey::Char('X'));
+        assert!(matches!(typed.action, ViAction::Edit(_)));
+        assert!(typed.warning.is_none());
+        let escaped = feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        assert_eq!(escaped.action, ViAction::None);
+        assert!(escaped.warning.is_some());
+        assert_eq!(text, "X");
+        assert!(engine.repeat_is_refused());
+        assert_eq!(engine.record.capacity(), 0);
+    }
+
+    #[test]
+    fn vi_oversized_change_refuses_stale_repeat_and_recovers_without_a_count_prefix() {
+        let mut engine = ViEngine::new();
+        let mut text = "abcdef".to_owned();
+        let mut caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('x'));
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('i'));
+        for _ in 0..MAX_VI_RECORDING_KEYS {
+            feed(&mut engine, &mut text, &mut caret, ViKey::Ctrl('a'));
+        }
+        let typed = feed(&mut engine, &mut text, &mut caret, ViKey::Char('Z'));
+        assert!(matches!(typed.action, ViAction::Edit(_)));
+        assert!(typed.warning.is_some());
+        assert!(engine.repeat_is_refused());
+        assert!(matches!(engine.last_change, LastChange::OverLimit));
+        feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('2'));
+        let before = (text.clone(), caret);
+        let repeated = feed(&mut engine, &mut text, &mut caret, ViKey::Char('.'));
+        let ViAction::Refused(error) = repeated.action else {
+            panic!("must refuse rather than replay a truncated or older change");
+        };
+        assert!(error.detail().contains(&MAX_VI_RECORDING_KEYS.to_string()));
+        assert_eq!((text.clone(), caret), before);
+        assert!(!engine.is_pending());
+        assert!(engine.record.is_empty());
+
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('x'));
+        assert!(!engine.repeat_is_refused());
+        assert_eq!(text, "bcdef");
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('.'));
+        assert_eq!(text, "cdef");
+    }
+
+    #[test]
+    fn vi_oversized_visual_change_warns_only_when_it_edits() {
+        for visual in ['v', 'V'] {
+            let mut engine = ViEngine::new();
+            let mut text = "abc\ndef".to_owned();
+            let mut caret = 0;
+            feed(&mut engine, &mut text, &mut caret, ViKey::Char(visual));
+            for _ in 0..MAX_VI_RECORDING_KEYS {
+                assert!(feed(&mut engine, &mut text, &mut caret, ViKey::Char('l'))
+                    .warning
+                    .is_none());
+            }
+            let deleted = feed(&mut engine, &mut text, &mut caret, ViKey::Char('d'));
+            assert!(matches!(deleted.action, ViAction::Edit(_)));
+            assert!(deleted.warning.is_some());
+            assert_eq!(engine.record.capacity(), 0);
+            let before = text.clone();
+            let repeated = feed(&mut engine, &mut text, &mut caret, ViKey::Char('.'));
+            assert!(matches!(repeated.action, ViAction::Refused(_)));
+            assert_eq!(text, before);
+        }
+    }
+
+    #[test]
+    fn vi_oversized_visual_yank_preserves_the_previous_repeat() {
+        let mut engine = ViEngine::new();
+        let mut text = "abcdef".to_owned();
+        let mut caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('x'));
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('v'));
+        for _ in 0..MAX_VI_RECORDING_KEYS {
+            feed(&mut engine, &mut text, &mut caret, ViKey::Char('l'));
+        }
+        let yanked = feed(&mut engine, &mut text, &mut caret, ViKey::Char('y'));
+        assert_eq!(yanked.action, ViAction::None);
+        assert!(yanked.warning.is_none());
+        assert!(!engine.repeat_is_refused());
+        assert_eq!(engine.record.capacity(), 0);
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('.'));
+        assert_eq!(text, "cdef");
+    }
+
+    #[test]
+    fn vi_replace_churn_warns_once_and_keeps_editing_after_recording_exhaustion() {
+        let mut engine = ViEngine::new();
+        let mut text = "abc".to_owned();
+        let mut caret = 0;
+        let mut notices = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('R'));
+        for _ in 0..MAX_VI_RECORDING_KEYS {
+            for key in [ViKey::Char('Z'), ViKey::Backspace] {
+                let response = feed(&mut engine, &mut text, &mut caret, key);
+                assert!(!matches!(response.action, ViAction::Refused(_)));
+                notices += usize::from(response.warning.is_some());
+            }
+            assert_eq!(text, "Zbc");
+            assert!(engine.record.capacity() <= MAX_VI_RECORDING_KEYS);
+        }
+        let edited = feed(&mut engine, &mut text, &mut caret, ViKey::Char('Q'));
+        assert!(matches!(edited.action, ViAction::Edit(_)));
+        assert!(edited.warning.is_none());
+        assert_eq!(text, "Qbc");
+        feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        assert_eq!(notices, 1);
+        assert!(engine.repeat_is_refused());
+        assert_eq!(engine.record.capacity(), 0);
+    }
+
+    #[test]
+    fn vi_abandoned_visual_recording_releases_exceptional_capacity_below_the_limit() {
+        let mut engine = ViEngine::new();
+        let mut text = "abc".to_owned();
+        let mut caret = 0;
+        feed(&mut engine, &mut text, &mut caret, ViKey::Char('v'));
+        for _ in 0..MAX_VI_RECORDING_KEYS / 2 {
+            feed(&mut engine, &mut text, &mut caret, ViKey::Char('l'));
+        }
+        assert!(engine.record.capacity() > SMALL_RECORDING_CAPACITY);
+        let response = feed(&mut engine, &mut text, &mut caret, ViKey::Escape);
+        assert!(response.warning.is_none());
+        assert_eq!(engine.record.capacity(), 0);
+        assert_eq!(text, "abc");
+        assert!(!engine.repeat_is_refused());
+    }
 
     #[test]
     fn dot_repeats_a_simple_delete() {
