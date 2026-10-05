@@ -351,8 +351,19 @@ because the user cannot tell what happened to their text.
 The initial matrix is: mode entry and exit (`i I a A o O R v V Esc`), motion
 (`h j k l w W b B e E 0 ^ $ gg G {count}G`), counts on motions, edits, and
 operator-motion pairs, operators and edits (`d c y` with supported motions,
-`dd cc yy x X r s D C J p P`), undo and repeat (`u`, `Ctrl-r`, `.`) through the
+`dd cc yy x X r s D C J p P`), undo (`u`, `Ctrl-r`) through the
 **shared** undo history, and characterwise/linewise visual selection — all Full.
+Dot-repeat (`.`) is Partial: each change records at most 8,192 keystrokes,
+including mode entry/exit, Backspace and Visual motion. Exceeding that budget
+releases the recording but never stops ordinary editing or discards committed
+text. An oversized actual change produces a nonfatal command-area warning;
+`.` refuses it without replaying a truncated or older change. A smaller
+completed change restores repeat. Pure navigation, abandoned selection and
+yank preserve the previous change and do not warn. Exceptional abandoned
+recording capacity is released; at most 32 keys of scratch capacity may be
+reused. Replay borrows the bounded key sequence, and remains one shared-document
+undo transaction. This key budget is not a bound on replay scratch text,
+registers or document undo.
 Search (`/ ? n N * #`) and the `iw aw iW aW` text objects are Partial. The
 unnamed register plus ordinary platform copy and paste is Partial; named,
 numbered, expression, and black-hole registers are unsupported. Blockwise
@@ -539,6 +550,12 @@ existing Markdown rendering stays out of scope.
   read-only line-oriented comparison, Save As destination binding to an
   already-open document, and the vi subset's motions, operators, and `:` command
   convergence.
+- **Vi recording refinement:** `EDIT-07` now has deterministic engine and
+  production-view regressions for the exact 8,192-key boundary, Insert/Replace
+  and Visual churn, capacity retirement, visible nonfatal warnings, refusal of
+  partial/stale repeat, pure-navigation/yank preservation, next-change recovery,
+  and repeated edits as one shared undo transaction. Native keyboard/IME,
+  narrow-pane readability and screen-reader delivery remain in `CP-15`.
 - **Native/manual evidence required:** a new manual scenario registered with the
   implementation, covering real watcher behaviour, atomic replacement,
   permission preservation, and remote disconnect/reconnect on each platform.
