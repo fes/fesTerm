@@ -39,7 +39,8 @@ $debugCommands = 'sxd -c2 ".echo NATIVE_ACCESS_VIOLATION; .exr -1; .ecxr; kv; ~*
 $compiler = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path -LiteralPath $compiler)) { throw 'The installed Framework C# compiler is required for exit-capture calibration.' }
 $exitProbe = Join-Path $env:RUNNER_TEMP 'festerm-exit-probe.exe'
-& $compiler /nologo /platform:x64 "/out:$exitProbe" "$PSScriptRoot/diagnose-windows-exit-probe.cs"
+$probeSource = (Resolve-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'scripts/diagnose-windows-exit-probe.cs')).Path
+& $compiler /nologo /platform:x64 "/out:$exitProbe" $probeSource
 if ($LASTEXITCODE -ne 0) { throw 'Exit-capture calibration build failed.' }
 & $debugger -g -G -o -logo "$ResultDirectory/exit-probe.log" -c $debugCommands $exitProbe 2>&1 |
     Tee-Object -FilePath "$ResultDirectory/exit-probe-console.log"
