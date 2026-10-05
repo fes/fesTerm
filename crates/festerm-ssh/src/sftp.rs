@@ -253,6 +253,10 @@ pub enum SftpSessionError {
         temporary: String,
         destination: String,
     },
+    TransferFailedWithIncompleteCleanup {
+        operation_error: Box<SftpSessionError>,
+        cleanup_error: Box<SftpSessionError>,
+    },
     LocalOperationFailed {
         operation: &'static str,
         path: String,
@@ -313,6 +317,9 @@ impl fmt::Display for SftpSessionError {
                 formatter,
                 "transfer commit could not be confirmed; temporary output was not removed; inspect temporary and destination paths: {temporary} -> {destination}"
             ),
+            Self::TransferFailedWithIncompleteCleanup { operation_error, cleanup_error } => {
+                write!(formatter, "{operation_error}; cleanup is incomplete: {cleanup_error}")
+            }
             Self::LocalOperationFailed {
                 operation,
                 path,
@@ -535,6 +542,16 @@ impl SftpSession {
         Err(SftpSessionError::PartialFileOwnershipUnconfirmed {
             path: partial.path.display(),
         })
+    }
+
+    async fn finish_failed_transfer(&mut self, error: SftpSessionError) -> SftpSessionError {
+        match self.cleanup_interrupted_transfer().await {
+            Ok(()) => error,
+            Err(cleanup_error) => SftpSessionError::TransferFailedWithIncompleteCleanup {
+                operation_error: Box::new(error),
+                cleanup_error: Box::new(cleanup_error),
+            },
+        }
     }
 
     /// Parses and runs one text-mode SFTP command line.
@@ -934,10 +951,7 @@ impl SftpSession {
                     byte_count,
                 })
             }
-            Err(error) => {
-                self.cleanup_interrupted_transfer().await?;
-                Err(error)
-            }
+            Err(error) => Err(self.finish_failed_transfer(error).await),
         }
     }
 
@@ -1027,10 +1041,7 @@ impl SftpSession {
                     byte_count,
                 })
             }
-            Err(error) => {
-                self.cleanup_interrupted_transfer().await?;
-                Err(error)
-            }
+            Err(error) => Err(self.finish_failed_transfer(error).await),
         }
     }
 
@@ -1224,13 +1235,7 @@ impl SftpSession {
         drop(local_file);
         drop(remote_file);
 
-        match transfer_result {
-            Ok(byte_count) => Ok(byte_count),
-            Err(error) => {
-                self.cleanup_interrupted_transfer().await?;
-                Err(error)
-            }
-        }
+        transfer_result
     }
 
     pub(crate) async fn download_remote_file_exact<F>(
@@ -1288,13 +1293,7 @@ impl SftpSession {
         drop(local_file);
         drop(remote_file);
 
-        match transfer_result {
-            Ok(byte_count) => Ok(byte_count),
-            Err(error) => {
-                self.cleanup_interrupted_transfer().await?;
-                Err(error)
-            }
-        }
+        transfer_result
     }
 }
 
@@ -2020,6 +2019,37 @@ mod tests {
             session
                 .begin_partial_file(SftpPath::local(root.join("unrelated.bin")))
                 .unwrap();
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn failed_text_transfer_reports_original_error_and_preserved_output() {
+        let root = unique_test_directory("failed-transfer-preserved-output");
+        create_directory(&root);
+        let path = root.join("partial.bin");
+        stdfs::write(&path, b"incomplete output").unwrap();
+        test_runtime().block_on(async {
+            let (mut session, server) = partial_file_session(PartialFile {
+                path: SftpPath::local(path.clone()),
+                owned: true,
+                commit_destination: None,
+            })
+            .await;
+            let error = session
+                .finish_failed_transfer(SftpSessionError::RemoteOperationFailed {
+                    operation: "download",
+                    path: "/fixture/source.bin".to_owned(),
+                    reason: "controlled read failure".to_owned(),
+                })
+                .await;
+            let detail = error.to_string();
+            assert!(detail.contains("controlled read failure"));
+            assert!(detail.contains("/fixture/source.bin"));
+            assert!(detail.contains("file was not removed"));
+            assert!(detail.contains("partial.bin"));
+            assert_eq!(stdfs::read(&path).unwrap(), b"incomplete output");
+            assert!(session.partial_file.is_none());
             server.abort();
         });
     }

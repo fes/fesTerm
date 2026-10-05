@@ -261,6 +261,7 @@ correctness and easier to explain honestly in the UI.
   regressions include
   `text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file`,
   `text_sftp_runtime_reports_completion_without_waiting_for_blocking_io`,
+  `failed_text_transfer_reports_original_error_and_preserved_output`,
   `cancellation_cleanup_preserves_a_replaced_local_leaf`, and the Unix-only
   `cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement`.
 - **Native/manual evidence required:** Manual fixture evidence is required for

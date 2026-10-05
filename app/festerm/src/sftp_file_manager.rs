@@ -1600,6 +1600,12 @@ struct SftpWorkerOwner {
     reporter: SftpCleanupReporter,
 }
 
+struct SftpWorkerNotifications {
+    events: mpsc::Sender<WorkerEvent>,
+    repaint: egui::Context,
+    reporter: SftpCleanupReporter,
+}
+
 pub(crate) struct SftpFileManagerTab {
     pub(crate) label: String,
     pub(crate) profile_identifier: Option<String>,
@@ -3806,6 +3812,10 @@ impl SftpFileManagerTab {
     fn apply_transfer_event(&mut self, event: SftpTransferEvent) {
         match event {
             SftpTransferEvent::BatchQueued { .. } | SftpTransferEvent::BatchFinished { .. } => {}
+            SftpTransferEvent::CleanupIncomplete { error } => {
+                self.operation_error =
+                    Some(("SFTP cleanup is incomplete".to_owned(), error.to_string()));
+            }
             SftpTransferEvent::ItemStarted {
                 transfer_id,
                 source,
@@ -4082,8 +4092,11 @@ async fn run_worker(
         authentication,
         known_host_fingerprint,
         command_receiver,
-        event_sender,
-        repaint.clone(),
+        SftpWorkerNotifications {
+            events: event_sender,
+            repaint: repaint.clone(),
+            reporter: reporter.clone(),
+        },
         &mut transfers,
     );
     let _ = wait_for_sftp_tab_owner(work, &mut shutdown).await;
@@ -4103,10 +4116,14 @@ async fn run_worker_operations(
     authentication: SftpFileManagerAuthentication,
     known_host_fingerprint: Option<String>,
     mut command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
-    event_sender: mpsc::Sender<WorkerEvent>,
-    repaint: egui::Context,
+    notifications: SftpWorkerNotifications,
     transfers: &mut Option<SftpTransferManager>,
 ) {
+    let SftpWorkerNotifications {
+        events: event_sender,
+        repaint,
+        reporter,
+    } = notifications;
     let mut session_known_host_fingerprint = known_host_fingerprint;
     // Retry the initial connect (both the browsing session and the
     // dedicated transfer session) in place, instead of giving up and
@@ -4411,7 +4428,14 @@ async fn run_worker_operations(
             }
             transfer_event = transfer_manager.recv_event() => {
                 let Some(transfer_event) = transfer_event else { break; };
-                let _ = event_sender.send(WorkerEvent::Transfer(transfer_event));
+                match transfer_event {
+                    SftpTransferEvent::CleanupIncomplete { error } => {
+                        reporter.report(target.label.clone(), error, &repaint);
+                    }
+                    event => {
+                        let _ = event_sender.send(WorkerEvent::Transfer(event));
+                    }
+                }
                 repaint.request_repaint();
             }
             _ = liveness_interval.tick() => {
@@ -6645,6 +6669,21 @@ pub(crate) mod tests {
             festerm_ssh::SftpSessionError::CancellationCleanupTimedOut,
             &context,
         );
+    }
+
+    #[test]
+    fn gui_sftp_preserved_output_notice_reports_a_recovery_path() {
+        let mut tab = test_tab();
+        tab.apply_transfer_event(SftpTransferEvent::CleanupIncomplete {
+            error: festerm_ssh::SftpSessionError::PartialFileOwnershipUnconfirmed {
+                path: "/fixture/report.festerm-part".to_owned(),
+            },
+        });
+        assert!(tab.transfer_drawer.items.is_empty());
+        let (summary, detail) = tab.operation_error.as_ref().unwrap();
+        assert_eq!(summary, "SFTP cleanup is incomplete");
+        assert!(detail.contains("/fixture/report.festerm-part"));
+        assert!(detail.contains("file was not removed"));
     }
 
     #[test]

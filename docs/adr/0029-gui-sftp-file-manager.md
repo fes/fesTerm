@@ -241,6 +241,10 @@ uses a bounded notice queue in the current owning window or content-free
 diagnostics if delivery is unavailable. Final process exit can interrupt
 asynchronous cleanup; it is not a rollback guarantee.
 
+Preserved-output notices do not change collision or cancellation control flow.
+A destination appearing during copying still offers Replace, Skip and Keep
+Both, without silently discarding the completed temporary.
+
 ### The GUI file-manager tab owns an explicit UI state machine
 
 `SftpFileManagerTab` will own non-terminal surface state for:
@@ -372,7 +376,11 @@ core transfer workflow.
   `owner_shutdown_interrupts_copy_and_reports_uncertain_partial_output`,
   `cancellation_cleanup_preserves_a_confirmed_remote_partial_file`,
   `owner_shutdown_during_replace_preserves_the_completed_temporary_for_recovery`,
-  and `gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window`.
+  `gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window`,
+  `late_collision_preserves_and_reports_output_without_losing_any_decision`,
+  `cancelled_copy_reports_preserved_output_and_keeps_cancelled_state`,
+  `live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state`,
+  and `gui_sftp_preserved_output_notice_reports_a_recovery_path`.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and

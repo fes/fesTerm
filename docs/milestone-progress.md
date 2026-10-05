@@ -94,9 +94,18 @@ accessibility and sibling-window behavior remain native evidence in `SFTP-01`.
 This repairs a concrete ownership defect, not a demonstrated cause of #297.
 
 Review regressions reproduced three unsafe/unproven cleanup outcomes and one
-runtime-completion timeout before the fixes. The repaired suite contains 125
-SSH unit cases on Unix (124 on Windows; the ancestor-symlink fixture is
-Unix-only); the local Unix unit suite and all five owned loopback cases pass.
+runtime-completion timeout before the fixes. A follow-up reliability gate also
+reproduced a late-collision failure caused by treating preserved output as a
+terminal cleanup error. The ordered cleanup notice is now separate from
+collision/cancellation state; all three late conflict decisions preserve the
+temporary and remain usable. A canceled copy also reports retained output before
+its ordered Cancelled event, without becoming a failed transfer. A real owned
+SFTP copy reproduced error masking below the mock backend; exact-copy helpers
+now retain the ledger and original cause for the manager to report separately.
+Text failures preserve both original and cleanup errors. The repaired
+suite contains 128 SSH unit cases on Unix (127 on Windows; the ancestor-symlink
+fixture is Unix-only); the local Unix unit suite and all six owned loopback
+cases pass.
 A controlled, already-started
 blocking task proves completion is published without waiting for that task;
 it is released and joined by the fixture, not presented as forced I/O abortion.

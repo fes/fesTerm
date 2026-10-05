@@ -72,6 +72,13 @@ starts, the completed temporary is not removed: inspect both temporary and
 destination because an already-sent rename may still complete. Reported recovery
 files do not prevent unrelated transfers from proceeding.
 
+Preserving a temporary during a late destination collision does not abandon
+the collision workflow. Its incomplete-cleanup notice is separate from transfer
+state: Replace, Skip and Keep Both remain available, and cancellation remains
+cancellation rather than failing solely because a partial was retained.
+The transfer manager owns cleanup reporting separately from copy errors;
+text transfer failures report both the original cause and incomplete cleanup.
+
 Cleanup failures use the existing dismissible application error dialog in the
 tab's current window, even after the tab is gone. Its notification queue is
 bounded and never delays teardown. A full queue or closed window falls back to

@@ -325,6 +325,9 @@ pub enum SftpTransferEvent {
         total_bytes: Option<u64>,
     },
     Collision(SftpCollision),
+    CleanupIncomplete {
+        error: SftpSessionError,
+    },
     DestinationDirectoryRefreshRequested {
         batch_id: SftpTransferBatchId,
         transfer_id: SftpTransferId,
@@ -2135,7 +2138,7 @@ impl WorkerState {
                                     existing,
                                     allowed,
                                 )?;
-                                cleanup_temp_destination(backend).await?;
+                                self.cleanup_temporary_output(backend, event_sender).await?;
                                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                                 item.state = SftpTransferState::AwaitingCollision(collision.id);
                                 item.active_collision = Some(collision.id);
@@ -2172,17 +2175,37 @@ impl WorkerState {
                         self.ready.push_front(transfer_id);
                     }
                     Err(CopyFileError::Cancelled) => {
-                        cleanup_temp_destination(backend).await?;
+                        self.cleanup_temporary_output(backend, event_sender).await?;
                         self.finish_cancelled(transfer_id, event_sender).await;
                     }
                     Err(CopyFileError::Operation(error)) => {
-                        cleanup_temp_destination(backend).await?;
+                        self.cleanup_temporary_output(backend, event_sender).await?;
                         return Err(error);
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    async fn cleanup_temporary_output<B: TransferBackend>(
+        &mut self,
+        backend: &mut B,
+        event_sender: &Sender<SftpTransferEvent>,
+    ) -> Result<(), SftpSessionError> {
+        match backend.cleanup_interrupted_copy().await {
+            Err(error @ SftpSessionError::PartialFileOwnershipUnconfirmed { .. }) => {
+                tracing::warn!(
+                    target: "festerm::sftp",
+                    "SFTP temporary output was preserved; manual inspection is required"
+                );
+                eprintln!("fesTerm: SFTP cleanup is incomplete: {error}");
+                self.emit_event(event_sender, SftpTransferEvent::CleanupIncomplete { error })
+                    .await;
+                Ok(())
+            }
+            result => result,
+        }
     }
 
     async fn emit_started_if_needed(
@@ -2549,12 +2572,6 @@ fn proposed_keep_both_destination(destination: &SftpPath) -> Result<SftpPath, Sf
     )))
 }
 
-async fn cleanup_temp_destination<B: TransferBackend>(
-    backend: &mut B,
-) -> Result<(), SftpSessionError> {
-    backend.cleanup_interrupted_copy().await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2597,6 +2614,7 @@ mod tests {
         delay_per_chunk_ms: u64,
         cleanup_delay_ms: u64,
         retain_uncertain_partial: bool,
+        late_collision: Option<(PathBuf, Vec<u8>)>,
         partial_file: Option<PathBuf>,
         commit_destination: Option<PathBuf>,
         replacement_removed: Option<Arc<Notify>>,
@@ -2772,6 +2790,9 @@ mod tests {
                         error,
                     ))
                 })?;
+                if let Some((path, content)) = self.late_collision.take() {
+                    fs::write(&path, content).await.unwrap();
+                }
                 if let Some(finished) = &self.copy_finished {
                     finished.notify_one();
                 }
@@ -3039,6 +3060,143 @@ mod tests {
         assert_eq!(stdfs::read(&unrelated).unwrap(), b"not this transfer");
         assert!(!destination.join("source.bin").exists());
         assert_eq!(stdfs::read_dir(&destination).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn late_collision_preserves_and_reports_output_without_losing_any_decision() {
+        for decision in [
+            SftpCollisionDecision::Replace,
+            SftpCollisionDecision::Skip,
+            SftpCollisionDecision::KeepBoth,
+        ] {
+            let root = unique_test_directory("late-collision-preserved-output");
+            recreate_directory(&root);
+            let source = root.join("source.bin");
+            let destination = root.join("destination");
+            stdfs::create_dir(&destination).unwrap();
+            stdfs::write(&source, b"copied contents").unwrap();
+            let final_path = destination.join("source.bin");
+            let preserved = destination.join("source.bin.festerm-part");
+            test_runtime().block_on(async {
+                let (commands, mut events, snapshot) = spawn_worker(TestBackend {
+                    retain_uncertain_partial: true,
+                    late_collision: Some((final_path.clone(), b"late collision".to_vec())),
+                    ..Default::default()
+                })
+                .await;
+                let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+                let (prior, collision) = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    next_collision(&mut events),
+                )
+                .await
+                .expect("preserving a temporary must not abandon a late collision");
+                assert!(prior.iter().any(|event| matches!(
+                    event,
+                    SftpTransferEvent::CleanupIncomplete {
+                        error: SftpSessionError::PartialFileOwnershipUnconfirmed { path },
+                    } if path == &display_path(&preserved)
+                )));
+                assert_eq!(
+                    snapshot.lock().unwrap().items[0].state,
+                    SftpTransferState::AwaitingCollision(collision.id)
+                );
+                assert_eq!(stdfs::read(&preserved).unwrap(), b"copied contents");
+                assert_eq!(stdfs::read(&final_path).unwrap(), b"late collision");
+                commands
+                    .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                        collision_id: collision.id,
+                        decision,
+                        scope: SftpCollisionScope::ThisItem,
+                    }))
+                    .await
+                    .unwrap();
+                let completed = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    collect_until_batch_finished(&mut events, batch.batch_id),
+                )
+                .await
+                .unwrap();
+                assert!(!completed
+                    .iter()
+                    .any(|event| matches!(event, SftpTransferEvent::ItemFailed { .. })));
+                if decision == SftpCollisionDecision::Skip {
+                    assert!(completed
+                        .iter()
+                        .any(|event| matches!(event, SftpTransferEvent::ItemSkipped { .. })));
+                } else {
+                    let committed = completed
+                        .iter()
+                        .find_map(|event| match event {
+                            SftpTransferEvent::ItemCompleted { destination, .. } => {
+                                Some(real_path(destination))
+                            }
+                            _ => None,
+                        })
+                        .expect("approved copy must still complete");
+                    assert_eq!(stdfs::read(committed).unwrap(), b"copied contents");
+                }
+            });
+            assert_eq!(stdfs::read(&preserved).unwrap(), b"copied contents");
+            if decision != SftpCollisionDecision::Replace {
+                assert_eq!(stdfs::read(&final_path).unwrap(), b"late collision");
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_copy_reports_preserved_output_and_keeps_cancelled_state() {
+        let root = unique_test_directory("cancelled-copy-preserved-output");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, vec![42; 1024 * 1024]).unwrap();
+        test_runtime().block_on(async {
+            let (commands, mut events, _) = spawn_worker(TestBackend {
+                delay_per_chunk_ms: 10,
+                retain_uncertain_partial: true,
+                ..Default::default()
+            })
+            .await;
+            let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while let Some(event) = events.recv().await {
+                    if matches!(event, SftpTransferEvent::ItemProgress { .. }) {
+                        return;
+                    }
+                }
+                panic!("copy must start before cancellation");
+            })
+            .await
+            .unwrap();
+            commands
+                .send(WorkerCommand::CancelTransfer(batch.transfer_ids[0]))
+                .await
+                .unwrap();
+            let events = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                collect_until_batch_finished(&mut events, batch.batch_id),
+            )
+            .await
+            .unwrap();
+            let notice = events
+                .iter()
+                .position(|event| matches!(event, SftpTransferEvent::CleanupIncomplete { .. }))
+                .expect("retained output must be reported");
+            let cancelled = events
+                .iter()
+                .position(|event| matches!(event, SftpTransferEvent::ItemCancelled { .. }))
+                .expect("retained output must not turn cancellation into failure");
+            assert!(notice < cancelled);
+            assert!(!events
+                .iter()
+                .any(|event| matches!(event, SftpTransferEvent::ItemFailed { .. })));
+        });
+        assert!(!destination.join("source.bin").exists());
+        let partial = stdfs::read(destination.join("source.bin.festerm-part")).unwrap();
+        assert!(!partial.is_empty());
+        assert!(partial.len() < 1024 * 1024);
     }
 
     #[test]

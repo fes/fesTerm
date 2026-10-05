@@ -517,6 +517,7 @@
         "text_sftp_runtime_reports_completion_without_waiting_for_blocking_io",
         "cancellation_cleanup_refuses_an_unconfirmed_destination_without_removing_it",
         "cancellation_cleanup_preserves_a_confirmed_local_partial_file",
+        "failed_text_transfer_reports_original_error_and_preserved_output",
         "cancellation_cleanup_preserves_a_replaced_local_leaf",
         "cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement"
       ],
@@ -1742,6 +1743,10 @@
         "gui_sftp_owner_signal_survives_a_completed_connect_phase",
         "gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window",
         "gui_sftp_cleanup_notices_are_bounded_without_waiting_for_a_closed_window",
+        "gui_sftp_preserved_output_notice_reports_a_recovery_path",
+        "late_collision_preserves_and_reports_output_without_losing_any_decision",
+        "cancelled_copy_reports_preserved_output_and_keeps_cancelled_state",
+        "live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state",
         "owner_shutdown_interrupts_copy_and_reports_uncertain_partial_output",
         "cancellation_cleanup_preserves_a_confirmed_local_partial_file",
         "cancellation_cleanup_preserves_a_confirmed_remote_partial_file",
