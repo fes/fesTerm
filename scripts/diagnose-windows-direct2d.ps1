@@ -9,11 +9,13 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 New-Item -ItemType Directory -Path $ResultDirectory -Force | Out-Null
 $started = Get-Date
-$messages = @(& cargo test --locked -p festerm-windows-direct2d -p festerm-ui-egui --lib --no-run --message-format=json --color never --config 'profile.test.package.festerm-windows-direct2d.debug=2')
+$messages = @(& cargo test --locked --workspace --no-run --message-format=json --color never --config 'profile.test.package.festerm-windows-direct2d.debug=2')
 if ($LASTEXITCODE -ne 0) { throw 'Native test build failed.' }
 $executables = @($messages | ForEach-Object {
     $message = $_ | ConvertFrom-Json
-    if ($message.reason -eq 'compiler-artifact' -and $message.profile.test -and $message.executable) {
+    if ($message.reason -eq 'compiler-artifact' -and $message.profile.test -and $message.executable -and
+        $message.target.name -in @('festerm_windows_direct2d', 'festerm_ui_egui') -and
+        $message.target.kind -contains 'lib') {
         [PSCustomObject] @{ name = $message.target.name; path = $message.executable }
     }
 })
@@ -49,12 +51,12 @@ for ($iteration = 1; $iteration -le $iterations; $iteration++) {
     }
     & $debugger -g -G -o -logo $output `
         -c 'sxd -c2 ".echo NATIVE_ACCESS_VIOLATION; .exr -1; .ecxr; kv; ~* k 20; lm; q" av; g' `
-        $binary @testArguments
+        $binary @testArguments 2>&1 | Tee-Object -FilePath "$ResultDirectory/native-console-$iteration.log"
     $exitCode = $LASTEXITCODE
     @{ iteration = $iteration; exit_code = $exitCode } |
         ConvertTo-Json | Set-Content -LiteralPath "$ResultDirectory/iteration-$iteration.json"
     $crashed = Select-String -LiteralPath $output -Pattern '^NATIVE_ACCESS_VIOLATION' -Quiet
-    $failed = Select-String -LiteralPath $output -Pattern 'test result: FAILED' -Quiet
+    $failed = Select-String -LiteralPath "$ResultDirectory/native-console-$iteration.log" -Pattern 'test result: FAILED' -Quiet
     if ($exitCode -ne 0 -or $crashed -or $failed) {
         # Query only crash records for this synthetic test executable.
         $events = @(Get-WinEvent -FilterHashtable @{
@@ -67,5 +69,8 @@ for ($iteration = 1; $iteration -le $iterations; $iteration++) {
         $events | Select-Object TimeCreated, Id, Message |
             ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$ResultDirectory/crash-events.json"
         throw "Native test iteration $iteration failed with exit $exitCode; no green rerun replaces it."
+    }
+    if (-not (Select-String -LiteralPath "$ResultDirectory/native-console-$iteration.log" -Pattern 'test result: ok\. [1-9][0-9]* passed' -Quiet)) {
+        throw "Iteration $iteration did not report successful nonzero test execution."
     }
 }
