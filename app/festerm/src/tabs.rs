@@ -2564,6 +2564,17 @@ pub struct AppState {
     session_name_validation_failure: Option<ConfigError>,
 }
 
+impl Drop for AppState {
+    fn drop(&mut self) {
+        let mut documents = self.documents.borrow_mut();
+        for tab in &self.tabs {
+            if let Some(document) = view_document(&tab.content) {
+                documents.release(document);
+            }
+        }
+    }
+}
+
 impl AppState {
     /// Builds the `AppState` fields derived purely from `Configuration`'s
     /// interface settings (chip layout, toggles, keyboard bindings, ...),

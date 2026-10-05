@@ -26,6 +26,22 @@ that queue. These are control/lifetime regressions, not a reproduction of
 multi-day CPU growth in #297 or a universal 10 ms worker-exit claim. Native
 close/disconnect surfaces and usability remain separate validation.
 
+## Retiring editor-owned widget history when its view ends
+
+The allocation/lifecycle audit in [#320](https://github.com/fes/fesTerm/issues/320)
+found that the shared GUI context retained closed editor widget states,
+including a second full-text undo history outside the document's byte budget.
+The body now keeps only one widget baseline and at most egui's transient
+changing state, configured once rather than repeatedly clearing and copying
+the text on every pass. View teardown removes its body and small-field widget
+states; Find and command-field undo remain local while the view is alive.
+
+Production-widget regressions cover document undo/redo, small-field undo,
+text-state teardown and repeated view churn without retiring a sibling's
+state. This repairs a concrete editor lifetime defect, not the unproven
+multi-day terminal CPU-growth cause in #297; native caret/focus usability
+evidence remains CP-15.
+
 ## v0.9.2: consistent identity for native persistent shells
 
 This correctness patch makes newly created native persistent local shells
@@ -3788,3 +3804,19 @@ anchor and zoom, and does not send input, resize or daemon recovery controls.
 Deterministic coverage checks unchanged-row rebuilding, complete native
 pixel replacement, one-shot reuse recovery, command routing and Ctrl+L/Ctrl+R
 delivery. Native desktop feel remains separate manual evidence.
+
+## Closing a window without orphaning shared documents
+
+The allocation/lifecycle audit in [#320](https://github.com/fes/fesTerm/issues/320)
+found a mismatch between tab close and whole-window teardown: tab close released
+its document view, but dropping a secondary window did not. The primary window's
+shared registry could therefore keep text, undo and syntax state alive and
+continue checking documents nobody was viewing.
+
+Window-local application state now releases only the document views still in
+its tab list when that owner ends. Already-closed tabs are absent, and moved
+tabs belong to their destination, so neither is released twice. Model
+regressions reproduce the original retention and preserve sibling unsaved
+text/undo, moved tabs and primary/application teardown. Dirty-close decisions
+remain in the existing command policy; native close and multi-window usability
+evidence remain CP-13/CP-15 rather than being claimed by headless ownership tests.
