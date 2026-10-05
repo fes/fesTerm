@@ -1552,6 +1552,19 @@ impl SessionTab {
         }
     }
 
+    pub fn recovery_retry_message(&self) -> Option<&'static str> {
+        let Some(SessionLifecycle::Disconnected(error)) = self.controller.lifecycle() else {
+            return None;
+        };
+        (matches!(
+            self.inspector_transport,
+            InspectorTransport::Local {
+                persistence: Some(_)
+            }
+        ) && error.message() == festerm_sessiond::RECOVERY_RETRY_MESSAGE)
+            .then_some(festerm_sessiond::RECOVERY_RETRY_MESSAGE)
+    }
+
     /// The active SSH host-key request, if the transport is waiting for one.
     /// Local tabs never expose this UI state.
     pub fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {

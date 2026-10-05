@@ -675,7 +675,12 @@ unchanged active bidirectional bytes, admission after consuming a slot, and
 queued-handle closure with normal broker exit. Portable regressions cover
 1,024 refusal/consume/retry cycles, immediate ownership release, one adoption
 per turn under refill, independent bounded listener-failure delivery, and
-visible early-recovery disconnect guidance without adopting a snapshot.
+early-recovery disconnect guidance without adopting a snapshot. A production
+GUI regression now proves the guidance is visible in the viewport overlay and
+Inspector state message with Diagnostics closed, both Reconnect and Resume
+dispatch the same-tab recovery command, and accepting recovery removes stale
+guidance while preserving history. Only the known content-free recovery
+message is promoted; arbitrary backend details remain in Diagnostics.
 CP-11 still requires signed-package reconnect/focus, cross-user isolation and
 native usability evidence, including narrow-window readability of the retry
 guidance. These checks neither remove the existing 15-second adoption wait

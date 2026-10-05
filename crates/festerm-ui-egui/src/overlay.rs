@@ -44,7 +44,13 @@ const fn overlay_status(status: ChipStatus) -> bool {
 /// Shows a restrained, centered overlay describing `status` if it is
 /// non-nominal, returning the user's chosen action (if any) for this frame.
 /// Draws nothing and returns `None` for connected/starting/neutral states.
-pub fn show(ctx: &Context, status: ChipStatus, reconnect_available: bool) -> Option<OverlayAction> {
+/// The caller supplies only content-free primary guidance, not raw diagnostics.
+pub fn show(
+    ctx: &Context,
+    status: ChipStatus,
+    reconnect_available: bool,
+    disconnected_message: Option<&str>,
+) -> Option<OverlayAction> {
     if !overlay_status(status) {
         return None;
     }
@@ -59,6 +65,11 @@ pub fn show(ctx: &Context, status: ChipStatus, reconnect_available: bool) -> Opt
                 ui.set_max_width(260.0);
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new(status.accessible_label()).strong().small());
+                    if status == ChipStatus::Disconnected {
+                        if let Some(message) = disconnected_message {
+                            ui.label(RichText::new(message).small());
+                        }
+                    }
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if reconnect_available
@@ -90,7 +101,7 @@ mod tests {
             .with_size(egui::vec2(400.0, 300.0))
             .build_ui_state(
                 move |ui, action: &mut Option<OverlayAction>| {
-                    if let Some(clicked) = show(ui.ctx(), status, reconnect_available) {
+                    if let Some(clicked) = show(ui.ctx(), status, reconnect_available, None) {
                         *action = Some(clicked);
                     }
                 },

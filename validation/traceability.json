@@ -1900,6 +1900,8 @@
         "windows_attachment_queue_empty_turn_does_not_invoke_adoption",
         "windows_attachment_queue_native_overflow_keeps_active_bytes_and_allows_retry",
         "initial_recovery_eof_reports_retryable_disconnect_without_adoption",
+        "native_recovery_disconnect_guidance_is_visible_beside_reconnect_and_resume",
+        "native_recovery_primary_ui_does_not_promote_raw_disconnect_details",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
         "native_daemon_snapshot_matches_fresh_terminal_after_large_output",
         "native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable",

@@ -2109,7 +2109,9 @@ the previous connection is discarded rather than replayed into the resumed
 shell, and accepted recovery returns keyboard focus to the terminal.
 An early recovery disconnect explains that the daemon may be busy or shutting
 down and directs the user to retry Reconnect/Resume. It does not assert a
-particular refusal cause or change the recovery protocol.
+particular refusal cause or change the recovery protocol. This content-free
+guidance is visible in the viewport overlay and the Inspector's state message
+without expanding Diagnostics. Other raw backend details remain in Diagnostics.
 
 Reconnection must not imply that remote process state survived. Unless
 continuity is guaranteed, the UI describes reconnecting to the host rather

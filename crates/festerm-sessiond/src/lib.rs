@@ -81,6 +81,9 @@ impl<T: Read + Write + Send> SessionStream for T {}
 
 const RECOVERY_DISCONNECT_MESSAGE: &str =
     "persistent-session daemon closed before recovery completed; it may be busy or shutting down";
+/// Content-free guidance suitable for the visible GUI recovery controls.
+pub const RECOVERY_RETRY_MESSAGE: &str =
+    "persistent-session daemon closed before recovery completed; it may be busy or shutting down; retry Reconnect or Resume";
 
 struct ConnectedSession {
     stream: Box<dyn SessionStream>,
@@ -1527,7 +1530,7 @@ fn client_worker(
         Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
             shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
                 SessionErrorKind::Output,
-                format!("{RECOVERY_DISCONNECT_MESSAGE}; retry Reconnect or Resume"),
+                RECOVERY_RETRY_MESSAGE,
             )));
             let _ = completion.send(ShutdownResult::AlreadyStopped);
             return;
@@ -2825,10 +2828,7 @@ mod client_worker_tests {
         loop {
             let lifecycle = session.lifecycle();
             if let SessionLifecycle::Disconnected(error) = lifecycle {
-                assert_eq!(
-                    error.message(),
-                    "persistent-session daemon closed before recovery completed; it may be busy or shutting down; retry Reconnect or Resume"
-                );
+                assert_eq!(error.message(), RECOVERY_RETRY_MESSAGE);
                 break;
             }
             assert!(!matches!(lifecycle, SessionLifecycle::Running));

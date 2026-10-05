@@ -496,7 +496,12 @@ installer/application cleanup.
   exercises the production broker, preserves active bidirectional bytes at
   saturation, fences retry admission and verifies queued-handle teardown.
   `initial_recovery_eof_reports_retryable_disconnect_without_adoption`
-  proves visible retry guidance without recovery adoption on every platform.
+  proves lifecycle retry guidance without recovery adoption on every platform.
+  `native_recovery_disconnect_guidance_is_visible_beside_reconnect_and_resume`
+  proves the production GUI displays that guidance with Diagnostics closed in
+  both the viewport overlay and Inspector, dispatches same-tab recovery, and
+  removes stale guidance after retry. The primary UI does not promote arbitrary
+  backend error details.
   `native_discovery_churn_preserves_process_and_rejects_replaced_generations`
   verifies isolated batches, same-child PID after fresh post-reattach input,
   natural exit removal and rejection of same-name replacements. Registry tests

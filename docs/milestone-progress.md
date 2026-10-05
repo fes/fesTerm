@@ -19,6 +19,13 @@ joining workers. Early recovery EOF gives factual busy/shutdown and
 Reconnect/Resume guidance without adding a wire protocol or blocking refusal
 write.
 
+Review caught that the lifecycle reason was initially hidden behind
+Diagnostics. The known content-free guidance is now shown directly beside
+Reconnect in the viewport and above Resume in the Inspector. A compiled
+production-GUI control failed with no visible guidance before the repair;
+regressions cover both retry routes, same-tab history preservation, stale
+message removal and keeping arbitrary backend details out of primary UI.
+
 Three compiled legacy controls demonstrated admission of the 17th handle,
 17 adoptions in one refilled turn, and 16 adoptions before a queued listener
 failure. Deterministic ownership/churn tests and a production-broker Windows
