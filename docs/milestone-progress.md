@@ -22,7 +22,10 @@ shutdown, delayed processing, and a biased asynchronous select where ready
 traffic always beats the sleep branch. A repository-owned loopback SSH fixture
 also fills the frontend event queue while producing output, then proves queued
 input/resize progress and successful caller-bounded shutdown without draining
-that queue. These are control/lifetime regressions, not a reproduction of
+that queue. Fixture readiness requires current queue fullness and observed
+backpressure together, not a historical full-queue counter after connection
+setup has consumed events. These are control/lifetime regressions, not a
+reproduction of
 multi-day CPU growth in #297 or a universal 10 ms worker-exit claim. Native
 close/disconnect surfaces and usability remain separate validation.
 

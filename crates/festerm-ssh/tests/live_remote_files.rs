@@ -373,14 +373,19 @@ fn live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_qu
         start_server(SubsystemBehavior::Reject, ShellBehavior::ContinuousOutput);
     let session = connect_session(port);
     let deadline = Instant::now() + Duration::from_secs(3);
-    while session.metrics().backpressure_count == 0 {
+    let before = loop {
+        let metrics = session.metrics();
+        if metrics.backpressure_count > 0
+            && metrics.event_queue_depth == metrics.event_queue_capacity
+        {
+            break metrics;
+        }
         assert!(
             Instant::now() < deadline,
             "fixture output never filled the frontend queue"
         );
         thread::sleep(Duration::from_millis(5));
-    }
-    let before = session.metrics();
+    };
     assert_eq!(before.event_queue_depth, before.event_queue_capacity);
     session.try_send_input(b"shell-remains-responsive").unwrap();
     session
