@@ -202,7 +202,8 @@ reconnect does not claim a new connection attempt, and a collision decision is
 not dismissed before admission.
 
 The finished-history window is completion-ordered, includes failures and uses
-indexed transfer-ID lookup. Exceptional row/index capacity retires with
+indexed transfer-ID lookup and stable transfer-scoped widget identity.
+Exceptional row/index capacity retires with
 hysteresis. A visible cumulative retirement count explains missing old rows;
 the ordinary Clear action still preserves retained failures. A 240-logical-pixel
 scroll region bounds drawer geometry without claiming row virtualization or
@@ -412,6 +413,7 @@ core transfer workflow.
   `gui_sftp_history_keeps_active_rows_and_retires_by_finish_order`,
   `gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity`,
   `gui_sftp_history_reclaims_a_large_active_peak_and_reports_retirement`,
+  `gui_sftp_history_retirement_preserves_the_active_rows_widget_identity`,
   `gui_sftp_command_bridge_refuses_full_and_closed_queues_without_false_success`,
   `gui_sftp_refused_reconnect_preserves_connection_and_spinner_until_admitted`,
   `gui_sftp_external_drop_and_oversized_batches_refuse_before_bridge_admission`,

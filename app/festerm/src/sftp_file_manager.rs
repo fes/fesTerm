@@ -3360,7 +3360,7 @@ impl SftpFileManagerTab {
                     .id_salt("sftp_transfer_history")
                     .max_height(240.0)
                     .show(ui, |ui| {
-                        for item in &self.transfer_drawer.items {
+                        show_transfer_history_rows(ui, &self.transfer_drawer.items, |ui, item| {
                             ui.separator();
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(
@@ -3446,7 +3446,7 @@ impl SftpFileManagerTab {
                                         .push(WorkerCommand::Enqueue(vec![item.request.clone()]));
                                 }
                             });
-                        }
+                        });
                     });
             });
         for command in commands {
@@ -4187,6 +4187,18 @@ enum WorkerEvent {
         details: String,
     },
     Transfer(SftpTransferEvent),
+}
+
+fn show_transfer_history_rows<Id: std::hash::Hash + std::fmt::Debug>(
+    ui: &mut Ui,
+    items: &[TransferHistoryItem<Id>],
+    mut show_row: impl FnMut(&mut Ui, &TransferHistoryItem<Id>),
+) {
+    for item in items {
+        // push_id's child auto-IDs still depend on row position; explicit IDs do not.
+        let id = ui.id().with(("sftp-transfer-row", &item.transfer_id));
+        ui.scope_builder(egui::UiBuilder::new().id(id), |ui| show_row(ui, item));
+    }
 }
 
 fn push_coalescing_progress<Event>(
@@ -6904,6 +6916,42 @@ pub(crate) mod tests {
         let notice = history.retirement_notice().unwrap();
         assert!(notice.contains("3968 older finished transfers retired"));
         assert!(notice.contains("latest 128"));
+    }
+
+    #[test]
+    fn gui_sftp_history_retirement_preserves_the_active_rows_widget_identity() {
+        fn row_ids(
+            context: &egui::Context,
+            history: &TransferDrawerState<u64>,
+        ) -> HashMap<u64, egui::Id> {
+            let mut ids = HashMap::new();
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                show_transfer_history_rows(ui, &history.items, |ui, item| {
+                    ids.insert(item.transfer_id, ui.button("Controlled row action").id);
+                });
+            });
+            output.textures_delta.clear();
+            ids
+        }
+
+        let mut history = TransferDrawerState::<u64>::default();
+        for id in 0..128 {
+            history.upsert(id, history_request()).state = SftpTransferState::Completed;
+            history.record_finished(id);
+        }
+        let active_id = 10_000;
+        history.upsert(active_id, history_request()).state = SftpTransferState::Running;
+        let context = egui::Context::default();
+        let before = row_ids(&context, &history);
+        assert_eq!(history.indices[&active_id], 128);
+        for id in 128..256 {
+            history.upsert(id, history_request()).state = SftpTransferState::Completed;
+            history.record_finished(id);
+        }
+        assert_eq!(history.indices[&active_id], 0);
+        let after = row_ids(&context, &history);
+        assert_eq!(before[&active_id], after[&active_id]);
+        assert!(!after.values().any(|id| *id == before[&0]));
     }
 
     fn tab_with_command_receiver() -> (

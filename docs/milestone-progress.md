@@ -25,7 +25,9 @@ The owner approved retaining the 128 most recently finished rows, including
 failures, and reporting retirement. Completion order preserves a long-running
 item that finishes late; active/collision-paused work is not evicted. Indexed
 lookup avoids per-progress history searches, and exceptional row/index
-capacity retires after a peak. History has a 240-logical-pixel scroll area,
+capacity retires after a peak. Transfer-scoped row controls preserve identity
+when earlier rows retire, rather than reusing another transfer's action ID.
+History has a 240-logical-pixel scroll area,
 not row virtualization, and the existing Clear action still preserves retained
 failures. Deterministic churn, boundaries, ordering, admission recovery and
 full-queue teardown cover the repaired contracts. Aggregate directory/plan

@@ -76,6 +76,8 @@ retire automatically with a visible cumulative count; a long-running item that
 finishes late is still recent. Active and collision-paused work is not evicted.
 Retirement removes the row's request, detail and collision storage, keeps an
 indexed transfer-ID lookup, and releases exceptional row/index capacity.
+Row controls are scoped by transfer ID, so retiring an earlier row cannot
+reuse another transfer's action/focus identity.
 The existing Clear action removes successful, skipped and canceled rows but
 leaves failures available while retained. Retirement is tab-local and does not
 persist history or change the filesystem recovery-output policy.
