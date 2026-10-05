@@ -218,6 +218,24 @@ policy), or **Partial**. Anything outside the matrix shows a concise error and
 has **no side effect**, because half-executing an unsupported command is worse
 than refusing it: the user cannot tell what happened to their text.
 
+Dot-repeat (`.`) is **Partial**: a change can record at most **8,192
+keystrokes**, including mode entry/exit, Backspace, and Visual motions. This is
+a key budget, not a document-size or character limit. At the first excess key,
+the recording is released; ordinary editing continues without truncating or
+discarding text. If the sequence has made an edit, the command area warns
+**Repeat unavailable**, states the limit and says editing continues. `.` then
+refuses without changing the document: it never replays a partial sequence or
+silently repeats an older change instead. Completing a smaller change restores
+repeat and reports **Repeat available again**. Long navigation, an abandoned
+selection, or a yank without an edit preserves the previous repeat and produces
+no limit warning. Undo remains document-scoped; a repeat is one transaction.
+
+Completed/abandoned sequences release recording capacity above a small
+32-key reuse allowance. Only the bounded last repeatable change is retained,
+and replay borrows its keys rather than cloning another key array. The repeat
+budget does not bound document, register, undo, or replay scratch-text storage;
+those have separate ownership and size policies.
+
 The `:` commands are all fesTerm-routed, which is the whole point of them.
 `:w` dispatches Save and reports success only once the durable replacement
 completes. `:w {path}` and `:saveas` dispatch the reviewed Save As sheet with

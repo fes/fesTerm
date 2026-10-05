@@ -983,7 +983,19 @@ impl TextEditorTab {
             };
             (open.text().text().to_owned(), self.caret_offset)
         };
+        let repeat_was_refused = self.vi.repeat_is_refused();
         let response = self.vi.on_key(key, &text, caret);
+        if let Some(warning) = response.warning {
+            self.command
+                .report(CommandOutcome::Warning(CommandError::new(
+                    warning.headline(),
+                    warning.detail(),
+                )));
+        } else if repeat_was_refused && !self.vi.repeat_is_refused() {
+            self.command.report(CommandOutcome::Message(
+                "Repeat available again.".to_owned(),
+            ));
+        }
         match response.action {
             ViAction::None => {}
             ViAction::Edit(edits) => self.apply_vi_edits(edits, documents),
@@ -3989,6 +4001,69 @@ mod tests {
             ),
             "an unsupported key reports itself instead of doing nothing visible"
         );
+    }
+
+    #[test]
+    fn oversized_vi_recording_warns_visibly_keeps_edits_and_recovers_repeat() {
+        let directory = TemporaryDirectory::new("vi-repeat-budget");
+        let path = directory.file("notes.txt", "abc\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        {
+            let (documents, editor) = harness.state_mut();
+            editor.feed_vi_key(ViKey::Char('x'), documents);
+            editor.feed_vi_key(ViKey::Char('i'), documents);
+            for _ in 0..4096 {
+                editor.feed_vi_key(ViKey::Char('😀'), documents);
+                editor.feed_vi_key(ViKey::Backspace, documents);
+            }
+            editor.feed_vi_key(ViKey::Char('Z'), documents);
+            editor.feed_vi_key(ViKey::Escape, documents);
+        }
+        harness.run();
+        assert_eq!(document_text(&harness), "Zbc\n");
+        let Some(CommandOutcome::Warning(warning)) = harness.state().1.command.outcome() else {
+            panic!("recording exhaustion must not be reported as a failed edit");
+        };
+        assert_eq!(warning.headline(), "Repeat unavailable");
+        assert!(warning.detail().contains("8192"));
+        assert!(warning.detail().contains("editing continues"));
+        assert!(harness.query_by_label(warning.headline()).is_some());
+        assert!(harness.query_by_label(warning.detail()).is_some());
+
+        vi_type(&mut harness, ".");
+        assert_eq!(document_text(&harness), "Zbc\n");
+        assert!(matches!(
+            harness.state().1.command.outcome(),
+            Some(CommandOutcome::Failed(_))
+        ));
+        vi_type(&mut harness, "x");
+        assert_eq!(document_text(&harness), "bc\n");
+        assert_eq!(
+            harness.state().1.command.outcome(),
+            Some(&CommandOutcome::Message(
+                "Repeat available again.".to_owned()
+            ))
+        );
+        vi_type(&mut harness, ".");
+        assert_eq!(document_text(&harness), "c\n");
+    }
+
+    #[test]
+    fn bounded_vi_repeat_remains_one_shared_document_undo_transaction() {
+        let directory = TemporaryDirectory::new("vi-repeat-undo");
+        let path = directory.file("notes.txt", "abc\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+        vi_type(&mut harness, "iX");
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(document_text(&harness), "Xabc\n");
+        vi_type(&mut harness, ".");
+        assert_eq!(document_text(&harness), "XXabc\n");
+        vi_type(&mut harness, "u");
+        assert_eq!(document_text(&harness), "Xabc\n");
     }
 
     #[test]
