@@ -4128,9 +4128,22 @@ impl russh::client::Handler for SshClientHandler {
             bind_host: connected_address.to_owned(),
             bind_port: connected_port.try_into().unwrap_or(u16::MAX),
         };
+        let incarnation = shared.port_forward_admissions.incarnation(&key);
         async move {
             reply.accept().await;
-            match forwarded_tcpip_sender.try_send(ForwardedTcpIpConnection { key, channel }) {
+            let Some(incarnation) = incarnation else {
+                report_port_forward_error(
+                    &shared,
+                    "SSH remote forwarded connection has no registered mapping",
+                );
+                let _ = channel.close().await;
+                return Ok(());
+            };
+            match forwarded_tcpip_sender.try_send(ForwardedTcpIpConnection {
+                key,
+                incarnation,
+                channel,
+            }) {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Full(forwarded)) => {
                     report_port_forward_error(

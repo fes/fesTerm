@@ -29,6 +29,14 @@ The launch form checks draft count before constructing row configurations, so
 an oversized draft does not allocate or validate its entire mapping prefix.
 
 The original 128/129 profile and pending-admission controls both failed.
+Review exposed a narrower same-transport race: an old queued connection was
+identified only by its reusable bind and could inherit a replacement
+destination. Mapping-incarnation tokens now cross both connection queues
+and reject that stale work. Review also found that credential-free saved
+launch discarded a boolean refusal; it now propagates a typed, visible error.
+Compiled controls reproduced both gaps, and an owned TCP listener regression
+checks production token capture and release after removal/re-add.
+
 Deterministic churn now plateaus at 128 and releases empty storage, and 1,000
 blocked retries prepare one snapshot. Owned loopback SSH coverage preserves
 active tunnel bytes at capacity, proves unchanged queries do not republish,

@@ -1441,6 +1441,9 @@ visible explanation and preserves the draft, rather than retiring failures or
 evicting a working tunnel. Removing a row makes room after its forwarding owner
 stops. A profile requesting more than 128 mappings is rejected before launch;
 this does not change the configuration schema or truncate saved metadata. The
+The same factual refusal appears for stored-credential and credential-free
+saved-profile launches. Removing and re-adding a bind does not reroute already
+queued connections to its replacement destination. The
 independent 32-in-flight forwarded-connection limit is unchanged.
 
 ### Serial session creation

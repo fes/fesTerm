@@ -175,13 +175,19 @@ No mapping is automatically retired: a full inventory visibly refuses the
 addition and preserves the overlay draft until the user removes a row.
 
 Profile collection refuses a 129th mapping before launch, without truncating
-or rejecting the whole saved configuration. Binding validation and source
+or rejecting the whole saved configuration. Stored-credential and direct
+credential-free saved-profile launch both display the same factual refusal;
+the interactive launch returns a typed error rather than a discarded boolean. Binding validation and source
 metadata remain unchanged. The separate 32-in-flight connection bound still
 protects bridges rather than mapping inventory. This is a count bound, not an
 aggregate host-string, payload-byte, allocator-fragmentation, or RSS guarantee.
 
 Admission and queued removals are transport-generation scoped; stale work
 cannot act on a replacement connection or release its reservations. Indexed
+Each mapping also has a unique incarnation retained by accepted local and
+remote connection events before they enter the bounded queues. Removing and
+re-adding the same bind never routes an old queued connection to the new
+destination. Old queue tokens retire with their rejected connections. Indexed
 binding lookup removes repeated scans and bind-host clones. Removal preserves
 row order, and exceptional outer-vector/index capacity is reclaimed.
 
@@ -307,12 +313,16 @@ advanced widening when the user truly intends broader reachability.
   `failed_port_forward_inventory_churn_plateaus_and_reclaims_capacity`,
   `indexed_port_forward_removal_preserves_order_and_other_bindings`,
   `stale_forward_reservation_cannot_release_a_new_generation_binding`,
+  `stale_forward_reservation_cannot_release_a_readded_same_generation_binding`,
+  `queued_forward_connections_cannot_use_a_readded_binding`,
+  `local_forward_queue_retains_the_accepting_mapping_incarnation`,
   `forward_reservation_is_released_only_after_local_owner_stops`,
   `disconnecting_clears_the_retained_port_forward_snapshot`,
   `forward_snapshot_retries_without_recloning_and_coalesces_latest_state`,
   `forward_snapshot_closed_receiver_does_not_rebuild_or_survive_owner_retirement`,
   `port_forward_manager_inventory_refusal_is_visible_and_preserves_the_draft`,
   `stored_password_profile_forward_inventory_limit_is_visible_and_preserves_configuration`,
+  `credential_free_saved_profile_forward_inventory_refusal_is_visible`,
   `port_forward_row_widget_identity_survives_removing_an_earlier_mapping`, and
   `live_forward_inventory_limit_preserves_active_bytes_and_admits_retry_after_failed_removal`.
 - **Native/manual evidence required:** Manual SSH-fixture evidence is required

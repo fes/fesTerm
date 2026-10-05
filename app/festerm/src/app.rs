@@ -1961,9 +1961,8 @@ impl FesTermApp {
         let options = match options {
             Some(Ok(options)) => options,
             Some(Err(festerm_ssh::SshPortForwardConfigurationError::InventoryLimit)) => {
-                self.secure_storage_feedback = Some(
-                    "This saved SSH profile has more than 128 port-forward mappings; reduce them before launching.",
-                );
+                self.secure_storage_feedback =
+                    Some(crate::tabs::SAVED_SSH_PROFILE_FORWARD_LIMIT_MESSAGE);
                 return;
             }
             Some(Err(_)) | None => {
@@ -1991,8 +1990,14 @@ impl FesTermApp {
         if has_credential {
             self.start_stored_password_profile(profile_id, context);
         } else {
-            self.state
-                .start_configured_ssh_profile_interactive(&profile_id, context);
+            if let Err(error) = self
+                .state
+                .start_configured_ssh_profile_interactive(&profile_id, context)
+            {
+                self.overlays.transient_notice =
+                    Some((error.to_string(), Instant::now() + Duration::from_secs(5)));
+                context.request_repaint();
+            }
         }
     }
 
@@ -10482,8 +10487,7 @@ mod tests {
         assert!(harness.query_by_label("1 active forward").is_some());
     }
 
-    #[test]
-    fn stored_password_profile_forward_inventory_limit_is_visible_and_preserves_configuration() {
+    fn oversized_forward_profile_configuration() -> (Configuration, String) {
         let forwards = (1..=129)
             .map(|port| {
                 festerm_config::SshPortForwardConfiguration::new(
@@ -10514,6 +10518,48 @@ mod tests {
         let profile = Profile::Ssh(ssh);
         let id = profile.identifier().to_owned();
         let configuration = Configuration::new(vec![profile]).unwrap();
+        (configuration, id)
+    }
+
+    #[test]
+    fn credential_free_saved_profile_forward_inventory_refusal_is_visible() {
+        let (configuration, id) = oversized_forward_profile_configuration();
+        assert!(configuration
+            .profile(&id)
+            .unwrap()
+            .as_ssh()
+            .unwrap()
+            .credential_reference()
+            .is_none());
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let prior_tab = app.state.active();
+        app.start_configured_ssh_profile(id.clone(), &egui::Context::default());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run_steps(3);
+        assert!(harness.query_by_label(
+            "This saved SSH profile has more than 128 port-forward mappings; reduce them before launching."
+        ).is_some(), "credential-free profile refusal must be visible");
+        assert_eq!(harness.state().state.active(), prior_tab);
+        assert_eq!(
+            harness
+                .state()
+                .state
+                .configuration()
+                .profile(&id)
+                .unwrap()
+                .as_ssh()
+                .unwrap()
+                .port_forwards()
+                .len(),
+            129
+        );
+    }
+
+    #[test]
+    fn stored_password_profile_forward_inventory_limit_is_visible_and_preserves_configuration() {
+        let (configuration, id) = oversized_forward_profile_configuration();
         let mut app = FesTermApp::for_test_with_configuration(configuration);
         let prior_tab = app.state.active();
         app.start_stored_password_profile(id.clone(), &egui::Context::default());
