@@ -204,6 +204,22 @@ does not replace an admitted pending request, external drop reports failure,
 reconnect does not claim a new connection attempt, and a collision decision is
 not dismissed before admission.
 
+After successful backend batch admission, the worker publishes the receipt's
+ordered transfer IDs paired with request metadata before forwarding engine
+events. This creates Queued rows for pre-start collisions, Skip and pre-copy
+failures; a refused batch creates no rows. The extra metadata clone is bounded
+by the existing 256-item batch ceiling, not a payload-byte budget.
+
+The drawer's bulk Cancel crosses each command bridge as one command. Full or
+closed admission refuses the entire action visibly. The manager flags all
+existing items and rebuilds the ready queue once, sorting by stable transfer ID;
+it does not perform an individual `ready.retain` traversal per canceled item.
+Queued and collision-paused work preceding the command is canceled; later
+admitted work is unaffected. Single-item and batch-specific cancellation retain
+their existing scope.
+Collision presentation rechecks the indexed row's active state, retiring a
+stale prompt when a cancellation/terminal event overtakes its presentation.
+
 The finished-history window is completion-ordered, includes failures and uses
 indexed transfer-ID lookup and stable transfer-scoped widget identity.
 Exceptional row/index capacity retires with
@@ -412,6 +428,14 @@ core transfer workflow.
   `live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state`,
   and `gui_sftp_preserved_output_notice_reports_a_recovery_path`.
   Backlog/history regressions include
+  `gui_sftp_admitted_prestart_outcomes_enter_finished_history`,
+  `gui_sftp_refused_backend_admission_creates_no_phantom_history`,
+  `gui_sftp_terminal_rows_are_ineligible_for_a_collision_modal`,
+  `gui_sftp_bulk_cancel_header_refuses_whole_action_then_uses_one_slot`,
+  `collision_before_start_and_skip_emit_no_item_started`,
+  `bulk_cancel_refuses_full_admission_then_cancels_all_items_with_one_slot`,
+  `bulk_cancel_finishes_more_than_one_command_queue_of_collision_paused_items`,
+  `bulk_cancel_does_not_cancel_work_enqueued_after_the_command`,
   `gui_sftp_finished_history_retires_old_failures_at_the_approved_limit`,
   `gui_sftp_history_keeps_active_rows_and_retires_by_finish_order`,
   `gui_sftp_history_duplicate_finishes_and_clear_preserve_index_integrity`,

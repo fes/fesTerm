@@ -5,6 +5,21 @@
 
 ## Bounding GUI SFTP backlog and retiring finished history
 
+Review of #331 found two missing lifecycle paths: a collision could occur
+before the drawer had a row, and the header's per-row Cancel fan-out could fill
+the new 64-command bridge after canceling only part of a larger queue. A
+compiled pre-start history control retained zero admitted rows instead of 96.
+The worker now publishes successful admission metadata before engine events;
+Skip and pre-copy failure enter the same indexed, bounded finished history
+without waiting for `ItemStarted`. Refused admission creates no phantom rows.
+Header Cancel now uses one ordered command through both bridges. Full admission
+refuses the whole action; one free slot can cancel all existing work, including
+96 real collision-paused transfers. The backend rebuilds/sorts its ready queue
+once rather than repeatedly filtering it, with a 1,024-item regression covering
+all batches and a separate check that later queued work remains unaffected.
+Collision presentation rechecks the indexed row's active state, so a delayed
+prompt cannot remain open after its transfer is canceled or otherwise finishes.
+
 The allocation/lifecycle audit in #320 found unbounded GUI SFTP command/event
 bridges, unrestricted frontend event draining, and a transfer drawer whose
 completed and failed rows grew for the lifetime of the tab. Each progress event

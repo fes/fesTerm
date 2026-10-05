@@ -1391,6 +1391,18 @@ pub(crate) struct TransferHistoryItem<Id = SftpTransferId> {
     pub(crate) pending_collision: Option<SftpCollision>,
 }
 
+impl<Id> TransferHistoryItem<Id> {
+    fn is_active(&self) -> bool {
+        matches!(
+            self.state,
+            SftpTransferState::Queued
+                | SftpTransferState::Planning
+                | SftpTransferState::Running
+                | SftpTransferState::AwaitingCollision(_)
+        )
+    }
+}
+
 /// The private ID parameter lets storage tests preserve backend-issued ID opacity.
 #[derive(Clone, Debug)]
 pub(crate) struct TransferDrawerState<Id = SftpTransferId> {
@@ -1414,6 +1426,12 @@ impl<Id> Default for TransferDrawerState<Id> {
 }
 
 impl<Id: Copy + Eq + std::hash::Hash> TransferDrawerState<Id> {
+    fn record_admitted(&mut self, transfers: impl IntoIterator<Item = (Id, SftpTransferRequest)>) {
+        for (transfer_id, request) in transfers {
+            self.upsert(transfer_id, request);
+        }
+    }
+
     fn upsert(
         &mut self,
         transfer_id: Id,
@@ -1518,32 +1536,22 @@ impl<Id: Copy + Eq + std::hash::Hash> TransferDrawerState<Id> {
     fn active_transfer_ids(&self) -> Vec<Id> {
         self.items
             .iter()
-            .filter(|item| {
-                matches!(
-                    item.state,
-                    SftpTransferState::Queued
-                        | SftpTransferState::Planning
-                        | SftpTransferState::Running
-                        | SftpTransferState::AwaitingCollision(_)
-                )
-            })
+            .filter(|item| item.is_active())
             .map(|item| item.transfer_id)
             .collect()
+    }
+
+    fn has_active_transfer(&self, transfer_id: Id) -> bool {
+        self.indices
+            .get(&transfer_id)
+            .is_some_and(|&index| self.items[index].is_active())
     }
 
     fn summary(&self) -> Option<TransferDrawerSummary> {
         let current_item = self
             .items
             .iter()
-            .find(|item| {
-                matches!(
-                    item.state,
-                    SftpTransferState::Running
-                        | SftpTransferState::AwaitingCollision(_)
-                        | SftpTransferState::Planning
-                        | SftpTransferState::Queued
-                )
-            })
+            .find(|item| item.is_active())
             .or_else(|| self.items.last())?;
         let active = self.active_transfer_ids().len();
         let completed = self
@@ -3314,33 +3322,11 @@ impl SftpFileManagerTab {
             .corner_radius(8.0)
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Transfers")
-                            .font(FontId::new(12.0, FontFamily::Proportional))
-                            .strong(),
-                    );
-                    ui.label(
-                        RichText::new(&summary.summary)
-                            .font(font_for_text_role(SftpTextRole::TransferMeta))
-                            .color(theme::TEXT_SECONDARY),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(summary.header_action.label()).clicked() {
-                            match summary.header_action {
-                                TransferDrawerHeaderAction::CancelActive => {
-                                    for transfer_id in self.transfer_drawer.active_transfer_ids() {
-                                        commands.push(WorkerCommand::CancelTransfer(transfer_id));
-                                    }
-                                }
-                                TransferDrawerHeaderAction::ClearFinished
-                                | TransferDrawerHeaderAction::ClearCompleted => {
-                                    self.transfer_drawer.clear_finished();
-                                }
-                            }
-                        }
-                    });
-                });
+                if let Some(command) =
+                    show_transfer_drawer_heading(ui, &mut self.transfer_drawer, &summary)
+                {
+                    commands.push(command);
+                }
                 if let Some(notice) = self.transfer_drawer.retirement_notice() {
                     ui.label(
                         RichText::new(notice)
@@ -3460,6 +3446,13 @@ impl SftpFileManagerTab {
         let Some(dialog) = self.collision_dialog.as_mut() else {
             return;
         };
+        if !self
+            .transfer_drawer
+            .has_active_transfer(dialog.collision.transfer_id)
+        {
+            self.collision_dialog = None;
+            return;
+        }
         let collision = dialog.collision.clone();
         let mut decision = None;
         let mut close = false;
@@ -3907,6 +3900,18 @@ impl SftpFileManagerTab {
                 self.connection_state = SftpConnectionState::Disconnected { summary, details };
                 self.remote_pane.stale = true;
             }
+            WorkerEvent::TransferBatchAdmitted {
+                transfer_ids,
+                requests,
+            } => {
+                assert_eq!(
+                    transfer_ids.len(),
+                    requests.len(),
+                    "admission must cover the entire batch"
+                );
+                self.transfer_drawer
+                    .record_admitted(transfer_ids.into_iter().zip(requests));
+            }
             WorkerEvent::Transfer(event) => self.apply_transfer_event(event),
             WorkerEvent::ConnectionFailed { summary, details } => {
                 self.pending_host_key = None;
@@ -4120,6 +4125,7 @@ enum WorkerCommand {
     },
     Enqueue(Vec<SftpTransferRequest>),
     CancelTransfer(SftpTransferId),
+    CancelAllTransfers,
     ResolveCollision(SftpCollisionResolution),
     Reconnect,
 }
@@ -4186,7 +4192,45 @@ enum WorkerEvent {
         action: &'static str,
         details: String,
     },
+    TransferBatchAdmitted {
+        transfer_ids: Vec<SftpTransferId>,
+        requests: Vec<SftpTransferRequest>,
+    },
     Transfer(SftpTransferEvent),
+}
+
+fn show_transfer_drawer_heading<Id: Copy + Eq + std::hash::Hash>(
+    ui: &mut Ui,
+    history: &mut TransferDrawerState<Id>,
+    summary: &TransferDrawerSummary,
+) -> Option<WorkerCommand> {
+    let mut command = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Transfers")
+                .font(FontId::new(12.0, FontFamily::Proportional))
+                .strong(),
+        );
+        ui.label(
+            RichText::new(&summary.summary)
+                .font(font_for_text_role(SftpTextRole::TransferMeta))
+                .color(theme::TEXT_SECONDARY),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(summary.header_action.label()).clicked() {
+                match summary.header_action {
+                    TransferDrawerHeaderAction::CancelActive => {
+                        command = Some(WorkerCommand::CancelAllTransfers);
+                    }
+                    TransferDrawerHeaderAction::ClearFinished
+                    | TransferDrawerHeaderAction::ClearCompleted => {
+                        history.clear_finished();
+                    }
+                }
+            }
+        });
+    });
+    command
 }
 
 fn show_transfer_history_rows<Id: std::hash::Hash + std::fmt::Debug>(
@@ -4558,9 +4602,29 @@ async fn run_worker_operations(
                         repaint.request_repaint();
                     }
                     WorkerCommand::Enqueue(requests) => {
-                        if let Err(error) = transfer_manager.enqueue_batch(requests) {
+                        let metadata = requests.clone();
+                        match transfer_manager.enqueue_batch(requests) {
+                            Ok(batch) => {
+                                // Publish row metadata before forwarding any engine events.
+                                let _ = event_sender.send(WorkerEvent::TransferBatchAdmitted {
+                                    transfer_ids: batch.transfer_ids,
+                                    requests: metadata,
+                                }).await;
+                            }
+                            Err(error) => {
+                                drop(metadata);
+                                let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
+                                    action: "queue the transfer",
+                                    details: error.to_string(),
+                                }).await;
+                            }
+                        }
+                        repaint.request_repaint();
+                    }
+                    WorkerCommand::CancelAllTransfers => {
+                        if let Err(error) = transfer_manager.cancel_all_transfers() {
                             let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
-                                action: "queue the transfer",
+                                action: "cancel the transfers",
                                 details: error.to_string(),
                             }).await;
                             repaint.request_repaint();
@@ -6844,6 +6908,32 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn gui_sftp_admitted_prestart_outcomes_enter_finished_history() {
+        let mut history = TransferDrawerState::<u64>::default();
+        history.record_admitted((0..96).map(|id| (id, history_request())));
+        assert_eq!(
+            history.items.len(),
+            96,
+            "admitted rows must exist before ItemStarted"
+        );
+        for id in 0..96 {
+            let item = history.item_mut(id).unwrap();
+            assert_eq!(item.state, SftpTransferState::Queued);
+            item.state = if id % 2 == 0 {
+                SftpTransferState::Skipped
+            } else {
+                SftpTransferState::Failed {
+                    reason: "pre-copy fixture failure".to_owned(),
+                }
+            };
+            history.record_finished(id);
+        }
+        assert_eq!(history.finished_order.len(), 96);
+        assert_eq!(history.items.len(), 96);
+        assert!(history.active_transfer_ids().is_empty());
+    }
+
+    #[test]
     fn gui_sftp_finished_history_retires_old_failures_at_the_approved_limit() {
         let mut history = TransferDrawerState::<u64>::default();
         for id in 0..512 {
@@ -6984,6 +7074,99 @@ pub(crate) mod tests {
         for _ in 0..GUI_SFTP_COMMAND_CAPACITY {
             tab.submit_worker_command(WorkerCommand::Reconnect).unwrap();
         }
+    }
+
+    #[test]
+    fn gui_sftp_terminal_rows_are_ineligible_for_a_collision_modal() {
+        let mut history = TransferDrawerState::<u64>::default();
+        history.record_admitted((0..2).map(|id| (id, history_request())));
+        assert!(history.has_active_transfer(0));
+        assert!(!history.has_active_transfer(2));
+        for terminal in [
+            SftpTransferState::Completed,
+            SftpTransferState::Skipped,
+            SftpTransferState::Cancelled,
+            SftpTransferState::Failed {
+                reason: "owned fixture failure".to_owned(),
+            },
+        ] {
+            history.item_mut(0).unwrap().state = terminal;
+            history.record_finished(0);
+            assert!(!history.has_active_transfer(0));
+            assert!(
+                history.has_active_transfer(1),
+                "unrelated ongoing decisions remain eligible"
+            );
+        }
+        history.clear_finished();
+        assert!(!history.has_active_transfer(0));
+        assert!(history.has_active_transfer(1));
+    }
+
+    #[test]
+    fn gui_sftp_refused_backend_admission_creates_no_phantom_history() {
+        let mut tab = test_tab();
+        tab.apply_event(WorkerEvent::TransferCommandFailed {
+            action: "queue the transfer",
+            details: "owned backend admission refusal".to_owned(),
+        });
+        assert!(tab.transfer_drawer.items.is_empty());
+        assert!(tab.transfer_drawer.finished_order.is_empty());
+        assert_eq!(
+            tab.operation_error.as_ref().unwrap().1,
+            "owned backend admission refusal"
+        );
+    }
+
+    #[test]
+    fn gui_sftp_bulk_cancel_header_refuses_whole_action_then_uses_one_slot() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let (tab, mut receiver) = tab_with_command_receiver();
+        let mut history = TransferDrawerState::<u64>::default();
+        history.record_admitted((0..96).map(|id| (id, history_request())));
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, (tab, history): &mut (SftpFileManagerTab, TransferDrawerState<u64>)| {
+                let summary = history.summary().unwrap();
+                if let Some(command) = show_transfer_drawer_heading(ui, history, &summary) {
+                    let _ = tab.submit_worker_command(command);
+                }
+            },
+            (tab, history),
+        );
+        fill_command_bridge(&mut harness.state_mut().0);
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(3);
+        assert_eq!(receiver.len(), GUI_SFTP_COMMAND_CAPACITY);
+        assert!(harness
+            .state()
+            .0
+            .operation_error
+            .as_ref()
+            .unwrap()
+            .1
+            .contains("64 queued commands"));
+        assert_eq!(harness.state().1.active_transfer_ids().len(), 96);
+        receiver.try_recv().unwrap();
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(3);
+        let mut bulk_commands = 0;
+        while let Ok(command) = receiver.try_recv() {
+            match command {
+                WorkerCommand::CancelAllTransfers => bulk_commands += 1,
+                WorkerCommand::Reconnect => {}
+                other => panic!("unexpected header command: {other:?}"),
+            }
+        }
+        assert_eq!(
+            bulk_commands, 1,
+            "one available slot must admit the entire cancel action"
+        );
+        assert_eq!(
+            harness.state().1.active_transfer_ids().len(),
+            96,
+            "rows await engine outcomes"
+        );
     }
 
     #[test]

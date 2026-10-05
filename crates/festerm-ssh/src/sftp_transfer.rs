@@ -545,6 +545,12 @@ impl SftpTransferManager {
         try_send_command(&self.command_sender, WorkerCommand::CancelBatch(batch_id))
     }
 
+    /// Cancels all work preceding this command in the manager's ordered queue.
+    /// A saturated or closed queue refuses the entire action.
+    pub fn cancel_all_transfers(&self) -> Result<(), SftpTransferManagerError> {
+        try_send_command(&self.command_sender, WorkerCommand::CancelAllTransfers)
+    }
+
     pub fn resolve_collision(
         &self,
         resolution: SftpCollisionResolution,
@@ -656,6 +662,7 @@ enum WorkerCommand {
         items: Vec<QueuedTransferInput>,
     },
     CancelTransfer(SftpTransferId),
+    CancelAllTransfers,
     CancelBatch(SftpTransferBatchId),
     ResolveCollision(SftpCollisionResolution),
 }
@@ -1222,6 +1229,17 @@ impl WorkerState {
             }
             WorkerCommand::CancelTransfer(transfer_id) => {
                 self.request_cancel(transfer_id);
+                None
+            }
+            WorkerCommand::CancelAllTransfers => {
+                self.ready.clear();
+                for item in self.items.values_mut() {
+                    item.cancel_requested = true;
+                    self.ready.push_back(item.id);
+                }
+                self.ready
+                    .make_contiguous()
+                    .sort_unstable_by_key(|id| id.raw());
                 None
             }
             WorkerCommand::CancelBatch(batch_id) => {
@@ -3872,6 +3890,169 @@ mod tests {
         );
 
         stdfs::remove_dir_all(root).expect("could not clean cancellation fixtures");
+    }
+
+    #[test]
+    fn bulk_cancel_refuses_full_admission_then_cancels_all_items_with_one_slot() {
+        let mut state = WorkerState::default();
+        for batch in 0..MAX_QUEUED_TRANSFER_ITEMS / MAX_TRANSFER_BATCH_ITEMS {
+            state.apply_command(WorkerCommand::EnqueueBatch {
+                batch_id: SftpTransferBatchId(batch as u64 + 1),
+                items: (0..MAX_TRANSFER_BATCH_ITEMS)
+                    .map(|index| QueuedTransferInput {
+                        id: SftpTransferId((batch * MAX_TRANSFER_BATCH_ITEMS + index) as u64 + 1),
+                        request: upload_request(Path::new("fixture.bin"), Path::new("destination")),
+                    })
+                    .collect(),
+            });
+        }
+        for item in state
+            .items
+            .values_mut()
+            .filter(|item| item.id.raw() % 2 == 0)
+        {
+            item.state = SftpTransferState::AwaitingCollision(SftpCollisionId(item.id.raw()));
+        }
+        state.ready.retain(|id| id.raw() % 2 != 0);
+        let initial_ready = state.ready.clone();
+        let (sender, mut receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+        for _ in 0..TRANSFER_COMMAND_QUEUE_CAPACITY {
+            try_send_command(
+                &sender,
+                WorkerCommand::CancelBatch(SftpTransferBatchId(u64::MAX)),
+            )
+            .unwrap();
+        }
+        assert!(matches!(
+            try_send_command(&sender, WorkerCommand::CancelAllTransfers),
+            Err(SftpTransferManagerError::CommandQueueSaturated {
+                capacity: TRANSFER_COMMAND_QUEUE_CAPACITY
+            })
+        ));
+        assert_eq!(state.ready, initial_ready);
+        assert!(state.items.values().all(|item| !item.cancel_requested));
+        receiver.try_recv().unwrap();
+        try_send_command(&sender, WorkerCommand::CancelAllTransfers).unwrap();
+        while let Ok(command) = receiver.try_recv() {
+            state.apply_command(command);
+        }
+        assert!(state.items.values().all(|item| item.cancel_requested));
+        assert_eq!(state.ready.len(), MAX_QUEUED_TRANSFER_ITEMS);
+        assert_eq!(
+            state.ready.iter().map(|id| id.raw()).collect::<Vec<_>>(),
+            (1..=MAX_QUEUED_TRANSFER_ITEMS as u64).collect::<Vec<_>>(),
+        );
+        state.apply_command(WorkerCommand::CancelAllTransfers);
+        assert_eq!(
+            state.ready.len(),
+            MAX_QUEUED_TRANSFER_ITEMS,
+            "repeated cancel must not duplicate ready items"
+        );
+    }
+
+    #[test]
+    fn bulk_cancel_does_not_cancel_work_enqueued_after_the_command() {
+        let mut state = WorkerState::default();
+        let request = upload_request(Path::new("fixture.bin"), Path::new("destination"));
+        state.apply_command(WorkerCommand::EnqueueBatch {
+            batch_id: SftpTransferBatchId(1),
+            items: vec![QueuedTransferInput {
+                id: SftpTransferId(1),
+                request: request.clone(),
+            }],
+        });
+        state.apply_command(WorkerCommand::CancelAllTransfers);
+        state.apply_command(WorkerCommand::EnqueueBatch {
+            batch_id: SftpTransferBatchId(2),
+            items: vec![QueuedTransferInput {
+                id: SftpTransferId(2),
+                request,
+            }],
+        });
+        assert!(state.items[&SftpTransferId(1)].cancel_requested);
+        assert!(!state.items[&SftpTransferId(2)].cancel_requested);
+        assert_eq!(
+            state.ready.iter().map(|id| id.raw()).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn collision_before_start_and_skip_emit_no_item_started() {
+        let root = unique_test_directory("prestart-skip");
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        recreate_directory(&destination);
+        stdfs::write(&source, b"new").unwrap();
+        stdfs::write(destination.join("source.bin"), b"old").unwrap();
+        test_runtime().block_on(async {
+            let (commands, mut receiver, _) = spawn_worker(TestBackend::default()).await;
+            let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            let (prior, collision) = next_collision(&mut receiver).await;
+            assert_eq!(collision.transfer_id, batch.transfer_ids[0]);
+            assert!(!prior.iter().any(|event| matches!(event, SftpTransferEvent::ItemStarted { .. })));
+            commands.send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                collision_id: collision.id,
+                decision: SftpCollisionDecision::Skip,
+                scope: SftpCollisionScope::ThisItem,
+            })).await.unwrap();
+            let events = collect_until_batch_finished(&mut receiver, batch.batch_id).await;
+            assert!(events.iter().any(|event| matches!(event, SftpTransferEvent::ItemSkipped { transfer_id, .. } if *transfer_id == collision.transfer_id)));
+            assert!(!events.iter().any(|event| matches!(event, SftpTransferEvent::ItemStarted { .. })));
+        });
+        assert_eq!(stdfs::read(destination.join("source.bin")).unwrap(), b"old");
+        stdfs::remove_dir_all(root).expect("could not clean pre-start skip fixtures");
+    }
+
+    #[test]
+    fn bulk_cancel_finishes_more_than_one_command_queue_of_collision_paused_items() {
+        let root = unique_test_directory("bulk-cancel-collisions");
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        recreate_directory(&destination);
+        stdfs::write(&source, b"new").unwrap();
+        stdfs::write(destination.join("source.bin"), b"old").unwrap();
+        test_runtime().block_on(async {
+            let (commands, mut receiver, snapshot) = spawn_worker(TestBackend::default()).await;
+            let count = TRANSFER_COMMAND_QUEUE_CAPACITY + 32;
+            let batch = queue_batch(
+                &commands,
+                vec![upload_request(&source, &destination); count],
+            );
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let mut collisions = 0;
+                while collisions < count {
+                    match receiver.recv().await.expect("worker must remain open") {
+                        SftpTransferEvent::Collision(_) => collisions += 1,
+                        SftpTransferEvent::BatchQueued { .. } => {}
+                        other => panic!("unexpected pre-start event: {other:?}"),
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            try_send_command(&commands, WorkerCommand::CancelAllTransfers).unwrap();
+            let events = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                collect_until_batch_finished(&mut receiver, batch.batch_id),
+            )
+            .await
+            .unwrap();
+            let cancelled = events
+                .iter()
+                .filter_map(|event| match event {
+                    SftpTransferEvent::ItemCancelled { transfer_id, .. } => Some(*transfer_id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(cancelled, batch.transfer_ids);
+            assert!(!events
+                .iter()
+                .any(|event| matches!(event, SftpTransferEvent::ItemStarted { .. })));
+            assert!(snapshot.lock().unwrap().items.is_empty());
+        });
+        assert_eq!(stdfs::read(destination.join("source.bin")).unwrap(), b"old");
+        stdfs::remove_dir_all(root).expect("could not clean bulk cancellation fixtures");
     }
 
     #[test]

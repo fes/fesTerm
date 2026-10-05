@@ -69,6 +69,16 @@ scroll and loading state unchanged; an unadmitted reconnect does not change
 connection/spinner state; an unadmitted Markdown read preserves the
 previous pending request. Collision decisions stay open until admitted, and
 rejected external drops return failure rather than a successful item count.
+Successful backend admission publishes queued row metadata before collision
+or terminal events, so Skip and pre-copy failure remain visible even when
+`ItemStarted` never occurs. Backend refusal creates no phantom drawer rows.
+The drawer's **Cancel** action is one ordered bulk-cancel command through both
+bridges, not one command per row: full admission refuses the whole action with
+the existing error treatment, and one free slot is sufficient to retry.
+It cancels existing work preceding that command, including paused collisions;
+work queued afterward is not canceled.
+An already-delivered collision prompt retires when its row becomes terminal,
+rather than offering decisions for work that bulk Cancel has ended.
 The backend's existing **256-item batch limit** is checked before the batch
 enters the GUI command bridge. Queue counts are not total payload-byte budgets;
 aggregate directory and recursive-plan admission is separate work.
