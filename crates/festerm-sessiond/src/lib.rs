@@ -79,6 +79,9 @@ const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 trait SessionStream: Read + Write + Send {}
 impl<T: Read + Write + Send> SessionStream for T {}
 
+const RECOVERY_DISCONNECT_MESSAGE: &str =
+    "persistent-session daemon closed before recovery completed; it may be busy or shutting down";
+
 struct ConnectedSession {
     stream: Box<dyn SessionStream>,
     protocol_version: u16,
@@ -1475,7 +1478,7 @@ fn read_protocol_bytes(
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "persistent-session daemon closed during recovery",
+                    format!("{RECOVERY_DISCONNECT_MESSAGE}; retry attachment"),
                 ))
             }
             Ok(count) => {
@@ -1524,7 +1527,7 @@ fn client_worker(
         Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
             shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
                 SessionErrorKind::Output,
-                "persistent-session daemon closed unexpectedly",
+                format!("{RECOVERY_DISCONNECT_MESSAGE}; retry Reconnect or Resume"),
             )));
             let _ = completion.send(ShutdownResult::AlreadyStopped);
             return;
@@ -2807,6 +2810,36 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod client_worker_tests {
     use super::*;
+
+    #[test]
+    fn initial_recovery_eof_reports_retryable_disconnect_without_adoption() {
+        let session = PersistentSession::from_stream_with_protocol(
+            Box::new(io::Cursor::new(Vec::<u8>::new())),
+            noop_session_event_notifier(),
+            None,
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let lifecycle = session.lifecycle();
+            if let SessionLifecycle::Disconnected(error) = lifecycle {
+                assert_eq!(
+                    error.message(),
+                    "persistent-session daemon closed before recovery completed; it may be busy or shutting down; retry Reconnect or Resume"
+                );
+                break;
+            }
+            assert!(!matches!(lifecycle, SessionLifecycle::Running));
+            assert!(
+                Instant::now() < deadline,
+                "early recovery EOF was not reported"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(session.take_recovered_terminal().is_none());
+    }
 
     fn connected_test(stream: Box<dyn SessionStream>) -> ConnectedSession {
         ConnectedSession {

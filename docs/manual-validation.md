@@ -669,6 +669,18 @@ visual recovery during rapid resizing remain native evidence, not implied by
 these tests. A replacement handshake can pause daemon processing for up to
 15 seconds; CLI attach is a text projection rather than full styled rendering.
 
+Windows attachment-backlog checks are now automated with the production
+broker and owned local pipes: 16 waiting connections, EOF/refusal on the 17th,
+unchanged active bidirectional bytes, admission after consuming a slot, and
+queued-handle closure with normal broker exit. Portable regressions cover
+1,024 refusal/consume/retry cycles, immediate ownership release, one adoption
+per turn under refill, independent bounded listener-failure delivery, and
+visible early-recovery disconnect guidance without adopting a snapshot.
+CP-11 still requires signed-package reconnect/focus, cross-user isolation and
+native usability evidence, including narrow-window readability of the retry
+guidance. These checks neither remove the existing 15-second adoption wait
+nor prove a global daemon RSS or recovery-snapshot peak budget.
+
 ### Rendering performance
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
