@@ -3887,7 +3887,7 @@ without restarting it. PTY workers mostly slept; the active stacks were in grid
 painting, tessellation and Metal uploads. Dirty rows already avoided copying
 unchanged core cells, but did not avoid preparing their paint instructions.
 
-An isolated worktree and synthetic local profiles now exercise a bounded ASCII
+An isolated worktree and synthetic local profiles now exercise a bounded monochrome
 row-graphics prototype. Opaque presentation revisions and complete geometry/
 font/selection keys reuse unchanged instructions while the cursor stays live.
 Exact meshes are compared with the original renderer rather than assuming
@@ -3895,4 +3895,17 @@ rectangle merging preserves antialiased pixels. The first foreground result
 improved, but background results varied adversely; the prototype remains a
 draft, not an accepted fix. Per-frame mechanism timings and stable native-window
 identity are being separated from startup/teardown activity before qualification.
-No output throttling, queue-policy change, live-app restart or release is involved.
+Monochrome Unicode can reuse the managed font atlas safely; color-emoji and
+foreign textures remain excluded. Geometry, selection, cursor, budget/teardown,
+history/resize, transforms, opacity and native fallback now have deterministic
+regressions, with the full renderer suite passing. The CPU-stage control covers
+static, localized and full-mutation scenes with shaping on/off: shaped static
+and localized work improves strongly, while full-mutation unshaped preparation
+has a small adverse result that remains visible.
+
+Native qualification uncovered an environmental boundary: the owner's display
+is locked. Earlier raw executable runs also lacked explicit high-resolution
+bundle metadata. A matched pair of uniquely identified high-resolution bundles
+reduces background CPU, but is explicitly labeled locked-display evidence, not
+foreground/native-presentation acceptance. No output throttling, queue-policy
+change, live-app restart, screen unlock or release is involved.

@@ -33,6 +33,9 @@ impl Key {
     ) -> Option<Self> {
         if !painter.is_visible()
             || painter.opacity() != 1.0
+            || !painter.clip_rect().is_positive()
+            || !painter.pixels_per_point().is_finite()
+            || painter.pixels_per_point() <= 0.0
             || painter
                 .ctx()
                 .layer_transform_to_global(painter.layer_id())
@@ -76,7 +79,6 @@ pub(super) struct Rows {
     entries: Vec<Option<Entry>>,
     bytes: usize,
     budget: usize,
-    pub(super) background_meshes: bool,
     pub(super) reused: usize,
     pub(super) rebuilt: usize,
 }
@@ -87,7 +89,6 @@ impl Default for Rows {
             entries: Vec::new(),
             bytes: 0,
             budget: MAX_BYTES,
-            background_meshes: true,
             reused: 0,
             rebuilt: 0,
         }
@@ -149,6 +150,7 @@ impl Rows {
         mut key: Key,
         start: egui::layers::ShapeIdx,
     ) {
+        self.remove(row);
         let Some(slot) = self.entries.get_mut(row) else {
             return;
         };
@@ -175,26 +177,37 @@ impl Rows {
 
     #[cfg(test)]
     pub(super) fn disable(&mut self) {
+        self.set_budget(0);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_budget(&mut self, bytes: usize) {
         self.clear();
-        self.budget = 0;
+        self.budget = bytes.min(MAX_BYTES);
     }
 }
 
 fn retained_bytes(shape: &Shape) -> Option<usize> {
     let extra = match shape {
-        Shape::Mesh(mesh) => mesh
-            .vertices
-            .capacity()
-            .checked_mul(std::mem::size_of::<egui::epaint::Vertex>())?
-            .checked_add(
-                mesh.indices
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<u32>())?,
-            )?,
+        Shape::Mesh(mesh) if mesh.texture_id == egui::TextureId::default() => {
+            std::mem::size_of_val(mesh.as_ref())
+                .checked_add(2 * std::mem::size_of::<usize>())?
+                .checked_add(
+                    mesh.vertices
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<egui::epaint::Vertex>())?,
+                )?
+                .checked_add(
+                    mesh.indices
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u32>())?,
+                )?
+        }
         Shape::Text(text) => {
             let galley = &text.galley;
             let mut bytes = std::mem::size_of_val(galley.as_ref())
                 .checked_add(std::mem::size_of_val(galley.job.as_ref()))?
+                .checked_add(4 * std::mem::size_of::<usize>())?
                 .checked_add(galley.job.text.capacity())?
                 .checked_add(
                     galley
@@ -202,11 +215,20 @@ fn retained_bytes(shape: &Shape) -> Option<usize> {
                         .sections
                         .capacity()
                         .checked_mul(std::mem::size_of::<egui::text::LayoutSection>())?,
+                )?
+                .checked_add(
+                    galley
+                        .rows
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<egui::epaint::text::PlacedRow>())?,
                 )?;
             for row in &galley.rows {
+                if row.visuals.mesh.texture_id != egui::TextureId::default() {
+                    return None;
+                }
                 bytes = bytes
-                    .checked_add(std::mem::size_of_val(row))?
                     .checked_add(std::mem::size_of_val(row.row.as_ref()))?
+                    .checked_add(2 * std::mem::size_of::<usize>())?
                     .checked_add(
                         row.glyphs
                             .capacity()
@@ -270,5 +292,111 @@ pub(super) fn backgrounds(
     }
     if !mesh.is_empty() {
         painter.add(Shape::Mesh(Arc::new(mesh)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_row_budget_rejects_overflow_and_releases_shapes() {
+        let context = egui::Context::default();
+        let mut rows = Rows::default();
+        rows.begin(2, false);
+        let rect_bytes = retained_bytes(&Shape::rect_filled(
+            Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(20.0, 20.0)),
+            0.0,
+            egui::Color32::BLUE,
+        ))
+        .expect("supported rectangle");
+        rows.budget = rect_bytes;
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            let key = Key::new(
+                painter,
+                &RowRevision::default(),
+                super::super::tests::grid_layout(4, 2),
+                &FontSettings::default(),
+                None,
+                true,
+            )
+            .expect("ordinary painter");
+            let start =
+                context.graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx());
+            painter.rect_filled(painter.clip_rect(), 0.0, egui::Color32::BLUE);
+            rows.capture(painter, 0, key.clone(), start);
+            assert_eq!(rows.bytes, rect_bytes);
+            let start =
+                context.graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx());
+            painter.rect_filled(painter.clip_rect(), 0.0, egui::Color32::RED);
+            rows.capture(painter, 1, key, start);
+            assert!(rows.entries[0].is_some());
+            assert!(rows.entries[1].is_none());
+            assert_eq!(rows.bytes, rect_bytes);
+        });
+        output.textures_delta.clear();
+        rows.begin(MAX_ROWS + 1, false);
+        assert!(!rows.enabled());
+        assert_eq!(rows.bytes, 0);
+        rows.begin(2, false);
+        assert!(rows.enabled());
+        rows.clear();
+        assert_eq!(rows.bytes, 0);
+        assert!(rows.entries.is_empty());
+    }
+
+    #[test]
+    fn retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity() {
+        let mut mesh = egui::epaint::Mesh::default();
+        mesh.vertices.reserve(100);
+        mesh.indices.reserve(300);
+        let expected = std::mem::size_of::<ClippedShape>()
+            + std::mem::size_of::<egui::epaint::Mesh>()
+            + 2 * std::mem::size_of::<usize>()
+            + mesh.vertices.capacity() * std::mem::size_of::<egui::epaint::Vertex>()
+            + mesh.indices.capacity() * std::mem::size_of::<u32>();
+        let mut mesh = Arc::new(mesh);
+        assert_eq!(retained_bytes(&Shape::Mesh(mesh.clone())), Some(expected));
+        Arc::get_mut(&mut mesh).expect("unique mesh").texture_id = egui::TextureId::Managed(1);
+        assert_eq!(retained_bytes(&Shape::Mesh(mesh)), None);
+        let mesh = egui::epaint::Mesh::with_texture(egui::TextureId::User(0));
+        assert_eq!(retained_bytes(&Shape::Mesh(Arc::new(mesh))), None);
+    }
+
+    #[test]
+    fn retained_row_clear_releases_owned_meshes() {
+        let context = egui::Context::default();
+        let mut rows = Rows::default();
+        rows.begin(1, false);
+        let mut mesh = egui::epaint::Mesh::default();
+        mesh.add_colored_rect(
+            Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(20.0, 20.0)),
+            egui::Color32::BLUE,
+        );
+        let mesh = Arc::new(mesh);
+        let weak = Arc::downgrade(&mesh);
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            let key = Key::new(
+                painter,
+                &RowRevision::default(),
+                super::super::tests::grid_layout(4, 1),
+                &FontSettings::default(),
+                None,
+                true,
+            )
+            .expect("ordinary painter");
+            let start =
+                context.graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx());
+            painter.add(Shape::Mesh(mesh.clone()));
+            rows.capture(painter, 0, key, start);
+        });
+        output.textures_delta.clear();
+        output.shapes.clear();
+        drop(mesh);
+        assert!(weak.upgrade().is_some());
+        rows.clear();
+        assert!(weak.upgrade().is_none());
     }
 }

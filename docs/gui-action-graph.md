@@ -90,13 +90,16 @@ matched workload delivery, font, grid, native-window identity and CPU. Neither
 GUI frame counts nor offscreen timings establish physical presentation latency.
 See `validation/terminal-performance/README.md` and CP-18.
 
-Proposed ADR 0044 adds a bounded ordinary ASCII row-paint cache for issue #327.
+Proposed ADR 0044 adds a bounded ordinary monochrome row-paint cache for issue #327.
 Exact-mesh tests compare unchanged reuse, dirty content, fonts/DPI, selection
-and Unicode fallback against the cache-disabled renderer. Redraw clears reuse;
+and monochrome Unicode against the cache-disabled renderer. Budget, teardown,
+history/resize, clip, opacity, transforms, cursor and native fallback are covered.
+Color-emoji and foreign textures are never retained. Redraw clears reuse;
 native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
-Isolated macOS native CPU and remaining cache-lifetime/fallback gates are still
-pending; CP-18 is not advanced by the prototype.
+The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU
+presentation. Isolated foreground macOS native CPU qualification is blocked
+while the owner's display is locked; CP-18 is not advanced by the prototype.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU

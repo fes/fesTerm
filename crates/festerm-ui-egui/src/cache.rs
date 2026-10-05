@@ -240,3 +240,31 @@ impl ResizeTracker {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 3).expect("valid dimensions"))
+            .expect("test allocation");
+        terminal.ingest(b"\x1b[?25lone");
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        let mut equal = cache.clone();
+        equal.update(TerminalSnapshot::from_terminal(&terminal), &[0, 1, 2]);
+        assert_eq!(cache, equal);
+        for row in 0..3 {
+            assert_ne!(cache.row_revision(row), equal.row_revision(row));
+        }
+        let revisions: Vec<_> = (0..3)
+            .map(|row| cache.row_revision(row).expect("cached row").clone())
+            .collect();
+        terminal.ingest(b"\x1b[2;1Htwo");
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[1]);
+        assert_eq!(cache.row_revision(0), Some(&revisions[0]));
+        assert_ne!(cache.row_revision(1), Some(&revisions[1]));
+        assert_eq!(cache.row_revision(2), Some(&revisions[2]));
+    }
+}

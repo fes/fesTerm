@@ -14,18 +14,20 @@ This is distinct from issue #297's long-lived Windows/WARP attribution.
 
 ## Decision
 
-Retain ordinary ASCII row paint instructions per view, bounded to 8 MiB of
+Retain ordinary monochrome row paint instructions per view, bounded to 8 MiB of
 estimated payload and 1024 rows. Opaque row identities change whenever the
 presentation cache reconstructs a row. Reuse additionally requires matching
 layout, viewport, clip, DPI, fonts and trusted font-image identity, selection,
 shaping and tessellation options. Redraw and glyph-cache teardown clear reuse.
 
-Keep the cursor outside the retained rows. Unicode/color-emoji, native-painter,
+Keep the cursor outside the retained rows. Color-emoji, native-painter,
 transformed, translucent, hidden and debug-paint cases keep ordinary painting.
 Eligible shaped rows may retain the exact tessellated individual background
 rectangles, using only WHITE_UV; do not merge colors/spans, alter antialiasing
 seams or capture text atlas UVs early. Shape order and clip rectangles remain
 unchanged. No texture delta is consumed.
+Monochrome Unicode uses the same managed font atlas and trusted identity;
+non-font managed/user textures are never retained.
 
 The cache introduces no persistent state, runtime preference, renderer backend,
 frame-rate cap, queue policy, transport change or additional terminal writer.
@@ -36,8 +38,7 @@ frame-rate cap, queue policy, transport change or additional terminal writer.
 - Throttle background/session notifications: risks delayed terminal processing
   and changes latency instead of reducing the cost of each frame.
 - Merge adjacent background rectangles: may change antialiased boundaries.
-- Cache all Unicode and emoji immediately: adds texture lifetime risks beyond
-  the narrow first repair.
+- Retain color-emoji textures: adds eviction/lifetime risks beyond this repair.
 
 ## Consequences
 
@@ -61,12 +62,21 @@ required.
 - **GUI/action edges affected:** `TERM-01`; redraw invalidates this cache too.
 - **Automated tests required:**
   `retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work`,
-  `retained_grid_rows_invalidate_dirty_content_selection_fonts_and_unicode`.
-  Additional budget, teardown, geometry/fallback and history/resize coverage
-  must qualify the completed repair.
+  `retained_grid_rows_invalidate_dirty_content_selection_fonts_and_unicode`,
+  `retained_grid_rows_preserve_geometry_clip_opacity_transform_and_cursor`,
+  `retained_grid_rows_refresh_history_resize_fonts_debug_and_native_fallback`,
+  `retained_grid_rows_exclude_color_emoji_but_reuse_monochrome_unicode`,
+  `retained_grid_row_budget_fallback_preserves_exact_meshes`,
+  `retained_row_budget_rejects_overflow_and_releases_shapes`,
+  `retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity`,
+  `retained_row_clear_releases_owned_meshes`,
+  `row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality`.
 - **Native/manual evidence required:** Issue #327 requires matched isolated
   macOS foreground/background/idle/full-mutation CPU measurements with stable
   window identity and geometry. CP-18's existing Windows native-painter gates
   remain unchanged; native input, mixed-DPI and physical latency are not proven
   by exact meshes or CPU samples.
+  `profile_retained_grid_row_stages` is an opt-in CPU-stage diagnostic,
+  registered in both aggregate runners under `FESTERM_RUN_ROW_CACHE_PROFILE=1`;
+  timings are not native GPU/presentation or portable threshold evidence.
 - **Coverage superseded:** None.
