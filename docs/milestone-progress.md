@@ -3917,3 +3917,12 @@ invalidates both caches conservatively. The regression checks atlas contents
 and actual GPU pixels after font/text-option reset without manual clearing,
 and fails when the repair is removed. Current-paint destructive atlas overflow
 remains an existing rendering limitation rather than being claimed as solved.
+
+Shaping-off controls exposed a second performance boundary: retaining glyph
+instructions alone left background tessellation hot, and full mutation paid
+capture overhead without reuse. Blank, undecorated background groups can retain
+the exact individual rectangles without crossing any glyph instruction.
+Previous-row identities then bypass retention when all unshaped rows change,
+and recover normally after output stabilizes. The measured full-mutation
+CPU-stage regression disappears with that bounded policy; native evidence must
+still be re-collected rather than inferred from the mechanism timing.

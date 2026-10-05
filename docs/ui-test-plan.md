@@ -329,6 +329,9 @@ color-emoji and non-font textures are excluded.
 Font-definition and text-option reset coverage compares actual atlas contents
 and GPU framebuffers with fresh layouts without manually clearing caches.
 The negative control fails with font-image checkpointing disabled.
+Unshaped blank-background groups retain every rectangle's geometry and preserve
+glyph/decoration order. Full-mutation bypass and quiet/redraw recovery have
+exact-mesh coverage; source timing must retain adverse controls.
 Native CPU qualification must separately cover localized foreground output, background
 output with populated foreground, genuine idle and full mutation, using owned
 profiles and stable window identity/geometry. Prototype timings do not advance

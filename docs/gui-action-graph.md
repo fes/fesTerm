@@ -98,6 +98,8 @@ Color-emoji and foreign textures are never retained. Redraw clears reuse;
 font-image changes also clear glyph layouts before replay, preventing stale
 galleys from being stamped with a replacement atlas identity. Atlas-content and
 GPU-pixel regressions cover reset without manual invalidation.
+Unshaped blank-background groups preserve exact instruction order; full-row
+mutation bypasses retention and returns to caching when content stabilizes.
 native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
 The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU

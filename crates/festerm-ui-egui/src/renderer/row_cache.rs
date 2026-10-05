@@ -79,6 +79,8 @@ pub(super) struct Rows {
     entries: Vec<Option<Entry>>,
     bytes: usize,
     budget: usize,
+    previous_revisions: Vec<RowRevision>,
+    retain_frame: bool,
     pub(super) reused: usize,
     pub(super) rebuilt: usize,
 }
@@ -89,6 +91,8 @@ impl Default for Rows {
             entries: Vec::new(),
             bytes: 0,
             budget: MAX_BYTES,
+            previous_revisions: Vec::new(),
+            retain_frame: true,
             reused: 0,
             rebuilt: 0,
         }
@@ -98,11 +102,12 @@ impl Default for Rows {
 impl Rows {
     pub(super) fn clear(&mut self) {
         self.entries.clear();
+        self.previous_revisions.clear();
         self.bytes = 0;
     }
 
     pub(super) fn enabled(&self) -> bool {
-        self.budget > 0 && !self.entries.is_empty()
+        self.budget > 0 && !self.entries.is_empty() && self.retain_frame
     }
 
     pub(super) fn diagnostics(&self) -> (usize, usize, usize) {
@@ -110,6 +115,7 @@ impl Rows {
     }
 
     pub(super) fn begin(&mut self, rows: usize, full_redraw: bool) {
+        self.retain_frame = true;
         self.reused = 0;
         self.rebuilt = 0;
         if full_redraw || self.entries.len() != rows {
@@ -118,6 +124,26 @@ impl Rows {
         if rows <= MAX_ROWS && self.entries.len() != rows {
             self.entries.resize_with(rows, || None);
         }
+    }
+
+    pub(super) fn observe(&mut self, cache: &crate::cache::TerminalRenderCache, shaped: bool) {
+        if self.budget == 0 || self.entries.is_empty() {
+            return;
+        }
+        self.retain_frame = shaped
+            || self.previous_revisions.len() != self.entries.len()
+            || self
+                .previous_revisions
+                .iter()
+                .enumerate()
+                .any(|(row, old)| {
+                    cache
+                        .row_revision(row)
+                        .is_some_and(|current| current == old)
+                });
+        self.previous_revisions.clear();
+        self.previous_revisions
+            .extend((0..self.entries.len()).filter_map(|row| cache.row_revision(row).cloned()));
     }
 
     pub(super) fn replay(&mut self, painter: &Painter, row: usize, key: &Key) -> bool {
@@ -260,6 +286,7 @@ fn retained_bytes(shape: &Shape) -> Option<usize> {
 pub(super) fn backgrounds(
     painter: &Painter,
     cells: &[crate::cache::RenderedCell],
+    columns: std::ops::Range<usize>,
     row: usize,
     layout: GridLayout,
     selection: Option<CellRange>,
@@ -270,7 +297,8 @@ pub(super) fn backgrounds(
         egui::epaint::Tessellator::new(painter.pixels_per_point(), options, [1, 1], Vec::new());
     tessellator.set_clip_rect(painter.clip_rect());
     let mut mesh = egui::epaint::Mesh::default();
-    for (column, cell) in cells.iter().enumerate() {
+    for column in columns {
+        let cell = &cells[column];
         if cell.width == festerm_core::CellWidth::Continuation {
             continue;
         }
