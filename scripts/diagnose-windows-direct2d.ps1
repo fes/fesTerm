@@ -31,8 +31,14 @@ Remove-Item Env:FESTERM_TRACE_NATIVE_TESTS
 for ($iteration = 1; $iteration -le 40; $iteration++) {
     $output = "$ResultDirectory/iteration-$iteration.log"
     Write-Host "UI prefix plus debugger-native iteration $iteration; stop at the first failure."
-    & $prefix --nocapture 2>&1 | Tee-Object -FilePath "$ResultDirectory/ui-prefix-$iteration.log"
-    if ($LASTEXITCODE -ne 0) { throw "The UI prefix itself failed in iteration $iteration." }
+    Push-Location (Join-Path $env:GITHUB_WORKSPACE 'crates/festerm-ui-egui')
+    try {
+        & $prefix --nocapture 2>&1 | Tee-Object -FilePath "$ResultDirectory/ui-prefix-$iteration.log"
+        $prefixExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($prefixExit -ne 0) { throw "The UI prefix itself failed in iteration $iteration with exit $prefixExit." }
     & $debugger -g -G -o -logo $output `
         -c 'sxd -c2 ".echo NATIVE_ACCESS_VIOLATION; .exr -1; .ecxr; kv; ~* k 20; lm; q" av; g' `
         $binary --nocapture
