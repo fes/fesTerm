@@ -73,11 +73,25 @@ the initial shaped full-mutation regression. Unshaped foreground full mutation
 remains variable: the 56-run matrix averages 7.6% worse, with opposite paired
 results. Eight longer ABBA/BAAB controls also remain adverse (12.2% aggregate;
 paired changes +57.2%, +3.1%, +0.8%, +3.2%). The low first baseline and the
-remaining smaller differences have no established cause; performance
-acceptance remains blocked. All adverse receipts remain preserved. This proposed
-decision does not establish release, platform or physical-latency acceptance.
-Issue #334's bounded revision-allocation/bookmark cleanup has deterministic
-regressions, including negative controls; its native impact remains unmeasured.
+remaining smaller differences have no established cause; those controls did
+not clear performance acceptance. All adverse receipts remain preserved.
+
+Issue #334's bounded revision-allocation/bookmark cleanup at
+`86e4274bb5ebbbe5cb8423cbb24d0db34688c62c` has deterministic regressions,
+including negative controls, and 52 completed isolated unlocked native runs.
+Against the original baseline, tested localized/Unicode cases use 13-23% less
+CPU, unshaped full foreground is approximately neutral (6.433% to 6.404%),
+and quiet controls remain 0.133% in both shaping modes. Longer shaped full
+foreground controls remain adverse (7.850% to 8.051%, +2.56%; all four paired
+changes +1.75% to +3.65%). The owner explicitly accepted this remaining shaped
+heavy-redraw tradeoff for PR #328 on 2026-10-05, keeping #334 open. Acceptance
+is not a claim that every workload is faster or a no-regression gate passed.
+The low-first-run phenomenon also occurred with the cleanup candidate first;
+its cause remains unknown and the direct before/after aggregate is not claimed
+as a causal speedup.
+
+This proposed decision still requires external PR review and does not establish
+release, broader platform, native-input, mixed-DPI or physical-latency acceptance.
 Independent security, reliability, scope and cross-platform test gates remain
 required.
 
@@ -111,7 +125,10 @@ required.
   after font-definition/text-option replacement; no manual invalidation is used.
 - **Native/manual evidence required:** Issue #327 requires matched isolated
   macOS foreground/background/idle/full-mutation CPU measurements with stable
-  window identity and geometry. CP-18's existing Windows native-painter gates
+  window identity and geometry. The 52-run cleanup evidence and owner-approved
+  residual shaped-heavy tradeoff are recorded in `docs/manual-validation.md`;
+  historical adverse receipts remain preserved under issues #327/#334.
+  CP-18's existing Windows native-painter gates
   remain unchanged; native input, mixed-DPI and physical latency are not proven
   by exact meshes or CPU samples.
   `profile_retained_grid_row_stages` is an opt-in CPU-stage diagnostic,

@@ -4000,8 +4000,8 @@ remain adverse: 5.763% baseline versus 6.466% candidate (+12.2%), with paired
 changes of +57.2%, +3.1%, +0.8% and +3.2%. The unusually low first baseline
 has no established cause; it is preserved along with every other run, not
 discarded or used to excuse the smaller adverse differences. Performance
-acceptance remains blocked, and the owner's installed app and profiles remain
-untouched.
+acceptance was blocked at that source head, and the owner's installed app and
+profiles remain untouched.
 
 The owner authorized a bounded follow-up in #334 before choosing whether to
 accept the heavy-redraw tradeoff. Dirty rows rebuilt together now share one
@@ -4009,5 +4009,26 @@ fresh revision token, compared only at the same row position. Non-retaining
 rows no longer acquire a capture bookmark/graphics-list lock. Shared-batch,
 independent-cache/clone and swapped-row mesh tests preserve identity and paint
 ownership; the full-mutation tests now also prove zero bookmarks. Restoring
-the old bookkeeping fails four focused regressions. This removes known extra
-work but does not yet establish native CPU gains or explain the low baseline.
+the old bookkeeping fails four focused regressions.
+
+The cleanup source `86e4274` completed 52 isolated unlocked native comparisons:
+the predeclared 36-run before/after/original-baseline/focused plan, eight current
+quiet controls and eight longer shaped-full controls. Exact hashes, matched
+geometry, foreground/input/lock guards and producer delivery passed throughout.
+Against the original baseline, tested localized/Unicode cases retain 13-23%
+CPU savings, unshaped full foreground is approximately neutral (6.433% to
+6.404%) and quiet controls stay 0.133% in both modes. Longer shaped full
+foreground remains 7.850% to 8.051% (+2.56%), adverse in all four pairs.
+The low-first-run phenomenon recurred with the cleanup candidate first
+(4.216%), so the direct previous-candidate aggregate is not claimed as a
+causal 10% speedup; its cause remains unknown and all older receipts remain.
+
+The owner explicitly accepted the remaining shaped-heavy tradeoff for #328 on
+2026-10-05 while keeping #334 open. Full local source gates, independent
+security/reliability/scope reviews and all eleven measured-source GitHub checks
+passed; only unstarted hosted-runner acquisition failures were retried once,
+with both attempts preserved. Evidence-only follow-ups do not change that
+measured source/binary and need their own CI. External PR review remains
+required, and native input, mixed-DPI and physical presentation/latency gates
+are unchanged. No merge, deployment, live-app restart or personal-state change
+is implied by this owner-approved performance decision.

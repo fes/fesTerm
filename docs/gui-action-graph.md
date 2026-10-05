@@ -106,14 +106,16 @@ Issue #334's bounded cleanup shares one revision token per nonempty presentation
 update, comparing identities only at the same row position. Capture bookmarks
 are created only for eligible retained rows. Batch/clone/independent-cache
 identity, swapped-row exact meshes and zero full-mutation bookmarks are covered;
-native performance requalification remains required.
+52 isolated unlocked native runs at `86e4274` complete CPU requalification.
 The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU
-presentation. The unlocked isolated 56-run macOS matrix at `58c5cd6` confirms
-localized/Unicode savings and removal of the initial shaped full-mutation
-regression. Unshaped foreground full mutation remains variable/adverse in that
-matrix; eight longer ABBA/BAAB controls did not clear the acceptance blocker.
-Historical adverse receipts remain preserved; CP-18 is not advanced by the
-prototype.
+presentation. Cleanup controls against the original baseline retain 13-23%
+localized/Unicode savings, approximately neutral unshaped full foreground and
+0.133% quiet CPU in both shaping modes. Longer shaped full foreground remains
++2.56%, adverse in all four pairs; the owner explicitly accepts this bounded
+tradeoff for #328 while #334 remains open. Historical matrices and low-first-run
+outliers remain preserved, with no established cause or causal before/after
+speedup claim. External PR review remains required; CP-18, native input,
+mixed-DPI and physical latency are not advanced by these CPU measurements.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU
