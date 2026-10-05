@@ -83,6 +83,8 @@ pub(super) struct Rows {
     retain_frame: bool,
     pub(super) reused: usize,
     pub(super) rebuilt: usize,
+    #[cfg(test)]
+    pub(super) capture_bookmarks: usize,
 }
 
 impl Default for Rows {
@@ -95,6 +97,8 @@ impl Default for Rows {
             retain_frame: true,
             reused: 0,
             rebuilt: 0,
+            #[cfg(test)]
+            capture_bookmarks: 0,
         }
     }
 }
@@ -118,6 +122,10 @@ impl Rows {
         self.retain_frame = true;
         self.reused = 0;
         self.rebuilt = 0;
+        #[cfg(test)]
+        {
+            self.capture_bookmarks = 0;
+        }
         if full_redraw || self.entries.len() != rows {
             self.clear();
         }

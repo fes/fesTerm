@@ -805,9 +805,15 @@ fn paint_grid_with_clip_override(
             continue;
         }
         glyphs.rows.remove(row);
-        let start = painter
-            .ctx()
-            .graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx());
+        let start = key.as_ref().map(|_| {
+            #[cfg(test)]
+            {
+                glyphs.rows.capture_bookmarks += 1;
+            }
+            painter
+                .ctx()
+                .graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx())
+        });
         // The shaped path already paints every background before its glyph runs.
         let cached_backgrounds = key.is_some()
             && paint.shape_cell_runs
@@ -986,7 +992,7 @@ fn paint_grid_with_clip_override(
                 }
             }
         }
-        if let Some(key) = key {
+        if let Some((key, start)) = key.zip(start) {
             glyphs.rows.capture(&painter, row, key, start);
         }
     }
@@ -2749,6 +2755,8 @@ mod tests {
             );
             assert_same_row_primitives(&actual, &reference);
             assert_eq!(glyphs.rows.diagnostics(), (0, 0, 0), "frame {frame}");
+            assert_eq!(glyphs.rows.capture_bookmarks, 0, "frame {frame}");
+            assert_eq!(ordinary.rows.capture_bookmarks, 0);
         }
         for _ in 0..3 {
             row_cache_frame(
@@ -2762,6 +2770,7 @@ mod tests {
             );
         }
         assert_eq!(glyphs.rows.reused, 12);
+        assert_eq!(glyphs.rows.capture_bookmarks, 0);
         row_cache_frame(
             &context,
             &terminal,
@@ -2775,6 +2784,84 @@ mod tests {
             },
         );
         assert_eq!(glyphs.rows.rebuilt, 12);
+        assert_eq!(glyphs.rows.capture_bookmarks, 12);
+    }
+
+    #[test]
+    fn retained_rows_keep_shared_revision_batches_bound_to_row_positions() {
+        for shaped in [false, true] {
+            let context = egui::Context::default();
+            crate::install_terminal_fonts(&context);
+            warm_row_context(&context);
+            let mut terminal = terminal(48, 3);
+            terminal.ingest(
+                b"\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[1;1Halpha\x1b[2;1Hmiddle\x1b[3;1Homega",
+            );
+            let mut cache = TerminalRenderCache::default();
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let selection = Selection::default();
+            let fonts = FontSettings::default();
+            let options = RowFrameOptions {
+                shaped,
+                ..Default::default()
+            };
+            let mut ordinary = GlyphCache::default();
+            ordinary.rows.disable();
+            let mut optimized = GlyphCache::default();
+            for _ in 0..3 {
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+            }
+            assert_eq!(optimized.rows.reused, 3);
+
+            terminal.ingest(b"\x1b[1;1H\x1b[2Komega\x1b[3;1H\x1b[2Kalpha");
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            assert_eq!(cache.row_revision(0), cache.row_revision(2));
+            assert_ne!(cache.row_revision(0), cache.row_revision(1));
+            for frame in 0..2 {
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_same_row_primitives(&actual, &reference);
+                assert_eq!(ordinary.rows.capture_bookmarks, 0);
+                assert_eq!(optimized.rows.reused, if frame == 0 { 1 } else { 3 });
+                assert_eq!(optimized.rows.rebuilt, if frame == 0 { 2 } else { 0 });
+                assert_eq!(optimized.rows.capture_bookmarks, optimized.rows.rebuilt);
+            }
+        }
     }
 
     #[test]

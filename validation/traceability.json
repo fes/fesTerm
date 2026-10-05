@@ -985,6 +985,8 @@
         "retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity",
         "retained_row_clear_releases_owned_meshes",
         "row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality",
+        "row_revisions_share_one_token_per_nonempty_update",
+        "retained_rows_keep_shared_revision_batches_bound_to_row_positions",
         "retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear",
         "profile_retained_grid_row_stages",
         "retained_unshaped_rows_bypass_full_mutation_and_recover_exact_meshes",
@@ -1126,6 +1128,7 @@
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
         "CP-17/18 native CPU evidence requires application-window identity and recorded input/geometry/cadence guards; noisy shared-host results are approximate, not strict benchmarks",
         "ADR-0044 exact-source 58c5cd6 unlocked macOS 56-run matrix confirms localized/Unicode savings and repaired shaped full-mutation cost; eight longer ABBA/BAAB controls remain adverse/variable for unshaped foreground full mutation, blocking native CPU acceptance, while native input, mixed-DPI and physical latency remain separate evidence",
+        "Issue334 bounded revision-batch/bookmark cleanup preserves row-position identity and fallback meshes with negative controls; native full-redraw/localized comparisons on the resulting exact binary remain required and do not supersede older adverse receipts",
         "ADR-0039/0040/0041 owner-approved automatic WARP rollout without switches; native/resource/latency qualification remains follow-up work: https://github.com/fes/fesTerm/issues/282"
       ]
     },

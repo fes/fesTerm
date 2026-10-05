@@ -102,6 +102,11 @@ Unshaped blank-background groups preserve exact instruction order; full-row
 mutation bypasses retention with shaping both on and off, then returns to
 caching when content stabilizes. Native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
+Issue #334's bounded cleanup shares one revision token per nonempty presentation
+update, comparing identities only at the same row position. Capture bookmarks
+are created only for eligible retained rows. Batch/clone/independent-cache
+identity, swapped-row exact meshes and zero full-mutation bookmarks are covered;
+native performance requalification remains required.
 The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU
 presentation. The unlocked isolated 56-run macOS matrix at `58c5cd6` confirms
 localized/Unicode savings and removal of the initial shaped full-mutation

@@ -714,6 +714,12 @@ blocker, and none of their intervals or runs is discarded.
 Local workspace/portable/vendor gates, independent security/reliability/scope
 reviews and all 11 integrated-head GitHub checks passed. CI success does not
 resolve the remaining native CPU uncertainty.
+Issue #334's owner-authorized cleanup removes per-rebuilt-row revision
+allocations and unconditional capture bookmarks without changing retention
+eligibility or atlas invalidation. Batch/independent-cache/clone identity and
+row-position mesh regressions pass; restoring both old policies fails four
+focused regressions. Native full-redraw and localized-output comparisons on
+the resulting exact binary are still required before interpreting its impact.
 The shaped/unshaped static/localized/full-mutation CPU-stage diagnostic is in
 both optional runners under `FESTERM_RUN_ROW_CACHE_PROFILE=1`.
 Existing CP-16/17/18 and mixed-DPI/native-input/physical

@@ -19,6 +19,11 @@ estimated payload and 1024 rows. Opaque row identities change whenever the
 presentation cache reconstructs a row. Reuse additionally requires matching
 layout, viewport, clip, DPI, fonts and trusted font-image identity, selection,
 shaping and tessellation options. Redraw and glyph-cache teardown clear reuse.
+Rows rebuilt by one presentation update share one fresh opaque revision token.
+Identity comparisons remain at the same row position; unchanged rows keep their
+old token and independent updates/caches receive distinct tokens. Empty updates
+allocate no batch revision. Capture bookmarks are acquired only for eligible
+rows, so the non-retaining fallback avoids that graphics-list lock.
 
 Compare a persistent previous-paint-end font-image identity before any glyph
 lookup/replay. A changed image conservatively clears glyph layouts and retained
@@ -71,6 +76,8 @@ paired changes +57.2%, +3.1%, +0.8%, +3.2%). The low first baseline and the
 remaining smaller differences have no established cause; performance
 acceptance remains blocked. All adverse receipts remain preserved. This proposed
 decision does not establish release, platform or physical-latency acceptance.
+Issue #334's bounded revision-allocation/bookmark cleanup has deterministic
+regressions, including negative controls; its native impact remains unmeasured.
 Independent security, reliability, scope and cross-platform test gates remain
 required.
 
@@ -91,9 +98,14 @@ required.
   `retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity`,
   `retained_row_clear_releases_owned_meshes`,
   `row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality`.
+  `row_revisions_share_one_token_per_nonempty_update` covers batch identity,
+  separate caches, unchanged/empty/invalid/duplicate dirty rows and clone
+  independence. `retained_rows_keep_shared_revision_batches_bound_to_row_positions`
+  compares swapped distinct rows with ordinary meshes for both shaping modes.
   `retained_unshaped_rows_bypass_full_mutation_and_recover_exact_meshes`
   and `retained_shaped_rows_bypass_full_mutation_and_recover_exact_meshes`
-  cover full-mutation bypass, quiet recovery and explicit redraw.
+  cover full-mutation bypass, zero capture bookmarks, quiet recovery and
+  explicit redraw.
   `retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear`
   compares actual atlas contents and GPU framebuffers with fresh glyph layouts
   after font-definition/text-option replacement; no manual invalidation is used.

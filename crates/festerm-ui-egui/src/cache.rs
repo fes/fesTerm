@@ -142,15 +142,19 @@ impl TerminalRenderCache {
                 .filter(|row| *row < dimensions.rows())
                 .collect()
         };
-        for row in &rows {
-            self.rows[*row].cells = (0..dimensions.columns())
-                .map(|column| {
-                    snapshot
-                        .cell(column, *row)
-                        .map_or_else(RenderedCell::blank, RenderedCell::from_core)
-                })
-                .collect();
-            self.rows[*row].revision = RowRevision::default();
+        if !rows.is_empty() {
+            // Revisions are compared at the same row position, never across rows.
+            let revision = RowRevision::default();
+            for row in &rows {
+                self.rows[*row].cells = (0..dimensions.columns())
+                    .map(|column| {
+                        snapshot
+                            .cell(column, *row)
+                            .map_or_else(RenderedCell::blank, RenderedCell::from_core)
+                    })
+                    .collect();
+                self.rows[*row].revision = revision.clone();
+            }
         }
 
         RenderCacheUpdate {
@@ -266,5 +270,53 @@ mod tests {
         assert_eq!(cache.row_revision(0), Some(&revisions[0]));
         assert_ne!(cache.row_revision(1), Some(&revisions[1]));
         assert_eq!(cache.row_revision(2), Some(&revisions[2]));
+    }
+
+    #[test]
+    fn row_revisions_share_one_token_per_nonempty_update() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 3).expect("valid dimensions"))
+            .expect("test allocation");
+        terminal.ingest(b"\x1b[?25lone\x1b[2;1Htwo\x1b[3;1Hthree");
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        let initial = cache.clone();
+        assert_eq!(cache.row_revision(0), cache.row_revision(1));
+        assert_eq!(cache.row_revision(0), cache.row_revision(2));
+
+        let mut independent = TerminalRenderCache::default();
+        independent.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        assert_eq!(cache, independent);
+        for row in 0..3 {
+            assert_ne!(cache.row_revision(row), independent.row_revision(row));
+        }
+
+        terminal.ingest(b"\x1b[1;1HONE\x1b[3;1HTHREE");
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &[0, 2, 0, 99]);
+        assert_eq!(update.updated_rows, [0, 2, 0]);
+        assert!(!update.full_refresh);
+        assert_eq!(cache.row_revision(0), cache.row_revision(2));
+        assert_ne!(cache.row_revision(0), initial.row_revision(0));
+        assert_eq!(cache.row_revision(1), initial.row_revision(1));
+        assert_ne!(cache.row_revision(0), cache.row_revision(1));
+        assert_eq!(initial.row(0).expect("initial row")[0].text(), "o");
+        assert_eq!(cache.row(0).expect("updated row")[0].text(), "O");
+
+        let changed = cache.clone();
+        for dirty in [&[][..], &[99][..]] {
+            let update = cache.update(TerminalSnapshot::from_terminal(&terminal), dirty);
+            assert!(update.updated_rows.is_empty());
+            assert!(!update.full_refresh);
+            for row in 0..3 {
+                assert_eq!(cache.row_revision(row), changed.row_revision(row));
+            }
+        }
+
+        terminal.ingest(b"\x1b[2;1HTWO");
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[1]);
+        assert_ne!(cache.row_revision(1), changed.row_revision(1));
+        for row in [0, 2] {
+            assert_eq!(cache.row_revision(row), changed.row_revision(row));
+            assert_ne!(cache.row_revision(row), cache.row_revision(1));
+        }
     }
 }

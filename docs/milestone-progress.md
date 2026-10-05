@@ -4002,3 +4002,12 @@ has no established cause; it is preserved along with every other run, not
 discarded or used to excuse the smaller adverse differences. Performance
 acceptance remains blocked, and the owner's installed app and profiles remain
 untouched.
+
+The owner authorized a bounded follow-up in #334 before choosing whether to
+accept the heavy-redraw tradeoff. Dirty rows rebuilt together now share one
+fresh revision token, compared only at the same row position. Non-retaining
+rows no longer acquire a capture bookmark/graphics-list lock. Shared-batch,
+independent-cache/clone and swapped-row mesh tests preserve identity and paint
+ownership; the full-mutation tests now also prove zero bookmarks. Restoring
+the old bookkeeping fails four focused regressions. This removes known extra
+work but does not yet establish native CPU gains or explain the low baseline.
