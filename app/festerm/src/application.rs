@@ -1564,6 +1564,182 @@ mod tests {
         assert_eq!(application.window_count(), 1);
     }
 
+    #[test]
+    fn accepted_window_close_releases_its_last_document_views() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first.txt");
+        let second = directory.path().join("second.txt");
+        std::fs::write(&first, "first\n").unwrap();
+        std::fs::write(&second, "second\n").unwrap();
+        application.window_mut(1).dispatch_for_test(
+            AppCommand::OpenTextEditor {
+                path: first.clone(),
+            },
+            &context,
+        );
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenAnotherEditorView, &context);
+        application.window_mut(1).dispatch_for_test(
+            AppCommand::OpenTextEditor {
+                path: second.clone(),
+            },
+            &context,
+        );
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let first_id = documents.borrow().find_local(&first).unwrap();
+        assert_eq!(documents.borrow().get(first_id).unwrap().views(), 2);
+        assert_eq!(documents.borrow().len(), 2);
+
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows(&context);
+
+        assert_eq!(application.window_count(), 1);
+        assert!(documents.borrow().is_empty());
+        assert!(documents.borrow().find_local(&first).is_none());
+        assert!(documents.borrow().find_local(&second).is_none());
+    }
+
+    #[test]
+    fn accepted_window_close_preserves_a_sibling_document_and_its_undo() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("shared.txt");
+        std::fs::write(&path, "original\n").unwrap();
+        for index in 0..2 {
+            application
+                .window_mut(index)
+                .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        }
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenAnotherEditorView, &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let id = documents.borrow().find_local(&path).unwrap();
+        assert_eq!(documents.borrow().get(id).unwrap().views(), 3);
+        documents
+            .borrow_mut()
+            .get_mut(id)
+            .unwrap()
+            .text_mut()
+            .replace(0..0, "unsaved ")
+            .unwrap();
+
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows(&context);
+
+        let mut registry = documents.borrow_mut();
+        let document = registry.get_mut(id).unwrap();
+        assert_eq!(document.views(), 1);
+        assert_eq!(document.text().text(), "unsaved original\n");
+        assert!(document.text().is_dirty());
+        assert!(document.text_mut().undo());
+        assert_eq!(document.text().text(), "original\n");
+        assert!(document.text_mut().redo());
+        assert_eq!(document.text().text(), "unsaved original\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    }
+
+    #[test]
+    fn window_teardown_does_not_release_already_closed_document_views() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("shared.txt");
+        std::fs::write(&path, "original\n").unwrap();
+        for index in 0..2 {
+            application
+                .window_mut(index)
+                .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        }
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenAnotherEditorView, &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let id = documents.borrow().find_local(&path).unwrap();
+        let closed = application.window_mut(1).active_tab_id_for_test();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::CloseTab(closed), &context);
+        assert_eq!(documents.borrow().get(id).unwrap().views(), 2);
+
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows(&context);
+
+        assert_eq!(documents.borrow().get(id).unwrap().views(), 1);
+        let last = application.window_mut(0).active_tab_id_for_test();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::CloseTab(last), &context);
+        assert!(documents.borrow().is_empty());
+    }
+
+    #[test]
+    fn moving_an_editor_out_of_a_closing_window_keeps_its_document_registered() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let launcher = application.window_mut(1).active_tab_id_for_test();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("moved.txt");
+        std::fs::write(&path, "moved\n").unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        let moved = application.window_mut(1).active_tab_id_for_test();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::CloseTab(launcher), &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let id = documents.borrow().find_local(&path).unwrap();
+        let target = application.windows[0].id.viewport_id();
+        application.window_mut(1).dispatch_for_test(
+            AppCommand::MoveTabToWindow {
+                moved,
+                target: Some(target),
+                before: None,
+                screen_position: egui::pos2(40.0, 40.0),
+            },
+            &context,
+        );
+        application.settle_windows(&context);
+
+        assert_eq!(application.window_count(), 1);
+        assert!(application
+            .window_mut(0)
+            .tab_ids_for_test()
+            .contains(&moved));
+        assert_eq!(documents.borrow().get(id).unwrap().views(), 1);
+        assert_eq!(documents.borrow().get(id).unwrap().text().text(), "moved\n");
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::CloseTab(moved), &context);
+        assert!(documents.borrow().is_empty());
+    }
+
+    #[test]
+    fn application_teardown_releases_all_remaining_document_views() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("quit.txt");
+        std::fs::write(&path, "quit\n").unwrap();
+        for index in 0..2 {
+            application
+                .window_mut(index)
+                .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        }
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let id = documents.borrow().find_local(&path).unwrap();
+        assert_eq!(documents.borrow().get(id).unwrap().views(), 2);
+
+        drop(application);
+
+        assert!(documents.borrow().is_empty());
+    }
+
     /// A window must not re-broadcast a document it merely adopted, or two
     /// windows would ping-pong the same write for as long as the app runs.
     #[test]
