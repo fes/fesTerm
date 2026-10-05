@@ -325,8 +325,11 @@ Issue #327's ordinary row-cache repair compares complete clipped mesh vertices,
 indices, colors and UVs with cache-disabled painting across fractional DPI,
 shaping, dirty content, fonts, selection and monochrome Unicode. Budget/teardown,
 history/resize, cursor, clip/transform/opacity and native fallback are covered;
-color-emoji and non-font textures are excluded. Native CPU
-qualification must separately cover localized foreground output, background
+color-emoji and non-font textures are excluded.
+Font-definition and text-option reset coverage compares actual atlas contents
+and GPU framebuffers with fresh layouts without manually clearing caches.
+The negative control fails with font-image checkpointing disabled.
+Native CPU qualification must separately cover localized foreground output, background
 output with populated foreground, genuine idle and full mutation, using owned
 profiles and stable window identity/geometry. Prototype timings do not advance
 native presentation, input or physical-latency acceptance; see proposed ADR 0044.

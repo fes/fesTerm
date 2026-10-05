@@ -95,6 +95,9 @@ Exact-mesh tests compare unchanged reuse, dirty content, fonts/DPI, selection
 and monochrome Unicode against the cache-disabled renderer. Budget, teardown,
 history/resize, clip, opacity, transforms, cursor and native fallback are covered.
 Color-emoji and foreign textures are never retained. Redraw clears reuse;
+font-image changes also clear glyph layouts before replay, preventing stale
+galleys from being stamped with a replacement atlas identity. Atlas-content and
+GPU-pixel regressions cover reset without manual invalidation.
 native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
 The opt-in `profile_retained_grid_row_stages` measures CPU-stage cost, not GPU

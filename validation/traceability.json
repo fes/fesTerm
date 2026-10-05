@@ -972,6 +972,7 @@
         "retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity",
         "retained_row_clear_releases_owned_meshes",
         "row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality",
+        "retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear",
         "profile_retained_grid_row_stages",
         "native_background_hook_preserves_rectangles_and_translucent_fallback",
         "panel_fill_callback_preserves_declined_geometry_and_color",

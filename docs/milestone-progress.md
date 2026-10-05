@@ -3909,3 +3909,11 @@ bundle metadata. A matched pair of uniquely identified high-resolution bundles
 reduces background CPU, but is explicitly labeled locked-display evidence, not
 foreground/native-presentation acceptance. No output throttling, queue-policy
 change, live-app restart, screen unlock or release is involved.
+
+Independent reliability review found an inherited font-atlas lifetime defect:
+rejecting an old row key was insufficient if the glyph cache then supplied
+galleys from the old atlas. A persistent before/after-paint image checkpoint now
+invalidates both caches conservatively. The regression checks atlas contents
+and actual GPU pixels after font/text-option reset without manual clearing,
+and fails when the repair is removed. Current-paint destructive atlas overflow
+remains an existing rendering limitation rather than being claimed as solved.

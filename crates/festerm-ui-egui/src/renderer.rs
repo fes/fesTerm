@@ -154,6 +154,7 @@ pub(crate) struct GlyphCache {
     style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
     rows: row_cache::Rows,
+    font_revision: Option<egui::epaint::FontImageRevision>,
 }
 
 impl GlyphCache {
@@ -166,6 +167,27 @@ impl GlyphCache {
         self.style_hasher = None;
         self.color_emoji.clear();
         self.rows.clear();
+        self.font_revision = None;
+    }
+
+    fn begin_paint(&mut self, painter: &egui::Painter) {
+        let revision = painter.ctx().fonts_mut(|fonts| fonts.image_revision());
+        if self.font_revision.as_ref() != Some(&revision) {
+            self.layouts.clear();
+            self.style_hasher = None;
+            self.rows.clear();
+        }
+        self.font_revision = Some(revision);
+    }
+
+    fn finish_paint(&mut self, painter: &egui::Painter) {
+        let revision = painter.ctx().fonts_mut(|fonts| fonts.image_revision());
+        if self.font_revision.as_ref() != Some(&revision) {
+            self.layouts.clear();
+            self.style_hasher = None;
+            self.rows.clear();
+        }
+        self.font_revision = Some(revision);
     }
 
     fn query_hash(&mut self, query: &GlyphQuery<'_>) -> u64 {
@@ -742,6 +764,7 @@ fn paint_grid_with_clip_override(
     let Some(dimensions) = paint.cache.dimensions() else {
         return GridPaintStats::default();
     };
+    glyphs.begin_paint(&painter);
     let mut stats = GridPaintStats::default();
     let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
     let clip_policy = GridGlyphClipPolicy::new(&painter, clip_override);
@@ -999,6 +1022,7 @@ fn paint_grid_with_clip_override(
     if let Some(native) = native {
         native.finish(&painter);
     }
+    glyphs.finish_paint(&painter);
     stats
 }
 
@@ -1908,7 +1932,7 @@ mod tests {
         }
     }
 
-    fn row_cache_frame(
+    fn row_cache_output(
         context: &egui::Context,
         terminal: &Terminal,
         cache: &TerminalRenderCache,
@@ -1916,9 +1940,9 @@ mod tests {
         selection: &Selection,
         fonts: &FontSettings,
         options: RowFrameOptions,
-    ) -> Vec<egui::epaint::ClippedPrimitive> {
+    ) -> egui::FullOutput {
         let dimensions = terminal.dimensions();
-        let mut output = context.run_ui(
+        context.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, options.screen_size)),
                 ..Default::default()
@@ -1954,7 +1978,20 @@ mod tests {
                     options.clip_override,
                 );
             },
-        );
+        )
+    }
+
+    fn row_cache_frame(
+        context: &egui::Context,
+        terminal: &Terminal,
+        cache: &TerminalRenderCache,
+        glyphs: &mut GlyphCache,
+        selection: &Selection,
+        fonts: &FontSettings,
+        options: RowFrameOptions,
+    ) -> Vec<egui::epaint::ClippedPrimitive> {
+        let mut output =
+            row_cache_output(context, terminal, cache, glyphs, selection, fonts, options);
         output.textures_delta.clear();
         context.tessellate(output.shapes, output.pixels_per_point)
     }
@@ -1971,6 +2008,90 @@ mod tests {
                 )
                 .textures_delta
                 .clear();
+        }
+    }
+
+    #[test]
+    fn retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear() {
+        let context = egui::Context::default();
+        context.set_theme(egui::Theme::Dark);
+        crate::install_terminal_fonts(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(
+            "\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[HAtlas validity != geometry 界 αé".as_bytes(),
+        );
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        let options = RowFrameOptions {
+            shaped: false,
+            ..Default::default()
+        };
+        let mut glyphs = GlyphCache::default();
+        let mut renderer = egui_kittest::wgpu::WgpuTestRenderer::new();
+        for step in 0..3 {
+            match step {
+                1 => {
+                    crate::install_terminal_font_family(
+                        &context,
+                        crate::TerminalFontFamily::JuliaMono,
+                    );
+                }
+                2 => context.style_mut_of(egui::Theme::Dark, |style| {
+                    style.visuals.text_options.color_transfer_function =
+                        egui::epaint::FontColorTransferFunction::Gamma(0.8);
+                }),
+                _ => {}
+            }
+            let mut actual = row_cache_output(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                options,
+            );
+            renderer.handle_delta(&mut actual.textures_delta);
+            let actual_pixels = renderer.render(&context, &actual).expect("actual pixels");
+            let actual_atlas = context.fonts(|fonts| fonts.image());
+            let mut ordinary = GlyphCache::default();
+            ordinary.rows.disable();
+            let mut reference = row_cache_output(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                options,
+            );
+            renderer.handle_delta(&mut reference.textures_delta);
+            let reference_pixels = renderer.render(&context, &reference).expect("fresh pixels");
+            let reference_atlas = context.fonts(|fonts| fonts.image());
+            assert!(
+                actual_atlas == reference_atlas,
+                "atlas at reset step {step}"
+            );
+            assert!(
+                actual_pixels == reference_pixels,
+                "pixels at reset step {step}"
+            );
+            for _ in 0..2 {
+                let mut output = row_cache_output(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut glyphs,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                renderer.handle_delta(&mut output.textures_delta);
+            }
+            assert_eq!(glyphs.rows.reused, 12);
         }
     }
 

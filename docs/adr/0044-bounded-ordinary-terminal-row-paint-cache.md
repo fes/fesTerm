@@ -20,6 +20,14 @@ presentation cache reconstructs a row. Reuse additionally requires matching
 layout, viewport, clip, DPI, fonts and trusted font-image identity, selection,
 shaping and tessellation options. Redraw and glyph-cache teardown clear reuse.
 
+Compare a persistent previous-paint-end font-image identity before any glyph
+lookup/replay. A changed image conservatively clears glyph layouts and retained
+rows; an image change during painting clears newly retained entries too.
+This repairs inherited stale galleys after pass-boundary atlas recreation
+without a new vendor API, image copy or per-cell check. Ordinary append may
+also discard caches. Destructive atlas overflow during a current paint can
+still affect that already-emitted frame; retention must not carry it forward.
+
 Keep the cursor outside the retained rows. Color-emoji, native-painter,
 transformed, translucent, hidden and debug-paint cases keep ordinary painting.
 Eligible shaped rows may retain the exact tessellated individual background
@@ -71,6 +79,9 @@ required.
   `retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity`,
   `retained_row_clear_releases_owned_meshes`,
   `row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality`.
+  `retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear`
+  compares actual atlas contents and GPU framebuffers with fresh glyph layouts
+  after font-definition/text-option replacement; no manual invalidation is used.
 - **Native/manual evidence required:** Issue #327 requires matched isolated
   macOS foreground/background/idle/full-mutation CPU measurements with stable
   window identity and geometry. CP-18's existing Windows native-painter gates
