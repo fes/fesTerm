@@ -153,7 +153,7 @@ This overlay is session-scoped and live-session-only. It serves three jobs:
 
 1. show the current active forward mappings for the selected SSH session;
 2. add a new mapping to the current live session; and
-3. remove an active mapping from the current live session.
+3. remove an active or failed mapping from the current live session.
 
 The overlay must show both **profile-sourced** mappings and **ephemeral**
 overlay-added mappings, clearly distinguishing their source. Ephemeral
@@ -163,6 +163,36 @@ saved profile, and disappear when that live session ends.
 A compact status-bar affordance such as an icon or count may be added later if
 it remains factual and non-noisy, but it is not required by this ADR. The
 authoritative live-management surface is the overlay itself.
+
+### Live inventory is bounded without retiring working or failed mappings
+
+The owner-approved live-session ceiling is 128 combined profile and ephemeral
+mappings. Pending requests reserve slots before command admission; the
+reservation remains owned by the resulting active or failed record. Full or
+closed command delivery, canceled pending work, and explicit removal release
+the reservation. Removal releases its slot after the forwarding owner stops.
+No mapping is automatically retired: a full inventory visibly refuses the
+addition and preserves the overlay draft until the user removes a row.
+
+Profile collection refuses a 129th mapping before launch, without truncating
+or rejecting the whole saved configuration. Binding validation and source
+metadata remain unchanged. The separate 32-in-flight connection bound still
+protects bridges rather than mapping inventory. This is a count bound, not an
+aggregate host-string, payload-byte, allocator-fragmentation, or RSS guarantee.
+
+Admission and queued removals are transport-generation scoped; stale work
+cannot act on a replacement connection or release its reservations. Indexed
+binding lookup removes repeated scans and bind-host clones. Removal preserves
+row order, and exceptional outer-vector/index capacity is reclaimed.
+
+Snapshots are prepared only after mutations, with initial profile changes
+batched. A blocked publication retains one latest snapshot and retries through
+the existing command cadence without rebuilding unchanged metadata or adding
+a polling loop. Unpublished snapshots retire with their transport-owned
+inventory. The overlay borrows the controller snapshot and gives each binding
+explicit stable widget identity; it does not clone the whole list every frame.
+Existing network-operation and teardown timeouts remain unchanged; shutdown
+is checked between profile mappings and commands.
 
 ### Transport integration stays inside the existing worker/channel architecture
 
@@ -176,7 +206,7 @@ Concretely:
   polls commands while the session is running, becomes the integration point
   for applying profile-defined forwards at startup and processing live
   add/remove requests afterward; and
-- `WorkerShared::try_emit` returns sanitized forward-state updates to the app
+- `WorkerShared::try_emit_retaining` publishes sanitized forward-state updates to the app
   via new `SessionEvent` data, suitable for `SessionController` and the live
   overlay to render.
 
@@ -249,10 +279,14 @@ advanced widening when the user truly intends broader reachability.
 - **Invariants introduced or changed:** Saved SSH profiles may declare zero or
   more validated local/remote forwards; loopback is the default bind policy;
   overlay-added forwards are always ephemeral; all active forwards tear down on
-  disconnect; reconnect never silently restores prior forward state.
+  disconnect; reconnect never silently restores prior forward state. Each
+  live inventory admits at most 128 combined profile/pending/active/failed
+  mappings, refusing new work until explicit removal rather than evicting a
+  tunnel or discarding failed-row diagnostics.
 - **GUI/action edges affected:** New planned edges `SSH-06` (open Port Forward
   Manager from a live SSH session), `SSH-07` (add a validated local or remote
-  forward in that overlay), and `SSH-08` (remove an active forward and confirm
+  forward in that overlay, including visible full-inventory refusal), and
+  `SSH-08` (remove an active or failed forward and confirm
   the live list updates without mutating the saved profile). A later optional
   status-bar count, if implemented, should receive its own stable `STATUS-*`
   edge rather than piggybacking on these.
@@ -264,11 +298,32 @@ advanced widening when the user truly intends broader reachability.
   `port_forward_manager_lists_profile_and_ephemeral_mappings`,
   `removing_an_ephemeral_forward_does_not_mutate_the_saved_profile`, and
   `reconnect_does_not_reapply_forward_state_without_a_fresh_launch_decision`.
+  Deterministic inventory coverage includes
+  `profile_port_forward_inventory_accepts_128_and_rejects_129`,
+  `pending_port_forward_inventory_refuses_a_129th_request`,
+  `port_forward_command_refusal_and_cancellation_release_admission`,
+  `initial_profile_and_live_forward_requests_share_admission_before_running`,
+  `queued_forward_removal_records_the_transport_generation`,
+  `failed_port_forward_inventory_churn_plateaus_and_reclaims_capacity`,
+  `indexed_port_forward_removal_preserves_order_and_other_bindings`,
+  `stale_forward_reservation_cannot_release_a_new_generation_binding`,
+  `forward_reservation_is_released_only_after_local_owner_stops`,
+  `disconnecting_clears_the_retained_port_forward_snapshot`,
+  `forward_snapshot_retries_without_recloning_and_coalesces_latest_state`,
+  `forward_snapshot_closed_receiver_does_not_rebuild_or_survive_owner_retirement`,
+  `port_forward_manager_inventory_refusal_is_visible_and_preserves_the_draft`,
+  `stored_password_profile_forward_inventory_limit_is_visible_and_preserves_configuration`,
+  `port_forward_row_widget_identity_survives_removing_an_earlier_mapping`, and
+  `live_forward_inventory_limit_preserves_active_bytes_and_admits_retry_after_failed_removal`.
 - **Native/manual evidence required:** Manual SSH-fixture evidence is required
   for loopback-default behavior, explicit non-loopback opt-in messaging, a
   server-accepted remote forward, a server-rejected remote forward, and clean
-  teardown on disconnect. Stable scenario IDs should be added to
-  `docs/manual-validation.md` in the implementing change.
+  teardown on disconnect. Existing scenario `TI-11` also retains native
+  full-inventory message, draft-preservation, failed-row removal/retry, and
+  narrow-overlay/accessibility checks; headless and owned-loopback evidence
+  do not establish native usability acceptance. `LAUNCH-02`, `LAUNCH-04` and
+  `LAUNCH-07` also cover the pre-connect count refusal and factual saved-profile
+  feedback without truncating the stored configuration.
 - **Coverage superseded:** None yet. `validation/traceability.json` must be
   updated in the implementing change that wires these edges and tests into real
   coverage.

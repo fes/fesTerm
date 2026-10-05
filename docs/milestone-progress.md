@@ -3,6 +3,38 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding live forwarding inventory without evicting tunnels
+
+The #320 allocation/lifecycle audit found that each requested SSH mapping
+retained an active or failed row indefinitely until explicit removal, with no
+inventory ceiling. Snapshot queries cloned every row, and the manager cloned
+the list again on every frame. The existing 32-connection bound did not limit
+listeners or failed mappings.
+
+The approved policy is 128 combined profile, pending, active and failed
+mappings per live SSH session, with visible refusal until a row is removed.
+Reservations begin before command admission and remain with the forwarding
+owner; failed/closed delivery, canceled work and completed removal release
+them. Startup reserves profile slots before exposing Running, while generation
+checks prevent stale work from affecting a replacement transport. Failed rows
+and working tunnels are never automatically evicted.
+
+Binding indexes replace repeated scans and host-string copies. Ordered removal
+reclaims exceptional row/index storage; change-only publication batches initial
+profiles and retains one latest blocked snapshot without repeated cloning.
+The manager borrows its retained list, preserves refused drafts and uses
+explicit stable row widget IDs. Oversized saved-profile launches report the
+ceiling, including the stored-password shortcut, without discarding settings.
+
+The original 128/129 profile and pending-admission controls both failed.
+Deterministic churn now plateaus at 128 and releases empty storage, and 1,000
+blocked retries prepare one snapshot. Owned loopback SSH coverage preserves
+active tunnel bytes at capacity, proves unchanged queries do not republish,
+and removes a failed mapping to admit a retry. Native overlay readability,
+accessibility and OpenSSH interoperability remain `TI-11`; the count ceiling
+is not a total-payload/RSS bound, allocator-fragmentation diagnosis, or evidence
+for the multi-day CPU-growth cause in #297.
+
 ## Keeping vi repeat bounded without discarding edits
 
 The allocation/lifecycle audit in #320 found that Insert/Backspace and Visual

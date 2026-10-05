@@ -1957,15 +1957,20 @@ impl FesTermApp {
             .configuration()
             .profile(&profile_id)
             .and_then(Profile::as_ssh)
-            .and_then(|profile| {
-                options
-                    .with_profile_port_forwards(profile.port_forwards().iter())
-                    .ok()
-            });
-        let Some(options) = options else {
-            self.secure_storage_feedback =
-                Some("This saved SSH profile has invalid port-forward settings.");
-            return;
+            .map(|profile| options.with_profile_port_forwards(profile.port_forwards().iter()));
+        let options = match options {
+            Some(Ok(options)) => options,
+            Some(Err(festerm_ssh::SshPortForwardConfigurationError::InventoryLimit)) => {
+                self.secure_storage_feedback = Some(
+                    "This saved SSH profile has more than 128 port-forward mappings; reduce them before launching.",
+                );
+                return;
+            }
+            Some(Err(_)) | None => {
+                self.secure_storage_feedback =
+                    Some("This saved SSH profile has invalid port-forward settings.");
+                return;
+            }
         };
         self.start_stored_password_profile_with_options(profile_id, options, context);
     }
@@ -4284,6 +4289,20 @@ impl FesTermApp {
         })
     }
 
+    fn with_port_forward_row<R>(
+        ui: &mut egui::Ui,
+        forward: &SshPortForwardRuntime,
+        render: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let id = ui.id().with((
+            "ssh-port-forward-row",
+            forward.direction() == SshPortForwardDirection::Local,
+            forward.bind_host(),
+            forward.bind_port(),
+        ));
+        ui.scope_builder(egui::UiBuilder::new().id(id), render)
+    }
+
     fn show_port_forward_manager(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
         let Some(manager) = self.overlays.port_forward_manager.as_mut() else {
             return;
@@ -4293,7 +4312,7 @@ impl FesTermApp {
             return;
         };
         let available = session.live_port_forwarding_available();
-        let forwards = session.port_forwards().to_vec();
+        let forwards = session.port_forwards();
         let mut close_requested = false;
         let mut add_requested = false;
         let mut remove_requested: Option<SshPortForwardRuntime> = None;
@@ -4323,6 +4342,15 @@ impl FesTermApp {
                             egui::RichText::new(
                                 "Live-only SSH forwards for this tab. Overlay-added mappings never change the saved profile.",
                             )
+                            .small()
+                            .color(theme::TEXT_SECONDARY),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{}/{} recorded mappings. Pending additions also reserve slots; remove an active or failed mapping to make room.",
+                                forwards.len(),
+                                festerm_ssh::MAX_SSH_PORT_FORWARD_ENTRIES,
+                            ))
                             .small()
                             .color(theme::TEXT_SECONDARY),
                         );
@@ -4358,6 +4386,7 @@ impl FesTermApp {
                                         if index > 0 {
                                             ui.add_space(8.0);
                                         }
+                                        Self::with_port_forward_row(ui, forward, |ui| {
                                         egui::Frame::new()
                                             .fill(theme::SURFACE_TAB_ACTIVE)
                                             .stroke(egui::Stroke::new(
@@ -4446,6 +4475,7 @@ impl FesTermApp {
                                                     }
                                                 });
                                             });
+                                        });
                                     }
                                 });
                         }
@@ -10450,6 +10480,121 @@ mod tests {
         }
         assert!(harness.query_by_label("2 active forwards").is_none());
         assert!(harness.query_by_label("1 active forward").is_some());
+    }
+
+    #[test]
+    fn stored_password_profile_forward_inventory_limit_is_visible_and_preserves_configuration() {
+        let forwards = (1..=129)
+            .map(|port| {
+                festerm_config::SshPortForwardConfiguration::new(
+                    ConfigPortForwardDirection::Remote,
+                    "127.0.0.1",
+                    port,
+                    "127.0.0.1",
+                    9000,
+                )
+                .unwrap()
+            })
+            .collect();
+        let ssh = Profile::ssh(
+            "forwarded",
+            "127.0.0.1",
+            9,
+            "fixture",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_port_forwards(forwards)
+        .unwrap();
+        let profile = Profile::Ssh(ssh);
+        let id = profile.identifier().to_owned();
+        let configuration = Configuration::new(vec![profile]).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let prior_tab = app.state.active();
+        app.start_stored_password_profile(id.clone(), &egui::Context::default());
+        assert_eq!(app.secure_storage_feedback, Some(
+            "This saved SSH profile has more than 128 port-forward mappings; reduce them before launching.",
+        ));
+        assert_eq!(app.state.active(), prior_tab);
+        assert_eq!(
+            app.state
+                .configuration()
+                .profile(&id)
+                .unwrap()
+                .as_ssh()
+                .unwrap()
+                .port_forwards()
+                .len(),
+            129
+        );
+    }
+
+    #[test]
+    fn port_forward_manager_inventory_refusal_is_visible_and_preserves_the_draft() {
+        let context = egui::Context::default();
+        let (mut app, _tab, session) = FesTermApp::for_test_with_fake_ssh_session([]);
+        session.set_add_port_forward_error(festerm_ssh::SshPortForwardRequestError::InventoryFull);
+        app.open_port_forward_manager(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        {
+            let manager = harness
+                .state_mut()
+                .overlays
+                .port_forward_manager
+                .as_mut()
+                .unwrap();
+            manager.draft.bind_port = "15432".to_owned();
+            manager.draft.destination_host = "db.internal".to_owned();
+            manager.draft.destination_port = "5432".to_owned();
+        }
+        harness.run();
+        harness.get_by_label("Add live forward").click();
+        harness.run();
+        let message = festerm_ssh::SshPortForwardRequestError::InventoryFull.to_string();
+        assert!(harness.query_by_label(&message).is_some());
+        let manager = harness
+            .state()
+            .overlays
+            .port_forward_manager
+            .as_ref()
+            .unwrap();
+        assert_eq!(manager.draft.bind_port, "15432");
+        assert_eq!(manager.draft.destination_host, "db.internal");
+        assert_eq!(manager.draft.destination_port, "5432");
+        assert_eq!(
+            session.operations(),
+            vec![crate::session_controller::fake::FakeSshOperation::Query]
+        );
+    }
+
+    #[test]
+    fn port_forward_row_widget_identity_survives_removing_an_earlier_mapping() {
+        let context = egui::Context::default();
+        let rows = sample_port_forwards();
+        let render = |rows: &[SshPortForwardRuntime]| {
+            let mut ids = Vec::new();
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                for forward in rows {
+                    FesTermApp::with_port_forward_row(ui, forward, |ui| {
+                        ids.push(ui.button("Remove").id);
+                    });
+                }
+            });
+            output.textures_delta.clear();
+            ids
+        };
+        let before = render(&rows);
+        let after = render(&rows[1..]);
+        assert_eq!(&before[1..], after.as_slice());
     }
 
     #[test]

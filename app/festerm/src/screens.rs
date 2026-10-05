@@ -5420,6 +5420,19 @@ mod tests {
             form.submit().unwrap_err(),
             "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports"
         );
+        form.port_forwards = (1..=129)
+            .map(|port| SshPortForwardDraft {
+                bind_port: port.to_string(),
+                destination_host: "app.internal".to_owned(),
+                destination_port: "8080".to_owned(),
+                ..Default::default()
+            })
+            .collect();
+        assert_eq!(
+            form.submit().unwrap_err(),
+            festerm_ssh::SshPortForwardConfigurationError::InventoryLimit.to_string(),
+        );
+        assert_eq!(form.port_forwards.len(), 129);
     }
 
     #[test]

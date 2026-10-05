@@ -40,11 +40,13 @@ use port_forward::{
     apply_port_forward, collect_requested_port_forwards, emit_port_forward_snapshot,
     handle_forwarded_tcpip_connection, handle_local_forward_connection, remove_port_forward,
     report_port_forward_error, requested_port_forward, teardown_port_forwards,
-    AcceptedLocalForwardConnection, ActivePortForward, ForwardedTcpIpConnection,
-    PortForwardAttemptLimiter, PortForwardBindingKey, RequestedSshPortForward,
+    AcceptedLocalForwardConnection, AdmittedPortForward, ForwardedTcpIpConnection,
+    PortForwardAdmissions, PortForwardAttemptLimiter, PortForwardBindingKey, PortForwardInventory,
+    RequestedSshPortForward,
 };
 pub use port_forward::{
     SshPortForwardConfigurationError, SshPortForwardRequestError, SshPortForwardSpec,
+    MAX_SSH_PORT_FORWARD_ENTRIES,
 };
 use sftp::GuiSftpConnectionKeepAlive;
 pub use sftp::{
@@ -1773,9 +1775,9 @@ enum WorkerCommand {
         generation: u64,
         result_sender: SyncSender<Result<RemoteFileSnapshot, RemoteFileReadError>>,
     },
-    ApplyPortForwards(Vec<RequestedSshPortForward>),
-    AddPortForward(RequestedSshPortForward),
-    RemovePortForward(PortForwardBindingKey),
+    ApplyPortForwards(Vec<AdmittedPortForward>),
+    AddPortForward(AdmittedPortForward),
+    RemovePortForward(PortForwardBindingKey, u64),
     QueryPortForwards,
     Reconnect,
     Shutdown,
@@ -1803,6 +1805,7 @@ struct WorkerShared {
     shutdown_requested: AtomicBool,
     verified_host_key_fingerprint: Mutex<Option<String>>,
     transport_generation: AtomicU64,
+    port_forward_admissions: PortForwardAdmissions,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
@@ -1810,8 +1813,27 @@ struct WorkerShared {
 
 impl WorkerShared {
     fn begin_transport(&self) {
-        self.transport_generation.fetch_add(1, Ordering::AcqRel);
+        let generation = self
+            .transport_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        self.port_forward_admissions.reset(generation);
         self.clear_verified_host_key_fingerprint();
+    }
+
+    fn reserve_profile_port_forwards(
+        &self,
+        forwards: Vec<RequestedSshPortForward>,
+    ) -> Vec<AdmittedPortForward> {
+        let generation = self.transport_generation.load(Ordering::Acquire);
+        forwards
+            .into_iter()
+            .map(|forward| {
+                self.port_forward_admissions
+                    .reserve(forward, generation)
+                    .expect("validated profile forwards fit a fresh transport inventory")
+            })
+            .collect()
     }
 
     fn desired_terminal_size(&self) -> TerminalSize {
@@ -2076,6 +2098,7 @@ impl SshWorkerFoundation {
             shutdown_requested: AtomicBool::new(false),
             verified_host_key_fingerprint: Mutex::new(None),
             transport_generation: AtomicU64::new(0),
+            port_forward_admissions: PortForwardAdmissions::default(),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: event_capacity,
                 ..SessionMetrics::default()
@@ -2238,9 +2261,17 @@ impl SshWorkerFoundation {
         &self,
         forward: RequestedSshPortForward,
     ) -> Result<(), SshPortForwardRequestError> {
-        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+        let generation = self.shared.transport_generation.load(Ordering::Acquire);
+        if !matches!(self.lifecycle(), SessionLifecycle::Running)
+            || self.shared.reconnecting.load(Ordering::Acquire)
+            || self.shared.shutdown_requested()
+        {
             return Err(SshPortForwardRequestError::NotRunning);
         }
+        let forward = self
+            .shared
+            .port_forward_admissions
+            .reserve(forward, generation)?;
         match self
             .command_sender
             .try_send(WorkerCommand::AddPortForward(forward))
@@ -2257,7 +2288,11 @@ impl SshWorkerFoundation {
         bind_host: impl Into<String>,
         bind_port: u16,
     ) -> Result<(), SshPortForwardRequestError> {
-        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+        let generation = self.shared.transport_generation.load(Ordering::Acquire);
+        if !matches!(self.lifecycle(), SessionLifecycle::Running)
+            || self.shared.reconnecting.load(Ordering::Acquire)
+            || self.shared.shutdown_requested()
+        {
             return Err(SshPortForwardRequestError::NotRunning);
         }
         if bind_port == 0 {
@@ -2267,11 +2302,14 @@ impl SshWorkerFoundation {
         }
         match self
             .command_sender
-            .try_send(WorkerCommand::RemovePortForward(PortForwardBindingKey {
-                direction,
-                bind_host: bind_host.into(),
-                bind_port,
-            })) {
+            .try_send(WorkerCommand::RemovePortForward(
+                PortForwardBindingKey {
+                    direction,
+                    bind_host: bind_host.into(),
+                    bind_port,
+                },
+                generation,
+            )) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err(SshPortForwardRequestError::QueueFull),
             Err(TrySendError::Disconnected(_)) => Err(SshPortForwardRequestError::Closed),
@@ -3572,6 +3610,7 @@ pub async fn connect_gui_sftp_session(
         shutdown_requested: AtomicBool::new(false),
         verified_host_key_fingerprint: Mutex::new(None),
         transport_generation: AtomicU64::new(0),
+        port_forward_admissions: PortForwardAdmissions::default(),
         metrics: Mutex::new(SessionMetrics::default()),
         event_sender,
         event_notifier: Arc::new(NoopNotifier),
@@ -3767,6 +3806,7 @@ pub async fn probe_remote_persistence_provider(
         shutdown_requested: AtomicBool::new(false),
         verified_host_key_fingerprint: Mutex::new(None),
         transport_generation: AtomicU64::new(0),
+        port_forward_admissions: PortForwardAdmissions::default(),
         metrics: Mutex::new(SessionMetrics::default()),
         event_sender,
         event_notifier: Arc::new(NoopNotifier),
@@ -4167,13 +4207,16 @@ async fn ssh_worker(
                 if let Some(planner) = planner.as_mut() {
                     let _ = planner.connection_established();
                 }
+                let initial_port_forwards = shared.reserve_profile_port_forwards(
+                    initial_profile_port_forwards.take().unwrap_or_default(),
+                );
                 shared.set_reconnecting(false);
                 shared.set_lifecycle(SessionLifecycle::Running);
                 match run_authenticated_channel(
                     Arc::new(handle),
                     channel,
                     forwarded_tcpip_receiver,
-                    initial_profile_port_forwards.take().unwrap_or_default(),
+                    initial_port_forwards,
                     &command_receiver,
                     &shared,
                     &host_key_gate,
@@ -5518,7 +5561,7 @@ async fn sftp_worker(
             Ok(
                 WorkerCommand::ApplyPortForwards(_)
                 | WorkerCommand::AddPortForward(_)
-                | WorkerCommand::RemovePortForward(_)
+                | WorkerCommand::RemovePortForward(..)
                 | WorkerCommand::QueryPortForwards
                 | WorkerCommand::Reconnect,
             ) => {}
@@ -5727,7 +5770,7 @@ async fn run_authenticated_channel(
     handle: Arc<russh::client::Handle<SshClientHandler>>,
     mut channel: russh::Channel<russh::client::Msg>,
     mut forwarded_tcpip_receiver: tokio::sync::mpsc::Receiver<ForwardedTcpIpConnection>,
-    initial_profile_port_forwards: Vec<RequestedSshPortForward>,
+    initial_profile_port_forwards: Vec<AdmittedPortForward>,
     command_receiver: &WorkerCommandReceiver,
     shared: &Arc<WorkerShared>,
     host_key_gate: &Arc<HostKeyDecisionGate>,
@@ -5743,7 +5786,7 @@ async fn run_authenticated_channel(
         tokio::sync::mpsc::channel(PORT_FORWARD_PENDING_CONNECTION_CAPACITY);
     let mut local_forward_receiver_closed = false;
     let mut forwarded_tcpip_receiver_closed = false;
-    let mut active_port_forwards = Vec::new();
+    let mut active_port_forwards = PortForwardInventory::default();
     let mut pending_commands = VecDeque::new();
     let attempt_limiter = PortForwardAttemptLimiter::new(MAX_IN_FLIGHT_PORT_FORWARD_CONNECTIONS);
     let mut port_forward_attempts = tokio::task::JoinSet::new();
@@ -5869,7 +5912,7 @@ async fn run_authenticated_channel(
                     handle_local_forward_connection(
                         &handle,
                         accepted,
-                        &mut active_port_forwards,
+                        &active_port_forwards,
                         shared,
                         &attempt_limiter,
                         &mut port_forward_attempts,
@@ -5881,7 +5924,7 @@ async fn run_authenticated_channel(
                 Some(forwarded) => {
                     handle_forwarded_tcpip_connection(
                         forwarded,
-                        &mut active_port_forwards,
+                        &active_port_forwards,
                         shared,
                         &attempt_limiter,
                         &mut port_forward_attempts,
@@ -5905,19 +5948,19 @@ async fn process_authenticated_commands(
     handle: &Arc<russh::client::Handle<SshClientHandler>>,
     channel: &mut russh::Channel<russh::client::Msg>,
     pending_commands: &mut VecDeque<WorkerCommand>,
-    active_port_forwards: &mut Vec<ActivePortForward>,
+    active_port_forwards: &mut PortForwardInventory,
     local_forward_sender: &tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
     command_receiver: &WorkerCommandReceiver,
     shared: &Arc<WorkerShared>,
     host_key_gate: &HostKeyDecisionGate,
     remote_reads: &mut RemoteFileReads,
 ) -> Result<AuthenticatedCommandOutcome, SessionError> {
-    if shared.shutdown_requested() {
-        host_key_gate.reject_pending();
-        shared.set_lifecycle(SessionLifecycle::Stopping);
-        return Ok(AuthenticatedCommandOutcome::Shutdown);
-    }
     loop {
+        if shared.shutdown_requested() {
+            host_key_gate.reject_pending();
+            shared.set_lifecycle(SessionLifecycle::Stopping);
+            return Ok(AuthenticatedCommandOutcome::Shutdown);
+        }
         let command = if let Some(command) = pending_commands.pop_front() {
             Ok(command)
         } else {
@@ -5983,6 +6026,11 @@ async fn process_authenticated_commands(
             }
             Ok(WorkerCommand::ApplyPortForwards(port_forwards)) => {
                 for forward in port_forwards {
+                    if shared.shutdown_requested() {
+                        host_key_gate.reject_pending();
+                        shared.set_lifecycle(SessionLifecycle::Stopping);
+                        return Ok(AuthenticatedCommandOutcome::Shutdown);
+                    }
                     apply_port_forward(
                         handle,
                         forward,
@@ -6003,12 +6051,17 @@ async fn process_authenticated_commands(
                 )
                 .await;
             }
-            Ok(WorkerCommand::RemovePortForward(key)) => {
-                remove_port_forward(handle, &key, active_port_forwards, shared).await;
+            Ok(WorkerCommand::RemovePortForward(key, generation)) => {
+                if generation == shared.transport_generation.load(Ordering::Acquire) {
+                    remove_port_forward(handle, &key, active_port_forwards, shared).await;
+                } else {
+                    report_port_forward_error(
+                        shared,
+                        "SSH port-forward removal was canceled because its connection ended",
+                    );
+                }
             }
-            Ok(WorkerCommand::QueryPortForwards) => {
-                emit_port_forward_snapshot(shared, active_port_forwards);
-            }
+            Ok(WorkerCommand::QueryPortForwards) => {}
             Ok(WorkerCommand::Reconnect) => {
                 return Ok(AuthenticatedCommandOutcome::Reconnect);
             }
@@ -6017,8 +6070,12 @@ async fn process_authenticated_commands(
                 shared.set_lifecycle(SessionLifecycle::Stopping);
                 return Ok(AuthenticatedCommandOutcome::Shutdown);
             }
-            Err(TryRecvError::Empty) => return Ok(AuthenticatedCommandOutcome::Continue),
+            Err(TryRecvError::Empty) => {
+                emit_port_forward_snapshot(shared, active_port_forwards);
+                return Ok(AuthenticatedCommandOutcome::Continue);
+            }
         }
+        emit_port_forward_snapshot(shared, active_port_forwards);
     }
 }
 
@@ -6061,7 +6118,7 @@ async fn wait_for_manual_recovery(
             Ok(
                 WorkerCommand::ApplyPortForwards(_)
                 | WorkerCommand::AddPortForward(_)
-                | WorkerCommand::RemovePortForward(_)
+                | WorkerCommand::RemovePortForward(..)
                 | WorkerCommand::QueryPortForwards,
             ) => {
                 report_unsupported(shared, "SSH port forwarding is not available");
@@ -6106,7 +6163,7 @@ fn process_commands_before_running(
             Ok(
                 WorkerCommand::ApplyPortForwards(_)
                 | WorkerCommand::AddPortForward(_)
-                | WorkerCommand::RemovePortForward(_)
+                | WorkerCommand::RemovePortForward(..)
                 | WorkerCommand::QueryPortForwards,
             ) => report_unsupported(shared, "SSH port forwarding is not available"),
             Ok(WorkerCommand::Reconnect) => {
@@ -6921,6 +6978,162 @@ mod tests {
                 SshPortForwardState::Active,
                 None,
             )
+        );
+    }
+
+    #[test]
+    fn profile_port_forward_inventory_accepts_128_and_rejects_129() {
+        let specs = |count| {
+            (1..=count).map(|bind_port| TestPortForwardSpec {
+                direction: SshPortForwardDirection::Local,
+                bind_host: "127.0.0.1",
+                bind_port,
+                destination_host: "127.0.0.1",
+                destination_port: 9000,
+            })
+        };
+        let accepted = SshSessionOptions::new()
+            .with_profile_port_forwards(specs(128))
+            .expect("128 unique profile mappings fit the live inventory");
+        assert_eq!(accepted.profile_port_forwards().len(), 128);
+        assert_eq!(
+            SshSessionOptions::new()
+                .with_profile_port_forwards(specs(129))
+                .expect_err("a 129th profile mapping must be refused"),
+            SshPortForwardConfigurationError::InventoryLimit,
+        );
+    }
+
+    #[test]
+    fn pending_port_forward_inventory_refuses_a_129th_request() {
+        let (worker, receiver, _resolver, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            1,
+            DEFAULT_EVENT_QUEUE_CAPACITY,
+            noop_session_event_notifier(),
+        );
+        worker.set_running();
+        let request = |bind_port| RequestedSshPortForward {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port,
+            destination_host: "127.0.0.1".to_owned(),
+            destination_port: 9000,
+            source: SshPortForwardSource::Ephemeral,
+        };
+        let mut pending = Vec::new();
+        for bind_port in 1..=128 {
+            worker
+                .try_add_port_forward(request(bind_port))
+                .expect("the first 128 pending mappings must be admitted");
+            pending.push(receiver.try_recv().expect("admitted request is queued"));
+        }
+        assert_eq!(
+            worker.try_add_port_forward(request(129)),
+            Err(SshPortForwardRequestError::InventoryFull),
+        );
+        assert_eq!(pending.len(), 128);
+    }
+
+    #[test]
+    fn port_forward_command_refusal_and_cancellation_release_admission() {
+        let (worker, receiver, _resolver, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            1,
+            DEFAULT_EVENT_QUEUE_CAPACITY,
+            noop_session_event_notifier(),
+        );
+        worker.set_running();
+        let request = |bind_port| RequestedSshPortForward {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port,
+            destination_host: "127.0.0.1".to_owned(),
+            destination_port: 9000,
+            source: SshPortForwardSource::Ephemeral,
+        };
+        worker.try_add_port_forward(request(1)).unwrap();
+        assert_eq!(
+            worker.try_add_port_forward(request(2)),
+            Err(SshPortForwardRequestError::QueueFull)
+        );
+        let first = receiver.try_recv().unwrap();
+        worker.try_add_port_forward(request(2)).unwrap();
+        drop(receiver.try_recv().unwrap());
+        worker.try_add_port_forward(request(2)).unwrap();
+        drop(receiver.try_recv().unwrap());
+        drop(first);
+        worker.try_add_port_forward(request(1)).unwrap();
+        drop(receiver);
+        for _ in 0..256 {
+            assert_eq!(
+                worker.try_add_port_forward(request(1)),
+                Err(SshPortForwardRequestError::Closed)
+            );
+        }
+    }
+
+    #[test]
+    fn initial_profile_and_live_forward_requests_share_admission_before_running() {
+        let (worker, receiver, _resolver, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            1,
+            DEFAULT_EVENT_QUEUE_CAPACITY,
+            noop_session_event_notifier(),
+        );
+        let request = |bind_port, source| RequestedSshPortForward {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port,
+            destination_host: "127.0.0.1".to_owned(),
+            destination_port: 9000,
+            source,
+        };
+        let mut initial = worker.shared.reserve_profile_port_forwards(
+            (1..=96)
+                .map(|port| request(port, SshPortForwardSource::Profile))
+                .collect(),
+        );
+        worker.set_running();
+        let mut pending = Vec::new();
+        for port in 97..=128 {
+            worker
+                .try_add_port_forward(request(port, SshPortForwardSource::Ephemeral))
+                .unwrap();
+            pending.push(receiver.try_recv().unwrap());
+        }
+        assert_eq!(
+            worker.try_add_port_forward(request(129, SshPortForwardSource::Ephemeral)),
+            Err(SshPortForwardRequestError::InventoryFull)
+        );
+        drop(initial.pop());
+        worker
+            .try_add_port_forward(request(129, SshPortForwardSource::Ephemeral))
+            .unwrap();
+        assert_eq!(pending.len(), 32);
+    }
+
+    #[test]
+    fn queued_forward_removal_records_the_transport_generation() {
+        let (worker, receiver, _resolver, _) = SshWorkerFoundation::new(profile());
+        worker.shared.begin_transport();
+        worker.set_running();
+        worker
+            .try_remove_port_forward(SshPortForwardDirection::Local, "127.0.0.1", 1)
+            .unwrap();
+        let WorkerCommand::RemovePortForward(key, generation) = receiver.try_recv().unwrap() else {
+            panic!("removal must carry its transport generation");
+        };
+        worker.shared.begin_transport();
+        assert_eq!(key.bind_port, 1);
+        assert_ne!(
+            generation,
+            worker.shared.transport_generation.load(Ordering::Acquire)
+        );
+        worker.shared.set_reconnecting(true);
+        assert_eq!(
+            worker.try_remove_port_forward(SshPortForwardDirection::Local, "127.0.0.1", 1),
+            Err(SshPortForwardRequestError::NotRunning)
         );
     }
 
