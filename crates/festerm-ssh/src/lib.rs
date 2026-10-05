@@ -49,6 +49,7 @@ use sftp::GuiSftpConnectionKeepAlive;
 pub use sftp::{
     parse_sftp_command, read_local_directory_snapshot_sync, SftpCommand, SftpCommandOutcome,
     SftpCommandParseError, SftpDirectoryEntry, SftpEntryType, SftpSession, SftpSessionError,
+    SFTP_CANCELLATION_CLEANUP_TIMEOUT,
 };
 pub use sftp_transfer::{
     SftpCollision, SftpCollisionDecision, SftpCollisionId, SftpCollisionResolution,
@@ -2857,17 +2858,20 @@ impl SftpTerminalSession {
                     .build()
                     .map_err(|_| sftp_failure(&shared, "SFTP runtime could not start"))
                     .and_then(|runtime| {
-                        runtime.block_on(sftp_worker(
-                            profile,
-                            authentication,
-                            local_working_directory,
-                            known_host_fingerprint,
-                            worker_working_directories,
-                            shared,
-                            command_receiver,
-                            worker_host_key_gate,
-                            worker_password_gate,
-                        ))
+                        Self::run_sftp_worker_runtime(
+                            runtime,
+                            sftp_worker(
+                                profile,
+                                authentication,
+                                local_working_directory,
+                                known_host_fingerprint,
+                                worker_working_directories,
+                                shared,
+                                command_receiver,
+                                worker_host_key_gate,
+                                worker_password_gate,
+                            ),
+                        )
                     });
                 let _ = completion_sender.send(result);
             })
@@ -2883,6 +2887,16 @@ impl SftpTerminalSession {
             completion_receiver: Mutex::new(completion_receiver),
             completion: Mutex::new(None),
         })
+    }
+
+    fn run_sftp_worker_runtime<T>(
+        runtime: tokio::runtime::Runtime,
+        work: impl std::future::Future<Output = T>,
+    ) -> T {
+        let result = runtime.block_on(work);
+        // A dropped filesystem future can leave a blocking call running.
+        runtime.shutdown_background();
+        result
     }
 
     /// Returns a resolver for the current host-key verification request.
@@ -3272,6 +3286,7 @@ impl Drop for SftpTerminalSession {
 pub enum GuiSftpSessionConnectError {
     InteractiveAuthenticationUnsupported,
     HostKeyRejected,
+    Cancelled,
     /// A GUI SFTP session could not be established, carrying a short,
     /// human-readable detail (e.g. "connection refused", "SSH shell request
     /// was rejected", "authentication failed") so the UI can surface a
@@ -3286,6 +3301,7 @@ impl fmt::Display for GuiSftpSessionConnectError {
                 "GUI SFTP currently requires an explicit password, private key, or stored credential",
             ),
             Self::HostKeyRejected => formatter.write_str("SSH host key was rejected"),
+            Self::Cancelled => formatter.write_str("GUI SFTP connection was cancelled"),
             Self::ConnectionFailed(detail) => {
                 write!(formatter, "could not establish GUI SFTP session: {detail}")
             }
@@ -3297,20 +3313,53 @@ impl std::error::Error for GuiSftpSessionConnectError {}
 
 struct GuiSftpConnectCompletion<T> {
     task: Option<tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>>,
+    cancellation: Option<GuiSftpConnectCancellation>,
+}
+
+struct GuiSftpConnectCancellation {
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    shared: Arc<WorkerShared>,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+}
+
+impl Drop for GuiSftpConnectCancellation {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            self.shared.request_shutdown();
+            self.host_key_gate.reject_pending();
+            let _ = shutdown.send(());
+        }
+    }
 }
 
 impl<T> GuiSftpConnectCompletion<T> {
     const fn new(task: tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>) -> Self {
-        Self { task: Some(task) }
+        Self {
+            task: Some(task),
+            cancellation: None,
+        }
     }
 
     async fn wait(mut self) -> Result<T, GuiSftpSessionConnectError> {
-        match self
+        let result = self
             .task
-            .take()
+            .as_mut()
             .expect("GUI SFTP completion handle must still be present")
-            .await
-        {
+            .await;
+        self.finish(result)
+    }
+
+    fn finish(
+        &mut self,
+        result: Result<Result<T, GuiSftpSessionConnectError>, tokio::task::JoinError>,
+    ) -> Result<T, GuiSftpSessionConnectError> {
+        self.task.take();
+        if result.is_ok() {
+            if let Some(mut cancellation) = self.cancellation.take() {
+                cancellation.shutdown.take();
+            }
+        }
+        match result {
             Ok(result) => result,
             Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed(
                 "the connect task panicked before finishing".to_owned(),
@@ -3344,6 +3393,8 @@ pub struct GuiSftpSessionConnectCompletion {
 impl GuiSftpSessionConnectCompletion {
     /// Waits for the paused connect attempt to finish after the GUI resolves
     /// the pending host-key prompt.
+    ///
+    /// Dropping this completion or its wait cancels the owned connect attempt.
     pub async fn wait(self) -> Result<SftpSession, GuiSftpSessionConnectError> {
         self.inner.wait().await
     }
@@ -3447,11 +3498,14 @@ async fn establish_gui_sftp_session(
 async fn observe_gui_sftp_connect<T>(
     event_receiver: Receiver<SessionEvent>,
     resolver: HostKeyDecisionResolver,
-    mut connect_task: tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>,
+    connect_task: tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>,
+    cancellation: Option<GuiSftpConnectCancellation>,
 ) -> Result<GuiSftpConnectOutcome<T>, GuiSftpSessionConnectError>
 where
     T: Send + 'static,
 {
+    let mut connect_task = GuiSftpConnectCompletion::new(connect_task);
+    connect_task.cancellation = cancellation;
     let prompt_listener = tokio::task::spawn_blocking(move || loop {
         match event_receiver.recv() {
             Ok(SessionEvent::HostKeyVerification(prompt)) => return Some(prompt),
@@ -3462,26 +3516,16 @@ where
     tokio::pin!(prompt_listener);
 
     tokio::select! {
-        result = &mut connect_task => match result {
-            Ok(Ok(session)) => Ok(GuiSftpConnectOutcome::Connected(session)),
-            Ok(Err(error)) => Err(error),
-            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed(
-                "the connect task panicked before finishing".to_owned(),
-            )),
+        result = connect_task.task.as_mut().expect("connect task is present") => {
+            connect_task.finish(result).map(GuiSftpConnectOutcome::Connected)
         },
         prompt = &mut prompt_listener => match prompt {
             Ok(Some(prompt)) => Ok(GuiSftpConnectOutcome::NeedsHostKeyDecision {
                 prompt,
                 resolver,
-                completion: GuiSftpConnectCompletion::new(connect_task),
+                completion: connect_task,
             }),
-            Ok(None) | Err(_) => match connect_task.await {
-                Ok(Ok(session)) => Ok(GuiSftpConnectOutcome::Connected(session)),
-                Ok(Err(error)) => Err(error),
-                Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed(
-                    "the connect task panicked before finishing".to_owned(),
-                )),
-            },
+            Ok(None) | Err(_) => connect_task.wait().await.map(GuiSftpConnectOutcome::Connected),
         },
     }
 }
@@ -3554,6 +3598,12 @@ pub async fn connect_gui_sftp_session(
     // with the session.
     let (result_sender, result_receiver) =
         mpsc::sync_channel::<Result<SftpSession, GuiSftpSessionConnectError>>(1);
+    let (shutdown, cancelled) = tokio::sync::oneshot::channel();
+    let cancellation = GuiSftpConnectCancellation {
+        shutdown: Some(shutdown),
+        shared: Arc::clone(&shared),
+        host_key_gate: Arc::clone(&host_key_gate),
+    };
     let thread_spawned = thread::Builder::new()
         .name(format!("festerm-gui-sftp-connect-{connect_id}"))
         .spawn(move || {
@@ -3576,8 +3626,11 @@ pub async fn connect_gui_sftp_session(
                     return;
                 }
             };
-            let connect_result =
-                runtime.block_on(establish_gui_sftp_session(GuiSftpConnectTaskConfig {
+            let connect_result = runtime.block_on(async {
+                tokio::select! {
+                    biased;
+                    _ = cancelled => Err(GuiSftpSessionConnectError::Cancelled),
+                    result = establish_gui_sftp_session(GuiSftpConnectTaskConfig {
                     profile,
                     authentication,
                     local_working_directory,
@@ -3586,7 +3639,9 @@ pub async fn connect_gui_sftp_session(
                     host_key_gate,
                     password_gate,
                     known_host_fingerprint,
-                }));
+                    }) => result,
+                }
+            });
             match connect_result {
                 Ok(session) => {
                     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -3605,6 +3660,8 @@ pub async fn connect_gui_sftp_session(
                     let _ = result_sender.send(Err(error));
                 }
             }
+            // Do not wait indefinitely for a cancelled blocking filesystem call.
+            runtime.shutdown_background();
         });
     if thread_spawned.is_err() {
         return Err(GuiSftpSessionConnectError::ConnectionFailed(
@@ -3619,7 +3676,14 @@ pub async fn connect_gui_sftp_session(
         })
     });
 
-    match observe_gui_sftp_connect(event_receiver, resolver.clone(), connect_task).await? {
+    match observe_gui_sftp_connect(
+        event_receiver,
+        resolver.clone(),
+        connect_task,
+        Some(cancellation),
+    )
+    .await?
+    {
         GuiSftpConnectOutcome::Connected(session) => {
             Ok(GuiSftpSessionConnectOutcome::Connected(session))
         }
@@ -5140,7 +5204,12 @@ async fn execute_sftp_input_line(
 ) -> Result<bool, SessionError> {
     let line =
         String::from_utf8(line).map_err(|_| sftp_failure(shared, "SFTP input must be UTF-8"))?;
-    match session.execute_line(&line).await {
+    let outcome = wait_for_sftp_owner_operation(session.execute_line(&line), shared).await;
+    let SftpOwnerOperation::Completed(outcome) = outcome else {
+        finish_sftp_cancellation(session, shared).await;
+        return Ok(true);
+    };
+    match outcome {
         Ok(outcome) => {
             update_sftp_working_directories(working_directories, session);
             emit_sftp_outcome(shared, &outcome);
@@ -5155,6 +5224,49 @@ async fn execute_sftp_input_line(
             emit_sftp_prompt(shared, profile, session);
             Ok(false)
         }
+    }
+}
+
+enum SftpOwnerOperation<T> {
+    Completed(T),
+    Cancelled,
+}
+
+async fn wait_for_sftp_owner_operation<T>(
+    operation: impl std::future::Future<Output = T>,
+    shared: &WorkerShared,
+) -> SftpOwnerOperation<T> {
+    tokio::pin!(operation);
+    loop {
+        if shared.shutdown_requested() {
+            return SftpOwnerOperation::Cancelled;
+        }
+        tokio::select! {
+            result = &mut operation => return SftpOwnerOperation::Completed(result),
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {}
+        }
+    }
+}
+
+async fn finish_sftp_cancellation(session: &mut SftpSession, shared: &WorkerShared) {
+    shared.set_lifecycle(SessionLifecycle::Stopping);
+    let result = tokio::time::timeout(SFTP_CANCELLATION_CLEANUP_TIMEOUT, async {
+        session.cleanup_interrupted_transfer().await?;
+        session.close().await.map(|_| ())
+    })
+    .await;
+    let error = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => SftpSessionError::CancellationCleanupTimedOut,
+    };
+    let error = SessionError::new(SessionErrorKind::Shutdown, error.to_string());
+    tracing::warn!(
+        target: "festerm::sftp",
+        "text SFTP cancellation cleanup failed; partial output may remain"
+    );
+    if !shared.try_emit(SessionEvent::Error(error.clone())) {
+        eprintln!("fesTerm: SFTP cancellation cleanup failed: {error}");
     }
 }
 
@@ -5279,7 +5391,7 @@ async fn sftp_worker(
         remote_reads.reap();
         if shared.shutdown_requested() {
             shared.set_lifecycle(SessionLifecycle::Stopping);
-            let _ = session.close().await;
+            finish_sftp_cancellation(&mut session, &shared).await;
             let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
                 .await
                 .unwrap_or(ShutdownResult::Stopped);
@@ -5324,7 +5436,7 @@ async fn sftp_worker(
             }
             Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                 shared.set_lifecycle(SessionLifecycle::Stopping);
-                let _ = session.close().await;
+                finish_sftp_cancellation(&mut session, &shared).await;
                 let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
                     .await
                     .unwrap_or(ShutdownResult::Stopped);
@@ -7684,6 +7796,7 @@ mod tests {
                     event_receiver,
                     resolver,
                     tokio::spawn(async { Ok::<_, GuiSftpSessionConnectError>("connected") }),
+                    None,
                 )
                 .await
             })
@@ -7693,6 +7806,151 @@ mod tests {
             outcome,
             GuiSftpConnectOutcome::Connected("connected")
         ));
+    }
+
+    struct ConnectDropProbe(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for ConnectDropProbe {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    #[test]
+    fn text_sftp_runtime_reports_completion_without_waiting_for_blocking_io() {
+        let (started, start) = mpsc::sync_channel(1);
+        let (release, blocked) = mpsc::sync_channel(1);
+        let (finished, finish) = mpsc::sync_channel(1);
+        let (completed, completion) = mpsc::sync_channel(1);
+        let owner = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let timed_out = SftpTerminalSession::run_sftp_worker_runtime(runtime, async {
+                let operation = tokio::task::spawn_blocking(move || {
+                    started.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    finished.send(()).unwrap();
+                });
+                tokio::time::timeout(SFTP_CANCELLATION_CLEANUP_TIMEOUT, operation)
+                    .await
+                    .is_err()
+            });
+            completed.send(timed_out).unwrap();
+        });
+        start.recv_timeout(Duration::from_secs(3)).unwrap();
+        let result = completion.recv_timeout(Duration::from_secs(3));
+        let still_blocked = matches!(finish.try_recv(), Err(TryRecvError::Empty));
+        release.send(()).unwrap();
+        finish.recv_timeout(Duration::from_secs(3)).unwrap();
+        owner.join().unwrap();
+        assert!(still_blocked);
+        assert_eq!(
+            result,
+            Ok(true),
+            "text completion must not wait for an already-started blocking call"
+        );
+    }
+
+    #[test]
+    fn cancelling_gui_connect_completion_wait_retires_its_pending_task() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (retired, retirement) = tokio::sync::oneshot::channel();
+            let probe = ConnectDropProbe(Some(retired));
+            let task = tokio::spawn(async move {
+                let _probe = probe;
+                std::future::pending::<Result<(), GuiSftpSessionConnectError>>().await
+            });
+            let mut waiting = Box::pin(GuiSftpConnectCompletion::new(task).wait());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), &mut waiting)
+                    .await
+                    .is_err()
+            );
+            drop(waiting);
+            tokio::time::timeout(Duration::from_secs(1), retirement)
+                .await
+                .expect("dropping the wait must not detach its pending task")
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn cancelling_gui_connect_observation_retires_the_pre_prompt_task() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+            let (retired, retirement) = tokio::sync::oneshot::channel();
+            let probe = ConnectDropProbe(Some(retired));
+            let task = tokio::spawn(async move {
+                let _sender = event_sender;
+                let _probe = probe;
+                std::future::pending::<Result<(), GuiSftpSessionConnectError>>().await
+            });
+            let resolver = HostKeyDecisionResolver {
+                gate: Arc::new(HostKeyDecisionGate::new()),
+            };
+            assert!(tokio::time::timeout(
+                Duration::from_millis(10),
+                observe_gui_sftp_connect(event_receiver, resolver, task, None),
+            )
+            .await
+            .is_err());
+            tokio::time::timeout(Duration::from_secs(1), retirement)
+                .await
+                .expect("dropping observation must not detach its pre-prompt task")
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn gui_connect_cancellation_signals_shutdown_and_rejects_pending_trust() {
+        let (foundation, _commands, _resolver, _) = SshWorkerFoundation::new(profile());
+        let waiter = foundation
+            .request_host_key_verification("SHA256:cancel-owner")
+            .unwrap();
+        let (shutdown, mut cancelled) = tokio::sync::oneshot::channel();
+        drop(GuiSftpConnectCancellation {
+            shutdown: Some(shutdown),
+            shared: Arc::clone(&foundation.shared),
+            host_key_gate: Arc::clone(&foundation.host_key_gate),
+        });
+        assert!(foundation.shared.shutdown_requested());
+        assert_eq!(cancelled.try_recv(), Ok(()));
+        assert_eq!(
+            waiter.wait(&foundation.host_key_gate, Duration::ZERO),
+            HostTrustDecision::Reject
+        );
+    }
+
+    #[test]
+    fn text_sftp_shutdown_cancels_a_pending_operation_without_draining_input() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (foundation, commands, _, _) = SshWorkerFoundation::new(profile());
+            foundation.set_running();
+            foundation.try_send_input(b"queued-command\n").unwrap();
+            foundation.shared.request_shutdown();
+            assert!(matches!(
+                wait_for_sftp_owner_operation(std::future::pending::<()>(), &foundation.shared)
+                    .await,
+                SftpOwnerOperation::Cancelled
+            ));
+            assert!(matches!(commands.try_recv(), Ok(WorkerCommand::Input(_))));
+        });
     }
 
     #[test]
@@ -7729,6 +7987,7 @@ mod tests {
                             }
                         }
                     }),
+                    None,
                 )
                 .await
             })
@@ -7791,6 +8050,7 @@ mod tests {
                             }
                         }
                     }),
+                    None,
                 )
                 .await
             })
@@ -7844,6 +8104,7 @@ mod tests {
                             }
                         }
                     }),
+                    None,
                 )
                 .await
             })
@@ -7904,6 +8165,7 @@ mod tests {
                             }
                         }
                     }),
+                    None,
                 )
                 .await
             })

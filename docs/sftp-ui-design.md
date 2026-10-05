@@ -49,6 +49,45 @@ Transfers are always **copies**, never moves. Selection remains after starting s
 
 Refresh the affected destination directory after each committed item while preserving selection and scroll position where possible. Partial files use a temporary sibling name and are renamed only after successful completion where the backend supports it; a canceled/failed temporary is cleaned up when safe and otherwise reported explicitly.
 
+### Owner cancellation and cleanup
+
+Closing an SFTP tab or its owning window cancels pending connection, trust,
+browsing, metadata, Markdown-read and transfer work without waiting for another
+command or progress callback. The sibling shell remains independent. Text-mode
+SFTP shutdown also interrupts an awaited command without consuming queued input.
+
+After dropping the interrupted operation and its file handles, cleanup gets at
+most **two seconds**, then teardown proceeds with an explicit incomplete-cleanup
+result. Exclusive creation acknowledges ownership at creation, not the current
+identity of a mutable local or remote pathname. A metadata check followed by
+unlink is not race-free. The current filesystem/SFTP APIs cannot establish safe
+conditional deletion, so canceled/failed partial output is preserved and its
+path reported for inspection and manual cleanup, even after acknowledged
+creation. No cleanup operation follows a replaced ancestor or deletes a
+replacement leaf. Already-started blocking filesystem calls cannot be forcibly
+aborted; GUI and text runtime retirement do not wait indefinitely for those
+calls. A pending creation with unconfirmed ownership is also reported, not
+deleted. If an approved Replace is interrupted after its destructive commit
+starts, the completed temporary is not removed: inspect both temporary and
+destination because an already-sent rename may still complete. Reported recovery
+files do not prevent unrelated transfers from proceeding.
+
+Preserving a temporary during a late destination collision does not abandon
+the collision workflow. Its incomplete-cleanup notice is separate from transfer
+state: Replace, Skip and Keep Both remain available, and cancellation remains
+cancellation rather than failing solely because a partial was retained.
+The transfer manager owns cleanup reporting separately from copy errors;
+text transfer failures report both the original cause and incomplete cleanup.
+
+Cleanup failures use the existing dismissible application error dialog in the
+tab's current window, even after the tab is gone. Its notification queue is
+bounded and never delays teardown. A full queue or closed window falls back to
+diagnostics; durable warnings are content-free, while console details include
+recovery paths. Final process exit can interrupt the asynchronous grace period:
+a cleanup-request record is not proof of completion, and neither cleanup nor
+server-side rollback is guaranteed after process termination. Native packaged
+close/quit and notice accessibility remain `SFTP-01` manual evidence.
+
 ### Collision and overwrite policy
 
 Never silently overwrite an existing file. A collision pauses only the affected transfer and opens a decision dialog showing source and destination names, locations, sizes, and modified times:

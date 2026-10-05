@@ -227,6 +227,24 @@ from `get`/`put`, but formalize it for GUI transfers:
 Uploads and downloads should use the same policy shape so the drawer can report
 truthful, symmetric states.
 
+Exclusive creation proves ownership only at creation. A later pathname can
+resolve to a replaced leaf or ancestor, and checking metadata before unlink
+does not remove that race. The current local and remote APIs therefore preserve
+failed/canceled partials and report their paths instead of deleting them.
+Interrupted destructive replacement also preserves recovery output and reports
+both uncertain paths; reporting releases the ledger for unrelated work.
+
+Closing the owner cancels connection, trust, browsing/read and transfer waits.
+Cleanup has a two-second grace, followed by non-waiting runtime retirement;
+already-started blocking I/O cannot be forcibly canceled. Incomplete cleanup
+uses a bounded notice queue in the current owning window or content-free
+diagnostics if delivery is unavailable. Final process exit can interrupt
+asynchronous cleanup; it is not a rollback guarantee.
+
+Preserved-output notices do not change collision or cancellation control flow.
+A destination appearing during copying still offers Replace, Skip and Keep
+Both, without silently discarding the completed temporary.
+
 ### The GUI file-manager tab owns an explicit UI state machine
 
 `SftpFileManagerTab` will own non-terminal surface state for:
@@ -336,13 +354,15 @@ core transfer workflow.
   surface distinct from text-mode SFTP; GUI and text-mode SFTP share SSH
   profile/trust/auth context but not tab lifecycle; queued GUI transfers never
   silently overwrite; collision approvals are batch-scoped and revalidated
-  before commit; delete is absent in v1.
+  before commit; delete is absent in v1; owner cancellation preserves and reports
+  partials when race-free current ownership cannot be established.
 - **GUI/action edges affected:** Planned new edges include `LAUNCH-10` (open a
   GUI SFTP tab from a saved SSH profile or live SSH tab), `SFTP-GUI-01`
   (browse both panes and change sort/filter/path state), `SFTP-GUI-02` (queue
   an upload/download and observe progress/cancel states), `SFTP-GUI-03`
   (resolve a collision with Replace/Skip/Keep Both), and `SFTP-GUI-04`
   (show stale remote listing and reconnect affordance after disconnect).
+  Owner teardown refines `SFTPG-08`, alongside `SFTPG-01` through `SFTPG-03`.
 - **Automated tests required:** Planned coverage includes
   `sftp_directory_snapshot_contains_sortable_metadata`,
   `sftp_transfer_manager_emits_progress_and_completion`,
@@ -351,12 +371,22 @@ core transfer workflow.
   `sftp_keep_both_generates_deterministic_sibling_names`,
   `sftp_merge_folders_preserves_destination_only_descendants`,
   `gui_sftp_workspace_restore_requires_fresh_authentication`, and
-  `interface_settings_parse_sftp_pane_order_additively`.
+  `interface_settings_parse_sftp_pane_order_additively`. Owner-teardown
+  regressions include
+  `owner_shutdown_interrupts_copy_and_reports_uncertain_partial_output`,
+  `cancellation_cleanup_preserves_a_confirmed_remote_partial_file`,
+  `owner_shutdown_during_replace_preserves_the_completed_temporary_for_recovery`,
+  `gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window`,
+  `late_collision_preserves_and_reports_output_without_losing_any_decision`,
+  `cancelled_copy_reports_preserved_output_and_keeps_cancelled_state`,
+  `live_gui_copy_cancellation_reports_partial_output_without_losing_cancelled_state`,
+  and `gui_sftp_preserved_output_notice_reports_a_recovery_path`.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and
   focused-pane narrow-width behavior. Stable scenario IDs should be added in
-  the implementing change.
+  the implementing change. `SFTP-01` retains packaged owner close/quit,
+  diagnostic visibility and cleanup-notice accessibility qualification.
 - **Coverage superseded:** None yet. `validation/traceability.json` should be
   updated in the implementing change that wires the new GUI SFTP edges and test
   relationships into real coverage.

@@ -1556,6 +1556,56 @@ pub(crate) enum SftpConnectionState {
     Disconnected { summary: String, details: String },
 }
 
+#[derive(Clone, Default)]
+struct SftpCleanupReporter {
+    sender: Arc<Mutex<Option<mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>>>>,
+}
+
+impl SftpCleanupReporter {
+    fn set_sender(&self, sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>) {
+        *self
+            .sender
+            .lock()
+            .expect("SFTP cleanup reporter lock is not poisoned") = Some(sender);
+    }
+
+    fn report(&self, label: String, error: festerm_ssh::SftpSessionError, repaint: &egui::Context) {
+        let notice = crate::overlay_state::OpenRefusalNotice {
+            name: label,
+            path: String::new(),
+            headline: "SFTP cleanup is incomplete".to_owned(),
+            detail: error.to_string(),
+        };
+        let delivered = self
+            .sender
+            .lock()
+            .expect("SFTP cleanup reporter lock is not poisoned")
+            .as_ref()
+            .is_some_and(|sender| sender.try_send(notice).is_ok());
+        tracing::warn!(
+            target: "festerm::sftp",
+            gui_notice_delivered = delivered,
+            "GUI SFTP cancellation cleanup failed; partial output may remain"
+        );
+        if delivered {
+            repaint.request_repaint();
+        } else {
+            eprintln!("fesTerm: GUI SFTP cancellation cleanup failed: {error}");
+        }
+    }
+}
+
+struct SftpWorkerOwner {
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+    reporter: SftpCleanupReporter,
+}
+
+struct SftpWorkerNotifications {
+    events: mpsc::Sender<WorkerEvent>,
+    repaint: egui::Context,
+    reporter: SftpCleanupReporter,
+}
+
 pub(crate) struct SftpFileManagerTab {
     pub(crate) label: String,
     pub(crate) profile_identifier: Option<String>,
@@ -1581,6 +1631,8 @@ pub(crate) struct SftpFileManagerTab {
     pub(crate) transfer_drawer: TransferDrawerState,
     pub(crate) collision_dialog: Option<SftpCollisionDialogState>,
     command_sender: tokio::sync::mpsc::UnboundedSender<WorkerCommand>,
+    shutdown_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    cleanup_reporter: SftpCleanupReporter,
     event_receiver: Receiver<WorkerEvent>,
     event_sender: Sender<WorkerEvent>,
     local_loader: LocalDirectoryLoader,
@@ -1677,6 +1729,8 @@ impl SftpFileManagerTab {
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
             command_sender,
+            shutdown_sender: None,
+            cleanup_reporter: SftpCleanupReporter::default(),
             event_receiver,
             event_sender,
             local_loader: LocalDirectoryLoader::new("festerm-gallery-sftp-local".to_owned()),
@@ -1705,6 +1759,9 @@ impl SftpFileManagerTab {
         let local_pane = SftpPaneState::new(SftpPath::local(local_directory));
         let remote_pane = SftpPaneState::new(SftpPath::remote("/"));
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let cleanup_reporter = SftpCleanupReporter::default();
+        let worker_reporter = cleanup_reporter.clone();
         let (event_sender, event_receiver) = mpsc::channel();
         let local_loader =
             LocalDirectoryLoader::new(format!("festerm-gui-sftp-local-{}", target.label));
@@ -1726,9 +1783,15 @@ impl SftpFileManagerTab {
                         command_receiver,
                         worker_event_sender,
                         repaint,
+                        SftpWorkerOwner {
+                            shutdown: shutdown_receiver,
+                            reporter: worker_reporter,
+                        },
                     )
                     .await;
                 });
+                // Already-started filesystem calls cannot be aborted by dropping their futures.
+                runtime.shutdown_background();
             })
             .expect("could not spawn GUI SFTP worker thread");
 
@@ -1747,6 +1810,8 @@ impl SftpFileManagerTab {
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
             command_sender,
+            shutdown_sender: Some(shutdown_sender),
+            cleanup_reporter,
             event_receiver,
             event_sender,
             local_loader,
@@ -1765,6 +1830,13 @@ impl SftpFileManagerTab {
         let initial_local = tab.local_pane.current_path.clone();
         load_path(&mut tab, PaneFocus::Local, initial_local, false);
         tab
+    }
+
+    pub(crate) fn set_cleanup_reporter(
+        &self,
+        sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>,
+    ) {
+        self.cleanup_reporter.set_sender(sender);
     }
 
     pub(crate) fn poll(&mut self) {
@@ -3740,6 +3812,10 @@ impl SftpFileManagerTab {
     fn apply_transfer_event(&mut self, event: SftpTransferEvent) {
         match event {
             SftpTransferEvent::BatchQueued { .. } | SftpTransferEvent::BatchFinished { .. } => {}
+            SftpTransferEvent::CleanupIncomplete { error } => {
+                self.operation_error =
+                    Some(("SFTP cleanup is incomplete".to_owned(), error.to_string()));
+            }
             SftpTransferEvent::ItemStarted {
                 transfer_id,
                 source,
@@ -3882,6 +3958,13 @@ impl Drop for SftpFileManagerTab {
         if let Some(pending) = self.pending_host_key.take() {
             let _ = pending.resolver.cancel(&pending.prompt);
         }
+        if let Some(shutdown) = self.shutdown_sender.take() {
+            tracing::info!(
+                target: "festerm::sftp",
+                "GUI SFTP owner closed; cancellation cleanup requested but not yet confirmed"
+            );
+            let _ = shutdown.send(());
+        }
     }
 }
 
@@ -3993,10 +4076,54 @@ async fn run_worker(
     target: SftpFileManagerLaunchTarget,
     authentication: SftpFileManagerAuthentication,
     known_host_fingerprint: Option<String>,
-    mut command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
+    command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
     event_sender: mpsc::Sender<WorkerEvent>,
     repaint: egui::Context,
+    owner: SftpWorkerOwner,
 ) {
+    let SftpWorkerOwner {
+        mut shutdown,
+        reporter,
+    } = owner;
+    let label = target.label.clone();
+    let mut transfers = None;
+    let work = run_worker_operations(
+        target,
+        authentication,
+        known_host_fingerprint,
+        command_receiver,
+        SftpWorkerNotifications {
+            events: event_sender,
+            repaint: repaint.clone(),
+            reporter: reporter.clone(),
+        },
+        &mut transfers,
+    );
+    let _ = wait_for_sftp_tab_owner(work, &mut shutdown).await;
+    if let Some(transfers) = transfers {
+        match transfers.shutdown().await {
+            Ok(()) => tracing::info!(
+                target: "festerm::sftp",
+                "GUI SFTP owner work stopped and cancellation cleanup completed"
+            ),
+            Err(error) => reporter.report(label, error, &repaint),
+        }
+    }
+}
+
+async fn run_worker_operations(
+    target: SftpFileManagerLaunchTarget,
+    authentication: SftpFileManagerAuthentication,
+    known_host_fingerprint: Option<String>,
+    mut command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
+    notifications: SftpWorkerNotifications,
+    transfers: &mut Option<SftpTransferManager>,
+) {
+    let SftpWorkerNotifications {
+        events: event_sender,
+        repaint,
+        reporter,
+    } = notifications;
     let mut session_known_host_fingerprint = known_host_fingerprint;
     // Retry the initial connect (both the browsing session and the
     // dedicated transfer session) in place, instead of giving up and
@@ -4063,7 +4190,8 @@ async fn run_worker(
         };
         break (browsing, transfer_session);
     };
-    let mut transfer_manager = SftpTransferManager::new(transfer_session);
+    *transfers = Some(SftpTransferManager::new(transfer_session));
+    let transfer_manager = transfers.as_mut().expect("transfer manager was installed");
     let mut current_remote = browsing.remote_working_directory().to_owned();
     if let Ok(snapshot) = browsing.remote_directory_snapshot(None).await {
         let metadata = browsing
@@ -4300,7 +4428,14 @@ async fn run_worker(
             }
             transfer_event = transfer_manager.recv_event() => {
                 let Some(transfer_event) = transfer_event else { break; };
-                let _ = event_sender.send(WorkerEvent::Transfer(transfer_event));
+                match transfer_event {
+                    SftpTransferEvent::CleanupIncomplete { error } => {
+                        reporter.report(target.label.clone(), error, &repaint);
+                    }
+                    event => {
+                        let _ = event_sender.send(WorkerEvent::Transfer(event));
+                    }
+                }
                 repaint.request_repaint();
             }
             _ = liveness_interval.tick() => {
@@ -4337,6 +4472,22 @@ async fn run_worker(
                 }
             }
         }
+    }
+}
+
+enum SftpTabWork<T> {
+    Completed(T),
+    OwnerClosed,
+}
+
+async fn wait_for_sftp_tab_owner<T>(
+    work: impl std::future::Future<Output = T>,
+    shutdown: &mut tokio::sync::oneshot::Receiver<()>,
+) -> SftpTabWork<T> {
+    tokio::select! {
+        biased;
+        _ = shutdown => SftpTabWork::OwnerClosed,
+        result = work => SftpTabWork::Completed(result),
     }
 }
 
@@ -4415,6 +4566,7 @@ async fn connect_remote_session(
         GuiSftpSessionConnectError::HostKeyRejected => {
             "The SSH host key was rejected or the trust prompt expired.".to_owned()
         }
+        GuiSftpSessionConnectError::Cancelled => "The SFTP connection was cancelled.".to_owned(),
         GuiSftpSessionConnectError::ConnectionFailed(detail) => {
             format!("The SSH/SFTP connection could not be established: {detail}")
         }
@@ -4435,6 +4587,7 @@ async fn connect_remote_session(
                     GuiSftpSessionConnectError::HostKeyRejected => {
                         "The SSH host key was rejected or the trust prompt expired.".to_owned()
                     }
+                    GuiSftpSessionConnectError::Cancelled => "The SFTP connection was cancelled.".to_owned(),
                     GuiSftpSessionConnectError::ConnectionFailed(detail) => {
                         format!("The SSH/SFTP connection could not be established: {detail}")
                     }
@@ -6444,6 +6597,8 @@ pub(crate) mod tests {
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
             command_sender,
+            shutdown_sender: None,
+            cleanup_reporter: SftpCleanupReporter::default(),
             event_receiver,
             event_sender,
             local_loader: LocalDirectoryLoader::paused_for_test(),
@@ -6459,6 +6614,125 @@ pub(crate) mod tests {
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
         }
+    }
+
+    #[test]
+    fn gui_sftp_cleanup_report_outlives_the_tab_and_follows_its_current_window() {
+        use crate::tabs::{AppState, TabContent};
+        let context = egui::Context::default();
+        let mut source = AppState::with_launcher(festerm_config::Configuration::empty());
+        let mut destination = AppState::with_launcher(festerm_config::Configuration::empty());
+        let tab = test_tab();
+        let reporter = tab.cleanup_reporter.clone();
+        let id = source.active_tab().id;
+        let mut owned_tab = source.detach_tab(id).unwrap();
+        owned_tab.content = TabContent::SftpFileManager(Box::new(tab));
+        source.adopt_tab(owned_tab, None);
+        destination.adopt_tab(source.detach_tab(id).unwrap(), None);
+        drop(destination.detach_tab(id).unwrap());
+        reporter.report(
+            "owned SFTP fixture".to_owned(),
+            festerm_ssh::SftpSessionError::TransferCommitInterrupted {
+                temporary: "/fixture/report.festerm-part".to_owned(),
+                destination: "/fixture/report".to_owned(),
+            },
+            &context,
+        );
+        assert!(source.take_sftp_cleanup_notice().is_none());
+        let notice = destination.take_sftp_cleanup_notice().unwrap();
+        assert_eq!(notice.name, "owned SFTP fixture");
+        assert!(notice.detail.contains("/fixture/report.festerm-part"));
+        assert!(destination.take_sftp_cleanup_notice().is_none());
+    }
+
+    #[test]
+    fn gui_sftp_cleanup_notices_are_bounded_without_waiting_for_a_closed_window() {
+        let reporter = SftpCleanupReporter::default();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        reporter.set_sender(sender);
+        let context = egui::Context::default();
+        for _ in 0..2 {
+            reporter.report(
+                "owned fixture".to_owned(),
+                festerm_ssh::SftpSessionError::CancellationCleanupTimedOut,
+                &context,
+            );
+        }
+        assert!(receiver.try_recv().is_ok());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(receiver);
+        reporter.report(
+            "closed fixture".to_owned(),
+            festerm_ssh::SftpSessionError::CancellationCleanupTimedOut,
+            &context,
+        );
+    }
+
+    #[test]
+    fn gui_sftp_preserved_output_notice_reports_a_recovery_path() {
+        let mut tab = test_tab();
+        tab.apply_transfer_event(SftpTransferEvent::CleanupIncomplete {
+            error: festerm_ssh::SftpSessionError::PartialFileOwnershipUnconfirmed {
+                path: "/fixture/report.festerm-part".to_owned(),
+            },
+        });
+        assert!(tab.transfer_drawer.items.is_empty());
+        let (summary, detail) = tab.operation_error.as_ref().unwrap();
+        assert_eq!(summary, "SFTP cleanup is incomplete");
+        assert!(detail.contains("/fixture/report.festerm-part"));
+        assert!(detail.contains("file was not removed"));
+    }
+
+    #[test]
+    fn dropping_gui_sftp_tab_signals_owner_shutdown() {
+        let mut tab = test_tab();
+        let (shutdown, mut closed) = tokio::sync::oneshot::channel();
+        tab.shutdown_sender = Some(shutdown);
+        drop(tab);
+        assert_eq!(closed.try_recv(), Ok(()));
+    }
+
+    #[test]
+    fn gui_sftp_owner_close_preempts_already_ready_work() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (shutdown, mut closed) = tokio::sync::oneshot::channel();
+            shutdown.send(()).unwrap();
+            let mut started = false;
+            let result = wait_for_sftp_tab_owner(
+                async {
+                    started = true;
+                },
+                &mut closed,
+            )
+            .await;
+            assert!(matches!(result, SftpTabWork::OwnerClosed));
+            assert!(!started);
+        });
+    }
+
+    #[test]
+    fn gui_sftp_owner_signal_survives_a_completed_connect_phase() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (shutdown, mut closed) = tokio::sync::oneshot::channel();
+            assert!(matches!(
+                wait_for_sftp_tab_owner(async { 42 }, &mut closed).await,
+                SftpTabWork::Completed(42)
+            ));
+            shutdown.send(()).unwrap();
+            assert!(matches!(
+                wait_for_sftp_tab_owner(std::future::pending::<()>(), &mut closed).await,
+                SftpTabWork::OwnerClosed
+            ));
+        });
     }
 
     pub(crate) fn paint_fixture(context: &egui::Context, rows: usize) -> SftpFileManagerTab {

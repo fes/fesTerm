@@ -59,6 +59,62 @@ performance optimization or fix for multi-day CPU growth in #297. Release
 preparation changes version metadata only, without dependency, protocol or
 additional runtime changes.
 
+## Retiring SFTP work when its owner closes
+
+The allocation/lifecycle audit in #320 found that closing an SFTP owner could
+leave connection, browsing or transfer work awaiting I/O. Dropping a completion
+future could also detach its connect task after its join handle was taken.
+Owner cancellation now spans those waits, retains the connect guard until
+completion, and rejects outstanding trust before retiring the dedicated
+transport runtime. Text SFTP interrupts commands without draining queued input.
+
+The approved cleanup policy allows two seconds, not an unbounded network wait.
+A one-file ledger records exclusive creation acknowledgements: unknown
+current ownership is reported rather than deleted. Creation acknowledgement
+alone cannot justify unlinking a mutable path. Independent security review
+demonstrated ancestor and leaf replacement deleting unrelated files; the owner
+approved preserving/reporting uncertain partials with the current local and
+remote APIs rather than expanding this fix into a private-staging design.
+Independent reliability review also found that the text runtime could wait
+for blocking I/O after the cleanup deadline. Text runtime retirement now uses
+non-waiting shutdown, like the GUI owners. Review also exposed a destructive
+Replace boundary, where removing the completed temporary during cancellation
+could discard the only replacement copy. That temporary is preserved and both
+paths are reported as uncertain; an already-sent rename may still complete.
+Reporting releases the ledger so an ordinary failed replacement does not block
+unrelated work. No new resume, rollback or transfer-persistence feature is added.
+
+Cleanup failures survive tab close through a bounded application-owned notice
+channel that follows a moved tab to its current window. Content-free durable
+diagnostics remain when GUI delivery is unavailable; final process exit cannot
+guarantee completion of asynchronous cleanup. Deterministic and owned loopback
+fixtures cover cancellation, preserved/reported partials, replacement recovery,
+continuing unrelated transfers and notice routing. Packaged close/quit,
+accessibility and sibling-window behavior remain native evidence in `SFTP-01`.
+This repairs a concrete ownership defect, not a demonstrated cause of #297.
+
+Review regressions reproduced three unsafe/unproven cleanup outcomes and one
+runtime-completion timeout before the fixes. A follow-up reliability gate also
+reproduced a late-collision failure caused by treating preserved output as a
+terminal cleanup error. The ordered cleanup notice is now separate from
+collision/cancellation state; all three late conflict decisions preserve the
+temporary and remain usable. A canceled copy also reports retained output before
+its ordered Cancelled event, without becoming a failed transfer. A real owned
+SFTP copy reproduced error masking below the mock backend; exact-copy helpers
+now retain the ledger and original cause for the manager to report separately.
+Text failures preserve both original and cleanup errors. The repaired
+suite contains 128 SSH unit cases on Unix (127 on Windows; the ancestor-symlink
+fixture is Unix-only); the local Unix unit suite and all six owned loopback
+cases pass.
+A controlled, already-started
+blocking task proves completion is published without waiting for that task;
+it is released and joined by the fixture, not presented as forced I/O abortion.
+
+Windows qualification exposed a fixture-only spelling mismatch between remote
+mock paths with slash separators and native paths with backslashes. The notice
+assertion compares the complete native `Path`, not display strings; file-content,
+collision-choice and retained-output assertions are unchanged.
+
 ## v0.9.1: less work while the Windows WARP palette is open
 
 This performance patch packages the palette frame/shadow and opaque

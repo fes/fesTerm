@@ -6183,6 +6183,12 @@ impl FesTermApp {
             self.overlays.open_refusal = Some(notice);
             self.overlays.open_refusal_focused = false;
         }
+        if self.overlays.open_refusal.is_none() {
+            if let Some(notice) = self.state.take_sftp_cleanup_notice() {
+                self.overlays.open_refusal = Some(notice);
+                self.overlays.open_refusal_focused = false;
+            }
+        }
         if let Some(refusal) = self.state.take_history_snapshot_refusal() {
             self.overlays.transient_notice = Some((
                 format!("Cannot snapshot terminal history. {}", refusal.detail()),

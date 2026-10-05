@@ -190,6 +190,21 @@ Diagnostics remain content-free:
 - keep secret material out of SFTP transcript plumbing exactly as the SSH shell
   path already keeps credentials out of logs and configuration.
 
+### Owner cancellation preserves uncertain partial output
+
+Owner shutdown interrupts an awaited command without consuming queued input.
+Cleanup and channel close have at most a two-second grace. Exclusive creation
+does not establish the current identity of a pathname: an ancestor or leaf can
+be replaced before cancellation. The current local-filesystem and SFTP APIs
+cannot perform race-free conditional deletion, so failed/canceled partial
+output is preserved and reported for inspection and manual cleanup. Reporting
+releases the ledger so unrelated work can continue; successful transfers and
+explicit `rm`/overwrite refusal are unchanged.
+
+Text runtime retirement must not wait for already-started blocking filesystem
+calls after the cleanup deadline. Those calls cannot be forcibly canceled, and
+final process exit does not guarantee cleanup completion or server-side rollback.
+
 ## Alternatives considered
 
 ### Hand-roll the SSH_FXP protocol inside `festerm-ssh`
@@ -227,12 +242,14 @@ correctness and easier to explain honestly in the UI.
   `"sftp"` subsystem channel; SFTP tabs reuse `SessionTab` transcript/search/
   status machinery; workspace restore recreates an auth-required SFTP surface
   instead of resuming a live channel; `get`/`put` refuse overwrite by default;
-  diagnostics never include transferred file content.
+  diagnostics never include transferred file content; owner cancellation
+  preserves partials whose current ownership cannot be proven race-free and
+  retires the runtime without waiting for outstanding blocking I/O.
 - **GUI/action edges affected:** Planned new edges `LAUNCH-09` (start a new
   SFTP session from SSH destination/profile metadata), `SSH-09` (interact with
   a live text-mode SFTP tab and run a supported command successfully), and
   `SET-09` (change the default local SFTP directory preference and verify it
-  persists without `lcd` mutating it).
+  persists without `lcd` mutating it). Owner cancellation refines `SSH-09`.
 - **Automated tests required:** Planned coverage includes
   `put_uploads_bytes_identical_to_local_source`,
   `get_downloads_bytes_identical_to_remote_source`,
@@ -240,11 +257,18 @@ correctness and easier to explain honestly in the UI.
   `sftp_put_refuses_to_overwrite_an_existing_remote_file`,
   `sftp_workspace_restore_requires_fresh_authentication`,
   `interface_settings_parse_default_sftp_local_directory_additively`, and
-  `lcd_changes_only_the_live_session_local_directory`.
+  `lcd_changes_only_the_live_session_local_directory`. Owner-cancellation
+  regressions include
+  `text_sftp_shutdown_interrupts_a_stalled_download_and_reports_its_partial_file`,
+  `text_sftp_runtime_reports_completion_without_waiting_for_blocking_io`,
+  `failed_text_transfer_reports_original_error_and_preserved_output`,
+  `cancellation_cleanup_preserves_a_replaced_local_leaf`, and the Unix-only
+  `cancellation_cleanup_preserves_files_after_ancestor_symlink_replacement`.
 - **Native/manual evidence required:** Manual fixture evidence is required for
   interactive command usability, local-directory defaulting, overwrite refusal,
   and transcript clarity during representative transfers. Stable scenario IDs
   should be added to `docs/manual-validation.md` in the implementing change.
+  `SFTP-01` retains packaged close/quit and cleanup-diagnostic qualification.
 - **Coverage superseded:** None yet. `validation/traceability.json` must be
   updated in the implementing change that adds the real SFTP edges, tests, and
   manual scenarios.
