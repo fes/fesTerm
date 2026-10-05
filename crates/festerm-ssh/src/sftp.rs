@@ -37,6 +37,9 @@ Supported commands:
   quit
   exit
 
+Command input is limited to 256 KiB (262144 bytes) per unfinished line.
+Overlong lines are refused until a line ending or Ctrl+C; then start a new command.
+
 Not supported in this first pass: reget, reput, symlink, chown, shell escapes,
 recursive -r transfers, and globbing/wildcard expansion.";
 
