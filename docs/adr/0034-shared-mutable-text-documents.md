@@ -533,8 +533,9 @@ existing Markdown rendering stays out of scope.
   colour; per-view presentation never alters document bytes; nothing new
   persisted. ADR 0030's read-only snapshot invariant is narrowed to the viewer's
   own entry routes.
-- **GUI/action edges affected:** `EDIT-01` … `EDIT-15` (new section R of
-  `docs/gui-action-graph.md`); `MD-06` is superseded in part, since freshness
+- **GUI/action edges affected:** `EDIT-01` … `EDIT-15` and `EDIT-17` (section R
+  of `docs/gui-action-graph.md`; `EDIT-16` is refined by ADR 0035); `MD-06` is
+  superseded in part, since freshness
   and conflict for an edited document are now specified here; `CLOSE-*` gains
   the final-view dirty-close prompt; `CHIP-*` gains the non-colour document
   state cue.
@@ -549,7 +550,9 @@ existing Markdown rendering stays out of scope.
   view-independence, final-view close routing and default-action placement,
   read-only line-oriented comparison, Save As destination binding to an
   already-open document, and the vi subset's motions, operators, and `:` command
-  convergence.
+  convergence. `EDIT-17` adds deterministic coverage for independent blank
+  untitled documents, per-kind sequential names, first-save routing, More
+  actions, and native-menu command convergence.
 - **Vi recording refinement:** `EDIT-07` now has deterministic engine and
   production-view regressions for the exact 8,192-key boundary, Insert/Replace
   and Visual churn, capacity retirement, visible nonfatal warnings, refusal of

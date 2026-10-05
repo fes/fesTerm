@@ -998,6 +998,7 @@ impl FesTermApp {
         use festerm_macos_window::NativeMenuCommand;
         let action = match command {
             NativeMenuCommand::Paste => None,
+            NativeMenuCommand::NewTextDocument => None,
             NativeMenuCommand::NewSession => Some(A::NewSession),
             NativeMenuCommand::NewWindow => Some(A::NewWindow),
             NativeMenuCommand::StartLocalShell => Some(A::StartLocalShell),
@@ -1043,6 +1044,9 @@ impl FesTermApp {
                 } else {
                     context.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                 }
+            }
+            NativeMenuCommand::NewTextDocument => {
+                self.state.dispatch(AppCommand::NewTextDocument, context)
             }
             NativeMenuCommand::NewSession => self.state.dispatch(AppCommand::OpenLauncher, context),
             NativeMenuCommand::NewWindow => self.state.dispatch(AppCommand::OpenWindow, context),
@@ -2372,6 +2376,9 @@ impl FesTermApp {
         for action in actions {
             match action {
                 ChromeAction::NewTab => self.state.dispatch(AppCommand::OpenLauncher, context),
+                ChromeAction::NewTextDocument => {
+                    self.state.dispatch(AppCommand::NewTextDocument, context)
+                }
                 ChromeAction::OpenMarkdownFile => self.open_markdown_file_picker(context),
                 ChromeAction::OpenSettings => {
                     self.state.dispatch(AppCommand::OpenSettings, context)
@@ -11039,7 +11046,7 @@ mod tests {
         assert!(
             !items.iter().any(|item| matches!(
                 item.label.as_str(),
-                "About fesTerm" | "Show Session Inspector" | "Hide Session Inspector"
+                "New File" | "About fesTerm" | "Show Session Inspector" | "Hide Session Inspector"
             )),
             "More actions entries must not be duplicated in the command palette"
         );
@@ -11262,6 +11269,46 @@ mod tests {
     }
 
     #[test]
+    fn new_file_actions_create_separate_empty_unsaved_documents() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.dispatch_chrome_actions(vec![ChromeAction::NewTextDocument], &context);
+        let first = app.state.active_document().expect("first editor document");
+        {
+            let documents = app.state.documents().clone();
+            let registry = documents.borrow();
+            let document = registry.get(first).unwrap();
+            assert_eq!(document.origin().file_name(), "Untitled-1.txt");
+            assert_eq!(document.origin().qualified_label(), "New unsaved file");
+            assert_eq!(document.text().text(), "");
+            assert!(document.text().is_dirty());
+            assert_eq!(
+                document.status().auto_save(),
+                festerm_document::AutoSaveControl::Unavailable
+            );
+        }
+
+        app.dispatch_chrome_actions(vec![ChromeAction::NewTextDocument], &context);
+        let second = app.state.active_document().expect("second editor document");
+        assert_ne!(first, second);
+        {
+            let documents = app.state.documents().clone();
+            let registry = documents.borrow();
+            assert_eq!(
+                registry.get(second).unwrap().origin().file_name(),
+                "Untitled-2.txt"
+            );
+        }
+
+        app.state.dispatch(AppCommand::SaveTextDocument, &context);
+        assert!(
+            app.state.take_save_as_request(),
+            "the first save of a new file must choose a destination"
+        );
+    }
+
+    #[test]
     fn saved_sftp_profile_launches_its_configured_surface_mode() {
         let context = egui::Context::default();
         for (gui_mode, expected_gui_surface) in [(true, true), (false, false)] {
@@ -11408,6 +11455,25 @@ mod tests {
 
         assert_eq!(app.state.tabs().len(), tabs_before);
         assert!(app.take_window_open_request());
+    }
+
+    #[test]
+    fn the_native_menu_new_file_command_opens_an_untitled_editor() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.dispatch_native_menu_command(
+            festerm_macos_window::NativeMenuCommand::NewTextDocument,
+            &context,
+        );
+
+        let document = app.state.active_document().expect("new editor document");
+        let documents = app.state.documents().clone();
+        let registry = documents.borrow();
+        assert_eq!(
+            registry.get(document).unwrap().origin().file_name(),
+            "Untitled-1.txt"
+        );
     }
 
     /// The persisted workspace is still a single tab list (ADR 0032), so a

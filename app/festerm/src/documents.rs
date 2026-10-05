@@ -211,6 +211,7 @@ pub(crate) struct DocumentRegistry {
     documents: HashMap<DocumentId, OpenDocument>,
     by_key: HashMap<DocumentKey, DocumentId>,
     next_id: u64,
+    next_untitled_by_prefix: HashMap<String, u64>,
     bounds: DocumentBounds,
 }
 
@@ -342,7 +343,11 @@ impl DocumentRegistry {
         qualified_label: &str,
         bytes: &[u8],
     ) -> DocumentId {
-        let next = self.next_id + 1;
+        let next = self
+            .next_untitled_by_prefix
+            .entry(name_prefix.to_owned())
+            .and_modify(|next| *next += 1)
+            .or_insert(1);
         let key = format!("{name_prefix}-{next}");
         let file_name = format!("{name_prefix}-{next}.txt");
         let origin = UntitledOrigin::new(key, file_name, qualified_label)
@@ -423,7 +428,7 @@ impl DocumentRegistry {
             if matches!(document.origin, DocumentOrigin::Untitled(_)) {
                 let error = SaveError::new(
                     "Choose a destination first",
-                    "This snapshot is not on disk yet. Use Save As to choose where to write it.",
+                    "This document is not on disk yet. Use Save As to choose where to write it.",
                 );
                 document.last_error = Some(error.clone());
                 return Some(SaveOutcome::Failed(error));
@@ -1066,9 +1071,38 @@ mod tests {
         assert_eq!(error.headline(), "Choose a destination first");
         assert_eq!(
             error.detail(),
-            "This snapshot is not on disk yet. Use Save As to choose where to write it."
+            "This document is not on disk yet. Use Save As to choose where to write it."
         );
         assert!(registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn untitled_names_are_sequential_per_creation_kind() {
+        let directory = TemporaryDirectory::new("untitled-names");
+        let path = directory.file("existing.txt", "existing\n");
+        let mut registry = DocumentRegistry::new();
+        registry.open_local(&path).unwrap();
+
+        let first = registry.create_untitled("Untitled", "New unsaved file", b"");
+        let history = registry.create_untitled(
+            "terminal-history",
+            "Local Shell · terminal history snapshot",
+            b"history",
+        );
+        let second = registry.create_untitled("Untitled", "New unsaved file", b"");
+
+        assert_eq!(
+            registry.get(first).unwrap().origin().file_name(),
+            "Untitled-1.txt"
+        );
+        assert_eq!(
+            registry.get(history).unwrap().origin().file_name(),
+            "terminal-history-1.txt"
+        );
+        assert_eq!(
+            registry.get(second).unwrap().origin().file_name(),
+            "Untitled-2.txt"
+        );
     }
 
     #[test]

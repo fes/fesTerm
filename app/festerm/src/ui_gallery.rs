@@ -3509,6 +3509,7 @@ fn assert_surface(kind: SurfaceKind, driver: &impl SurfaceDriver) {
         assert!(driver.has_label("Hide Licenses"));
     }
     if kind == K::ChromeMenu {
+        assert!(driver.has_label("New File"));
         assert!(driver.has_label("Open File…"));
         assert!(driver.has_label("Open Profiles"));
         assert!(driver.has_label("Open Settings"));
@@ -5158,6 +5159,7 @@ fn style_review_geometry(
         K::ExpandedOverflow => (
             None,
             &[
+                "New File",
                 "Open File…",
                 "Open Profiles",
                 "Open Settings",
