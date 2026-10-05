@@ -37,9 +37,17 @@ Consequences that follow from that and are worth stating plainly:
   away from the text widget, which keeps a private history of its own string
   and knows nothing about the other views, a reload, or a substitution
   committed as one transaction.
+- The body limits the widget to one baseline rather than its default 100
+  undo points; egui may also hold one transient changing state. Configuration
+  happens once, not by clearing and rebuilding the baseline on every pass.
+  Find/Replace, the column field, and the vi command field keep their local
+  undo while the view is open; closing the view removes all of its
+  text-widget state from the shared GUI context.
 - Closing a view does not close the document. The document is forgotten when
   the last view goes, which is also the only point at which the dirty-close
-  question is worth asking.
+  question is worth asking. Accepted window teardown releases every document
+  view still inside that window exactly once. Tabs moved out of the window
+  keep their registration with their new owner.
 - **Save As is not a rename.** The saving view follows the file it wrote; any
   other view still holding the original carries on looking at the original.
 - Saving onto a file that is already open binds the view to that **existing**
