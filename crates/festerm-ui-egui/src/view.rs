@@ -131,6 +131,9 @@ pub struct FrameDiagnostics {
     pub calculated_dimensions: Option<festerm_core::Dimensions>,
     pub grid_rect: Option<egui::Rect>,
     pub dirty_rows: usize,
+    pub retained_rows_reused: usize,
+    pub retained_rows_rebuilt: usize,
+    pub retained_row_bytes: usize,
     /// Color emoji glyphs successfully submitted through the renderer-owned
     /// texture path during the latest frame.
     pub color_emoji_paints: usize,
@@ -1375,6 +1378,10 @@ impl TerminalView {
                 )
             });
         self.diagnostics.color_emoji_paints = paint_stats.color_emoji_paints;
+        let (reused, rebuilt, bytes) = self.glyphs.row_cache_diagnostics();
+        self.diagnostics.retained_rows_reused = reused;
+        self.diagnostics.retained_rows_rebuilt = rebuilt;
+        self.diagnostics.retained_row_bytes = bytes;
         self.diagnostics.color_emoji_cache_hits = paint_stats.color_emoji_cache_hits;
         self.diagnostics.color_emoji_cache_misses = paint_stats.color_emoji_cache_misses;
         self.diagnostics.color_emoji_rasterization_attempts =

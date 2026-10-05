@@ -123,6 +123,7 @@ public:
     size_t degenerate_triangles = 0;
     uint32_t width, height;
     DXGI_ADAPTER_DESC adapter{};
+    bool target_acquired = false;
 
     Renderer(uint32_t w, uint32_t h, ID3D12Device* native = nullptr,
         ID3D12CommandQueue* queue = nullptr) : width(w), height(h) {
@@ -194,6 +195,7 @@ public:
     }
 
     ~Renderer() {
+        retire_target();
         if (timer) CloseHandle(timer);
         if (event) CloseHandle(event);
     }
@@ -208,10 +210,7 @@ public:
     }
 
     void set_target(ID3D12Resource* resource, uint32_t w, uint32_t h) {
-        context->SetTarget(nullptr);
-        target_bitmap.Reset();
-        target.Reset();
-        wrapped.Reset();
+        retire_target();
         width = w; height = h;
         const D3D11_RESOURCE_FLAGS flags{D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE};
         check(on12->CreateWrappedResource(resource, &flags, D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -219,6 +218,22 @@ public:
             IID_PPV_ARGS(&wrapped)));
         check(wrapped.As(&target));
         bind_surface();
+    }
+
+    void retire_target() {
+        if (!on12 || (!wrapped && !target && !target_bitmap)) return;
+        context->SetTarget(nullptr);
+        target_bitmap.Reset();
+        target.Reset();
+        if (target_acquired) {
+            ID3D11Resource* resources[]{wrapped.Get()};
+            on12->ReleaseWrappedResources(resources, 1);
+            target_acquired = false;
+        }
+        wrapped.Reset();
+        // D3D11 defers destruction. Flush only after every view and wrapped
+        // reference is gone so teardown cannot retain the imported resource.
+        immediate->Flush();
     }
 
     void pace(Clock::time_point deadline) {
@@ -349,6 +364,7 @@ public:
         if (on12) {
             ID3D11Resource* resources[]{wrapped.Get()};
             on12->AcquireWrappedResources(resources, 1);
+            target_acquired = true;
         }
         context->SetTarget(target_bitmap.Get());
         context->BeginDraw();
@@ -394,13 +410,7 @@ public:
         }
         const auto result = context->EndDraw();
         if (on12) {
-            ID3D11Resource* resources[]{wrapped.Get()};
-            on12->ReleaseWrappedResources(resources, 1);
-            immediate->Flush();
-            context->SetTarget(nullptr);
-            target_bitmap.Reset();
-            target.Reset();
-            wrapped.Reset();
+            retire_target();
         } else {
             complete();
         }

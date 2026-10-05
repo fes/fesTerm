@@ -1441,6 +1441,63 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_native_renderer_retirement_keeps_devices_usable() {
+        let start = Arc::new(std::sync::Barrier::new(4));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let start = start.clone();
+                scope.spawn(move || {
+                    let mut setup = default_wgpu_setup();
+                    let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                        unreachable!()
+                    };
+                    options.instance_descriptor.backends = wgpu::Backends::DX12;
+                    let state = create_render_state(setup, Default::default());
+                    let textures = [(
+                        TextureId::Managed(0),
+                        Arc::new(ColorImage::new([1, 1], vec![Color32::WHITE])),
+                    )];
+                    start.wait();
+                    for _ in 0..16 {
+                        let mut renderer =
+                            Renderer::new(state.device.clone(), state.queue.clone()).unwrap();
+                        let surface = renderer
+                            .render(
+                                Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0)),
+                                1.0,
+                                Color32::BLACK,
+                                &frame(Color32::RED),
+                                &textures,
+                                None,
+                            )
+                            .unwrap()
+                            .unwrap();
+                        drop(surface);
+                        drop(renderer);
+                    }
+                    let mut renderer =
+                        Renderer::new(state.device.clone(), state.queue.clone()).unwrap();
+                    let surface = renderer
+                        .render(
+                            Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0)),
+                            1.0,
+                            Color32::BLACK,
+                            &frame(Color32::GREEN),
+                            &textures,
+                            None,
+                        )
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(
+                        first_pixel(&state.device, &state.queue, &surface.texture),
+                        [0, 255, 0, 255]
+                    );
+                });
+            }
+        });
+    }
+
+    #[test]
     fn narrow_retained_updates_match_full_pixels_with_overlap_erasure_and_dpi() {
         let mut setup = default_wgpu_setup();
         let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {

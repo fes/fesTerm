@@ -459,5 +459,21 @@ if ($IsMacOS) {
     Add-Content -Path $ResultPath -Value "`nsuite=ios-simulator status=skipped reason=macos-required"
 }
 
+if ($env:FESTERM_RUN_ROW_CACHE_PROFILE -eq '1') {
+    try {
+        Invoke-NativeCommand {
+            cargo test --release -p festerm-ui-egui --lib profile_retained_grid_row_stages -- --ignored --nocapture --test-threads=1
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'Terminal row-cache profile failed.' }
+        Add-Content -Path $ResultPath -Value "`nsuite=terminal-row-cache-profile status=pass"
+    } catch {
+        Write-Warning $_
+        Add-Content -Path $ResultPath -Value "`nsuite=terminal-row-cache-profile status=fail"
+        $status = 'fail'
+    }
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=terminal-row-cache-profile status=skipped reason=explicit-opt-in"
+}
+
 Add-Content -Path $ResultPath -Value "`nstatus=$status"
 if ($status -eq 'fail') { exit 1 }

@@ -1240,10 +1240,17 @@ mod tests {
 
     #[test]
     fn endpoint_forwarding_ack_full_stale_and_shutdown_are_bounded() {
-        let root = test_root("endpoint-forwarding");
-        let _ = fs::remove_dir_all(&root);
-        create_private_dir(&root).unwrap();
-        let endpoint = Endpoint::for_root(root.clone()).unwrap();
+        // Unix socket paths must fit even when the checkout or TMPDIR is long.
+        #[cfg(unix)]
+        let directory = tempfile::Builder::new()
+            .prefix("festerm-activation-")
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir_in("/tmp")
+            .unwrap();
+        #[cfg(windows)]
+        let directory = tempfile::tempdir().unwrap();
+        create_private_dir(directory.path()).unwrap();
+        let endpoint = Endpoint::for_root(directory.path().to_owned()).unwrap();
         #[cfg(unix)]
         fs::write(&endpoint.socket_path, b"stale").unwrap();
         let lock = acquire_primary_lock(&endpoint).unwrap();
@@ -1272,7 +1279,6 @@ mod tests {
         drop(server);
         #[cfg(unix)]
         assert!(!endpoint.socket_path.exists());
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1289,16 +1295,6 @@ mod tests {
         };
         shared.set_waker(waker);
         assert_eq!(counter.0.load(Ordering::SeqCst), 1);
-    }
-
-    fn test_root(name: &str) -> PathBuf {
-        static NEXT_ROOT: AtomicUsize = AtomicUsize::new(0);
-        env::current_dir().unwrap().join(".a").join(format!(
-            "{}-{}-{}",
-            name,
-            std::process::id(),
-            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
-        ))
     }
 
     struct Counter(AtomicUsize);
