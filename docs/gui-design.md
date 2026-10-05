@@ -520,9 +520,11 @@ Global application actions and session-specific context are separate concerns.
 More actions owns infrequent global application actions without duplicating them
 in the command palette.
 
-Its primary entries are **Open File…**, **Open Profiles**, **Open
-Settings**, **Session inspector** (when a session is active), and **About
-fesTerm**. Terminal-only **Find in terminal** and **Focus mode** may appear
+Its primary entries are **New File**, **Open File…**, **Open Profiles**,
+**Open Settings**, **Session inspector** (when a session is active), and
+**About fesTerm**. **New File** immediately opens a blank, dirty `UNTITLED`
+editor document; its first Save continues through the ordinary Save As sheet.
+Terminal-only **Find in terminal** and **Focus mode** may appear
 when applicable; **Command palette** follows after a separator only in compact
 layouts.
 
@@ -859,6 +861,10 @@ The accepted shape is:
   opens in `Preview` in its editor tab rather than in a viewer tab of its own.
   **Duplicate view** opens a second view of the same document, which can be dragged
   to another window like any other tab.
+- **New files.** **New File** in More actions and the native File menu opens a
+  separate blank `UNTITLED` editor immediately. Each new document has its own
+  identity and `Untitled-N.txt` name, starts unsaved, cannot Auto-save before a
+  destination exists, and routes its first Save through Save As.
 - **Colour.** Source is highlighted by syntax, on by default, from one closed
   grammar set shared with the Markdown preview's fenced code. Colour carries
   syntax only: no document or application state is expressed through it, and a
