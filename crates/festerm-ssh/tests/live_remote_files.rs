@@ -5,7 +5,7 @@ use std::{
 };
 
 use festerm_session::{
-    Session, SessionEvent, SessionLifecycle, SessionTryReceiveError, TerminalSize,
+    Session, SessionEvent, SessionLifecycle, SessionTryReceiveError, ShutdownResult, TerminalSize,
 };
 use festerm_ssh::{
     connect_gui_sftp_session, GuiSftpSessionConnectOutcome, HostIdentity, HostTrustDecision,
@@ -14,6 +14,7 @@ use festerm_ssh::{
 use russh_sftp::protocol::{
     Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
 };
+use tokio::io::AsyncWriteExt;
 
 #[derive(Clone, Copy)]
 enum SubsystemBehavior {
@@ -21,6 +22,12 @@ enum SubsystemBehavior {
     Reject,
     ServeFiles,
     StallFileReads,
+}
+
+#[derive(Clone, Copy)]
+enum ShellBehavior {
+    Quiet,
+    ContinuousOutput,
 }
 
 const FIXTURE_PATH: &str = "/notes-\u{03bb}.md";
@@ -129,6 +136,7 @@ struct TestServer {
     channels: Vec<russh::Channel<russh::server::Msg>>,
     subsystem_started: mpsc::Sender<()>,
     behavior: SubsystemBehavior,
+    shell_behavior: ShellBehavior,
     subsystems: tokio::task::JoinSet<()>,
 }
 
@@ -179,6 +187,18 @@ impl russh::server::Handler for TestServer {
         session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)?;
+        if matches!(self.shell_behavior, ShellBehavior::ContinuousOutput) {
+            let index = self
+                .channels
+                .iter()
+                .position(|item| item.id() == channel)
+                .unwrap();
+            let mut stream = self.channels.remove(index).into_stream();
+            self.subsystems.spawn(async move {
+                let chunk = vec![b'x'; 16 * 1024];
+                while stream.write_all(&chunk).await.is_ok() {}
+            });
+        }
         Ok(())
     }
 
@@ -244,7 +264,10 @@ impl Drop for OwnedServer {
     }
 }
 
-fn start_server(behavior: SubsystemBehavior) -> (OwnedServer, u16, mpsc::Receiver<()>) {
+fn start_server(
+    behavior: SubsystemBehavior,
+    shell_behavior: ShellBehavior,
+) -> (OwnedServer, u16, mpsc::Receiver<()>) {
     let (port_sender, port_receiver) = mpsc::channel();
     let (subsystem_started, subsystem_receiver) = mpsc::channel();
     let (connection_closed, closed_receiver) = mpsc::channel();
@@ -270,6 +293,7 @@ fn start_server(behavior: SubsystemBehavior) -> (OwnedServer, u16, mpsc::Receive
                     channels: Vec::new(),
                     subsystem_started,
                     behavior,
+                    shell_behavior,
                     subsystems: tokio::task::JoinSet::new(),
                 }).await.unwrap();
                 let _ = session.await;
@@ -399,11 +423,14 @@ fn text_sftp_shutdown_interrupts_a_stalled_download_and_removes_its_partial_file
 #[test]
 fn live_remote_file_read_keeps_password_accept_once_shell_responsive() {
     for reject_subsystem in [false, true] {
-        let (_server, port, subsystem_started) = start_server(if reject_subsystem {
-            SubsystemBehavior::Reject
-        } else {
-            SubsystemBehavior::Stall
-        });
+        let (_server, port, subsystem_started) = start_server(
+            if reject_subsystem {
+                SubsystemBehavior::Reject
+            } else {
+                SubsystemBehavior::Stall
+            },
+            ShellBehavior::Quiet,
+        );
         let session = connect_session(port);
         let requestor = session.remote_file_requestor();
         assert!(requestor.verified_host_key_fingerprint().is_some());
@@ -459,6 +486,48 @@ fn live_remote_file_read_keeps_password_accept_once_shell_responsive() {
     }
 }
 
+#[test]
+fn live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue() {
+    let (_server, port, _subsystems) =
+        start_server(SubsystemBehavior::Reject, ShellBehavior::ContinuousOutput);
+    let session = connect_session(port);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let before = loop {
+        let metrics = session.metrics();
+        if metrics.backpressure_count > 0
+            && metrics.event_queue_depth == metrics.event_queue_capacity
+        {
+            break metrics;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture output never filled the frontend queue"
+        );
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(before.event_queue_depth, before.event_queue_capacity);
+    session.try_send_input(b"shell-remains-responsive").unwrap();
+    session
+        .try_resize(TerminalSize::new(100, 40).unwrap())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let metrics = session.metrics();
+        if metrics.input_bytes > before.input_bytes && metrics.resize_count > before.resize_count {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "busy output starved queued input or resize"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        session.shutdown(Duration::from_secs(3)).unwrap(),
+        ShutdownResult::Stopped
+    );
+}
+
 fn connect_session(port: u16) -> SshSession {
     let profile = SshConnectionProfile::new(
         HostIdentity::new("127.0.0.1", port).unwrap(),
@@ -492,7 +561,8 @@ fn connect_session(port: u16) -> SshSession {
 
 #[test]
 fn live_remote_file_read_returns_exact_bytes_and_honest_bounds() {
-    let (_server, port, _subsystems) = start_server(SubsystemBehavior::ServeFiles);
+    let (_server, port, _subsystems) =
+        start_server(SubsystemBehavior::ServeFiles, ShellBehavior::Quiet);
     let session = connect_session(port);
     let requestor = session.remote_file_requestor();
     let snapshot = requestor

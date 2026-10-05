@@ -2463,6 +2463,28 @@ const PASSWORD_DECISION_TIMEOUT: Duration = Duration::from_secs(120);
 /// giving up, matching `ssh`'s own default `NumberOfPasswordPrompts`.
 pub const MAX_INTERACTIVE_PASSWORD_ATTEMPTS: u8 = 3;
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+// Only completed control work advances this deadline, never incoming messages.
+struct CommandPoll {
+    deadline: tokio::time::Instant,
+}
+
+impl CommandPoll {
+    fn new(now: tokio::time::Instant) -> Self {
+        Self {
+            deadline: now + COMMAND_POLL_INTERVAL,
+        }
+    }
+
+    fn due(&self, now: tokio::time::Instant, shutdown_requested: bool) -> bool {
+        shutdown_requested || now >= self.deadline
+    }
+
+    fn processed(&mut self, now: tokio::time::Instant) {
+        self.deadline = now + COMMAND_POLL_INTERVAL;
+    }
+}
+
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const PORT_FORWARD_PENDING_CONNECTION_CAPACITY: usize = 32;
 const MAX_IN_FLIGHT_PORT_FORWARD_CONNECTIONS: usize = 32;
@@ -5461,7 +5483,14 @@ async fn wait_for_channel_request_reply(
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
 ) -> ChannelRequestReply {
+    let mut command_poll = CommandPoll::new(tokio::time::Instant::now());
     loop {
+        if command_poll.due(tokio::time::Instant::now(), shared.shutdown_requested()) {
+            if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                return ChannelRequestReply::Shutdown;
+            }
+            command_poll.processed(tokio::time::Instant::now());
+        }
         tokio::select! {
             message = channel.wait() => match message {
                 Some(russh::ChannelMsg::Success) => return ChannelRequestReply::Accepted,
@@ -5469,11 +5498,7 @@ async fn wait_for_channel_request_reply(
                 Some(russh::ChannelMsg::Failure | russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => return ChannelRequestReply::Rejected,
                 Some(_) => {}
             },
-            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                if process_commands_before_running(command_receiver, shared, host_key_gate) {
-                    return ChannelRequestReply::Shutdown;
-                }
-            }
+            _ = tokio::time::sleep_until(command_poll.deadline) => {}
         }
     }
 }
@@ -5532,7 +5557,14 @@ async fn probe_persistence_provider(
         WorkerWait::Completed(Err(_)) => return ProviderProbeOutcome::ProbeFailed,
         WorkerWait::Shutdown => return ProviderProbeOutcome::Shutdown,
     }
+    let mut command_poll = CommandPoll::new(tokio::time::Instant::now());
     loop {
+        if command_poll.due(tokio::time::Instant::now(), shared.shutdown_requested()) {
+            if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                return ProviderProbeOutcome::Shutdown;
+            }
+            command_poll.processed(tokio::time::Instant::now());
+        }
         tokio::select! {
             message = channel.wait() => match message {
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
@@ -5558,11 +5590,7 @@ async fn probe_persistence_provider(
                 // must never reach the terminal.
                 Some(_) => {}
             },
-            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                if process_commands_before_running(command_receiver, shared, host_key_gate) {
-                    return ProviderProbeOutcome::Shutdown;
-                }
-            }
+            _ = tokio::time::sleep_until(command_poll.deadline) => {}
         }
     }
 }
@@ -5640,7 +5668,61 @@ async fn run_authenticated_channel(
             initial_profile_port_forwards,
         ));
     }
+    let mut command_poll = CommandPoll::new(tokio::time::Instant::now());
     loop {
+        if command_poll.due(tokio::time::Instant::now(), shared.shutdown_requested()) {
+            match process_authenticated_commands(
+                &handle,
+                &mut channel,
+                &mut pending_commands,
+                &mut active_port_forwards,
+                &local_forward_sender,
+                command_receiver,
+                shared,
+                host_key_gate,
+                &mut remote_reads,
+            )
+            .await
+            {
+                Ok(AuthenticatedCommandOutcome::Continue) => {}
+                Ok(AuthenticatedCommandOutcome::Shutdown) => {
+                    teardown_port_forwards(
+                        Some(handle.as_ref()),
+                        &mut active_port_forwards,
+                        &mut port_forward_attempts,
+                        shared,
+                    )
+                    .await;
+                    return RunningOutcome::Shutdown(
+                        stop_handle_after_remote_reads(handle, &mut remote_reads, shared)
+                            .await
+                            .unwrap_or(ShutdownResult::Stopped),
+                    );
+                }
+                Ok(AuthenticatedCommandOutcome::Reconnect) => {
+                    teardown_port_forwards(
+                        Some(handle.as_ref()),
+                        &mut active_port_forwards,
+                        &mut port_forward_attempts,
+                        shared,
+                    )
+                    .await;
+                    let _ = stop_handle_after_remote_reads(handle, &mut remote_reads, shared).await;
+                    return RunningOutcome::ReconnectRequested;
+                }
+                Err(_) => {
+                    teardown_port_forwards(
+                        Some(handle.as_ref()),
+                        &mut active_port_forwards,
+                        &mut port_forward_attempts,
+                        shared,
+                    )
+                    .await;
+                    return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
+                }
+            }
+            command_poll.processed(tokio::time::Instant::now());
+        }
         remote_reads.reap();
         let probe_due = liveness_probe_due(
             tokio::time::Instant::now(),
@@ -5722,62 +5804,7 @@ async fn run_authenticated_channel(
                 }
                 None => forwarded_tcpip_receiver_closed = true,
             },
-            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                match process_authenticated_commands(
-                    &handle,
-                    &mut channel,
-                    &mut pending_commands,
-                    &mut active_port_forwards,
-                    &local_forward_sender,
-                    command_receiver,
-                    shared,
-                    host_key_gate,
-                    &mut remote_reads,
-                ).await {
-                    Ok(AuthenticatedCommandOutcome::Continue) => {}
-                    Ok(AuthenticatedCommandOutcome::Shutdown) => {
-                        teardown_port_forwards(
-                            Some(handle.as_ref()),
-                            &mut active_port_forwards,
-                            &mut port_forward_attempts,
-                            shared,
-                        ).await;
-                        return RunningOutcome::Shutdown(
-                            stop_handle_after_remote_reads(
-                                handle,
-                                &mut remote_reads,
-                                shared,
-                            )
-                            .await
-                            .unwrap_or(ShutdownResult::Stopped)
-                        );
-                    }
-                    Ok(AuthenticatedCommandOutcome::Reconnect) => {
-                        teardown_port_forwards(
-                            Some(handle.as_ref()),
-                            &mut active_port_forwards,
-                            &mut port_forward_attempts,
-                            shared,
-                        ).await;
-                        let _ = stop_handle_after_remote_reads(
-                            handle,
-                            &mut remote_reads,
-                            shared,
-                        )
-                        .await;
-                        return RunningOutcome::ReconnectRequested;
-                    }
-                    Err(_) => {
-                        teardown_port_forwards(
-                            Some(handle.as_ref()),
-                            &mut active_port_forwards,
-                            &mut port_forward_attempts,
-                            shared,
-                        ).await;
-                        return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
-                    }
-                }
-            }
+            _ = tokio::time::sleep_until(command_poll.deadline) => {}
         }
     }
 }
@@ -7162,6 +7189,79 @@ mod tests {
         let far_future_deadline = now + Duration::from_secs(3600);
 
         assert!(liveness_probe_due(now, far_future_deadline, true));
+    }
+
+    #[test]
+    fn command_poll_deadline_survives_continuously_ready_output() {
+        let start = tokio::time::Instant::now();
+        let poll = CommandPoll::new(start);
+        for microseconds in 0..10_000 {
+            let now = start + Duration::from_micros(microseconds);
+            assert!(!poll.due(now, false));
+            assert_eq!(poll.deadline, start + COMMAND_POLL_INTERVAL);
+        }
+        assert!(poll.due(start + COMMAND_POLL_INTERVAL, false));
+    }
+
+    #[test]
+    fn command_poll_shutdown_preempts_output_before_the_deadline() {
+        let now = tokio::time::Instant::now();
+        let poll = CommandPoll::new(now);
+        assert!(!poll.due(now, false));
+        assert!(poll.due(now, true));
+    }
+
+    #[test]
+    fn command_poll_progress_does_not_require_the_sleep_branch_to_win() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                let poll = CommandPoll::new(tokio::time::Instant::now());
+                loop {
+                    if poll.due(tokio::time::Instant::now(), false) {
+                        break;
+                    }
+                    tokio::select! {
+                        biased;
+                        _ = std::future::ready(()) => tokio::task::yield_now().await,
+                        _ = tokio::time::sleep_until(poll.deadline) => {
+                            panic!("continuously ready traffic always wins this synthetic select");
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("control becomes due even when output always wins the select");
+        });
+    }
+
+    #[test]
+    fn command_poll_reschedules_only_after_control_processing() {
+        let start = tokio::time::Instant::now();
+        let mut poll = CommandPoll::new(start);
+        let processed = start + COMMAND_POLL_INTERVAL;
+        assert!(poll.due(processed, false));
+        poll.processed(processed);
+        assert!(!poll.due(processed, false));
+        assert!(!poll.due(
+            processed + COMMAND_POLL_INTERVAL - Duration::from_nanos(1),
+            false
+        ));
+        assert!(poll.due(processed + COMMAND_POLL_INTERVAL, false));
+    }
+
+    #[test]
+    fn command_poll_skips_missed_ticks_without_a_busy_catch_up_loop() {
+        let start = tokio::time::Instant::now();
+        let mut poll = CommandPoll::new(start);
+        let completed = start + Duration::from_secs(60);
+        assert!(poll.due(completed, false));
+        poll.processed(completed);
+        assert_eq!(poll.deadline, completed + COMMAND_POLL_INTERVAL);
+        assert!(!poll.due(completed, false));
     }
 
     #[test]
