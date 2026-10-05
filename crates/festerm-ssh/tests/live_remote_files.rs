@@ -8,8 +8,8 @@ use festerm_session::{
     Session, SessionEvent, SessionLifecycle, SessionTryReceiveError, TerminalSize,
 };
 use festerm_ssh::{
-    HostIdentity, HostTrustDecision, RemoteFileReadError, SshAuthentication, SshConnectionProfile,
-    SshSession,
+    connect_gui_sftp_session, GuiSftpSessionConnectOutcome, HostIdentity, HostTrustDecision,
+    RemoteFileReadError, SftpTerminalSession, SshAuthentication, SshConnectionProfile, SshSession,
 };
 use russh_sftp::protocol::{
     Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
@@ -20,13 +20,17 @@ enum SubsystemBehavior {
     Stall,
     Reject,
     ServeFiles,
+    StallFileReads,
 }
 
 const FIXTURE_PATH: &str = "/notes-\u{03bb}.md";
 const FIXTURE_PARENT_PATH: &str = "/link/../notes-\u{03bb}.md";
 const FIXTURE_CONTENT: &[u8] = b"# remote document\n\nExact snapshot bytes.\n";
 
-struct MemoryFiles;
+struct MemoryFiles {
+    stall_reads: bool,
+    read_started: mpsc::Sender<()>,
+}
 
 impl russh_sftp::server::Handler for MemoryFiles {
     type Error = StatusCode;
@@ -92,6 +96,10 @@ impl russh_sftp::server::Handler for MemoryFiles {
             handle.as_str(),
             FIXTURE_PATH | FIXTURE_PARENT_PATH
         ));
+        if self.stall_reads {
+            self.read_started.send(()).unwrap();
+            return std::future::pending().await;
+        }
         let start = usize::try_from(offset).unwrap();
         if start >= FIXTURE_CONTENT.len() {
             return Err(StatusCode::Eof);
@@ -184,7 +192,7 @@ impl russh::server::Handler for TestServer {
         match self.behavior {
             SubsystemBehavior::Reject => session.channel_failure(channel)?,
             SubsystemBehavior::Stall => session.channel_success(channel)?,
-            SubsystemBehavior::ServeFiles => {
+            SubsystemBehavior::ServeFiles | SubsystemBehavior::StallFileReads => {
                 session.channel_success(channel)?;
                 let index = self
                     .channels
@@ -192,8 +200,13 @@ impl russh::server::Handler for TestServer {
                     .position(|item| item.id() == channel)
                     .unwrap();
                 let stream = self.channels.remove(index).into_stream();
-                self.subsystems
-                    .spawn(russh_sftp::server::run(stream, MemoryFiles));
+                self.subsystems.spawn(russh_sftp::server::run(
+                    stream,
+                    MemoryFiles {
+                        stall_reads: matches!(self.behavior, SubsystemBehavior::StallFileReads),
+                        read_started: self.subsystem_started.clone(),
+                    },
+                ));
             }
         }
         self.subsystem_started.send(()).unwrap();
@@ -217,6 +230,7 @@ impl russh::server::Handler for TestServer {
 struct OwnedServer {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     join: Option<thread::JoinHandle<()>>,
+    connection_closed: mpsc::Receiver<()>,
 }
 
 impl Drop for OwnedServer {
@@ -233,6 +247,7 @@ impl Drop for OwnedServer {
 fn start_server(behavior: SubsystemBehavior) -> (OwnedServer, u16, mpsc::Receiver<()>) {
     let (port_sender, port_receiver) = mpsc::channel();
     let (subsystem_started, subsystem_receiver) = mpsc::channel();
+    let (connection_closed, closed_receiver) = mpsc::channel();
     let (stop, stop_receiver) = tokio::sync::oneshot::channel();
     let join = thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -258,6 +273,7 @@ fn start_server(behavior: SubsystemBehavior) -> (OwnedServer, u16, mpsc::Receive
                     subsystems: tokio::task::JoinSet::new(),
                 }).await.unwrap();
                 let _ = session.await;
+                let _ = connection_closed.send(());
             };
             tokio::select! {
                 _ = serve => {}
@@ -271,10 +287,113 @@ fn start_server(behavior: SubsystemBehavior) -> (OwnedServer, u16, mpsc::Receive
         OwnedServer {
             stop: Some(stop),
             join: Some(join),
+            connection_closed: closed_receiver,
         },
         port,
         subsystem_receiver,
     )
+}
+
+fn fixture_profile(port: u16) -> SshConnectionProfile {
+    SshConnectionProfile::new(
+        HostIdentity::new("127.0.0.1", port).unwrap(),
+        "fixture",
+        SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+        TerminalSize::new(80, 24).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn cancelling_gui_connect_wait_closes_the_dedicated_transport_thread() {
+    let (server, port, subsystem_started) = start_server(SubsystemBehavior::Stall);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let outcome = connect_gui_sftp_session(
+            fixture_profile(port),
+            SshAuthentication::password("fixture-password"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let GuiSftpSessionConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion,
+        } = outcome
+        else {
+            panic!("fixture must require explicit host trust");
+        };
+        resolver
+            .resolve(&prompt, HostTrustDecision::AcceptOnce)
+            .unwrap();
+        let mut waiting = Box::pin(completion.wait());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut waiting)
+                .await
+                .is_err()
+        );
+        subsystem_started
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
+        drop(waiting);
+        server
+            .connection_closed
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
+    });
+}
+
+#[test]
+fn text_sftp_shutdown_interrupts_a_stalled_download_and_removes_its_partial_file() {
+    let (server, port, activity) = start_server(SubsystemBehavior::StallFileReads);
+    let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-artifacts")
+        .join(format!("sftp-download-owner-cancel-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let session = SftpTerminalSession::start(
+        fixture_profile(port),
+        SshAuthentication::password("fixture-password"),
+        Some(directory.clone()),
+        None,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => session
+                .host_key_decision_resolver()
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .unwrap(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => break,
+            Ok(SessionEvent::Error(error)) => panic!("fixture startup failed: {error}"),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(SessionTryReceiveError::Closed) => panic!("fixture closed during startup"),
+        }
+    }
+    activity.recv_timeout(Duration::from_secs(3)).unwrap();
+    session
+        .try_send_input(format!("get \"{FIXTURE_PATH}\" cancelled.bin\r").as_bytes())
+        .unwrap();
+    activity.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(directory.join("cancelled.bin").exists());
+    session.shutdown(Duration::from_secs(5)).unwrap();
+    assert!(!directory.join("cancelled.bin").exists());
+    server
+        .connection_closed
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap();
+    std::fs::remove_dir(&directory).unwrap();
 }
 
 #[test]

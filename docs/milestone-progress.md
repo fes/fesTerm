@@ -17,6 +17,33 @@ performance optimization or fix for multi-day CPU growth in #297. Release
 preparation changes version metadata only, without dependency, protocol or
 additional runtime changes.
 
+## Retiring SFTP work when its owner closes
+
+The allocation/lifecycle audit in #320 found that closing an SFTP owner could
+leave connection, browsing or transfer work awaiting I/O. Dropping a completion
+future could also detach its connect task after its join handle was taken.
+Owner cancellation now spans those waits, retains the connect guard until
+completion, and rejects outstanding trust before retiring the dedicated
+transport runtime. Text SFTP interrupts commands without draining queued input.
+
+The approved cleanup policy allows two seconds, not an unbounded network wait.
+A one-file ledger records exclusive creation acknowledgements: unknown
+ownership is reported rather than deleted. Review also exposed a destructive
+Replace boundary, where removing the completed temporary during cancellation
+could discard the only replacement copy. That temporary is preserved and both
+paths are reported as uncertain; an already-sent rename may still complete.
+Reporting releases the ledger so an ordinary failed replacement does not block
+unrelated work. No new resume, rollback or transfer-persistence feature is added.
+
+Cleanup failures survive tab close through a bounded application-owned notice
+channel that follows a moved tab to its current window. Content-free durable
+diagnostics remain when GUI delivery is unavailable; final process exit cannot
+guarantee completion of asynchronous cleanup. Deterministic and owned loopback
+fixtures cover cancellation, safe partial removal, replacement recovery,
+continuing unrelated transfers and notice routing. Packaged close/quit,
+accessibility and sibling-window behavior remain native evidence in `SFTP-01`.
+This repairs a concrete ownership defect, not a demonstrated cause of #297.
+
 ## v0.9.1: less work while the Windows WARP palette is open
 
 This performance patch packages the palette frame/shadow and opaque

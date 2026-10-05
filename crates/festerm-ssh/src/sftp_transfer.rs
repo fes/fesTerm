@@ -24,6 +24,7 @@ use tokio::{
 use crate::sftp::{
     display_path, join_path_segment, join_remote_path, local_error, read_local_directory_snapshot,
     read_local_path_metadata, remote_file_name, SftpEntryType, SftpSession, SftpSessionError,
+    SFTP_CANCELLATION_CLEANUP_TIMEOUT,
 };
 
 const TEMP_SUFFIX: &str = ".festerm-part";
@@ -450,7 +451,8 @@ pub struct SftpTransferManager {
     admitted_items: Arc<AtomicUsize>,
     next_batch_id: AtomicU64,
     next_transfer_id: AtomicU64,
-    worker: JoinHandle<()>,
+    shutdown: Option<tokio::sync::oneshot::Sender<tokio::time::Instant>>,
+    worker: JoinHandle<Result<(), SftpSessionError>>,
 }
 
 impl SftpTransferManager {
@@ -461,16 +463,18 @@ impl SftpTransferManager {
         let admitted_items = Arc::new(AtomicUsize::new(0));
         let worker_snapshot = Arc::clone(&snapshot);
         let worker_admitted_items = Arc::clone(&admitted_items);
+        let (shutdown, cancellation) = tokio::sync::oneshot::channel();
         let worker = tokio::spawn(async move {
-            run_transfer_worker(
+            run_owned_transfer_worker(
                 LiveTransferBackend { session },
                 worker_snapshot,
                 Some(worker_admitted_items),
                 command_receiver,
                 event_sender,
                 TransferPlanningLimits::default(),
+                cancellation,
             )
-            .await;
+            .await
         });
         Self {
             command_sender,
@@ -479,6 +483,7 @@ impl SftpTransferManager {
             admitted_items,
             next_batch_id: AtomicU64::new(1),
             next_transfer_id: AtomicU64::new(1),
+            shutdown: Some(shutdown),
             worker,
         }
     }
@@ -556,11 +561,33 @@ impl SftpTransferManager {
             .expect("SFTP transfer snapshot lock is not poisoned")
             .clone()
     }
+
+    /// Cancels owner work and allows at most two seconds for partial-file cleanup.
+    pub async fn shutdown(mut self) -> Result<(), SftpSessionError> {
+        let deadline = tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT;
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(deadline);
+        }
+        match tokio::time::timeout_at(deadline, &mut self.worker).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(SftpSessionError::LocalOperationFailed {
+                operation: "stop transfer worker",
+                path: "<sftp>".to_owned(),
+                reason: "transfer worker ended before reporting cleanup".to_owned(),
+            }),
+            Err(_) => {
+                self.worker.abort();
+                Err(SftpSessionError::CancellationCleanupTimedOut)
+            }
+        }
+    }
 }
 
 impl Drop for SftpTransferManager {
     fn drop(&mut self) {
-        self.worker.abort();
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT);
+        }
     }
 }
 
@@ -859,6 +886,11 @@ type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SftpSessionErr
 type CopyFuture<'a> = Pin<Box<dyn Future<Output = Result<u64, CopyFileError>> + Send + 'a>>;
 
 trait TransferBackend {
+    fn protect_partial_commit(&mut self, _temporary: &SftpPath, _destination: &SftpPath) {}
+
+    fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
     fn metadata<'a>(
         &'a mut self,
         path: &'a SftpPath,
@@ -894,6 +926,14 @@ struct LiveTransferBackend {
 }
 
 impl TransferBackend for LiveTransferBackend {
+    fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
+        self.session.protect_partial_commit(temporary, destination);
+    }
+
+    fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
+        Box::pin(self.session.cleanup_interrupted_transfer())
+    }
+
     fn metadata<'a>(
         &'a mut self,
         path: &'a SftpPath,
@@ -931,12 +971,16 @@ impl TransferBackend for LiveTransferBackend {
 
     fn remove_file<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()> {
         Box::pin(async move {
-            match path {
+            let result = match path {
                 SftpPath::Local(path) => fs::remove_file(path)
                     .await
                     .map_err(|error| local_error("remove file", path, error)),
                 SftpPath::Remote(path) => self.session.remove_remote_file_exact(path).await,
+            };
+            if result.is_ok() {
+                self.session.forget_partial_file(path);
             }
+            result
         })
     }
 
@@ -946,7 +990,7 @@ impl TransferBackend for LiveTransferBackend {
         destination: &'a SftpPath,
     ) -> BackendFuture<'a, ()> {
         Box::pin(async move {
-            match (source, destination) {
+            let result = match (source, destination) {
                 (SftpPath::Local(source), SftpPath::Local(destination)) => {
                     fs::rename(source, destination)
                         .await
@@ -962,7 +1006,11 @@ impl TransferBackend for LiveTransferBackend {
                     path: format!("{} -> {}", source.display(), destination.display()),
                     reason: "rename requires matching filesystem sides".to_owned(),
                 }),
+            };
+            if result.is_ok() {
+                self.session.forget_partial_file(source);
             }
+            result
         })
     }
 
@@ -1025,8 +1073,53 @@ impl TransferBackend for LiveTransferBackend {
     }
 }
 
-async fn run_transfer_worker<B: TransferBackend>(
+async fn run_owned_transfer_worker<B: TransferBackend>(
     mut backend: B,
+    snapshot: Arc<Mutex<SftpTransferQueueSnapshot>>,
+    admitted_items: Option<Arc<AtomicUsize>>,
+    command_receiver: Receiver<WorkerCommand>,
+    event_sender: Sender<SftpTransferEvent>,
+    planning_limits: TransferPlanningLimits,
+    cancellation: tokio::sync::oneshot::Receiver<tokio::time::Instant>,
+) -> Result<(), SftpSessionError> {
+    let deadline = {
+        let work = run_transfer_worker(
+            &mut backend,
+            Arc::clone(&snapshot),
+            admitted_items,
+            command_receiver,
+            event_sender,
+            planning_limits,
+        );
+        tokio::pin!(work);
+        tokio::select! {
+            biased;
+            deadline = cancellation => deadline.unwrap_or_else(|_| {
+                tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT
+            }),
+            _ = &mut work => return Ok(()),
+        }
+    };
+    let result = match tokio::time::timeout_at(deadline, backend.cleanup_interrupted_copy()).await {
+        Ok(result) => result,
+        Err(_) => Err(SftpSessionError::CancellationCleanupTimedOut),
+    };
+    *snapshot
+        .lock()
+        .expect("SFTP transfer snapshot lock is not poisoned") =
+        SftpTransferQueueSnapshot::default();
+    if let Err(error) = &result {
+        tracing::warn!(
+            target: "festerm::sftp",
+            "SFTP cancellation cleanup failed; partial output may remain"
+        );
+        eprintln!("fesTerm: SFTP cancellation cleanup failed: {error}");
+    }
+    result
+}
+
+async fn run_transfer_worker<B: TransferBackend>(
+    backend: &mut B,
     snapshot: Arc<Mutex<SftpTransferQueueSnapshot>>,
     admitted_items: Option<Arc<AtomicUsize>>,
     mut command_receiver: Receiver<WorkerCommand>,
@@ -1047,7 +1140,7 @@ async fn run_transfer_worker<B: TransferBackend>(
             state
                 .process_one(
                     transfer_id,
-                    &mut backend,
+                    backend,
                     &mut command_receiver,
                     &event_sender,
                     planning_limits,
@@ -1374,6 +1467,10 @@ impl WorkerState {
                     .execute_plan_step(transfer_id, plan, backend, command_receiver, event_sender)
                     .await
                 {
+                    let error = match backend.cleanup_interrupted_copy().await {
+                        Ok(()) => error,
+                        Err(cleanup_error) => cleanup_error,
+                    };
                     self.finish_failed(transfer_id, None, error.to_string(), event_sender)
                         .await;
                 }
@@ -2026,6 +2123,7 @@ impl WorkerState {
                     Ok(_) => {
                         if let Some(existing) = backend.metadata(&destination).await? {
                             if replace_existing_at_commit {
+                                backend.protect_partial_commit(&temp_destination, &destination);
                                 backend.remove_file(&destination).await?;
                             } else {
                                 let allowed =
@@ -2037,7 +2135,7 @@ impl WorkerState {
                                     existing,
                                     allowed,
                                 )?;
-                                let _ = cleanup_temp_destination(backend, &temp_destination).await;
+                                cleanup_temp_destination(backend).await?;
                                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                                 item.state = SftpTransferState::AwaitingCollision(collision.id);
                                 item.active_collision = Some(collision.id);
@@ -2074,11 +2172,11 @@ impl WorkerState {
                         self.ready.push_front(transfer_id);
                     }
                     Err(CopyFileError::Cancelled) => {
-                        let _ = cleanup_temp_destination(backend, &temp_destination).await;
+                        cleanup_temp_destination(backend).await?;
                         self.finish_cancelled(transfer_id, event_sender).await;
                     }
                     Err(CopyFileError::Operation(error)) => {
-                        let _ = cleanup_temp_destination(backend, &temp_destination).await;
+                        cleanup_temp_destination(backend).await?;
                         return Err(error);
                     }
                 }
@@ -2453,12 +2551,8 @@ fn proposed_keep_both_destination(destination: &SftpPath) -> Result<SftpPath, Sf
 
 async fn cleanup_temp_destination<B: TransferBackend>(
     backend: &mut B,
-    temp_destination: &SftpPath,
 ) -> Result<(), SftpSessionError> {
-    if backend.metadata(temp_destination).await?.is_some() {
-        backend.remove_file(temp_destination).await?;
-    }
-    Ok(())
+    backend.cleanup_interrupted_copy().await
 }
 
 #[cfg(test)]
@@ -2501,12 +2595,50 @@ mod tests {
     #[derive(Default)]
     struct TestBackend {
         delay_per_chunk_ms: u64,
+        cleanup_delay_ms: u64,
+        partial_file: Option<PathBuf>,
+        commit_destination: Option<PathBuf>,
+        replacement_removed: Option<Arc<Notify>>,
+        fail_replace_rename: bool,
         /// Signalled once `copy_file` has emitted its final progress callback,
         /// so a test can wait for a transfer to finish without racing it.
         copy_finished: Option<std::sync::Arc<Notify>>,
     }
 
     impl TransferBackend for TestBackend {
+        fn protect_partial_commit(&mut self, temporary: &SftpPath, destination: &SftpPath) {
+            assert_eq!(self.partial_file.as_ref(), Some(&real_path(temporary)));
+            self.commit_destination = Some(real_path(destination));
+        }
+
+        fn cleanup_interrupted_copy(&mut self) -> BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.cleanup_delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(self.cleanup_delay_ms))
+                        .await;
+                }
+                if let (Some(temporary), Some(destination)) =
+                    (self.partial_file.as_ref(), self.commit_destination.as_ref())
+                {
+                    let error = SftpSessionError::TransferCommitInterrupted {
+                        temporary: display_path(temporary),
+                        destination: display_path(destination),
+                    };
+                    self.partial_file = None;
+                    self.commit_destination = None;
+                    return Err(error);
+                }
+                if let Some(path) = self.partial_file.take() {
+                    match fs::remove_file(&path).await {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(local_error("remove partial file", &path, error)),
+                    }
+                }
+                Ok(())
+            })
+        }
+
         fn metadata<'a>(
             &'a mut self,
             path: &'a SftpPath,
@@ -2544,7 +2676,12 @@ mod tests {
                 let real = real_path(path);
                 fs::remove_file(&real)
                     .await
-                    .map_err(|error| local_error("remove file", &real, error))
+                    .map_err(|error| local_error("remove file", &real, error))?;
+                if let Some(removed) = &self.replacement_removed {
+                    removed.notify_one();
+                    pending::<()>().await;
+                }
+                Ok(())
             })
         }
 
@@ -2556,9 +2693,19 @@ mod tests {
             Box::pin(async move {
                 let source = real_path(source);
                 let destination = real_path(destination);
+                if self.fail_replace_rename && self.commit_destination.is_some() {
+                    return Err(SftpSessionError::LocalOperationFailed {
+                        operation: "rename file",
+                        path: display_path(&source),
+                        reason: "controlled replacement commit refusal".to_owned(),
+                    });
+                }
                 fs::rename(&source, &destination)
                     .await
-                    .map_err(|error| local_error("rename file", &source, error))
+                    .map_err(|error| local_error("rename file", &source, error))?;
+                self.partial_file = None;
+                self.commit_destination = None;
+                Ok(())
             })
         }
 
@@ -2586,6 +2733,7 @@ mod tests {
                             error,
                         ))
                     })?;
+                self.partial_file = Some(destination.clone());
                 let mut total = 0_u64;
                 let mut buffer = vec![0_u8; 64 * 1024];
                 loop {
@@ -2792,14 +2940,19 @@ mod tests {
         let (command_sender, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
         let (event_sender, event_receiver) = channel(event_queue_capacity);
         let snapshot = Arc::new(Mutex::new(SftpTransferQueueSnapshot::default()));
-        tokio::spawn(run_transfer_worker(
-            backend,
-            Arc::clone(&snapshot),
-            None,
-            command_receiver,
-            event_sender,
-            planning_limits,
-        ));
+        let worker_snapshot = Arc::clone(&snapshot);
+        tokio::spawn(async move {
+            let mut backend = backend;
+            run_transfer_worker(
+                &mut backend,
+                worker_snapshot,
+                None,
+                command_receiver,
+                event_sender,
+                planning_limits,
+            )
+            .await;
+        });
         (command_sender, event_receiver, snapshot)
     }
 
@@ -2824,6 +2977,235 @@ mod tests {
             batch_id,
             transfer_ids,
         }
+    }
+
+    #[test]
+    fn owner_shutdown_interrupts_copy_and_cleans_only_the_owned_partial_file() {
+        let root = unique_test_directory("owner-cancel");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, vec![42; 1024 * 1024]).unwrap();
+        let unrelated = destination.join("source.bin.festerm-part");
+        stdfs::write(&unrelated, b"not this transfer").unwrap();
+        test_runtime().block_on(async {
+            let (commands, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+            let (events, mut event_receiver) = channel(1);
+            let snapshot = Arc::new(Mutex::new(SftpTransferQueueSnapshot::default()));
+            let (shutdown, cancellation) = tokio::sync::oneshot::channel();
+            let worker = tokio::spawn(run_owned_transfer_worker(
+                TestBackend {
+                    delay_per_chunk_ms: 10,
+                    ..Default::default()
+                },
+                Arc::clone(&snapshot),
+                None,
+                command_receiver,
+                events,
+                TransferPlanningLimits::default(),
+                cancellation,
+            ));
+            queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            loop {
+                let event =
+                    tokio::time::timeout(std::time::Duration::from_secs(3), event_receiver.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                if matches!(event, SftpTransferEvent::ItemProgress { .. }) {
+                    break;
+                }
+            }
+            shutdown
+                .send(tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT)
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert!(snapshot.lock().unwrap().items.is_empty());
+        });
+        assert_eq!(stdfs::read(&unrelated).unwrap(), b"not this transfer");
+        assert!(!destination.join("source.bin").exists());
+        assert_eq!(stdfs::read_dir(&destination).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn owner_shutdown_during_replace_preserves_the_completed_temporary_for_recovery() {
+        let root = unique_test_directory("owner-cancel-replace");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, b"replacement contents").unwrap();
+        stdfs::write(destination.join("source.bin"), b"old contents").unwrap();
+        let unrelated = destination.join("unrelated.bin");
+        stdfs::write(&unrelated, b"untouched").unwrap();
+        test_runtime().block_on(async {
+            let removed = Arc::new(Notify::new());
+            let (commands, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+            let (events, mut event_receiver) = channel(TRANSFER_EVENT_QUEUE_CAPACITY);
+            let (shutdown, cancellation) = tokio::sync::oneshot::channel();
+            let worker = tokio::spawn(run_owned_transfer_worker(
+                TestBackend {
+                    replacement_removed: Some(Arc::clone(&removed)),
+                    ..Default::default()
+                },
+                Arc::new(Mutex::new(SftpTransferQueueSnapshot::default())),
+                None,
+                command_receiver,
+                events,
+                TransferPlanningLimits::default(),
+                cancellation,
+            ));
+            queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            let (_, collision) = next_collision(&mut event_receiver).await;
+            commands
+                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                    collision_id: collision.id,
+                    decision: SftpCollisionDecision::Replace,
+                    scope: SftpCollisionScope::ThisItem,
+                }))
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), removed.notified())
+                .await
+                .unwrap();
+            for _ in 0..TRANSFER_COMMAND_QUEUE_CAPACITY {
+                commands
+                    .try_send(WorkerCommand::CancelTransfer(SftpTransferId(1)))
+                    .unwrap();
+            }
+            assert!(commands
+                .try_send(WorkerCommand::CancelTransfer(SftpTransferId(1)))
+                .is_err());
+            shutdown
+                .send(tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT)
+                .unwrap();
+            assert!(matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Err(SftpSessionError::TransferCommitInterrupted { .. })
+            ));
+        });
+        assert_eq!(stdfs::read(&source).unwrap(), b"replacement contents");
+        assert_eq!(
+            stdfs::read(destination.join("source.bin.festerm-part")).unwrap(),
+            b"replacement contents"
+        );
+        assert!(!destination.join("source.bin").exists());
+        assert_eq!(stdfs::read(&unrelated).unwrap(), b"untouched");
+    }
+
+    #[test]
+    fn failed_replace_reports_recovery_output_and_allows_unrelated_queued_work() {
+        let root = unique_test_directory("failed-replace-continues");
+        recreate_directory(&root);
+        let source = root.join("source.bin");
+        let other = root.join("other.bin");
+        let destination = root.join("destination");
+        stdfs::create_dir(&destination).unwrap();
+        stdfs::write(&source, b"replacement contents").unwrap();
+        stdfs::write(&other, b"unrelated contents").unwrap();
+        stdfs::write(destination.join("source.bin"), b"old contents").unwrap();
+        test_runtime().block_on(async {
+            let (commands, mut events, _) = spawn_worker(TestBackend {
+                fail_replace_rename: true,
+                ..Default::default()
+            })
+            .await;
+            let batch = queue_batch(&commands, vec![upload_request(&source, &destination)]);
+            let (_, collision) = next_collision(&mut events).await;
+            commands
+                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                    collision_id: collision.id,
+                    decision: SftpCollisionDecision::Replace,
+                    scope: SftpCollisionScope::ThisItem,
+                }))
+                .await
+                .unwrap();
+            let failed_events = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                collect_until_batch_finished(&mut events, batch.batch_id),
+            )
+            .await
+            .unwrap();
+            assert!(failed_events.iter().any(|event| matches!(
+                event,
+                SftpTransferEvent::ItemFailed { reason, .. }
+                    if reason.contains("commit could not be confirmed")
+                        && reason.contains("source.bin.festerm-part")
+            )));
+            let next_batch = SftpTransferBatchId(2);
+            commands
+                .send(WorkerCommand::EnqueueBatch {
+                    batch_id: next_batch,
+                    items: vec![QueuedTransferInput {
+                        id: SftpTransferId(2),
+                        request: upload_request(&other, &destination),
+                    }],
+                })
+                .await
+                .unwrap();
+            let events = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                collect_until_batch_finished(&mut events, next_batch),
+            )
+            .await
+            .unwrap();
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SftpTransferEvent::ItemCompleted { transfer_id, .. }
+                    if *transfer_id == SftpTransferId(2)
+            )));
+        });
+        assert_eq!(
+            stdfs::read(destination.join("source.bin.festerm-part")).unwrap(),
+            b"replacement contents"
+        );
+        assert_eq!(
+            stdfs::read(destination.join("other.bin")).unwrap(),
+            b"unrelated contents"
+        );
+    }
+
+    #[test]
+    fn owner_cleanup_is_forced_to_stop_at_the_two_second_deadline() {
+        assert_eq!(
+            SFTP_CANCELLATION_CLEANUP_TIMEOUT,
+            std::time::Duration::from_secs(2)
+        );
+        test_runtime().block_on(async {
+            let (_commands, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+            let (events, _event_receiver) = channel(1);
+            let (shutdown, cancellation) = tokio::sync::oneshot::channel();
+            let start = std::time::Instant::now();
+            shutdown
+                .send(tokio::time::Instant::now() + SFTP_CANCELLATION_CLEANUP_TIMEOUT)
+                .unwrap();
+            assert_eq!(
+                run_owned_transfer_worker(
+                    TestBackend {
+                        cleanup_delay_ms: 10_000,
+                        ..Default::default()
+                    },
+                    Arc::new(Mutex::new(SftpTransferQueueSnapshot::default())),
+                    None,
+                    command_receiver,
+                    events,
+                    TransferPlanningLimits::default(),
+                    cancellation,
+                )
+                .await,
+                Err(SftpSessionError::CancellationCleanupTimedOut)
+            );
+            assert!(start.elapsed() >= std::time::Duration::from_secs(2));
+            assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        });
     }
 
     async fn collect_until_batch_finished(
@@ -3169,6 +3551,7 @@ mod tests {
                 TestBackend {
                     delay_per_chunk_ms: 0,
                     copy_finished: Some(copy_finished.clone()),
+                    ..Default::default()
                 },
                 TransferPlanningLimits::default(),
                 1,

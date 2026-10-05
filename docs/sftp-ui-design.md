@@ -49,6 +49,33 @@ Transfers are always **copies**, never moves. Selection remains after starting s
 
 Refresh the affected destination directory after each committed item while preserving selection and scroll position where possible. Partial files use a temporary sibling name and are renamed only after successful completion where the backend supports it; a canceled/failed temporary is cleaned up when safe and otherwise reported explicitly.
 
+### Owner cancellation and cleanup
+
+Closing an SFTP tab or its owning window cancels pending connection, trust,
+browsing, metadata, Markdown-read and transfer work without waiting for another
+command or progress callback. The sibling shell remains independent. Text-mode
+SFTP shutdown also interrupts an awaited command without consuming queued input.
+
+After dropping the interrupted operation and its file handles, cleanup gets at
+most **two seconds**, then teardown proceeds with an explicit incomplete-cleanup
+result. Only destinations whose exclusive creation was acknowledged are eligible
+for removal. Already-started blocking filesystem calls cannot be forcibly
+aborted; runtime teardown does not wait indefinitely for those calls.
+A pending creation with unconfirmed ownership is reported, not
+deleted. If an approved Replace is interrupted after its destructive commit
+starts, the completed temporary is not removed: inspect both temporary and
+destination because an already-sent rename may still complete. Reported recovery
+files do not prevent unrelated transfers from proceeding.
+
+Cleanup failures use the existing dismissible application error dialog in the
+tab's current window, even after the tab is gone. Its notification queue is
+bounded and never delays teardown. A full queue or closed window falls back to
+diagnostics; durable warnings are content-free, while console details include
+recovery paths. Final process exit can interrupt the asynchronous grace period:
+a cleanup-request record is not proof of completion, and neither cleanup nor
+server-side rollback is guaranteed after process termination. Native packaged
+close/quit and notice accessibility remain `SFTP-01` manual evidence.
+
 ### Collision and overwrite policy
 
 Never silently overwrite an existing file. A collision pauses only the affected transfer and opens a decision dialog showing source and destination names, locations, sizes, and modified times:

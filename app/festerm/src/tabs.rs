@@ -2533,6 +2533,8 @@ pub struct AppState {
     /// click that did nothing.
     open_refusal: Option<(PathBuf, OpenFailure)>,
     pending_open_refusal_notice: Option<crate::overlay_state::OpenRefusalNotice>,
+    sftp_cleanup_sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>,
+    sftp_cleanup_receiver: Receiver<crate::overlay_state::OpenRefusalNotice>,
     pending_terminal_path_opens: Vec<PendingTerminalPathOpen>,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
@@ -2573,6 +2575,7 @@ impl AppState {
     /// initial `tabs`/`active` are produced.
     fn new_with_tabs(configuration: Configuration, tabs: Vec<Tab>, active: TabId) -> Self {
         let settings = configuration.interface_settings().clone();
+        let (sftp_cleanup_sender, sftp_cleanup_receiver) = mpsc::sync_channel(8);
         Self {
             discovery: Default::default(),
             resume_error: None,
@@ -2615,6 +2618,8 @@ impl AppState {
             history_snapshot_refusal: None,
             open_refusal: None,
             pending_open_refusal_notice: None,
+            sftp_cleanup_sender,
+            sftp_cleanup_receiver,
             pending_terminal_path_opens: Vec::new(),
             pending_tab_move: None,
             pending_profile_create: None,
@@ -4263,6 +4268,12 @@ impl AppState {
         self.pending_open_refusal_notice.take()
     }
 
+    pub(crate) fn take_sftp_cleanup_notice(
+        &mut self,
+    ) -> Option<crate::overlay_state::OpenRefusalNotice> {
+        self.sftp_cleanup_receiver.try_recv().ok()
+    }
+
     /// Whether a Save As destination has been asked for since the last frame.
     pub fn take_save_as_request(&mut self) -> bool {
         std::mem::take(&mut self.save_as_requested)
@@ -4312,6 +4323,9 @@ impl AppState {
     /// before `before` (or at the end) and focusing it, because a tab arrives
     /// here as the direct result of the user dropping it here.
     pub fn adopt_tab(&mut self, tab: Tab, before: Option<TabId>) {
+        if let TabContent::SftpFileManager(sftp) = &tab.content {
+            sftp.set_cleanup_reporter(self.sftp_cleanup_sender.clone());
+        }
         let id = tab.id;
         let insert_at = before
             .and_then(|before| self.tabs.iter().position(|tab| tab.id == before))
@@ -5030,6 +5044,7 @@ impl AppState {
     }
 
     fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
+        tab_content.set_cleanup_reporter(self.sftp_cleanup_sender.clone());
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
             if matches!(
