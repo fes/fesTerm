@@ -4,6 +4,7 @@ mod decision_gate;
 mod openssh_config;
 mod port_forward;
 mod sftp;
+mod sftp_input;
 mod sftp_transfer;
 
 use std::{
@@ -51,6 +52,7 @@ pub use sftp::{
     SftpCommandParseError, SftpDirectoryEntry, SftpEntryType, SftpSession, SftpSessionError,
     SFTP_CANCELLATION_CLEANUP_TIMEOUT,
 };
+use sftp_input::{SftpInputAction, SftpInputBuffer};
 pub use sftp_transfer::{
     SftpCollision, SftpCollisionDecision, SftpCollisionId, SftpCollisionResolution,
     SftpCollisionScope, SftpDirectoryItem, SftpDirectorySnapshot, SftpLocation, SftpPath,
@@ -1932,9 +1934,13 @@ impl WorkerShared {
     }
 
     fn try_emit(&self, event: SessionEvent) -> bool {
+        self.try_emit_retaining(event).is_ok()
+    }
+
+    fn try_emit_retaining(&self, event: SessionEvent) -> Result<(), SessionEvent> {
         let output_bytes = match &event {
             SessionEvent::Output(bytes) if bytes.len() <= MAX_IO_CHUNK_BYTES => bytes.len(),
-            SessionEvent::Output(_) => return false,
+            SessionEvent::Output(_) => return Err(event),
             _ => 0,
         };
         let is_error = matches!(&event, SessionEvent::Error(_));
@@ -1954,13 +1960,13 @@ impl WorkerShared {
                     .max(metrics.event_queue_depth);
                 drop(metrics);
                 self.event_notifier.notify();
-                true
+                Ok(())
             }
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(event)) => {
                 metrics.backpressure_count = metrics.backpressure_count.saturating_add(1);
-                false
+                Err(event)
             }
-            Err(TrySendError::Disconnected(_)) => false,
+            Err(TrySendError::Disconnected(event)) => Err(event),
         }
     }
 
@@ -5185,13 +5191,48 @@ where
     }
 }
 
-fn pop_sftp_input_byte(buffer: &mut Vec<u8>) {
-    let _ = buffer.pop();
-    while let Some(byte) = buffer.last() {
-        if (byte & 0b1100_0000) != 0b1000_0000 {
-            break;
+const SFTP_INPUT_REFUSAL_MESSAGE: &str =
+    "One or more SFTP command lines exceeded the 256 KiB (262144-byte) limit and were not executed. Remaining bytes are ignored until a line ending or Ctrl+C; then enter a new command.";
+
+#[derive(Default)]
+struct SftpInputNotice {
+    pending: Option<SessionEvent>,
+}
+
+impl SftpInputNotice {
+    fn refuse(&mut self, shared: &WorkerShared) {
+        tracing::warn!(
+            target: "festerm::sftp",
+            "SFTP command input exceeded the 256 KiB limit; entire line refused"
+        );
+        if self.pending.is_none() {
+            self.pending = Some(SessionEvent::Error(SessionError::new(
+                SessionErrorKind::Input,
+                SFTP_INPUT_REFUSAL_MESSAGE,
+            )));
         }
-        let _ = buffer.pop();
+        self.flush(shared);
+    }
+
+    fn flush(&mut self, shared: &WorkerShared) {
+        if let Some(event) = self.pending.take() {
+            self.pending = shared.try_emit_retaining(event).err();
+        }
+    }
+
+    fn finish(&mut self, shared: &WorkerShared) {
+        self.flush(shared);
+        if self.pending.take().is_some() {
+            eprintln!("fesTerm: {SFTP_INPUT_REFUSAL_MESSAGE}");
+        }
+    }
+}
+
+impl Drop for SftpInputNotice {
+    fn drop(&mut self) {
+        if self.pending.is_some() {
+            eprintln!("fesTerm: {SFTP_INPUT_REFUSAL_MESSAGE}");
+        }
     }
 }
 
@@ -5201,10 +5242,14 @@ async fn execute_sftp_input_line(
     session: &mut sftp::SftpSession,
     working_directories: &Arc<Mutex<Option<SftpWorkingDirectories>>>,
     shared: &WorkerShared,
+    input_notice: &mut SftpInputNotice,
 ) -> Result<bool, SessionError> {
     let line =
         String::from_utf8(line).map_err(|_| sftp_failure(shared, "SFTP input must be UTF-8"))?;
-    let outcome = wait_for_sftp_owner_operation(session.execute_line(&line), shared).await;
+    let outcome = wait_for_sftp_owner_operation(session.execute_line(&line), shared, || {
+        input_notice.flush(shared);
+    })
+    .await;
     let SftpOwnerOperation::Completed(outcome) = outcome else {
         finish_sftp_cancellation(session, shared).await;
         return Ok(true);
@@ -5235,6 +5280,7 @@ enum SftpOwnerOperation<T> {
 async fn wait_for_sftp_owner_operation<T>(
     operation: impl std::future::Future<Output = T>,
     shared: &WorkerShared,
+    mut on_tick: impl FnMut(),
 ) -> SftpOwnerOperation<T> {
     tokio::pin!(operation);
     loop {
@@ -5243,7 +5289,7 @@ async fn wait_for_sftp_owner_operation<T>(
         }
         tokio::select! {
             result = &mut operation => return SftpOwnerOperation::Completed(result),
-            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {}
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => on_tick(),
         }
     }
 }
@@ -5273,41 +5319,61 @@ async fn finish_sftp_cancellation(session: &mut SftpSession, shared: &WorkerShar
 async fn process_sftp_input_bytes(
     profile: &SshConnectionProfile,
     bytes: Vec<u8>,
-    input_buffer: &mut Vec<u8>,
+    input_buffer: &mut SftpInputBuffer,
     session: &mut sftp::SftpSession,
     working_directories: &Arc<Mutex<Option<SftpWorkingDirectories>>>,
     shared: &WorkerShared,
+    input_notice: &mut SftpInputNotice,
 ) -> Result<bool, SessionError> {
     let byte_count = bytes.len();
+    let mut echo = Vec::with_capacity(byte_count);
     for byte in bytes {
-        match byte {
-            b'\r' | b'\n' => {
+        let action = input_buffer.push(byte);
+        if let SftpInputAction::Echo(byte) = action {
+            echo.push(byte);
+            continue;
+        }
+        if !echo.is_empty() {
+            input_notice.flush(shared);
+            let _ = shared.try_emit(SessionEvent::Output(std::mem::take(&mut echo)));
+        }
+        input_notice.flush(shared);
+        match action {
+            SftpInputAction::Submit(line) => {
                 emit_sftp_output(shared, "\r\n");
-                let line = std::mem::take(input_buffer);
-                if execute_sftp_input_line(profile, line, session, working_directories, shared)
-                    .await?
+                if execute_sftp_input_line(
+                    profile,
+                    line,
+                    session,
+                    working_directories,
+                    shared,
+                    input_notice,
+                )
+                .await?
                 {
                     shared.record_input_sent(byte_count);
                     return Ok(true);
                 }
             }
-            0x08 | 0x7f => {
-                if !input_buffer.is_empty() {
-                    pop_sftp_input_byte(input_buffer);
-                    emit_sftp_output(shared, "\u{8} \u{8}");
-                }
+            SftpInputAction::Erase => {
+                emit_sftp_output(shared, "\u{8} \u{8}");
             }
-            0x03 => {
-                input_buffer.clear();
+            SftpInputAction::Cancel => {
                 emit_sftp_output(shared, "^C\r\n");
                 emit_sftp_prompt(shared, profile, session);
             }
-            byte if !byte.is_ascii_control() => {
-                input_buffer.push(byte);
-                let _ = shared.try_emit(SessionEvent::Output(vec![byte]));
+            SftpInputAction::Refuse => input_notice.refuse(shared),
+            SftpInputAction::RefusedLineEnded => {
+                emit_sftp_output(shared, "\r\n");
+                emit_sftp_prompt(shared, profile, session);
             }
-            _ => {}
+            SftpInputAction::Ignore => {}
+            SftpInputAction::Echo(_) => unreachable!("echo bytes are accumulated before controls"),
         }
+    }
+    if !echo.is_empty() {
+        input_notice.flush(shared);
+        let _ = shared.try_emit(SessionEvent::Output(echo));
     }
     shared.record_input_sent(byte_count);
     Ok(false)
@@ -5386,10 +5452,13 @@ async fn sftp_worker(
     emit_sftp_startup_banner(&shared, &profile, &session);
     emit_sftp_prompt(&shared, &profile, &session);
 
-    let mut input_buffer = Vec::new();
+    let mut input_buffer = SftpInputBuffer::default();
+    let mut input_notice = SftpInputNotice::default();
     loop {
+        input_notice.flush(&shared);
         remote_reads.reap();
         if shared.shutdown_requested() {
+            input_notice.finish(&shared);
             shared.set_lifecycle(SessionLifecycle::Stopping);
             finish_sftp_cancellation(&mut session, &shared).await;
             let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
@@ -5407,9 +5476,11 @@ async fn sftp_worker(
                     &mut session,
                     &working_directories,
                     &shared,
+                    &mut input_notice,
                 )
                 .await?
                 {
+                    input_notice.finish(&shared);
                     shared.set_lifecycle(SessionLifecycle::Stopping);
                     let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
                         .await
@@ -5435,6 +5506,7 @@ async fn sftp_worker(
                 );
             }
             Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                input_notice.finish(&shared);
                 shared.set_lifecycle(SessionLifecycle::Stopping);
                 finish_sftp_cancellation(&mut session, &shared).await;
                 let result = stop_handle_after_remote_reads(handle, &mut remote_reads, &shared)
@@ -7754,6 +7826,84 @@ mod tests {
     }
 
     #[test]
+    fn sftp_input_refusal_survives_full_queue_without_reallocating_or_failing_the_session() {
+        let notifier = Arc::new(CountingNotifier::default());
+        let (worker, _receiver, _, _) =
+            SshWorkerFoundation::new_with_capacities(profile(), 2, 1, notifier.clone());
+        worker.try_recv_event().unwrap();
+        worker.set_running();
+        let mut notice = SftpInputNotice::default();
+        notice.refuse(&worker.shared);
+        let message_address = |notice: &SftpInputNotice| match notice.pending.as_ref().unwrap() {
+            SessionEvent::Error(error) => error.message().as_ptr(),
+            _ => panic!("only a bounded input error is retained"),
+        };
+        let original = message_address(&notice);
+        for _ in 0..10 {
+            notice.flush(&worker.shared);
+            assert_eq!(message_address(&notice), original);
+        }
+        notice.refuse(&worker.shared);
+        assert_eq!(message_address(&notice), original);
+        assert_eq!(worker.metrics().event_queue_depth, 1);
+        assert_eq!(worker.metrics().error_count, 0);
+        assert!(worker.metrics().backpressure_count > 0);
+        assert_eq!(notifier.notifications(), 2);
+        worker.try_recv_event().unwrap();
+        notice.flush(&worker.shared);
+        assert!(notice.pending.is_none());
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Error(error))
+                if error.kind() == SessionErrorKind::Input
+                    && error.message() == SFTP_INPUT_REFUSAL_MESSAGE
+        ));
+        assert_eq!(worker.metrics().error_count, 1);
+        assert_eq!(notifier.notifications(), 3);
+        assert_eq!(worker.lifecycle(), SessionLifecycle::Running);
+    }
+
+    #[test]
+    fn sftp_input_refusal_is_retried_while_a_command_waits_for_io() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (worker, _receiver, _, _) = SshWorkerFoundation::new_with_capacities(
+                profile(),
+                2,
+                1,
+                noop_session_event_notifier(),
+            );
+            let mut notice = SftpInputNotice::default();
+            notice.refuse(&worker.shared);
+            let operation = async {
+                tokio::time::sleep(COMMAND_POLL_INTERVAL * 2).await;
+                worker.try_recv_event().unwrap();
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        if let Ok(SessionEvent::Error(error)) = worker.try_recv_event() {
+                            return error.kind();
+                        }
+                        tokio::time::sleep(COMMAND_POLL_INTERVAL).await;
+                    }
+                })
+                .await
+                .unwrap()
+            };
+            assert!(matches!(
+                wait_for_sftp_owner_operation(operation, &worker.shared, || {
+                    notice.flush(&worker.shared);
+                })
+                .await,
+                SftpOwnerOperation::Completed(SessionErrorKind::Input)
+            ));
+            assert!(notice.pending.is_none());
+        });
+    }
+
+    #[test]
     fn host_key_gate_accepts_only_explicit_resolutions() {
         let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
         let waiter = worker
@@ -7945,8 +8095,12 @@ mod tests {
             foundation.try_send_input(b"queued-command\n").unwrap();
             foundation.shared.request_shutdown();
             assert!(matches!(
-                wait_for_sftp_owner_operation(std::future::pending::<()>(), &foundation.shared)
-                    .await,
+                wait_for_sftp_owner_operation(
+                    std::future::pending::<()>(),
+                    &foundation.shared,
+                    || {}
+                )
+                .await,
                 SftpOwnerOperation::Cancelled
             ));
             assert!(matches!(commands.try_recv(), Ok(WorkerCommand::Input(_))));

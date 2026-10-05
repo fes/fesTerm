@@ -1,5 +1,5 @@
 use std::{
-    sync::{mpsc, Arc},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -42,6 +42,7 @@ struct MemoryFiles {
     read_started: mpsc::Sender<()>,
     content: Vec<u8>,
     read_resume: Option<Arc<tokio::sync::Notify>>,
+    directories_created: Arc<Mutex<Vec<String>>>,
 }
 
 impl russh_sftp::server::Handler for MemoryFiles {
@@ -140,6 +141,21 @@ impl russh_sftp::server::Handler for MemoryFiles {
             language_tag: String::new(),
         })
     }
+
+    async fn mkdir(
+        &mut self,
+        id: u32,
+        path: String,
+        _attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        self.directories_created.lock().unwrap().push(path);
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: String::new(),
+            language_tag: String::new(),
+        })
+    }
 }
 
 struct TestServer {
@@ -149,6 +165,7 @@ struct TestServer {
     shell_behavior: ShellBehavior,
     read_resume: Arc<tokio::sync::Notify>,
     subsystems: tokio::task::JoinSet<()>,
+    directories_created: Arc<Mutex<Vec<String>>>,
 }
 
 impl russh::server::Handler for TestServer {
@@ -249,6 +266,7 @@ impl russh::server::Handler for TestServer {
                             SubsystemBehavior::ControlledFileReads
                         )
                         .then(|| Arc::clone(&self.read_resume)),
+                        directories_created: Arc::clone(&self.directories_created),
                     },
                 ));
             }
@@ -276,6 +294,7 @@ struct OwnedServer {
     join: Option<thread::JoinHandle<()>>,
     connection_closed: mpsc::Receiver<()>,
     read_resume: Arc<tokio::sync::Notify>,
+    directories_created: Arc<Mutex<Vec<String>>>,
 }
 
 impl Drop for OwnedServer {
@@ -298,6 +317,8 @@ fn start_server(
     let (connection_closed, closed_receiver) = mpsc::channel();
     let read_resume = Arc::new(tokio::sync::Notify::new());
     let server_read_resume = Arc::clone(&read_resume);
+    let directories_created = Arc::new(Mutex::new(Vec::new()));
+    let server_directories_created = Arc::clone(&directories_created);
     let (stop, stop_receiver) = tokio::sync::oneshot::channel();
     let join = thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -323,6 +344,7 @@ fn start_server(
                     shell_behavior,
                     read_resume: server_read_resume,
                     subsystems: tokio::task::JoinSet::new(),
+                    directories_created: server_directories_created,
                 }).await.unwrap();
                 let _ = session.await;
                 let _ = connection_closed.send(());
@@ -341,10 +363,83 @@ fn start_server(
             join: Some(join),
             connection_closed: closed_receiver,
             read_resume,
+            directories_created,
         },
         port,
         subsystem_receiver,
     )
+}
+
+#[test]
+fn text_sftp_refuses_overlong_prefixes_and_fragments_then_executes_the_next_command() {
+    let (server, port, _activity) =
+        start_server(SubsystemBehavior::ServeFiles, ShellBehavior::Quiet);
+    let session = SftpTerminalSession::start(
+        fixture_profile(port),
+        SshAuthentication::password("fixture-password"),
+        None,
+        None,
+    )
+    .unwrap();
+    let startup_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => session
+                .host_key_decision_resolver()
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .unwrap(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => break,
+            Ok(SessionEvent::Error(error)) => panic!("fixture startup failed: {error}"),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                assert!(Instant::now() < startup_deadline);
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(SessionTryReceiveError::Closed) => panic!("fixture closed during startup"),
+        }
+    }
+
+    let mut input = b"mkdir /overlong".to_vec();
+    input.resize(256 * 1024 + 1, b' ');
+    input.extend_from_slice(b"\r\n");
+    let mut fragment = b"mkdir /overlong-with-fragment".to_vec();
+    fragment.resize(256 * 1024 + 1, b' ');
+    fragment.extend_from_slice(b"mkdir /suffix\r\nmkdir /accepted\r");
+    input.extend_from_slice(&fragment);
+    for chunk in input.chunks(festerm_session::MAX_IO_CHUNK_BYTES) {
+        session.try_send_input(chunk).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut refusal_seen = false;
+    while session.metrics().input_bytes != input.len() as u64 {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Error(error)) => {
+                assert_eq!(error.kind(), festerm_session::SessionErrorKind::Input);
+                assert!(error.message().contains("256 KiB (262144-byte)"));
+                refusal_seen = true;
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {}
+            Err(SessionTryReceiveError::Closed) => panic!("input refusal must not close SFTP"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "bounded input must recover promptly"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    while let Ok(event) = session.try_recv_event() {
+        if let SessionEvent::Error(error) = event {
+            assert_eq!(error.kind(), festerm_session::SessionErrorKind::Input);
+            refusal_seen = true;
+        }
+    }
+    assert!(refusal_seen);
+    assert_eq!(
+        *server.directories_created.lock().unwrap(),
+        vec!["/accepted".to_owned()]
+    );
+    assert_eq!(session.lifecycle(), SessionLifecycle::Running);
+    assert_eq!(session.metrics().backpressure_count, 0);
+    session.shutdown(Duration::from_secs(5)).unwrap();
 }
 
 fn fixture_profile(port: u16) -> SshConnectionProfile {
