@@ -36,6 +36,23 @@ the model and widget/vi/Find/substitution routes. Native input, focus/caret,
 narrow-pane and accessibility evidence remains CP-15. This bounds retained
 history, not candidate/staged/undo scratch, view allocation, allocator
 fragmentation or RSS, and does not establish #297's multi-day growth cause.
+## Retiring imported Direct2D targets before teardown
+
+The intermittent Windows crash investigation in #330 exposed a concrete
+D3D11-on-12 lifetime violation. After drawing an imported DX12 target, the
+native renderer submitted its release transition and flushed while the D2D
+target bitmap, D3D11 texture view and wrapped resource were still retained.
+Those references were dropped only after the flush, so D3D11's deferred
+destruction could survive until the next frame or final device teardown.
+
+Target retirement now detaches the D2D context, releases every view and the
+wrapped reference, then flushes the immediate context in Microsoft's required
+cleanup order. Partial target setup and final renderer destruction use the same
+path. A parallel regression repeatedly creates, draws and drops native
+renderers, then verifies that every DX12 device and queue still render correct
+pixels. The separate unexplained `festerm-ui-egui` exit 2173 remains
+open under #330; this repair addresses the Direct2D access-violation path and
+does not relabel that other failure.
 
 ## Keeping vi repeat bounded without discarding edits
 
@@ -3966,3 +3983,103 @@ regressions reproduce the original retention and preserve sibling unsaved
 text/undo, moved tabs and primary/application teardown. Dirty-close decisions
 remain in the existing command policy; native close and multi-window usability
 evidence remain CP-13/CP-15 rather than being claimed by headless ownership tests.
+
+## Reducing presentation work instead of slowing terminal output
+
+The owner's macOS CPU report led to native sampling of the existing application
+without restarting it. PTY workers mostly slept; the active stacks were in grid
+painting, tessellation and Metal uploads. Dirty rows already avoided copying
+unchanged core cells, but did not avoid preparing their paint instructions.
+
+An isolated worktree and synthetic local profiles now exercise a bounded monochrome
+row-graphics prototype. Opaque presentation revisions and complete geometry/
+font/selection keys reuse unchanged instructions while the cursor stays live.
+Exact meshes are compared with the original renderer rather than assuming
+rectangle merging preserves antialiased pixels. The first foreground result
+improved, but background results varied adversely; the prototype remains a
+draft, not an accepted fix. Per-frame mechanism timings and stable native-window
+identity are being separated from startup/teardown activity before qualification.
+Monochrome Unicode can reuse the managed font atlas safely; color-emoji and
+foreign textures remain excluded. Geometry, selection, cursor, budget/teardown,
+history/resize, transforms, opacity and native fallback now have deterministic
+regressions, with the full renderer suite passing. The CPU-stage control covers
+static, localized and full-mutation scenes with shaping on/off: shaped static
+and localized work improves strongly, while full-mutation unshaped preparation
+has a small adverse result that remains visible.
+
+Native qualification uncovered an environmental boundary: the owner's display
+is locked. Earlier raw executable runs also lacked explicit high-resolution
+bundle metadata. A matched pair of uniquely identified high-resolution bundles
+reduces background CPU, but is explicitly labeled locked-display evidence, not
+foreground/native-presentation acceptance. No output throttling, queue-policy
+change, live-app restart, screen unlock or release is involved.
+
+Independent reliability review found an inherited font-atlas lifetime defect:
+rejecting an old row key was insufficient if the glyph cache then supplied
+galleys from the old atlas. A persistent before/after-paint image checkpoint now
+invalidates both caches conservatively. The regression checks atlas contents
+and actual GPU pixels after font/text-option reset without manual clearing,
+and fails when the repair is removed. Current-paint destructive atlas overflow
+remains an existing rendering limitation rather than being claimed as solved.
+
+Shaping-off controls exposed a second performance boundary: retaining glyph
+instructions alone left background tessellation hot, and full mutation paid
+capture overhead without reuse. Blank, undecorated background groups can retain
+the exact individual rectangles without crossing any glyph instruction.
+Previous-row identities then bypass retention when all unshaped rows change,
+and recover normally after output stabilizes. The measured full-mutation
+CPU-stage regression disappears with that bounded policy; native evidence must
+still be re-collected rather than inferred from the mechanism timing.
+
+Authorized unlocked testing finally separated genuine foreground evidence
+from the earlier locked-display controls. Four matched runs in each of fourteen
+isolated cases showed consistent localized and monochrome-Unicode savings,
+near-identical unshaped full-mutation cost, and low quiet-idle CPU. Shaped
+foreground full mutation, however, cost about 8% more. Native samples caught
+eager background tessellation and row recapture on frames with no reuse.
+The same bounded previous-row identity policy now bypasses retention regardless
+of shaping. Both policies share exact-mesh, zero-capture, stabilization-recovery
+and explicit-redraw coverage; the shaped regression fails before the repair.
+Independent security, reliability and scope review passed the incremental
+repair. After integrating reviewed main normally, all eleven GitHub checks and
+the full local gates passed. A new 56-run unlocked matrix on the exact
+`58c5cd6` binary confirmed 14-30% localized/Unicode process-CPU savings and
+removed the shaped full-foreground regression (7.863% to 7.698%, -2.1%).
+Unshaped full foreground still varied: +7.6% aggregate with opposite
++19.1%/-2.1% paired changes. Eight longer preselected ABBA/BAAB controls also
+remain adverse: 5.763% baseline versus 6.466% candidate (+12.2%), with paired
+changes of +57.2%, +3.1%, +0.8% and +3.2%. The unusually low first baseline
+has no established cause; it is preserved along with every other run, not
+discarded or used to excuse the smaller adverse differences. Performance
+acceptance was blocked at that source head, and the owner's installed app and
+profiles remain untouched.
+
+The owner authorized a bounded follow-up in #334 before choosing whether to
+accept the heavy-redraw tradeoff. Dirty rows rebuilt together now share one
+fresh revision token, compared only at the same row position. Non-retaining
+rows no longer acquire a capture bookmark/graphics-list lock. Shared-batch,
+independent-cache/clone and swapped-row mesh tests preserve identity and paint
+ownership; the full-mutation tests now also prove zero bookmarks. Restoring
+the old bookkeeping fails four focused regressions.
+
+The cleanup source `86e4274` completed 52 isolated unlocked native comparisons:
+the predeclared 36-run before/after/original-baseline/focused plan, eight current
+quiet controls and eight longer shaped-full controls. Exact hashes, matched
+geometry, foreground/input/lock guards and producer delivery passed throughout.
+Against the original baseline, tested localized/Unicode cases retain 13-23%
+CPU savings, unshaped full foreground is approximately neutral (6.433% to
+6.404%) and quiet controls stay 0.133% in both modes. Longer shaped full
+foreground remains 7.850% to 8.051% (+2.56%), adverse in all four pairs.
+The low-first-run phenomenon recurred with the cleanup candidate first
+(4.216%), so the direct previous-candidate aggregate is not claimed as a
+causal 10% speedup; its cause remains unknown and all older receipts remain.
+
+The owner explicitly accepted the remaining shaped-heavy tradeoff for #328 on
+2026-10-05 while keeping #334 open. Full local source gates, independent
+security/reliability/scope reviews and all eleven measured-source GitHub checks
+passed; only unstarted hosted-runner acquisition failures were retried once,
+with both attempts preserved. Evidence-only follow-ups do not change that
+measured source/binary and need their own CI. External PR review remains
+required, and native input, mixed-DPI and physical presentation/latency gates
+are unchanged. No merge, deployment, live-app restart or personal-state change
+is implied by this owner-approved performance decision.
