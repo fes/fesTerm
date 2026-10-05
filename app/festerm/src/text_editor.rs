@@ -405,6 +405,7 @@ pub(crate) struct TextEditorTab {
     /// The tab this view is drawn in, learned on the first frame. Ids that
     /// have to survive between two different `Ui` scopes are anchored to it.
     tab: Option<TabId>,
+    widget_context: Option<egui::Context>,
     /// Find/Replace, while it is open, and the results it is holding.
     find: FindState,
     /// The Compare view, while it is open. Per-view: comparing is looking,
@@ -460,6 +461,25 @@ pub(crate) struct TextEditorTab {
     /// dispatched has actually landed, so a failed write cannot take the
     /// buffer with it.
     close_after_save: bool,
+}
+
+impl Drop for TextEditorTab {
+    fn drop(&mut self) {
+        if let (Some(context), Some(tab)) = (&self.widget_context, self.tab) {
+            let ids = [
+                self.body_id(),
+                self.find_field_id(0),
+                self.find_field_id(1),
+                self.options_field_id(),
+                crate::vi_command::field_id(tab),
+            ];
+            context.data_mut(|data| {
+                for id in ids {
+                    data.remove::<egui::text_edit::TextEditState>(id);
+                }
+            });
+        }
+    }
 }
 
 /// One segment of the `Edit | Preview | Split` control.
@@ -593,6 +613,7 @@ impl TextEditorTab {
             outline_heading_storage: None,
             vi_focused: false,
             tab: None,
+            widget_context: None,
             find: FindState::default(),
         }
     }
@@ -763,6 +784,19 @@ impl TextEditorTab {
             return Some(AppCommand::CloseTab(tab_id));
         };
         self.tab = Some(tab_id);
+        if self.widget_context.is_none() {
+            // Document undo is authoritative; egui only needs its current baseline.
+            let mut state =
+                egui::text_edit::TextEditState::load(ui.ctx(), self.body_id()).unwrap_or_default();
+            state.set_undoer(egui::util::undoer::Undoer::with_settings(
+                egui::util::undoer::Settings {
+                    max_undos: 1,
+                    ..Default::default()
+                },
+            ));
+            state.store(ui.ctx(), self.body_id());
+            self.widget_context = Some(ui.ctx().clone());
+        }
         self.adopt_external_edits(documents);
         self.sync_compare(documents);
         self.route_find_shortcuts(ui);
@@ -4924,6 +4958,142 @@ mod tests {
             "alpha\nbeta",
             "and redo brings it back"
         );
+    }
+
+    #[test]
+    fn editor_body_bounds_widget_history_without_changing_document_undo() {
+        let directory = TemporaryDirectory::new("widget-undo");
+        let path = directory.file("notes.txt", "alpha\n");
+        let mut harness = typing_harness(&path);
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta");
+        harness.run();
+
+        let id = harness.state().1.body_id();
+        let state = egui::text_edit::TextEditState::load(&harness.ctx, id).unwrap();
+        let mut undoer = state.undoer();
+        let cursor = egui::text::CCursorRange::default();
+        undoer.add_undo(&(cursor, "older widget state".to_owned()));
+        let latest = (cursor, "current widget state".to_owned());
+        undoer.add_undo(&latest);
+        assert!(
+            undoer.undo(&latest).is_none(),
+            "only one baseline is retained"
+        );
+        assert!(state.cursor.char_range().is_some());
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(document_text(&harness), "alpha\n");
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::Z,
+        );
+        harness.run();
+        assert_eq!(document_text(&harness), "alpha\nbeta");
+    }
+
+    #[test]
+    fn dropping_an_editor_removes_all_its_text_widget_states() {
+        let directory = TemporaryDirectory::new("widget-drop");
+        let path = directory.file("notes.txt", "alpha\n");
+        let mut harness = typing_harness(&path);
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta");
+        harness.run();
+
+        let context = harness.ctx.clone();
+        let editor = &harness.state().1;
+        let ids = [
+            editor.body_id(),
+            editor.find_field_id(0),
+            editor.find_field_id(1),
+            editor.options_field_id(),
+            crate::vi_command::field_id(editor.tab.unwrap()),
+        ];
+        for id in &ids[1..] {
+            let mut state = egui::text_edit::TextEditState::default();
+            let mut undoer = state.undoer();
+            undoer.add_undo(&(egui::text::CCursorRange::default(), "field text".to_owned()));
+            state.set_undoer(undoer);
+            state.store(&context, *id);
+        }
+        for id in ids {
+            assert!(egui::text_edit::TextEditState::load(&context, id).is_some());
+        }
+
+        drop(harness);
+
+        for id in ids {
+            assert!(egui::text_edit::TextEditState::load(&context, id).is_none());
+        }
+    }
+
+    #[test]
+    fn find_field_widget_undo_remains_independent_of_document_history() {
+        let directory = TemporaryDirectory::new("find-widget-undo");
+        let path = directory.file("notes.txt", "alpha\n");
+        let mut harness = find_harness(&path);
+        open_find_and_type(&mut harness, false, "alp");
+        let query_id = harness.state().1.find_field_id(0);
+        let state = egui::text_edit::TextEditState::load(&harness.ctx, query_id).unwrap();
+        assert!(state
+            .undoer()
+            .has_undo(&(egui::text::CCursorRange::default(), "alp".to_owned())));
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_ne!(harness.state().1.find.query, "alp");
+        assert_eq!(document_text(&harness), "alpha\n");
+    }
+
+    #[test]
+    fn closing_editor_views_does_not_retire_a_surviving_views_widget_state() {
+        let directory = TemporaryDirectory::new("widget-churn");
+        let path = directory.file("notes.txt", "alpha\n");
+        let (documents, first) = editor_for(&path);
+        let document = first.document();
+        let first_id = TabId::next_for_test();
+        let second_id = TabId::next_for_test();
+        let second = second_view_of(document, &documents);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 420.0))
+            .build_ui_state(
+                |ui, state: &mut (SharedDocuments, Vec<(TabId, TextEditorTab)>)| {
+                    ui.horizontal(|ui| {
+                        for (id, editor) in &mut state.1 {
+                            ui.push_id(*id, |ui| {
+                                editor.show(ui, *id, &state.0);
+                            });
+                        }
+                    });
+                },
+                (documents, vec![(first_id, first), (second_id, second)]),
+            );
+        harness.run();
+        let context = harness.ctx.clone();
+        let baseline = context.data(|data| data.count::<egui::text_edit::TextEditState>());
+        let first_widget = harness.state().1[0].1.body_id();
+        let survivor_widget = harness.state().1[1].1.body_id();
+        drop(harness.state_mut().1.remove(0));
+        assert!(egui::text_edit::TextEditState::load(&context, first_widget).is_none());
+        assert!(egui::text_edit::TextEditState::load(&context, survivor_widget).is_some());
+
+        for _ in 0..12 {
+            let editor = second_view_of(document, &harness.state().0);
+            harness.state_mut().1.push((TabId::next_for_test(), editor));
+            harness.run();
+            let widget = harness.state().1[1].1.body_id();
+            assert!(egui::text_edit::TextEditState::load(&context, widget).is_some());
+            drop(harness.state_mut().1.pop().unwrap());
+            assert!(egui::text_edit::TextEditState::load(&context, widget).is_none());
+            assert_eq!(
+                context.data(|data| data.count::<egui::text_edit::TextEditState>()),
+                baseline - 1
+            );
+        }
     }
 
     #[test]

@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Retiring editor-owned widget history when its view ends
+
+The allocation/lifecycle audit in [#320](https://github.com/fes/fesTerm/issues/320)
+found that the shared GUI context retained closed editor widget states,
+including a second full-text undo history outside the document's byte budget.
+The body now keeps only one widget baseline and at most egui's transient
+changing state, configured once rather than repeatedly clearing and copying
+the text on every pass. View teardown removes its body and small-field widget
+states; Find and command-field undo remain local while the view is alive.
+
+Production-widget regressions cover document undo/redo, small-field undo,
+text-state teardown and repeated view churn without retiring a sibling's
+state. This repairs a concrete editor lifetime defect, not the unproven
+multi-day terminal CPU-growth cause in #297; native caret/focus usability
+evidence remains CP-15.
+
 ## v0.9.2: consistent identity for native persistent shells
 
 This correctness patch makes newly created native persistent local shells
