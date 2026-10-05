@@ -110,6 +110,11 @@ A controlled, already-started
 blocking task proves completion is published without waiting for that task;
 it is released and joined by the fixture, not presented as forced I/O abortion.
 
+Windows qualification exposed a fixture-only spelling mismatch between remote
+mock paths with slash separators and native paths with backslashes. The notice
+assertion compares the complete native `Path`, not display strings; file-content,
+collision-choice and retained-output assertions are unchanged.
+
 ## v0.9.1: less work while the Windows WARP palette is open
 
 This performance patch packages the palette frame/shadow and opaque

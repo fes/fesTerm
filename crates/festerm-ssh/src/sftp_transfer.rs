@@ -3095,7 +3095,7 @@ mod tests {
                     event,
                     SftpTransferEvent::CleanupIncomplete {
                         error: SftpSessionError::PartialFileOwnershipUnconfirmed { path },
-                    } if path == &display_path(&preserved)
+                    } if Path::new(path) == preserved.as_path()
                 )));
                 assert_eq!(
                     snapshot.lock().unwrap().items[0].state,
