@@ -208,14 +208,20 @@ first; if it changed, the write does not happen and the document enters Conflict
 Replacement is write-to-temporary-then-rename in the same directory. The
 temporary is private before it receives bytes: mode `0600` on Unix and a
 protected current-user-only DACL on Windows. Unix writes and flushes while the
-temporary remains private, then applies the existing target's permissions and
-durably flushes that metadata before replacement. Windows uses `ReplaceFileW`
-for an existing target so its attributes and DACL survive; a new Save As target
-keeps the private DACL. Creation and replacement are verified against the
-retained directory capability and exact temporary-file generation, and any
-permission/ACL-preservation failure refuses the save rather than silently
-weakening access. Where a remote server cannot rename over an existing file,
-the fallback is named explicitly in the design document
+temporary remains private, then copies the existing target's owner, group,
+mode and ACL from verified file handles and durably flushes that metadata
+before replacement. Windows uses `ReplaceFileW` for an existing target so its
+attributes and DACL survive; a new Save As target keeps the private DACL.
+Names are cryptographically unpredictable and verified against the open
+temporary handle. Publication atomically exchanges the prepared and current
+files on Unix or asks `ReplaceFileW` for a Windows backup, then validates both
+the published generation and displaced target generation. A mismatch is
+atomically rolled back, so a target that changed after the initial conflict
+check is retained rather than overwritten. Creation and publication stay tied
+to the retained directory capability, and any identity or security-metadata
+failure refuses the save rather than silently weakening access. Where a remote
+server cannot rename over an existing file, the fallback is named explicitly
+in the design document
 and surfaced to the user; fesTerm never truncates the only known-good copy
 before a complete replacement exists unless the user has explicitly accepted
 that server's limitation. An interrupted write never reports `Saved`.
@@ -561,11 +567,12 @@ implementation rather than left contradicting it.
 **Security and privacy.** Writes travel back through the same authenticated SFTP
 origin and trust boundary that opened the file; no new credential path, no new
 network surface, and no document content in logs, diagnostics, or workspace
-metadata. Temporary files are created private before receiving content. Unix permissions
-are restored only after the durable content write; Windows replacement retains
-the destination DACL rather than replacing it with directory-inherited access.
-This prevents an intermediate name from briefly broadening access to private
-content.
+metadata. Temporary files are created private before receiving content. Unix
+owner/group/mode/ACL metadata is restored through verified handles only after
+the durable content write; Windows replacement retains the destination DACL
+rather than replacing it with directory-inherited access. Unpredictable names,
+pre-publication identity checks and post-exchange displaced-generation checks
+prevent a substituted temporary or late target replacement from being accepted.
 
 **Platform.** Watcher behaviour, atomic replacement, permission and ownership
 preservation, and file-identity reporting differ across macOS, Windows, and

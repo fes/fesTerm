@@ -104,10 +104,13 @@ The editor never resolves a divergence silently.
 - A save is **generation-validated and atomic**: written to a temporary file
   created private in the retained destination directory, flushed durably, then
   replaced only after access metadata is secured. Unix restores target
-  permissions before replacement; Windows preserves an existing target's DACL
-  and attributes with `ReplaceFileW`. A new destination remains owner-only.
-  Access-metadata or post-replacement identity failure is a failed save, never a
-  best-effort success.
+  owner/group/mode/ACL metadata through verified handles before replacement;
+  Windows preserves an existing target's DACL and attributes with
+  `ReplaceFileW`. A new destination remains owner-only. Unix atomic exchange
+  and Windows backup replacement retain the displaced target until both old
+  and new generations are verified; a late concurrent change is rolled back
+  and reported as Conflict. Access-metadata or publication-identity failure is
+  a failed save, never a best-effort success.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit

@@ -225,14 +225,20 @@ mod imp {
         directory: &File,
         replacement: &Path,
         target: &Path,
+        backup: Option<&Path>,
     ) -> io::Result<()> {
         let replacement = wide_path(&directory_child_path(directory, replacement)?);
         let target = wide_path(&directory_child_path(directory, target)?);
+        let backup = backup
+            .map(|backup| directory_child_path(directory, backup).map(|path| wide_path(&path)))
+            .transpose()?;
         let replaced = unsafe {
             ReplaceFileW(
                 target.as_ptr(),
                 replacement.as_ptr(),
-                ptr::null(),
+                backup
+                    .as_ref()
+                    .map_or(ptr::null(), |backup| backup.as_ptr()),
                 0,
                 ptr::null(),
                 ptr::null(),
@@ -462,12 +468,26 @@ mod imp {
                 &directory_handle,
                 Path::new("replacement.tmp"),
                 Path::new("target.md"),
+                Some(Path::new("backup.md")),
             )
             .unwrap();
 
             let target = File::open(directory.0.join("target.md")).unwrap();
             assert_current_user_only_dacl(&target);
             assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"after");
+            assert_eq!(fs::read(directory.0.join("backup.md")).unwrap(), b"before");
+
+            replace_file_preserving_security(
+                &directory_handle,
+                Path::new("backup.md"),
+                Path::new("target.md"),
+                Some(Path::new("rollback.md")),
+            )
+            .unwrap();
+            let target = File::open(directory.0.join("target.md")).unwrap();
+            assert_current_user_only_dacl(&target);
+            assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"before");
+            assert_eq!(fs::read(directory.0.join("rollback.md")).unwrap(), b"after");
         }
 
         fn assert_current_user_only_dacl(file: &File) {

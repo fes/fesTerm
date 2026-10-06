@@ -12,6 +12,7 @@ cap-fs-ext = "4.0.3"
 cap-std = "4.0.3"
 directories = "6"
 fs2 = "0.4"
+getrandom = "0.3"
 eframe = "0"
 egui-winit = "=0.36.1"
 festerm-config = { path = "../../crates/festerm-config" }
@@ -43,7 +44,8 @@ bytemuck = "1"
 raw-window-handle = "0.6"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["process", "signal", "user"] }
+festerm-unix-security = { path = "../../crates/festerm-unix-security" }
+nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal", "user"] }
 
 [target.'cfg(windows)'.dependencies]
 festerm-windows-security = { path = "../../crates/festerm-windows-security" }

@@ -16,6 +16,7 @@ members = [
     "crates/festerm-ssh",
     "crates/festerm-test-support",
     "crates/festerm-ui-egui",
+    "crates/festerm-unix-security",
     "crates/festerm-windows-job",
     "crates/festerm-windows-power",
     "crates/festerm-windows-security",

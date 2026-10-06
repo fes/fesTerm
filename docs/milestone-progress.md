@@ -57,13 +57,16 @@ keep FIFOs from pinning a worker waiting for a writer.
 The same review found that save temporaries received bytes before their access
 metadata was secured. Save now creates the intermediate file as Unix `0600` or
 with a protected current-user-only Windows DACL before writing. Unix restores
-the destination mode explicitly after the durable content write; Windows uses
-`ReplaceFileW` so an existing target's DACL and attributes survive, while a new
-target remains private. Both temporary creation and replacement are checked
-back against the retained directory capability and exact file generation.
+the destination owner, group, mode and ACL from verified handles after the
+durable content write; Windows uses `ReplaceFileW` so an existing target's DACL
+and attributes survive, while a new target remains private. Temporary names use
+OS randomness and are checked against their open handles. Unix exchange and
+Windows backup replacement retain the displaced file until both generations
+are verified, rolling back a late target conflict or substituted temporary.
 Deterministic Unix coverage observes the empty private temporary before the
-write, and native Windows coverage inspects the protected one-ACE DACL before
-and after replacement.
+write, preserves an extended ACL, substitutes a temporary name, and changes the
+target at publication. Native Windows coverage inspects the protected one-ACE
+DACL through replacement and rollback.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan

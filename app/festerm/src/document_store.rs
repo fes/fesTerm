@@ -17,15 +17,19 @@ use std::fs::Metadata;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+#[cfg(test)]
+use std::{
+    process,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use festerm_document::{DocumentBounds, RefusalReason, TextDocument};
 
 /// How many distinct temporary names to try before giving up.
 const TEMPORARY_FILE_ATTEMPTS: u32 = 16;
 
+#[cfg(test)]
 static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
@@ -33,6 +37,8 @@ thread_local! {
     static AFTER_SAVE_DIRECTORY_CAPTURE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     static BEFORE_SAVE_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_SAVE_REPLACEMENT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -48,6 +54,15 @@ fn after_save_directory_capture() {
 fn before_save_write() {
     #[cfg(test)]
     BEFORE_SAVE_WRITE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+fn before_save_replacement() {
+    #[cfg(test)]
+    BEFORE_SAVE_REPLACEMENT.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -488,26 +503,18 @@ pub fn save(
         }
     }
 
-    let original = match save_directory.directory.metadata(&save_directory.target) {
-        Ok(metadata) if metadata.is_file() => Some(metadata),
-        Ok(_) => return Err(SaveFailure::NotAFile),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(classify_write_error(error)),
-    };
+    let original = open_original_file(&save_directory.directory, &save_directory.target)?;
+    if let (Some(expected), Some(original)) = (expected, original.as_ref()) {
+        if original.generation != expected {
+            return Err(SaveFailure::Conflict(original.generation));
+        }
+    }
 
     let mut temporary = TemporaryFile::create(&save_directory.directory)?;
     before_save_write();
     write_all_durably(temporary.file_mut(), bytes)?;
-    #[cfg(not(windows))]
     if let Some(original) = &original {
-        save_directory
-            .directory
-            .set_permissions(temporary.name(), original.permissions())
-            .map_err(classify_write_error)?;
-        temporary
-            .file_mut()
-            .sync_all()
-            .map_err(classify_write_error)?;
+        preserve_security_metadata(&original.file, temporary.file_mut())?;
     }
     #[cfg(not(windows))]
     let read_only = temporary
@@ -517,17 +524,17 @@ pub fn save(
         .permissions()
         .readonly();
     #[cfg(windows)]
-    let read_only = original
-        .as_ref()
-        .is_some_and(|metadata| metadata.permissions().readonly());
+    let read_only = original.as_ref().is_some_and(|original| original.read_only);
     let temporary_generation =
         Generation::from_file(temporary.file_mut()).map_err(|_| SaveFailure::Interrupted)?;
-    temporary.close_file();
-
-    replace_file(
+    before_save_replacement();
+    temporary.verify_name()?;
+    publish_temporary(
         &save_directory.directory,
-        temporary.name(),
+        &mut temporary,
         &save_directory.target,
+        original.as_ref().map(|original| original.generation),
+        temporary_generation,
     )?;
     let generation = generation_in_directory(&save_directory.directory, &save_directory.target)
         .map_err(|_| SaveFailure::Interrupted)?;
@@ -544,12 +551,58 @@ pub fn save(
     })
 }
 
+struct OriginalFile {
+    file: File,
+    generation: Generation,
+    read_only: bool,
+}
+
+fn open_original_file(
+    directory: &cap_std::fs::Dir,
+    target: &Path,
+) -> Result<Option<OriginalFile>, SaveFailure> {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    let file = match directory.open_with(target, &options) {
+        Ok(file) => file.into_std(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(classify_write_error(error)),
+    };
+    let metadata = file.metadata().map_err(classify_write_error)?;
+    if !metadata.is_file() {
+        return Err(SaveFailure::NotAFile);
+    }
+    Ok(Some(OriginalFile {
+        generation: Generation::from_file(&file).map_err(|_| SaveFailure::Interrupted)?,
+        read_only: metadata.permissions().readonly(),
+        file,
+    }))
+}
+
 fn generation_in_directory(
     directory: &cap_std::fs::Dir,
     target: &Path,
 ) -> Result<Generation, std::io::Error> {
-    let file = directory.open(target)?.into_std();
+    let file = open_named_file(directory, target)?;
     Generation::from_file(&file)
+}
+
+fn open_named_file(directory: &cap_std::fs::Dir, target: &Path) -> Result<File, std::io::Error> {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    directory
+        .open_with(target, &options)
+        .map(|file| file.into_std())
 }
 
 struct SaveDirectory {
@@ -663,6 +716,17 @@ fn parent_directory(path: &Path) -> Result<&Path, SaveFailure> {
     }
 }
 
+#[cfg(unix)]
+fn preserve_security_metadata(original: &File, temporary: &mut File) -> Result<(), SaveFailure> {
+    festerm_unix_security::preserve_security_metadata(original, temporary)
+        .map_err(classify_write_error)
+}
+
+#[cfg(windows)]
+fn preserve_security_metadata(_original: &File, _temporary: &mut File) -> Result<(), SaveFailure> {
+    Ok(())
+}
+
 /// A file that deletes itself unless it is explicitly kept, so a save that
 /// fails half way through leaves no debris beside the user's file.
 struct TemporaryFile<'a> {
@@ -675,7 +739,7 @@ struct TemporaryFile<'a> {
 impl<'a> TemporaryFile<'a> {
     fn create(directory: &'a cap_std::fs::Dir) -> Result<Self, SaveFailure> {
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
-            let name = temporary_path();
+            let name = temporary_path()?;
             #[cfg(unix)]
             let file = {
                 use cap_std::fs::OpenOptionsExt;
@@ -702,14 +766,14 @@ impl<'a> TemporaryFile<'a> {
             };
             match file {
                 Ok(file) => {
-                    #[cfg(windows)]
-                    verify_created_file(directory, &name, &file)?;
-                    return Ok(Self {
+                    let temporary = Self {
                         directory,
                         name,
                         file: Some(file),
                         persist: false,
-                    });
+                    };
+                    temporary.verify_name()?;
+                    return Ok(temporary);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(classify_write_error(error)),
@@ -735,24 +799,20 @@ impl<'a> TemporaryFile<'a> {
     fn persist(&mut self) {
         self.persist = true;
     }
-}
 
-#[cfg(windows)]
-fn verify_created_file(
-    directory: &cap_std::fs::Dir,
-    name: &Path,
-    created: &std::fs::File,
-) -> Result<(), SaveFailure> {
-    let reopened = directory
-        .open(name)
-        .map_err(classify_write_error)?
-        .into_std();
-    let created = Generation::from_file(created).map_err(|_| SaveFailure::Interrupted)?;
-    let reopened = Generation::from_file(&reopened).map_err(|_| SaveFailure::Interrupted)?;
-    if created == reopened {
-        Ok(())
-    } else {
-        Err(SaveFailure::Interrupted)
+    fn verify_name(&self) -> Result<(), SaveFailure> {
+        let reopened = open_named_file(self.directory, &self.name).map_err(classify_write_error)?;
+        let open = self
+            .file
+            .as_ref()
+            .ok_or(SaveFailure::Interrupted)
+            .and_then(|file| Generation::from_file(file).map_err(|_| SaveFailure::Interrupted))?;
+        let reopened = Generation::from_file(&reopened).map_err(|_| SaveFailure::Interrupted)?;
+        if open == reopened {
+            Ok(())
+        } else {
+            Err(SaveFailure::Interrupted)
+        }
     }
 }
 
@@ -764,45 +824,169 @@ impl Drop for TemporaryFile<'_> {
     }
 }
 
-fn temporary_path() -> PathBuf {
-    let identifier = NEXT_TEMPORARY_FILE_ID.fetch_add(1, Ordering::Relaxed);
-    PathBuf::from(format!(".festerm-save-{}-{identifier}.tmp", process::id()))
+fn temporary_path() -> Result<PathBuf, SaveFailure> {
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| SaveFailure::Interrupted)?;
+    let mut encoded = String::with_capacity(random.len() * 2);
+    for byte in random {
+        use std::fmt::Write;
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(PathBuf::from(format!(".festerm-save-{encoded}.tmp")))
 }
 
-#[cfg(not(windows))]
-fn replace_file(
+#[cfg(unix)]
+fn publish_temporary(
     directory: &cap_std::fs::Dir,
-    temporary: &Path,
+    temporary: &mut TemporaryFile<'_>,
     target: &Path,
+    original_generation: Option<Generation>,
+    temporary_generation: Generation,
 ) -> Result<(), SaveFailure> {
-    directory
-        .rename(temporary, directory, target)
-        .map_err(classify_write_error)
+    let Some(original_generation) = original_generation else {
+        rename_noreplace(directory, temporary.name(), target).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                generation_in_directory(directory, target)
+                    .map(SaveFailure::Conflict)
+                    .unwrap_or(SaveFailure::Interrupted)
+            } else {
+                classify_write_error(error)
+            }
+        })?;
+        let published =
+            generation_in_directory(directory, target).map_err(|_| SaveFailure::Interrupted)?;
+        if published != temporary_generation {
+            temporary.persist();
+            return Err(SaveFailure::Interrupted);
+        }
+        temporary.persist();
+        return Ok(());
+    };
+
+    atomic_exchange(directory, temporary.name(), target).map_err(classify_write_error)?;
+    let displaced = generation_in_directory(directory, temporary.name());
+    let published = generation_in_directory(directory, target);
+    if !displaced
+        .as_ref()
+        .is_ok_and(|generation| *generation == original_generation)
+        || !published
+            .as_ref()
+            .is_ok_and(|generation| *generation == temporary_generation)
+    {
+        if atomic_exchange(directory, temporary.name(), target).is_err() {
+            temporary.persist();
+            return Err(SaveFailure::Interrupted);
+        }
+        return match displaced {
+            Ok(current) if current != original_generation => Err(SaveFailure::Conflict(current)),
+            _ => Err(SaveFailure::Interrupted),
+        };
+    }
+    if let Err(error) = directory.remove_file(temporary.name()) {
+        if atomic_exchange(directory, temporary.name(), target).is_err() {
+            temporary.persist();
+        }
+        return Err(classify_write_error(error));
+    }
+    temporary.persist();
+    Ok(())
 }
 
 #[cfg(windows)]
-fn replace_file(
+fn publish_temporary(
     directory: &cap_std::fs::Dir,
-    temporary: &Path,
+    temporary: &mut TemporaryFile<'_>,
     target: &Path,
+    original_generation: Option<Generation>,
+    temporary_generation: Generation,
 ) -> Result<(), SaveFailure> {
-    match directory.metadata(target) {
-        Ok(metadata) if !metadata.is_file() => Err(SaveFailure::NotAFile),
-        Ok(_) => {
-            let directory = directory
-                .try_clone()
-                .map(cap_std::fs::Dir::into_std_file)
-                .map_err(classify_write_error)?;
-            festerm_windows_security::replace_file_preserving_security(
-                &directory, temporary, target,
-            )
-            .map_err(classify_write_error)
+    temporary.close_file();
+    let Some(original_generation) = original_generation else {
+        directory
+            .rename(temporary.name(), directory, target)
+            .map_err(classify_write_error)?;
+        let published =
+            generation_in_directory(directory, target).map_err(|_| SaveFailure::Interrupted)?;
+        if published != temporary_generation {
+            temporary.persist();
+            return Err(SaveFailure::Interrupted);
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => directory
-            .rename(temporary, directory, target)
-            .map_err(classify_write_error),
-        Err(error) => Err(classify_write_error(error)),
+        temporary.persist();
+        return Ok(());
+    };
+
+    let backup = temporary_path()?;
+    let directory_handle = directory
+        .try_clone()
+        .map(cap_std::fs::Dir::into_std_file)
+        .map_err(classify_write_error)?;
+    festerm_windows_security::replace_file_preserving_security(
+        &directory_handle,
+        temporary.name(),
+        target,
+        Some(&backup),
+    )
+    .map_err(classify_write_error)?;
+    let displaced = generation_in_directory(directory, &backup);
+    let published = generation_in_directory(directory, target);
+    if !displaced
+        .as_ref()
+        .is_ok_and(|generation| *generation == original_generation)
+        || !published
+            .as_ref()
+            .is_ok_and(|generation| *generation == temporary_generation)
+    {
+        if festerm_windows_security::replace_file_preserving_security(
+            &directory_handle,
+            &backup,
+            target,
+            Some(temporary.name()),
+        )
+        .is_err()
+        {
+            temporary.persist();
+            return Err(SaveFailure::Interrupted);
+        }
+        return match displaced {
+            Ok(current) if current != original_generation => Err(SaveFailure::Conflict(current)),
+            _ => Err(SaveFailure::Interrupted),
+        };
     }
+    if let Err(error) = directory.remove_file(&backup) {
+        if festerm_windows_security::replace_file_preserving_security(
+            &directory_handle,
+            &backup,
+            target,
+            Some(temporary.name()),
+        )
+        .is_err()
+        {
+            temporary.persist();
+        }
+        return Err(classify_write_error(error));
+    }
+    temporary.persist();
+    Ok(())
+}
+
+#[cfg(unix)]
+fn atomic_exchange(
+    directory: &cap_std::fs::Dir,
+    first: &Path,
+    second: &Path,
+) -> Result<(), std::io::Error> {
+    let directory = directory.try_clone()?.into_std_file();
+    festerm_unix_security::atomic_exchange(&directory, first, second)
+}
+
+#[cfg(unix)]
+fn rename_noreplace(
+    directory: &cap_std::fs::Dir,
+    source: &Path,
+    target: &Path,
+) -> Result<(), std::io::Error> {
+    let directory = directory.try_clone()?.into_std_file();
+    festerm_unix_security::rename_noreplace(&directory, source, target)
 }
 
 #[cfg(unix)]
@@ -1274,6 +1458,75 @@ mod tests {
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn target_replacement_at_publication_conflicts_without_losing_the_newer_file() {
+        let directory = TemporaryDirectory::new("publication-conflict");
+        let path = directory.file("notes.md", "loaded\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let target = path.clone();
+        let replacement = directory.path.join("replacement.md");
+        BEFORE_SAVE_REPLACEMENT.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::write(&replacement, b"newer\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            }));
+        });
+
+        let failure = save(
+            &path,
+            b"editor\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap_err();
+
+        assert!(matches!(failure, SaveFailure::Conflict(_)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "newer\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temporary_name_substitution_is_refused_before_publication() {
+        let directory = TemporaryDirectory::new("temporary-substitution");
+        let path = directory.file("notes.md", "loaded\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let observed_directory = directory.path.clone();
+        let stolen = directory.path.join("stolen.tmp");
+        let stolen_for_hook = stolen.clone();
+        BEFORE_SAVE_REPLACEMENT.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let temporary = fs::read_dir(&observed_directory)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                name.starts_with(".festerm-save-") && name.ends_with(".tmp")
+                            })
+                    })
+                    .expect("save temporary file");
+                fs::rename(&temporary, &stolen_for_hook).unwrap();
+                fs::write(&temporary, b"attacker\n").unwrap();
+            }));
+        });
+
+        let failure = save(
+            &path,
+            b"editor\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap_err();
+
+        assert_eq!(failure, SaveFailure::Interrupted);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "loaded\n");
+        assert_eq!(fs::read_to_string(&stolen).unwrap(), "editor\n");
+        fs::remove_file(stolen).unwrap();
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
     #[cfg(unix)]
