@@ -352,10 +352,8 @@ impl DocumentRegistry {
         let file_name = format!("{name_prefix}-{next}.txt");
         let origin = UntitledOrigin::new(key, file_name, qualified_label)
             .expect("generated untitled origins are valid");
-        let mut text = TextDocument::from_bytes(bytes, self.bounds)
+        let text = TextDocument::from_unsaved_bytes(bytes, self.bounds)
             .expect("untitled snapshots are preflighted against editor bounds");
-        text.replace(0..0, "")
-            .expect("a zero-delta untitled transaction preserves the snapshot");
         self.insert(DocumentOrigin::from(origin), text, None, false)
     }
 
@@ -1024,6 +1022,9 @@ mod tests {
         ));
         assert_eq!(document.text().text(), "alpha\nbeta");
         assert!(document.text().is_dirty());
+        assert_eq!(document.text().revision(), 0);
+        assert!(!document.text().can_undo());
+        assert!(!document.text().can_redo());
         assert!(document.status().can_save());
         assert!(document.status().can_save_as());
         assert_eq!(document.status().auto_save(), AutoSaveControl::Unavailable);

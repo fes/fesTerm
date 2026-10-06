@@ -487,6 +487,21 @@ settings/save/restart/reset/failed-save and Unix FIFO refusal are automated.
 Native visual/focus/accessibility and filesystem-permission review remain
 pending; this is not total-RAM/VRAM or long-running RSS acceptance.
 
+CP-15 undo retention: exercise an owned large multiline file with widget
+paste, vi edit and toolbar/colon substitution. A whole change whose undo
+record exceeds 8 MiB must leave text, revision, dirty/saved state, undo and
+redo intact and visibly state the required bytes, limit and smaller-change
+recovery. Find calls this **Change refused**, not **Invalid pattern**. Small
+typing remains usable when optional coalescing reaches its budget; no-ops
+preserve redo and match counts. New File and terminal snapshots start dirty
+without fake undo entries; undoing their real edits does not announce a
+never-saved document as saved. Deterministic regressions cover actual
+descriptor/string/slot capacity, exact-byte boundaries, churn/clone/clear,
+saved/base identity, atomic admission and production refusal routes. Native
+keyboard/paste/IME, caret/focus, narrow-window readability, high contrast and
+screen-reader delivery remain manual/native/usability evidence. Retained
+history bounds do not certify transient peaks, allocator fragmentation or RSS.
+
 CP-15 vi repeat budget: enable vi keys on an owned fixture and exceed 8,192
 recorded keys in one Insert/Replace change using typing/Backspace churn. All
 accepted edits remain; the command area visibly says **Repeat unavailable**,
