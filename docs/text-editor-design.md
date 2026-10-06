@@ -105,7 +105,9 @@ The editor never resolves a divergence silently.
   created private in the retained destination directory, flushed durably, then
   replaced only after access metadata is secured. Unix clears inherited ACLs
   and verifies `0700` staging/`0600` files before writing, then restores target
-  owner/group/mode/ACL metadata through verified handles. Windows applies and
+  owner/group/mode/ACL metadata through verified handles without copying the
+  previous modification time. Linux rewrites user xattrs/POSIX ACLs while
+  requiring kernel security labels to match in place. Windows applies and
   verifies the target owner/group/DACL/attributes on the prepared file before
   publication; inability to do so refuses before mutation. A new destination remains owner-only. Prepared files remain
   beneath a private same-filesystem staging directory, with an independently
@@ -120,7 +122,9 @@ The editor never resolves a divergence silently.
   is never deleted by pathname rollback: every recoverable version remains in
   the private `.festerm-save-*.stage` directory and the editor reports manual
   recovery. Access-metadata or publication-identity failure is a failed save,
-  never a best-effort success.
+  never a best-effort success. Cleanup failure after verified publication may
+  retain the private staging directory but does not turn a successful save
+  into a false failure.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit

@@ -443,7 +443,7 @@ mod imp {
             CreateFileW(
                 wide.as_ptr(),
                 FILE_ALL_ACCESS | DELETE,
-                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 &raw const attributes,
                 CREATE_NEW,
                 FILE_ATTRIBUTE_NORMAL,

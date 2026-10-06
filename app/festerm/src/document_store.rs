@@ -311,6 +311,7 @@ pub enum SaveFailure {
     NotAFile,
     Interrupted,
     RecoveryRequired,
+    MetadataPreservation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -330,6 +331,7 @@ impl SaveFailure {
             Self::NotAFile => "This destination is not a regular file",
             Self::Interrupted => "Saving did not complete",
             Self::RecoveryRequired => "Saving needs manual recovery",
+            Self::MetadataPreservation => "This file's access cannot be preserved",
         }
     }
 
@@ -349,6 +351,9 @@ impl SaveFailure {
             }
             Self::RecoveryRequired => {
                 "fesTerm retained private recovery copies in a hidden .festerm-save-* folder beside the file. Recover them before saving there again."
+            }
+            Self::MetadataPreservation => {
+                "The file's owner, group, ACL, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a file you own."
             }
         }
     }
@@ -758,6 +763,14 @@ fn classify_write_error(error: std::io::Error) -> SaveFailure {
     }
 }
 
+fn classify_metadata_error(error: std::io::Error) -> SaveFailure {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        SaveFailure::MetadataPreservation
+    } else {
+        classify_write_error(error)
+    }
+}
+
 fn parent_directory(path: &Path) -> Result<&Path, SaveFailure> {
     if path.file_name().is_none() {
         return Err(SaveFailure::NoDirectory);
@@ -779,7 +792,7 @@ fn preserve_security_metadata(
     temporary: &mut File,
 ) -> Result<festerm_unix_security::SecurityMetadata, SaveFailure> {
     festerm_unix_security::preserve_security_metadata(original, temporary)
-        .map_err(classify_write_error)
+        .map_err(classify_metadata_error)
 }
 
 /// A file that deletes itself unless it is explicitly kept, so a save that
@@ -966,9 +979,18 @@ impl<'a> TemporaryFile<'a> {
         result
     }
 
-    fn finish(&mut self) -> Result<(), SaveFailure> {
-        if self.staging.remove_file("prepared").is_err() {
-            return Err(self.recovery_required());
+    fn finish(&mut self) {
+        self.close_file();
+        for name in ["original", "prepared"] {
+            if let Err(error) = self.staging.remove_file(name) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        path = %self.staging_directory.display(),
+                        %error,
+                        "a private save staging file could not be removed after publication"
+                    );
+                }
+            }
         }
         if !self.staging_name_matches() {
             tracing::warn!(
@@ -983,7 +1005,6 @@ impl<'a> TemporaryFile<'a> {
             );
         }
         self.persist();
-        Ok(())
     }
 
     fn recovery_required(&mut self) -> SaveFailure {
@@ -1013,10 +1034,6 @@ impl<'a> TemporaryFile<'a> {
 
     fn original_generation(&self) -> Result<Generation, std::io::Error> {
         generation_in_directory(&self.staging, Path::new("original"))
-    }
-
-    fn remove_staging_file(&self, name: &str) -> Result<(), std::io::Error> {
-        self.staging.remove_file(name)
     }
 
     #[cfg(windows)]
@@ -1054,10 +1071,26 @@ impl<'a> TemporaryFile<'a> {
 impl Drop for TemporaryFile<'_> {
     fn drop(&mut self) {
         if !self.persist {
-            let _ = self.staging.remove_file("payload");
-            let _ = self.staging.remove_file("prepared");
+            self.close_file();
+            for name in ["payload", "prepared"] {
+                if let Err(error) = self.staging.remove_file(name) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        tracing::warn!(
+                            path = %self.staging_directory.display(),
+                            %error,
+                            "an unpublished save staging file could not be removed"
+                        );
+                    }
+                }
+            }
             if self.staging_name_matches() {
-                let _ = self.directory.remove_dir(&self.staging_directory);
+                if let Err(error) = self.directory.remove_dir(&self.staging_directory) {
+                    tracing::warn!(
+                        path = %self.staging_directory.display(),
+                        %error,
+                        "an unpublished save staging directory could not be removed"
+                    );
+                }
             }
         }
     }
@@ -1113,7 +1146,7 @@ fn publish_temporary(
         if published != temporary_generation {
             return Err(temporary.recovery_required());
         }
-        temporary.finish()?;
+        temporary.finish();
         return Ok(published);
     };
 
@@ -1184,11 +1217,7 @@ fn publish_temporary(
     {
         return Err(temporary.recovery_required());
     }
-    if let Err(error) = temporary.remove_staging_file("original") {
-        tracing::error!(%error, "the displaced save target could not be removed");
-        return Err(temporary.recovery_required());
-    }
-    temporary.finish()?;
+    temporary.finish();
     Ok(published.expect("the published generation was validated"))
 }
 
@@ -1226,7 +1255,7 @@ fn publish_temporary(
         if published != temporary_generation {
             return Err(temporary.recovery_required());
         }
-        temporary.finish()?;
+        temporary.finish();
         return Ok(published);
     };
 
@@ -1240,7 +1269,7 @@ fn publish_temporary(
         return Err(SaveFailure::Conflict(original_generation));
     }
     festerm_windows_security::apply_security_metadata(temporary.file_mut(), security_metadata)
-        .map_err(classify_write_error)?;
+        .map_err(classify_metadata_error)?;
     let directory_handle = directory
         .try_clone()
         .map(cap_std::fs::Dir::into_std_file)
@@ -1329,11 +1358,7 @@ fn publish_temporary(
     {
         return Err(temporary.recovery_required());
     }
-    if let Err(error) = temporary.remove_staging_file("original") {
-        tracing::error!(%error, "the retained Windows original could not be removed");
-        return Err(temporary.recovery_required());
-    }
-    temporary.finish()?;
+    temporary.finish();
     Ok(published)
 }
 
@@ -1451,6 +1476,16 @@ mod tests {
 
         assert_eq!(failure, LoadFailure::Refused(RefusalReason::BinaryContent));
         assert_eq!(failure.headline(), "This file appears to be binary");
+    }
+
+    #[test]
+    fn metadata_permission_failure_explains_the_safe_save_as_path() {
+        let failure =
+            classify_metadata_error(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+
+        assert_eq!(failure, SaveFailure::MetadataPreservation);
+        assert!(failure.headline().contains("access"));
+        assert!(failure.detail().contains("Save As"));
     }
 
     #[test]

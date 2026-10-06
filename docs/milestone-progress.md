@@ -59,7 +59,7 @@ metadata was secured. Save now clears inherited Unix staging/file ACLs and
 verifies `0700`/`0600`; Windows reapplies and verifies a protected one-ACE
 current-user DACL through the exact reopened staging handle before writing and
 before retaining a failed prepared payload. Unix restores
-the destination owner, group, mode, ACL and xattrs from verified handles after
+the destination owner, group, mode, ACL and user-managed xattrs from verified handles after
 the durable content write; Windows applies and verifies the original owner,
 group, DACL and attributes on the prepared file before publication; a new target remains private. Temporary
 names use OS randomness beneath an owner-only same-filesystem staging directory
@@ -67,7 +67,9 @@ and are checked against their open handles. Both platforms capture the
 no-follow current target into private staging with a no-overwrite move, verify
 it, then no-overwrite publish only if no concurrent winner claimed the briefly
 vacant name. Published/original generations, the Unix security snapshot,
-and the Windows owner/group/DACL/attribute snapshot are verified. A prepared copy and private displaced/original copy
+and the Windows owner/group/DACL/attribute snapshot are verified. macOS does not
+copy the old modification time, and Linux leaves matching kernel-managed
+security labels untouched. A prepared copy and private displaced/original copy
 remain on any late, ambiguous or partial failure; no unconditional pathname
 rollback can delete a later winner. Deterministic Unix coverage observes the
 empty private temporary before the write, preserves an extended ACL, detects

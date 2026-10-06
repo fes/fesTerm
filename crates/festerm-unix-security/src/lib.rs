@@ -126,20 +126,38 @@ mod imp {
         original: &File,
         temporary: &File,
     ) -> io::Result<SecurityMetadata> {
+        use nix::{
+            sys::stat::{fchmod, Mode},
+            unistd::{fchown, Gid, Uid},
+        };
         use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
 
         let expected = security_metadata(original)?;
+        let actual = temporary.metadata()?;
+        if expected.uid != actual.uid() || expected.gid != actual.gid() {
+            fchown(
+                temporary,
+                Some(Uid::from_raw(expected.uid)),
+                Some(Gid::from_raw(expected.gid)),
+            )
+            .map_err(io::Error::from)?;
+        }
         let copied = unsafe {
             nix::libc::fcopyfile(
                 original.as_raw_fd(),
                 temporary.as_raw_fd(),
                 std::ptr::null_mut(),
-                nix::libc::COPYFILE_METADATA,
+                nix::libc::COPYFILE_ACL | nix::libc::COPYFILE_XATTR,
             )
         };
         if copied != 0 {
             return Err(io::Error::last_os_error());
         }
+        fchmod(
+            temporary,
+            Mode::from_bits_truncate(expected.mode as nix::libc::mode_t),
+        )
+        .map_err(io::Error::from)?;
         let actual = temporary.metadata()?;
         if expected.uid != actual.uid()
             || expected.gid != actual.gid()
@@ -178,10 +196,14 @@ mod imp {
 
         let inherited = temporary.list_xattr()?.collect::<Vec<_>>();
         for name in inherited {
-            temporary.remove_xattr(&name)?;
+            if linux_user_managed_attribute(&name) {
+                temporary.remove_xattr(&name)?;
+            }
         }
         for (name, value) in &expected.attributes {
-            temporary.set_xattr(name, value)?;
+            if linux_user_managed_attribute(name) {
+                temporary.set_xattr(name, value)?;
+            }
         }
         fchmod(
             temporary,
@@ -198,6 +220,13 @@ mod imp {
         }
         temporary.sync_all()?;
         Ok(expected)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn linux_user_managed_attribute(name: &std::ffi::OsStr) -> bool {
+        use std::os::unix::ffi::OsStrExt;
+
+        name.as_bytes().starts_with(b"user.") || name.as_bytes() == b"system.posix_acl_access"
     }
 
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
@@ -514,8 +543,19 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_security_copy_preserves_owner_mode_and_posix_acl() {
+        use std::ffi::OsStr;
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
         use xattr::FileExt;
+
+        assert!(crate::imp::linux_user_managed_attribute(OsStr::new(
+            "user.note"
+        )));
+        assert!(crate::imp::linux_user_managed_attribute(OsStr::new(
+            "system.posix_acl_access"
+        )));
+        assert!(!crate::imp::linux_user_managed_attribute(OsStr::new(
+            "security.selinux"
+        )));
 
         let directory = TemporaryDirectory::new();
         let original_path = directory.path("original");
@@ -589,21 +629,31 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_security_copy_preserves_extended_acl() {
+        use std::fs::FileTimes;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         use std::process::Command;
+        use std::time::{Duration, UNIX_EPOCH};
 
         let directory = TemporaryDirectory::new();
         let original_path = directory.path("original");
         let temporary_path = directory.path("temporary");
         fs::write(&original_path, b"original").unwrap();
         fs::set_permissions(&original_path, fs::Permissions::from_mode(0o640)).unwrap();
+        let original = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&original_path)
+            .unwrap();
+        let old_modified = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        original
+            .set_times(FileTimes::new().set_modified(old_modified))
+            .unwrap();
         let status = Command::new("chmod")
             .args(["+a", "everyone deny write"])
             .arg(&original_path)
             .status()
             .unwrap();
         assert!(status.success());
-        let original = File::open(&original_path).unwrap();
         let temporary = OpenOptions::new()
             .read(true)
             .write(true)
@@ -615,6 +665,10 @@ mod tests {
         preserve_security_metadata(&original, &temporary).unwrap();
 
         assert_eq!(acl_lines(&original_path), acl_lines(&temporary_path));
+        assert_ne!(
+            temporary.metadata().unwrap().modified().unwrap(),
+            old_modified
+        );
     }
 
     #[cfg(target_os = "macos")]

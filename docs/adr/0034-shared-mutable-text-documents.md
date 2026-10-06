@@ -214,7 +214,10 @@ through the exact staging handle before creating any file, and re-privatizes a
 prepared payload before retaining it after failed publication. Unix writes and flushes
 while the temporary remains private, then copies the existing target's owner,
 group, mode and ACL from verified file handles and durably flushes that
-metadata before replacement. Windows applies and verifies the captured owner,
+metadata before replacement without copying the old modification time. Linux
+rewrites only user-owned xattrs and the POSIX access ACL; kernel-managed
+security labels remain in place and must already match the verified source
+snapshot. Windows applies and verifies the captured owner,
 group, DACL and attributes on the prepared file;
 inability to apply them refuses before publication. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
@@ -235,7 +238,11 @@ pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error. This
 also covers partial move failures; every ambiguous arrangement is retained for
-manual recovery. Creation and publication stay tied to
+manual recovery. Failure to reproduce ownership/access metadata refuses before
+publication with an ownership-specific Save As explanation. Cleanup failure
+after verified publication is warned and may retain the private staging
+directory, but does not misreport successfully published bytes as a failed
+save. Creation and publication stay tied to
 the retained directory capability, and any identity or security-metadata
 failure refuses the save rather than silently weakening access. Where a
 remote server cannot rename over an existing file, the fallback is named
