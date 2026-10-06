@@ -85,8 +85,12 @@ capture/publication. Save As now carries an absent-or-exact-generation
 expectation from picker confirmation through publication; a later destination
 appearance/change conflicts. An already-open dirty/conflicted destination
 refuses before disk mutation, while a clean one contributes its recorded
-generation and receives the source buffer with undo history intact on
-successful rebind.
+generation, or its explicit missing state accepts a confirmed-absent
+destination, and receives the source buffer with undo history intact on
+successful rebind. Final symbolic-link/reparse-point destinations refuse
+without being moved. Crash or power loss in the briefly absent-name window can
+leave private recovery versions without startup discovery and remains an
+explicit CP-15 native/manual residual.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan

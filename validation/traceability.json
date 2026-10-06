@@ -1584,6 +1584,8 @@
         "save_uses_the_captured_parent_after_its_path_is_rebound",
         "saving_a_symlinked_source_updates_its_canonical_target",
         "save_as_refuses_a_symlink_destination_without_moving_it",
+        "payload_creation_collision_is_cleaned_before_retry",
+        "payload_symlink_substitution_before_verification_is_refused",
         "save_temporary_file_is_private_before_content_is_written",
         "save_as_creates_a_private_new_file",
         "save_as_refuses_a_destination_that_appears_after_confirmation",
@@ -1712,7 +1714,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "atomic replacement, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
+        "conditional no-overwrite publication, the briefly absent destination-name window, crash/power-loss recovery from private staging, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
         "remote documents are unimplemented, so the Save As remote destination refuses rather than connecting, and remote disconnect/reconnect has no coverage",
         "vi compatibility ships behind a per-view option; the engine's own matrix is covered unit by unit in festerm-document, and the view covers routing, refusal and the mode indicator, but the matrix is not exercised end to end key by key"
       ]

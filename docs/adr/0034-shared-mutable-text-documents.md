@@ -677,9 +677,9 @@ existing Markdown rendering stays out of scope.
   and conflict for an edited document are now specified here; `CLOSE-*` gains
   the final-view dirty-close prompt; `CHIP-*` gains the non-colour document
   state cue.
-- **Automated tests required:** none yet — this ADR is design-approval only, and
-  the `text-editing` coverage entry is `deferred` until implementation. The
-  implementation change must land tests for document identity and aliasing,
+- **Automated tests:** the `text-editing` coverage entry is `partial` and
+  registers deterministic coverage for the implemented local editor,
+  including document identity and aliasing,
   shared-edit propagation across views and windows, generation revalidation and
   refused overwrite, conditional publication and interrupted writes, own-save event
   suppression, clean-reload and dirty-conflict paths, offline/reconnect
@@ -688,7 +688,8 @@ existing Markdown rendering stays out of scope.
   view-independence, final-view close routing and default-action placement,
   read-only line-oriented comparison, Save As destination binding to an
   already-open document, and the vi subset's motions, operators, and `:` command
-  convergence. `EDIT-17` adds deterministic coverage for independent blank
+  convergence. Remaining native and remote behavior stays explicit in
+  `CP-15` and the traceability prerequisites. `EDIT-17` adds deterministic coverage for independent blank
   untitled documents, per-kind sequential names, first-save routing, More
   actions, and native-menu command convergence.
 - **Vi recording refinement:** `EDIT-07` now has deterministic engine and
@@ -717,6 +718,6 @@ existing Markdown rendering stays out of scope.
   implementation, covering real watcher behaviour, conditional publication,
   permission preservation, and remote disconnect/reconnect on each platform.
   `CP-06` continues to cover the read-only viewer routes.
-- **Coverage superseded:** none yet. When the editor ships, `MD-06`'s "no
-  editing/conflict claim if read-only" oracle narrows to the viewer's own
-  routes.
+- **Coverage superseded:** `MD-06`'s "no editing/conflict claim if read-only"
+  oracle now applies only to the viewer's own routes; editor behavior is
+  registered under `text-editing`.
