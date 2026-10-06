@@ -1223,24 +1223,56 @@ fn publish_temporary(
         return Err(temporary.recovery_required());
     }
     after_save_replacement();
-    let published = generation_in_directory(directory, target);
-    let security_matches =
-        match festerm_unix_security::security_metadata_matches(original_file, security_metadata) {
-            Ok(matches) => matches,
-            Err(error) => {
-                tracing::error!(%error, "published save security metadata could not be verified");
-                return Err(temporary.recovery_required());
-            }
-        };
-    if !published
-        .as_ref()
-        .is_ok_and(|generation| *generation == temporary_generation)
-        || !security_matches
+    let published_file = match open_named_file(directory, target) {
+        Ok(file) => file,
+        Err(error) => {
+            tracing::error!(%error, "the replaced Unix save target could not be reopened");
+            return Err(temporary.recovery_required());
+        }
+    };
+    let published = match Generation::from_file(&published_file) {
+        Ok(generation) => generation,
+        Err(error) => {
+            tracing::error!(%error, "the replaced Unix save target could not be identified");
+            return Err(temporary.recovery_required());
+        }
+    };
+    let retained_original = match Generation::from_file(original_file) {
+        Ok(generation) => generation,
+        Err(error) => {
+            tracing::error!(%error, "the retained Unix original could not be identified");
+            return Err(temporary.recovery_required());
+        }
+    };
+    let published_security_matches = match festerm_unix_security::security_metadata_matches(
+        &published_file,
+        security_metadata,
+    ) {
+        Ok(matches) => matches,
+        Err(error) => {
+            tracing::error!(%error, "the replaced Unix target metadata could not be verified");
+            return Err(temporary.recovery_required());
+        }
+    };
+    let original_security_matches = match festerm_unix_security::security_metadata_matches(
+        original_file,
+        security_metadata,
+    ) {
+        Ok(matches) => matches,
+        Err(error) => {
+            tracing::error!(%error, "the retained Unix original metadata could not be verified");
+            return Err(temporary.recovery_required());
+        }
+    };
+    if published != temporary_generation
+        || retained_original != original_generation
+        || !published_security_matches
+        || !original_security_matches
     {
         return Err(temporary.recovery_required());
     }
     temporary.finish();
-    Ok(published.expect("the published generation was validated"))
+    Ok(published)
 }
 
 #[cfg(windows)]
@@ -2102,6 +2134,54 @@ mod tests {
             0o600
         );
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn security_metadata_change_after_publication_requires_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("published-security-metadata-conflict");
+        let path = directory.file("notes.md", "loaded\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let loaded = load(&path, bounds()).unwrap();
+        let target = path.clone();
+        AFTER_SAVE_REPLACEMENT.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+            }));
+        });
+
+        let failure = save(
+            &path,
+            b"editor\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap_err();
+
+        assert_eq!(failure, SaveFailure::RecoveryRequired);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let staging = fs::read_dir(&directory.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "stage")
+            })
+            .expect("private recovery directory");
+        assert_eq!(
+            fs::read_to_string(staging.join("original")).unwrap(),
+            "loaded\n"
+        );
+        assert_eq!(
+            fs::read_to_string(staging.join("prepared")).unwrap(),
+            "editor\n"
+        );
     }
 
     #[cfg(unix)]
