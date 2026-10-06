@@ -1326,6 +1326,20 @@ multi-day behavior, native presentation, real persistent-shell reconnect,
 WARP thread-stack attribution and complete GPU resource accounting remain
 manual/native evidence under #297/#282. It never operates installed sessions.
 See `validation/terminal-performance/README.md#bounded-six-session-aging`.
+The additive short whole-owner loop (default three, bounded to eight rounds)
+also drops the reporting instance before each held process-resource window.
+Device-free automated regressions cover six-session backlog retirement and
+stale clipboard completion/cancel after generation retirement; checker tests
+reject incomplete new lifecycle, submission and process-memory declarations.
+New Windows captures require OS-maintained lifetime peak commitment
+(`PeakPagefileUsage`), not only sampled private bytes/peak working set, and a
+final acknowledged process sample. Current caches, temporary CPU pixel-oracle
+arrays and completed host submissions are classified separately; neither these
+nor vacant registry slots count driver allocations or queued/in-flight bytes.
+The implementation has deterministic automated coverage; executing the revised
+offscreen probe on the cumulative source in an exclusive runtime interval,
+native device recovery and multi-day resource attribution remain qualification
+work. No process-resource acceptance cap or native/manual row is closed.
 The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
 normalized pixels, without reproducing the multi-day plateau. Moderate process
 memory growth remains an observation requiring separate attribution; no

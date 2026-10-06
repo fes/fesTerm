@@ -181,6 +181,13 @@ retained-prefix/atlas counters and sampled process resources are kept distinct.
 Public wgpu registry checkpoints and separate renderer/context teardown
 observations distinguish retained handles from process residency; vacant slots
 are not in-flight allocations and these counters are not total GPU bytes.
+Additive short whole-owner rounds drop even the reporting instance before
+held resource windows. OS-maintained lifetime commitment peaks and a final
+supervisor sample preserve transient commitment missed by 500ms observations;
+they are not per-phase peaks. Device-free regressions guard six-session backlog
+retirement and stale clipboard completion/cancellation across generations.
+Current cache sizes, temporary CPU oracle arrays and completed host submissions
+stay distinct from unmeasured driver-private/queued/in-flight bytes.
 `FrameDiagnostics.dirty_rows` is UI-cache work, not GPU damage. No notifier,
 production cadence, terminal ownership or queue policy changes are involved.
 This is not a multi-day reproducer, real persistent-shell reconnect, native
