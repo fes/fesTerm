@@ -591,6 +591,19 @@ existing Markdown rendering stays out of scope.
   report content-free refusals. Native input/IME, focus/caret, narrow-pane
   usability and screen-reader delivery remain `CP-15`; transient allocation
   peaks and allocator fragmentation are not certified by these tests.
+- **Vi motion refinement:** `EDIT-07` adds
+  `vi_local_motion_large_ascii_avoids_full_indexes`,
+  `vi_local_motion_large_unicode_avoids_full_indexes`,
+  `vi_local_motion_repeat_diff_avoids_char_arrays`,
+  `vi_local_motion_matches_indexed_motion_oracle`,
+  `vi_local_motion_engine_churn_matches_indexed_path_and_retires_fallback`,
+  `vi_local_motion_repeat_diff_matches_char_array_oracle` and
+  `vi_local_motion_empty_line_count_remains_bounded`. Actual construction
+  capacities and instrumented local scan bytes cover Normal motions/counts;
+  frozen scalar oracles and mixed-mode/repeat/recording churn preserve UTF-8,
+  caret, action and state semantics. The fallback stays keystroke-local; no
+  revision cache or new retained owner. Native CP-15 responsiveness/IME,
+  fragmentation/RSS and #297 conclusions remain separate.
 - **Native/manual evidence required:** a new manual scenario registered with the
   implementation, covering real watcher behaviour, atomic replacement,
   permission preservation, and remote disconnect/reconnect on each platform.
