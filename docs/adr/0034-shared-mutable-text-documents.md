@@ -209,7 +209,9 @@ Replacement is write-to-temporary-then-rename in the same directory. Before
 any document bytes are written, the Unix staging directory has inherited
 access/default ACLs cleared and is verified as mode `0700`; each Unix payload
 and recovery file likewise has inherited ACLs cleared and is verified as mode
-`0600`. Windows uses protected current-user-only DACLs. Unix writes and flushes
+`0600`. Windows reapplies and verifies a protected one-ACE current-user DACL
+through the exact staging handle before creating any file, and re-privatizes a
+prepared payload before retaining it after failed publication. Unix writes and flushes
 while the temporary remains private, then copies the existing target's owner,
 group, mode and ACL from verified file handles and durably flushes that
 metadata before replacement. Windows applies and verifies the captured owner,

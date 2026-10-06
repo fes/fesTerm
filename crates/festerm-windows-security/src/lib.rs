@@ -21,25 +21,28 @@ mod imp {
 
     use windows_sys::Win32::{
         Foundation::{
-            CloseHandle, GetLastError, SetHandleInformation, GENERIC_ALL, GENERIC_READ, HANDLE,
-            HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+            CloseHandle, GetLastError, LocalFree, SetHandleInformation, ERROR_SUCCESS, GENERIC_ALL,
+            GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
         },
         Security::{
-            AddAccessAllowedAceEx, EqualSid, GetKernelObjectSecurity, GetLengthSid,
-            GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
-            SetKernelObjectSecurity, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-            SetTokenInformation, TokenDefaultDacl, TokenUser, ACL, ACL_REVISION,
-            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-            SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT,
-            TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
+            AclSizeInformation, AddAccessAllowedAceEx,
+            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            EqualSid, GetAce, GetAclInformation, GetKernelObjectSecurity, GetLengthSid,
+            GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl,
+            InitializeSecurityDescriptor, SetKernelObjectSecurity, SetSecurityDescriptorControl,
+            SetSecurityDescriptorDacl, SetTokenInformation, TokenDefaultDacl, TokenUser,
+            ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
+            GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+            SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             CreateDirectoryW, CreateFileW, FileBasicInfo, FileRenameInfoEx,
             GetFileInformationByHandle, GetFinalPathNameByHandleW, SetFileInformationByHandle,
             BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_NAME_NORMALIZED, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, OPEN_EXISTING, VOLUME_NAME_DOS,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_NORMALIZED, FILE_RENAME_INFO,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, VOLUME_NAME_DOS,
         },
         System::{
             Console::{
@@ -50,6 +53,21 @@ mod imp {
             },
         },
     };
+
+    #[cfg(test)]
+    thread_local! {
+        static AFTER_PRIVATE_DIRECTORY_CREATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    fn after_private_directory_creation() {
+        #[cfg(test)]
+        AFTER_PRIVATE_DIRECTORY_CREATION.with(|slot| {
+            if let Some(hook) = slot.borrow_mut().take() {
+                hook();
+            }
+        });
+    }
 
     /// Restores the process token's original default DACL and closes the token.
     pub struct DefaultDaclGuard {
@@ -151,6 +169,126 @@ mod imp {
                 "prepared Windows security metadata did not match its source",
             ))
         }
+    }
+
+    /// Replaces an object's DACL with one protected full-access ACE for the
+    /// current user and verifies the exact result through the same handle.
+    pub fn restrict_to_current_user(file: &File) -> io::Result<()> {
+        let mut token = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let user = token_information(token.as_raw_handle(), TokenUser)?;
+        let token_user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+        let sid_length = unsafe { GetLengthSid(token_user.User.Sid) };
+        if sid_length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let acl_bytes = mem::size_of::<ACL>() + mem::size_of::<ACCESS_ALLOWED_ACE>()
+            - mem::size_of::<u32>()
+            + sid_length as usize;
+        let mut acl_storage = vec![0usize; acl_bytes.div_ceil(mem::size_of::<usize>())];
+        let acl = acl_storage.as_mut_ptr().cast::<ACL>();
+        if unsafe { InitializeAcl(acl, acl_bytes as u32, ACL_REVISION) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            AddAccessAllowedAceEx(acl, ACL_REVISION, 0, FILE_ALL_ACCESS, token_user.User.Sid)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut descriptor = SECURITY_DESCRIPTOR::default();
+        if unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) } == 0
+            || unsafe { SetSecurityDescriptorDacl((&raw mut descriptor).cast(), 1, acl, 0) } == 0
+            || unsafe {
+                SetSecurityDescriptorControl(
+                    (&raw mut descriptor).cast(),
+                    SE_DACL_PROTECTED,
+                    SE_DACL_PROTECTED,
+                )
+            } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            SetKernelObjectSecurity(
+                file.as_raw_handle() as HANDLE,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                (&raw mut descriptor).cast(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if current_user_only_dacl(file, token_user.User.Sid)? {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "object DACL is not protected current-user-only access",
+            ))
+        }
+    }
+
+    fn current_user_only_dacl(file: &File, user_sid: *mut core::ffi::c_void) -> io::Result<bool> {
+        const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+        let mut dacl = ptr::null_mut();
+        let mut descriptor = ptr::null_mut();
+        let status = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &raw mut dacl,
+                ptr::null_mut(),
+                &raw mut descriptor,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        let verified = (|| {
+            if dacl.is_null() {
+                return false;
+            }
+            let mut control = 0;
+            let mut revision = 0;
+            if unsafe {
+                GetSecurityDescriptorControl(descriptor, &raw mut control, &raw mut revision)
+            } == 0
+                || control & SE_DACL_PROTECTED == 0
+            {
+                return false;
+            }
+            let mut information = ACL_SIZE_INFORMATION::default();
+            if unsafe {
+                GetAclInformation(
+                    dacl,
+                    (&raw mut information).cast(),
+                    mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                    AclSizeInformation,
+                )
+            } == 0
+                || information.AceCount != 1
+            {
+                return false;
+            }
+            let mut ace = ptr::null_mut();
+            if unsafe { GetAce(dacl, 0, &raw mut ace) } == 0 {
+                return false;
+            }
+            let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+            ace.Header.AceType == ACCESS_ALLOWED_ACE_TYPE
+                && ace.Mask == FILE_ALL_ACCESS
+                && unsafe { EqualSid((&raw const ace.SidStart).cast_mut().cast(), user_sid) } != 0
+        })();
+        let _ = unsafe { LocalFree(descriptor) };
+        Ok(verified)
     }
 
     impl DefaultDaclGuard {
@@ -370,7 +508,7 @@ mod imp {
     }
 
     /// Creates a directory with a protected current-user-only DACL.
-    pub fn create_current_user_only_directory(directory: &File, name: &Path) -> io::Result<()> {
+    pub fn create_current_user_only_directory(directory: &File, name: &Path) -> io::Result<File> {
         if name.components().count() != 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -429,10 +567,26 @@ mod imp {
         };
         let path = wide_path(&directory_child_path(directory, name)?);
         if unsafe { CreateDirectoryW(path.as_ptr(), &raw const attributes) } == 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
+            return Err(io::Error::last_os_error());
         }
+        after_private_directory_creation();
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                FILE_ALL_ACCESS,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let file = unsafe { File::from_raw_handle(handle) };
+        restrict_to_current_user(&file)?;
+        Ok(file)
     }
 
     /// Atomically publishes an open file under a target directory without
@@ -695,14 +849,36 @@ mod imp {
         }
 
         #[test]
-        fn private_creation_and_replacement_keep_the_current_user_only_dacl() {
+        fn substituted_private_directory_is_restricted_before_return() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
-            create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
-                .unwrap();
+            let staging = directory.0.join("private.stage");
+            let stolen = directory.0.join("stolen.stage");
+            AFTER_PRIVATE_DIRECTORY_CREATION.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move || {
+                    fs::rename(&staging, &stolen).unwrap();
+                    fs::create_dir(&staging).unwrap();
+                }));
+            });
+
+            let staging =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+
+            assert_current_user_only_dacl(&staging);
+            assert!(directory.0.join("stolen.stage").is_dir());
+        }
+
+        #[test]
+        fn private_creation_and_conditional_publication_keep_the_current_user_only_dacl() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let staging_handle =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
             let staging = TemporaryDirectory(directory.0.join("private.stage"));
-            let staging_handle = staging.handle();
             assert_current_user_only_dacl(&staging_handle);
+            restrict_to_current_user(&staging_handle).unwrap();
             let mut unpublished =
                 create_current_user_only_file(&staging_handle, Path::new("unpublished.tmp"))
                     .unwrap();
@@ -813,6 +989,6 @@ mod imp {
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     disable_std_handle_inheritance, open_file_no_reparse, open_file_no_reparse_for_rename,
-    rename_file_noreplace, restrict_default_dacl_to_current_user, security_metadata,
-    security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
+    rename_file_noreplace, restrict_default_dacl_to_current_user, restrict_to_current_user,
+    security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
 };

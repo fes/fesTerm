@@ -810,7 +810,7 @@ impl<'a> TemporaryFile<'a> {
                 }
             }
             #[cfg(windows)]
-            {
+            let staging = {
                 let root = directory
                     .try_clone()
                     .map(cap_std::fs::Dir::into_std_file)
@@ -819,11 +819,12 @@ impl<'a> TemporaryFile<'a> {
                     &root,
                     &staging_directory,
                 ) {
-                    Ok(()) => {}
+                    Ok(staging) => cap_std::fs::Dir::from_std_file(staging),
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => return Err(classify_write_error(error)),
                 }
-            }
+            };
+            #[cfg(unix)]
             let staging = directory
                 .open_dir(&staging_directory)
                 .map_err(classify_write_error)?;
@@ -993,6 +994,16 @@ impl<'a> TemporaryFile<'a> {
                     path = %self.staging_directory.display(),
                     %error,
                     "a retained save recovery file could not be restricted to the current user"
+                );
+            }
+        }
+        #[cfg(windows)]
+        if let Some(file) = &self.file {
+            if let Err(error) = festerm_windows_security::restrict_to_current_user(file) {
+                tracing::error!(
+                    path = %self.staging_directory.display(),
+                    %error,
+                    "a retained Windows save recovery file could not be restricted to the current user"
                 );
             }
         }

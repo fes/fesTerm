@@ -56,8 +56,9 @@ keep FIFOs from pinning a worker waiting for a writer.
 
 The same review found that save temporaries received bytes before their access
 metadata was secured. Save now clears inherited Unix staging/file ACLs and
-verifies `0700`/`0600`, or creates a protected current-user-only Windows DACL,
-before writing. Unix restores
+verifies `0700`/`0600`; Windows reapplies and verifies a protected one-ACE
+current-user DACL through the exact reopened staging handle before writing and
+before retaining a failed prepared payload. Unix restores
 the destination owner, group, mode, ACL and xattrs from verified handles after
 the durable content write; Windows applies and verifies the original owner,
 group, DACL and attributes on the prepared file before publication; a new target remains private. Temporary
