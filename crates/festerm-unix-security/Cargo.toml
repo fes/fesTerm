@@ -9,6 +9,4 @@ description = "Narrow Unix file-security and atomic-publication support for fesT
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
 xattr = "1.6"

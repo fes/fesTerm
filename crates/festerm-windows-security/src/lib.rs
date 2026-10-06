@@ -25,15 +25,19 @@ mod imp {
             GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
         },
         Security::{
-            AddAccessAllowedAceEx, EqualSid, GetLengthSid, GetTokenInformation, InitializeAcl,
-            InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-            SetTokenInformation, TokenDefaultDacl, TokenUser, ACL, ACL_REVISION,
-            SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT,
-            TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
+            AddAccessAllowedAceEx, EqualSid, GetKernelObjectSecurity, GetLengthSid,
+            GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
+            SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetTokenInformation,
+            TokenDefaultDacl, TokenUser, ACL, ACL_REVISION, DACL_SECURITY_INFORMATION,
+            GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL,
+            TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
-            CreateFileW, GetFinalPathNameByHandleW, ReplaceFileW, CREATE_NEW, FILE_ALL_ACCESS,
-            FILE_ATTRIBUTE_NORMAL, FILE_NAME_NORMALIZED, VOLUME_NAME_DOS,
+            CreateDirectoryW, CreateFileW, FileRenameInfoEx, GetFileInformationByHandle,
+            GetFinalPathNameByHandleW, ReplaceFileW, SetFileInformationByHandle,
+            BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
+            FILE_NAME_NORMALIZED, FILE_RENAME_INFO, VOLUME_NAME_DOS,
         },
         System::{
             Console::{
@@ -50,6 +54,61 @@ mod imp {
         token: HANDLE,
         original: Vec<usize>,
         restored: bool,
+    }
+
+    /// Access-control and attribute metadata that replacement must preserve.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct SecurityMetadata {
+        descriptor: Vec<u8>,
+        attributes: u32,
+    }
+
+    /// Snapshots owner, group, DACL, and file attributes through an open handle.
+    pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
+        const INFORMATION: u32 =
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        const MAX_DESCRIPTOR_SIZE: u32 = 8 * 1024 * 1024;
+
+        let handle = file.as_raw_handle() as HANDLE;
+        let mut required = 0;
+        let _ = unsafe {
+            GetKernelObjectSecurity(handle, INFORMATION, ptr::null_mut(), 0, &raw mut required)
+        };
+        if required == 0 || required > MAX_DESCRIPTOR_SIZE {
+            return Err(if required == 0 {
+                io::Error::last_os_error()
+            } else {
+                io::Error::from(io::ErrorKind::InvalidData)
+            });
+        }
+        let mut descriptor = vec![0u8; required as usize];
+        if unsafe {
+            GetKernelObjectSecurity(
+                handle,
+                INFORMATION,
+                descriptor.as_mut_ptr().cast(),
+                required,
+                &raw mut required,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        descriptor.truncate(required as usize);
+
+        let mut information = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(handle, &raw mut information) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(SecurityMetadata {
+            descriptor,
+            attributes: information.dwFileAttributes,
+        })
+    }
+
+    /// Reports whether a handle still has the captured security metadata.
+    pub fn security_metadata_matches(file: &File, expected: &SecurityMetadata) -> io::Result<bool> {
+        security_metadata(file).map(|current| current == *expected)
     }
 
     impl DefaultDaclGuard {
@@ -147,6 +206,7 @@ mod imp {
                 "the private file name must be one path component",
             ));
         }
+
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
             return Err(io::Error::last_os_error());
@@ -202,7 +262,7 @@ mod imp {
         let handle = unsafe {
             CreateFileW(
                 wide.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
+                GENERIC_READ | GENERIC_WRITE | DELETE,
                 0,
                 &raw const attributes,
                 CREATE_NEW,
@@ -214,6 +274,72 @@ mod imp {
             Err(io::Error::last_os_error())
         } else {
             Ok(unsafe { File::from_raw_handle(handle) })
+        }
+    }
+
+    /// Creates a directory with a protected current-user-only DACL.
+    pub fn create_current_user_only_directory(directory: &File, name: &Path) -> io::Result<()> {
+        if name.components().count() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the private directory name must be one path component",
+            ));
+        }
+        let mut token = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let user = token_information(token.as_raw_handle(), TokenUser)?;
+        let token_user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+        let sid_length = unsafe { GetLengthSid(token_user.User.Sid) };
+        if sid_length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let acl_bytes = mem::size_of::<ACL>()
+            + mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>()
+            - mem::size_of::<u32>()
+            + sid_length as usize;
+        let mut acl_storage = vec![0usize; acl_bytes.div_ceil(mem::size_of::<usize>())];
+        let acl = acl_storage.as_mut_ptr().cast::<ACL>();
+        if unsafe { InitializeAcl(acl, acl_bytes as u32, ACL_REVISION) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            AddAccessAllowedAceEx(acl, ACL_REVISION, 0, FILE_ALL_ACCESS, token_user.User.Sid)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut descriptor = SECURITY_DESCRIPTOR::default();
+        if unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe { SetSecurityDescriptorDacl((&raw mut descriptor).cast(), 1, acl, 0) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            SetSecurityDescriptorControl(
+                (&raw mut descriptor).cast(),
+                SE_DACL_PROTECTED,
+                SE_DACL_PROTECTED,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: (&raw mut descriptor).cast(),
+            bInheritHandle: 0,
+        };
+        let path = wide_path(&directory_child_path(directory, name)?);
+        if unsafe { CreateDirectoryW(path.as_ptr(), &raw const attributes) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
         }
     }
 
@@ -232,13 +358,86 @@ mod imp {
         let backup = backup
             .map(|backup| directory_child_path(directory, backup).map(|path| wide_path(&path)))
             .transpose()?;
+        replace_paths(&replacement, &target, backup.as_deref())
+    }
+
+    /// Replaces a target using a replacement held beneath a separately retained
+    /// directory capability.
+    pub fn replace_file_preserving_security_from(
+        replacement_directory: &File,
+        replacement: &Path,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        let replacement = wide_path(&directory_child_path(replacement_directory, replacement)?);
+        let target = wide_path(&directory_child_path(target_directory, target)?);
+        replace_paths(&replacement, &target, None)
+    }
+
+    /// Atomically publishes an open file under a target directory without
+    /// replacing an existing target.
+    pub fn rename_file_noreplace(
+        source: &File,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        if target.components().next().is_none()
+            || target
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the file name must stay beneath the directory",
+            ));
+        }
+        let target: Vec<u16> = target.as_os_str().encode_wide().collect();
+        let header = mem::offset_of!(FILE_RENAME_INFO, FileName);
+        let name_bytes = target
+            .len()
+            .checked_mul(mem::size_of::<u16>())
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let size = header
+            .checked_add(name_bytes as usize)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let mut storage = vec![0usize; size.div_ceil(mem::size_of::<usize>())];
+        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        unsafe {
+            (*information).Anonymous.Flags = 0;
+            (*information).RootDirectory = target_directory.as_raw_handle() as HANDLE;
+            (*information).FileNameLength = name_bytes;
+            ptr::copy_nonoverlapping(
+                target.as_ptr(),
+                ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
+                target.len(),
+            );
+        }
+        let renamed = unsafe {
+            SetFileInformationByHandle(
+                source.as_raw_handle() as HANDLE,
+                FileRenameInfoEx,
+                information.cast(),
+                size as u32,
+            )
+        };
+        if renamed == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn replace_paths(
+        replacement: &[u16],
+        target: &[u16],
+        backup: Option<&[u16]>,
+    ) -> io::Result<()> {
         let replaced = unsafe {
             ReplaceFileW(
                 target.as_ptr(),
                 replacement.as_ptr(),
-                backup
-                    .as_ref()
-                    .map_or(ptr::null(), |backup| backup.as_ptr()),
+                backup.map_or(ptr::null(), |backup| backup.as_ptr()),
                 0,
                 ptr::null(),
                 ptr::null(),
@@ -252,10 +451,14 @@ mod imp {
     }
 
     fn directory_child_path(directory: &File, name: &Path) -> io::Result<PathBuf> {
-        if name.components().count() != 1 {
+        if name.components().next().is_none()
+            || name
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "the file name must be one path component",
+                "the file name must stay beneath the directory",
             ));
         }
         let handle = directory.as_raw_handle();
@@ -456,38 +659,69 @@ mod imp {
         fn private_creation_and_replacement_keep_the_current_user_only_dacl() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
+            create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                .unwrap();
+            let staging = TemporaryDirectory(directory.0.join("private.stage"));
+            let staging_handle = staging.handle();
+            assert_current_user_only_dacl(&staging_handle);
+            let mut unpublished =
+                create_current_user_only_file(&staging_handle, Path::new("unpublished.tmp"))
+                    .unwrap();
+            unpublished.write_all(b"new").unwrap();
+            unpublished.sync_all().unwrap();
+            rename_file_noreplace(&unpublished, &directory_handle, Path::new("published.md"))
+                .unwrap();
+            assert_eq!(fs::read(directory.0.join("published.md")).unwrap(), b"new");
+
+            let collision =
+                create_current_user_only_file(&staging_handle, Path::new("collision.tmp")).unwrap();
+            assert!(rename_file_noreplace(
+                &collision,
+                &directory_handle,
+                Path::new("published.md")
+            )
+            .is_err());
+            assert_eq!(fs::read(directory.0.join("published.md")).unwrap(), b"new");
+
             let mut target =
                 create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
             target.write_all(b"before").unwrap();
             target.sync_all().unwrap();
             assert_current_user_only_dacl(&target);
+            let target_security = security_metadata(&target).unwrap();
             drop(target);
 
-            fs::write(directory.0.join("replacement.tmp"), b"after").unwrap();
+            let mut replacement =
+                create_current_user_only_file(&staging_handle, Path::new("replacement.tmp"))
+                    .unwrap();
+            replacement.write_all(b"after").unwrap();
+            replacement.sync_all().unwrap();
+            drop(replacement);
             replace_file_preserving_security(
                 &directory_handle,
-                Path::new("replacement.tmp"),
+                Path::new("private.stage/replacement.tmp"),
                 Path::new("target.md"),
-                Some(Path::new("backup.md")),
+                Some(Path::new("private.stage/backup.md")),
             )
             .unwrap();
 
             let target = File::open(directory.0.join("target.md")).unwrap();
             assert_current_user_only_dacl(&target);
+            assert!(security_metadata_matches(&target, &target_security).unwrap());
             assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"after");
-            assert_eq!(fs::read(directory.0.join("backup.md")).unwrap(), b"before");
+            assert_eq!(fs::read(staging.0.join("backup.md")).unwrap(), b"before");
 
             replace_file_preserving_security(
                 &directory_handle,
-                Path::new("backup.md"),
+                Path::new("private.stage/backup.md"),
                 Path::new("target.md"),
-                Some(Path::new("rollback.md")),
+                Some(Path::new("private.stage/rollback.md")),
             )
             .unwrap();
             let target = File::open(directory.0.join("target.md")).unwrap();
             assert_current_user_only_dacl(&target);
             assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"before");
-            assert_eq!(fs::read(directory.0.join("rollback.md")).unwrap(), b"after");
+            assert_eq!(fs::read(staging.0.join("rollback.md")).unwrap(), b"after");
         }
 
         fn assert_current_user_only_dacl(file: &File) {
@@ -554,6 +788,8 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{
-    create_current_user_only_file, disable_std_handle_inheritance,
-    replace_file_preserving_security, restrict_default_dacl_to_current_user, DefaultDaclGuard,
+    create_current_user_only_directory, create_current_user_only_file,
+    disable_std_handle_inheritance, rename_file_noreplace, replace_file_preserving_security,
+    replace_file_preserving_security_from, restrict_default_dacl_to_current_user,
+    security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
 };

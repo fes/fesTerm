@@ -106,11 +106,16 @@ The editor never resolves a divergence silently.
   replaced only after access metadata is secured. Unix restores target
   owner/group/mode/ACL metadata through verified handles before replacement;
   Windows preserves an existing target's DACL and attributes with
-  `ReplaceFileW`. A new destination remains owner-only. Unix atomic exchange
-  and Windows backup replacement retain the displaced target until both old
-  and new generations are verified; a late concurrent change is rolled back
-  and reported as Conflict. Access-metadata or publication-identity failure is
-  a failed save, never a best-effort success.
+  `ReplaceFileW`. A new destination remains owner-only. Prepared files remain
+  beneath a private same-filesystem staging directory, with an independently
+  written private recovery copy before publication. Unix atomic exchange retains
+  the displaced target; Windows retains a separately copied original before
+  `ReplaceFileW`. Old/new generations, the Unix owner/group/mode/ACL/xattr
+  snapshot, and the Windows owner/group/DACL/attribute snapshot are verified. A late or ambiguous change
+  is never deleted by pathname rollback: every recoverable version remains in
+  the private `.festerm-save-*.stage` directory and the editor reports manual
+  recovery. Access-metadata or publication-identity failure is a failed save,
+  never a best-effort success.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit

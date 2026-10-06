@@ -212,16 +212,26 @@ temporary remains private, then copies the existing target's owner, group,
 mode and ACL from verified file handles and durably flushes that metadata
 before replacement. Windows uses `ReplaceFileW` for an existing target so its
 attributes and DACL survive; a new Save As target keeps the private DACL.
-Names are cryptographically unpredictable and verified against the open
-temporary handle. Publication atomically exchanges the prepared and current
-files on Unix or asks `ReplaceFileW` for a Windows backup, then validates both
-the published generation and displaced target generation. A mismatch is
-atomically rolled back, so a target that changed after the initial conflict
-check is retained rather than overwritten. Creation and publication stay tied
-to the retained directory capability, and any identity or security-metadata
-failure refuses the save rather than silently weakening access. Where a remote
-server cannot rename over an existing file, the fallback is named explicitly
-in the design document
+Names are cryptographically unpredictable and live beneath an owner-only
+staging directory on the destination filesystem. The prepared inode is
+verified through both its handle and staging name, and an independently
+written private recovery copy exists before publication. Publication atomically
+exchanges the prepared and current files on Unix. Windows first copies the
+verified original into the private staging directory, then calls `ReplaceFileW`
+without a pathname backup. The published generation and retained-original
+generation are validated after publication. Unix owner/group/mode/ACL/xattr
+snapshots and Windows owner/group/DACL/attribute snapshots are revalidated
+immediately before publication and against the published target afterward. A mismatch never triggers an unconditional second
+pathname replacement: the later visible winner remains visible where one
+exists, and prepared/displaced versions remain in the private
+`.festerm-save-*.stage` directory with a visible manual-recovery error. This
+also covers documented partial `ReplaceFileW` failures; a safely identifiable
+missing target is restored without deleting any recovery copy, while
+ambiguous arrangements are retained. Creation and publication stay tied to
+the retained directory capability, and any identity or security-metadata
+failure refuses the save rather than silently weakening access. Where a
+remote server cannot rename over an existing file, the fallback is named
+explicitly in the design document
 and surfaced to the user; fesTerm never truncates the only known-good copy
 before a complete replacement exists unless the user has explicitly accepted
 that server's limitation. An interrupted write never reports `Saved`.
@@ -568,11 +578,13 @@ implementation rather than left contradicting it.
 origin and trust boundary that opened the file; no new credential path, no new
 network surface, and no document content in logs, diagnostics, or workspace
 metadata. Temporary files are created private before receiving content. Unix
-owner/group/mode/ACL metadata is restored through verified handles only after
-the durable content write; Windows replacement retains the destination DACL
+owner/group/mode/ACL/xattr metadata is restored through verified handles only
+after the durable content write and while the file remains beneath an
+owner-only staging directory; Windows replacement retains the destination DACL
 rather than replacing it with directory-inherited access. Unpredictable names,
-pre-publication identity checks and post-exchange displaced-generation checks
-prevent a substituted temporary or late target replacement from being accepted.
+pre-publication identity/security snapshots, a prepared recovery link and
+post-exchange displaced-generation checks prevent a substituted temporary or
+late target replacement from being accepted or deleted.
 
 **Platform.** Watcher behaviour, atomic replacement, permission and ownership
 preservation, and file-identity reporting differ across macOS, Windows, and

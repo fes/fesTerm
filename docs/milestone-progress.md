@@ -57,16 +57,21 @@ keep FIFOs from pinning a worker waiting for a writer.
 The same review found that save temporaries received bytes before their access
 metadata was secured. Save now creates the intermediate file as Unix `0600` or
 with a protected current-user-only Windows DACL before writing. Unix restores
-the destination owner, group, mode and ACL from verified handles after the
-durable content write; Windows uses `ReplaceFileW` so an existing target's DACL
-and attributes survive, while a new target remains private. Temporary names use
-OS randomness and are checked against their open handles. Unix exchange and
-Windows backup replacement retain the displaced file until both generations
-are verified, rolling back a late target conflict or substituted temporary.
-Deterministic Unix coverage observes the empty private temporary before the
-write, preserves an extended ACL, substitutes a temporary name, and changes the
-target at publication. Native Windows coverage inspects the protected one-ACE
-DACL through replacement and rollback.
+the destination owner, group, mode, ACL and xattrs from verified handles after
+the durable content write; Windows uses `ReplaceFileW` so an existing target's
+DACL and attributes survive, while a new target remains private. Temporary
+names use OS randomness beneath an owner-only same-filesystem staging directory
+and are checked against their open handles. Unix exchange retains the displaced
+file while Windows privately copies the verified original before
+`ReplaceFileW`; published/original generations, the Unix security snapshot,
+and the Windows owner/group/DACL/attribute snapshot are verified. A prepared copy and private displaced/original copy
+remain on any late, ambiguous or partial failure; no unconditional pathname
+rollback can delete a later winner. Deterministic Unix coverage observes the
+empty private temporary before the write, preserves an extended ACL, detects
+mode/xattr races, substitutes the staging name, and changes the target before
+and after publication. Native Windows coverage inspects the protected
+staging/file DACL and replacement metadata; helper coverage also exercises
+nested backup paths.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan

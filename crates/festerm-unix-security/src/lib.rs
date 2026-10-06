@@ -4,55 +4,137 @@
 
 #[cfg(unix)]
 mod imp {
-    use std::{fs::File, io, path::Path};
+    use std::{ffi::OsString, fs::File, io, os::unix::fs::MetadataExt, path::Path};
+    use xattr::FileExt;
+
+    const MAX_SECURITY_ATTRIBUTE_BYTES: usize = 8 * 1024 * 1024;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct SecurityMetadata {
+        uid: u32,
+        gid: u32,
+        mode: u32,
+        attributes: Vec<(OsString, Vec<u8>)>,
+        #[cfg(target_os = "macos")]
+        acl: Vec<u8>,
+    }
+
+    pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
+        let metadata = file.metadata()?;
+        let mut total = 0usize;
+        let mut attributes = file
+            .list_xattr()?
+            .map(|name| {
+                let value = file
+                    .get_xattr(&name)?
+                    .ok_or_else(|| io::Error::other("security attribute disappeared"))?;
+                total = total
+                    .checked_add(name.len())
+                    .and_then(|total| total.checked_add(value.len()))
+                    .ok_or_else(|| io::Error::other("security metadata is too large"))?;
+                if total > MAX_SECURITY_ATTRIBUTE_BYTES {
+                    return Err(io::Error::other("security metadata is too large"));
+                }
+                Ok((name, value))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        attributes.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(SecurityMetadata {
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            mode: metadata.mode() & 0o7777,
+            attributes,
+            #[cfg(target_os = "macos")]
+            acl: macos_acl(file)?,
+        })
+    }
+
+    pub fn security_metadata_matches(file: &File, expected: &SecurityMetadata) -> io::Result<bool> {
+        Ok(&security_metadata(file)? == expected)
+    }
+
+    pub fn make_private(file: &File) -> io::Result<()> {
+        use nix::sys::stat::{fchmod, Mode};
+
+        #[cfg(target_os = "linux")]
+        if file
+            .list_xattr()?
+            .any(|name| name == "system.posix_acl_access")
+        {
+            file.remove_xattr("system.posix_acl_access")?;
+        }
+        #[cfg(target_os = "macos")]
+        clear_macos_acl(file)?;
+        fchmod(file, Mode::from_bits_truncate(0o600)).map_err(io::Error::from)?;
+        let private = security_metadata(file)?;
+        if private.mode != 0o600 || {
+            #[cfg(target_os = "macos")]
+            {
+                !private.acl.is_empty()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            }
+        } {
+            return Err(io::Error::other(format!(
+                "could not make recovery file private: {private:?}"
+            )));
+        }
+        file.sync_all()
+    }
 
     #[cfg(target_os = "macos")]
-    pub fn preserve_security_metadata(original: &File, temporary: &File) -> io::Result<()> {
-        use std::os::{
-            fd::AsRawFd,
-            unix::fs::{MetadataExt, PermissionsExt},
-        };
+    pub fn preserve_security_metadata(
+        original: &File,
+        temporary: &File,
+    ) -> io::Result<SecurityMetadata> {
+        use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
 
+        let expected = security_metadata(original)?;
         let copied = unsafe {
             nix::libc::fcopyfile(
                 original.as_raw_fd(),
                 temporary.as_raw_fd(),
                 std::ptr::null_mut(),
-                nix::libc::COPYFILE_SECURITY,
+                nix::libc::COPYFILE_METADATA,
             )
         };
         if copied != 0 {
             return Err(io::Error::last_os_error());
         }
-        let expected = original.metadata()?;
         let actual = temporary.metadata()?;
-        if expected.uid() != actual.uid()
-            || expected.gid() != actual.gid()
-            || expected.permissions().mode() != actual.permissions().mode()
+        if expected.uid != actual.uid()
+            || expected.gid != actual.gid()
+            || expected.mode != actual.permissions().mode() & 0o7777
+            || !security_metadata_matches(original, &expected)?
+            || !security_metadata_matches(temporary, &expected)?
         {
             return Err(io::Error::other(
                 "security metadata changed while it was copied",
             ));
         }
-        temporary.sync_all()
+        temporary.sync_all()?;
+        Ok(expected)
     }
 
     #[cfg(target_os = "linux")]
-    pub fn preserve_security_metadata(original: &File, temporary: &File) -> io::Result<()> {
+    pub fn preserve_security_metadata(
+        original: &File,
+        temporary: &File,
+    ) -> io::Result<SecurityMetadata> {
         use nix::{
             sys::stat::{fchmod, Mode},
             unistd::{fchown, Gid, Uid},
         };
-        use std::{ffi::OsString, os::unix::fs::MetadataExt};
-        use xattr::FileExt;
 
-        let expected = original.metadata()?;
+        let expected = security_metadata(original)?;
         let actual = temporary.metadata()?;
-        if expected.uid() != actual.uid() || expected.gid() != actual.gid() {
+        if expected.uid != actual.uid() || expected.gid != actual.gid() {
             fchown(
                 temporary,
-                Some(Uid::from_raw(expected.uid())),
-                Some(Gid::from_raw(expected.gid())),
+                Some(Uid::from_raw(expected.uid)),
+                Some(Gid::from_raw(expected.gid)),
             )
             .map_err(io::Error::from)?;
         }
@@ -61,63 +143,127 @@ mod imp {
         for name in inherited {
             temporary.remove_xattr(&name)?;
         }
-        let attributes = original
-            .list_xattr()?
-            .map(|name| original.get_xattr(&name).map(|value| (name, value)))
-            .collect::<io::Result<Vec<(OsString, Option<Vec<u8>>)>>>()?;
-        for (name, value) in &attributes {
-            let value = value
-                .as_deref()
-                .ok_or_else(|| io::Error::other("security attribute disappeared"))?;
+        for (name, value) in &expected.attributes {
             temporary.set_xattr(name, value)?;
         }
         fchmod(
             temporary,
-            Mode::from_bits_truncate(expected.mode() as nix::libc::mode_t),
+            Mode::from_bits_truncate(expected.mode as nix::libc::mode_t),
         )
         .map_err(io::Error::from)?;
 
-        let actual = temporary.metadata()?;
-        if expected.uid() != actual.uid()
-            || expected.gid() != actual.gid()
-            || (expected.mode() & 0o7777) != (actual.mode() & 0o7777)
+        if !security_metadata_matches(original, &expected)?
+            || !security_metadata_matches(temporary, &expected)?
         {
             return Err(io::Error::other(
                 "security metadata changed while it was copied",
             ));
         }
-        let actual_attributes = temporary
-            .list_xattr()?
-            .map(|name| temporary.get_xattr(&name).map(|value| (name, value)))
-            .collect::<io::Result<Vec<(OsString, Option<Vec<u8>>)>>>()?;
-        if attributes.len() != actual_attributes.len()
-            || attributes
-                .iter()
-                .any(|attribute| !actual_attributes.contains(attribute))
-        {
-            return Err(io::Error::other(
-                "extended attributes changed while they were copied",
-            ));
-        }
-        temporary.sync_all()
+        temporary.sync_all()?;
+        Ok(expected)
     }
 
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-    pub fn preserve_security_metadata(_original: &File, _temporary: &File) -> io::Result<()> {
+    pub fn preserve_security_metadata(
+        _original: &File,
+        _temporary: &File,
+    ) -> io::Result<SecurityMetadata> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "exact security metadata preservation is unavailable on this platform",
         ))
     }
 
+    #[cfg(target_os = "macos")]
+    fn macos_acl(file: &File) -> io::Result<Vec<u8>> {
+        use std::{
+            ffi::c_void,
+            os::fd::{AsRawFd, RawFd},
+        };
+
+        type Acl = *mut c_void;
+        const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
+        unsafe extern "C" {
+            fn acl_get_fd_np(fd: RawFd, acl_type: i32) -> Acl;
+            fn acl_get_entry(acl: Acl, entry_id: i32, entry: *mut *mut c_void) -> i32;
+            fn acl_size(acl: Acl) -> isize;
+            fn acl_copy_ext(buffer: *mut c_void, acl: Acl, size: isize) -> isize;
+            fn acl_free(object: *mut c_void) -> i32;
+        }
+
+        let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED) };
+        if acl.is_null() {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(nix::libc::ENOENT) {
+                return Ok(Vec::new());
+            }
+            return Err(error);
+        }
+        let mut entry = std::ptr::null_mut();
+        let has_entry = unsafe { acl_get_entry(acl, 0, &raw mut entry) };
+        if has_entry <= 0 {
+            let freed = unsafe { acl_free(acl) };
+            if has_entry == 0 && freed == 0 {
+                return Ok(Vec::new());
+            }
+            return Err(io::Error::last_os_error());
+        }
+        let size = unsafe { acl_size(acl) };
+        if size < 0 || size as usize > MAX_SECURITY_ATTRIBUTE_BYTES {
+            let _ = unsafe { acl_free(acl) };
+            return Err(io::Error::other("ACL metadata is too large"));
+        }
+        let mut bytes = vec![0u8; size as usize];
+        let copied = unsafe { acl_copy_ext(bytes.as_mut_ptr().cast(), acl, size) };
+        let freed = unsafe { acl_free(acl) };
+        if copied < 0 || freed != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        bytes.truncate(copied as usize);
+        Ok(bytes)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clear_macos_acl(file: &File) -> io::Result<()> {
+        use std::{
+            ffi::c_void,
+            os::fd::{AsRawFd, RawFd},
+        };
+
+        type Acl = *mut c_void;
+        const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
+        unsafe extern "C" {
+            fn acl_init(count: i32) -> Acl;
+            fn acl_set_fd_np(fd: RawFd, acl: Acl, acl_type: i32) -> i32;
+            fn acl_free(object: *mut c_void) -> i32;
+        }
+
+        let acl = unsafe { acl_init(0) };
+        if acl.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let set = unsafe { acl_set_fd_np(file.as_raw_fd(), acl, ACL_TYPE_EXTENDED) };
+        let freed = unsafe { acl_free(acl) };
+        if set != 0 || freed != 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
     #[cfg(target_os = "linux")]
-    pub fn atomic_exchange(directory: &File, first: &Path, second: &Path) -> io::Result<()> {
+    pub fn atomic_exchange(
+        first_directory: &File,
+        first: &Path,
+        second_directory: &File,
+        second: &Path,
+    ) -> io::Result<()> {
         use nix::fcntl::{renameat2, RenameFlags};
 
         renameat2(
-            directory,
+            first_directory,
             first,
-            directory,
+            second_directory,
             second,
             RenameFlags::RENAME_EXCHANGE,
         )
@@ -125,13 +271,18 @@ mod imp {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn rename_noreplace(directory: &File, source: &Path, target: &Path) -> io::Result<()> {
+    pub fn rename_noreplace(
+        source_directory: &File,
+        source: &Path,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
         use nix::fcntl::{renameat2, RenameFlags};
 
         renameat2(
-            directory,
+            source_directory,
             source,
-            directory,
+            target_directory,
             target,
             RenameFlags::RENAME_NOREPLACE,
         )
@@ -139,17 +290,45 @@ mod imp {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn atomic_exchange(directory: &File, first: &Path, second: &Path) -> io::Result<()> {
-        renameatx(directory, first, second, nix::libc::RENAME_SWAP)
+    pub fn atomic_exchange(
+        first_directory: &File,
+        first: &Path,
+        second_directory: &File,
+        second: &Path,
+    ) -> io::Result<()> {
+        renameatx(
+            first_directory,
+            first,
+            second_directory,
+            second,
+            nix::libc::RENAME_SWAP,
+        )
     }
 
     #[cfg(target_os = "macos")]
-    pub fn rename_noreplace(directory: &File, source: &Path, target: &Path) -> io::Result<()> {
-        renameatx(directory, source, target, nix::libc::RENAME_EXCL)
+    pub fn rename_noreplace(
+        source_directory: &File,
+        source: &Path,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        renameatx(
+            source_directory,
+            source,
+            target_directory,
+            target,
+            nix::libc::RENAME_EXCL,
+        )
     }
 
     #[cfg(target_os = "macos")]
-    fn renameatx(directory: &File, source: &Path, target: &Path, flags: u32) -> io::Result<()> {
+    fn renameatx(
+        source_directory: &File,
+        source: &Path,
+        target_directory: &File,
+        target: &Path,
+        flags: u32,
+    ) -> io::Result<()> {
         use std::{
             ffi::CString,
             os::{fd::AsRawFd, unix::ffi::OsStrExt},
@@ -161,9 +340,9 @@ mod imp {
             .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
         let renamed = unsafe {
             nix::libc::renameatx_np(
-                directory.as_raw_fd(),
+                source_directory.as_raw_fd(),
                 source.as_ptr(),
-                directory.as_raw_fd(),
+                target_directory.as_raw_fd(),
                 target.as_ptr(),
                 flags,
             )
@@ -176,7 +355,12 @@ mod imp {
     }
 
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-    pub fn atomic_exchange(_directory: &File, _first: &Path, _second: &Path) -> io::Result<()> {
+    pub fn atomic_exchange(
+        _first_directory: &File,
+        _first: &Path,
+        _second_directory: &File,
+        _second: &Path,
+    ) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "atomic file exchange is unavailable on this platform",
@@ -184,7 +368,12 @@ mod imp {
     }
 
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-    pub fn rename_noreplace(_directory: &File, _source: &Path, _target: &Path) -> io::Result<()> {
+    pub fn rename_noreplace(
+        _source_directory: &File,
+        _source: &Path,
+        _target_directory: &File,
+        _target: &Path,
+    ) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "atomic no-replace rename is unavailable on this platform",
@@ -193,7 +382,10 @@ mod imp {
 }
 
 #[cfg(unix)]
-pub use imp::{atomic_exchange, preserve_security_metadata, rename_noreplace};
+pub use imp::{
+    atomic_exchange, make_private, preserve_security_metadata, rename_noreplace, security_metadata,
+    security_metadata_matches, SecurityMetadata,
+};
 
 #[cfg(test)]
 mod tests {
@@ -240,21 +432,47 @@ mod tests {
         fs::write(directory.path("second"), b"second").unwrap();
         let handle = directory.open();
 
-        atomic_exchange(&handle, Path::new("first"), Path::new("second")).unwrap();
+        atomic_exchange(&handle, Path::new("first"), &handle, Path::new("second")).unwrap();
         assert_eq!(fs::read(directory.path("first")).unwrap(), b"second");
         assert_eq!(fs::read(directory.path("second")).unwrap(), b"first");
 
         fs::write(directory.path("third"), b"third").unwrap();
-        rename_noreplace(&handle, Path::new("third"), Path::new("fourth")).unwrap();
+        rename_noreplace(&handle, Path::new("third"), &handle, Path::new("fourth")).unwrap();
         assert_eq!(fs::read(directory.path("fourth")).unwrap(), b"third");
         fs::write(directory.path("third"), b"replacement").unwrap();
         assert_eq!(
-            rename_noreplace(&handle, Path::new("third"), Path::new("fourth"))
+            rename_noreplace(&handle, Path::new("third"), &handle, Path::new("fourth"),)
                 .unwrap_err()
                 .kind(),
             std::io::ErrorKind::AlreadyExists
         );
         assert_eq!(fs::read(directory.path("fourth")).unwrap(), b"third");
+    }
+
+    #[test]
+    fn security_snapshot_detects_xattr_changes_and_private_reset() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use xattr::FileExt;
+
+        let directory = TemporaryDirectory::new();
+        let path = directory.path("metadata");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&path)
+            .unwrap();
+        file.set_xattr("user.festerm-security-test", b"before")
+            .unwrap();
+        let snapshot = security_metadata(&file).unwrap();
+
+        file.set_xattr("user.festerm-security-test", b"after")
+            .unwrap();
+
+        assert!(!security_metadata_matches(&file, &snapshot).unwrap());
+        make_private(&file).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[cfg(target_os = "linux")]
