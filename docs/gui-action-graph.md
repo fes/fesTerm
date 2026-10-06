@@ -708,6 +708,12 @@ row and offscreen byte/heading target remain live. Warm normal/narrow 400-sectio
 controls count actual layout requests and cloned-buffer capacities rather than
 cache access, with additional bounded metadata accounted separately. Focused
 CPU qualification does not close `MD-04`/`MD-06` native gates.
+Source/Outline dependency-font metadata admission must precede any clone:
+128 entries per map, 8192 cumulative owned String-capacity/custom-family-name
+bytes and 256 family-reference capacity slots. Overflow must drop the key and
+stale geometry, retain every ordinary live label and exact Copy, and recover
+cold then warm when valid definitions return. Borrowed comparison and temporary
+key-clone payloads are bounded/accounted separately from label layout work.
 The standalone viewer's shared outer-frame paint route must match the actual
 Preview/Source caller pixels at narrow/wide widths and 1/1.25x scale, retain live
 accessibility/response identities, and use ordinary fallback at reduced opacity.

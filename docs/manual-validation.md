@@ -506,6 +506,14 @@ labels, including dependency invalidation and overflow fallback. The actual
 widths while every row remains live. Cloned buffer capacities and additional
 geometry/key metadata are reported separately; they are not total allocator
 or process-memory evidence.
+Dependency-key admission now covers both Source and Outline: at most 128
+entries per font/family map, 8192 cumulative String-capacity/custom-family-name
+bytes and 256 family-reference capacity slots. Earlier 140/168 fixture byte
+observations did not prove those limits. CPU controls compare font-map/name/
+reference overflow, live Unicode Copy, cold recovery and exact-ceiling warm
+reuse with the ordinary renderer. Rejection releases the key/stale geometry
+without hiding text; key-clone capacities and invalidations are distinct from
+layout counters and no old/new cloned keys overlap within an owner.
 These preparation counters do not qualify native clipboard/screen-reader
 delivery, input-to-display latency or GPU drawing; those statuses remain pending.
 

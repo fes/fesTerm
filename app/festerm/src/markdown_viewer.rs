@@ -114,6 +114,9 @@ const MAX_PREPARED_OUTLINE_ROWS: usize = 4096;
 const MAX_PREPARED_SOURCE_JOBS: usize = 8192;
 const MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SOURCE_PREPARATION_QUERY_BYTES: usize = 4096;
+const MAX_GEOMETRY_FONT_MAP_ENTRIES: usize = 128;
+const MAX_GEOMETRY_FONT_NAME_BYTES: usize = 8 * 1024;
+const MAX_GEOMETRY_FONT_FAMILY_REFERENCES: usize = 256;
 /// Height reserved for the viewer's own footer, used only when the shared
 /// application status bar is hidden. Matches the status bar's own geometry
 /// so toggling it doesn't reflow the document.
@@ -1622,6 +1625,12 @@ impl SourcePreparation {
             probe.label_clone_payload_bytes = 0;
             probe.explicit_job_clones = 0;
             probe.explicit_clone_capacity_bytes = 0;
+            probe.geometry_key_resets = 0;
+            probe.geometry_key_clones = 0;
+            probe.geometry_metadata_rejections = 0;
+            probe.geometry_clone_string_capacity_bytes = 0;
+            probe.geometry_clone_family_vector_capacity_bytes = 0;
+            probe.geometry_clone_custom_family_name_bytes = 0;
             probe.observations.clear();
         }
     }
@@ -1630,25 +1639,56 @@ impl SourcePreparation {
         let width = ui.available_width();
         let pixels_per_point = ui.ctx().pixels_per_point();
         let font = FontId::monospace(CODE_TEXT_SIZE);
-        let valid = self.geometry_key.as_ref().is_some_and(|key| {
-            key.width == width
-                && key.pixels_per_point == pixels_per_point
-                && key.font == font
-                && ui.painter().fonts(|fonts| {
-                    key.definitions == *fonts.definitions() && key.options == *fonts.options()
+        let current = ui.painter().fonts(|fonts| {
+            geometry_font_metadata(fonts.definitions()).map(|_| {
+                self.geometry_key.as_ref().is_some_and(|key| {
+                    key.matches(
+                        width,
+                        pixels_per_point,
+                        &font,
+                        fonts.definitions(),
+                        *fonts.options(),
+                    )
                 })
+            })
         });
-        if !valid {
-            for prepared in self.jobs.values_mut() {
-                prepared.geometry = None;
+        if current == Some(true) {
+            return;
+        }
+        self.geometry_key = None;
+        for prepared in self.jobs.values_mut() {
+            prepared.geometry = None;
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.geometry_key_resets += 1;
+        }
+        let replacement = current.and_then(|_| {
+            ui.painter().fonts(|fonts| {
+                OutlineGeometryKey::admitted(
+                    width,
+                    pixels_per_point,
+                    font,
+                    fonts.definitions(),
+                    *fonts.options(),
+                    |definitions| {
+                        #[cfg(test)]
+                        if let Some(probe) = &mut self.probe {
+                            probe.record_geometry_definition_clone(definitions);
+                        }
+                        #[cfg(not(test))]
+                        let _ = definitions;
+                    },
+                )
+            })
+        });
+        if let Some(key) = replacement {
+            self.geometry_key = Some(key);
+        } else {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                probe.geometry_metadata_rejections += 1;
             }
-            self.geometry_key = Some(ui.painter().fonts(|fonts| OutlineGeometryKey {
-                width,
-                pixels_per_point,
-                font,
-                definitions: fonts.definitions().clone(),
-                options: *fonts.options(),
-            }));
         }
     }
 
@@ -1738,7 +1778,7 @@ impl SourcePreparation {
         let supported = *ui.layout() == egui::Layout::top_down(Align::Min)
             && ui.available_width().is_finite()
             && ui.available_width() > 0.0;
-        let geometry = (!ordinary && supported)
+        let geometry = (!ordinary && supported && self.geometry_key.is_some())
             .then(|| {
                 self.jobs
                     .get(&line_start)
@@ -1780,7 +1820,11 @@ impl SourcePreparation {
             probe.layouts += 1;
             probe.layout_text_bytes += job.text.len();
         }
-        if ordinary || !supported || !self.jobs.contains_key(&line_start) {
+        if ordinary
+            || !supported
+            || self.geometry_key.is_none()
+            || !self.jobs.contains_key(&line_start)
+        {
             #[cfg(test)]
             if let Some(probe) = &mut self.probe {
                 // The pinned Label unwraps/clones this shared job before its
@@ -1876,7 +1920,39 @@ struct SourcePreparationProbe {
     label_clone_payload_bytes: usize,
     explicit_job_clones: usize,
     explicit_clone_capacity_bytes: usize,
+    geometry_key_resets: usize,
+    geometry_key_clones: usize,
+    geometry_metadata_rejections: usize,
+    geometry_clone_string_capacity_bytes: usize,
+    geometry_clone_family_vector_capacity_bytes: usize,
+    geometry_clone_custom_family_name_bytes: usize,
     observations: Vec<SourceRowObservation>,
+}
+
+#[cfg(test)]
+impl SourcePreparationProbe {
+    fn record_geometry_definition_clone(&mut self, definitions: &egui::FontDefinitions) {
+        self.geometry_key_clones += 1;
+        self.geometry_clone_string_capacity_bytes += definitions
+            .font_data
+            .keys()
+            .chain(definitions.families.values().flatten())
+            .map(String::capacity)
+            .sum::<usize>();
+        self.geometry_clone_family_vector_capacity_bytes += definitions
+            .families
+            .values()
+            .map(|names| names.capacity() * std::mem::size_of::<String>())
+            .sum::<usize>();
+        self.geometry_clone_custom_family_name_bytes += definitions
+            .families
+            .keys()
+            .filter_map(|family| match family {
+                egui::FontFamily::Name(name) => Some(name.len()),
+                _ => None,
+            })
+            .sum::<usize>();
+    }
 }
 
 #[cfg(test)]
@@ -1906,13 +1982,129 @@ struct OutlinePreparation {
     probe: Option<OutlinePreparationProbe>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 struct OutlineGeometryKey {
     width: f32,
     pixels_per_point: f32,
     font: FontId,
     definitions: egui::FontDefinitions,
     options: egui::epaint::text::TextOptions,
+}
+
+impl PartialEq for OutlineGeometryKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.matches(
+            other.width,
+            other.pixels_per_point,
+            &other.font,
+            &other.definitions,
+            other.options,
+        )
+    }
+}
+
+impl OutlineGeometryKey {
+    fn matches(
+        &self,
+        width: f32,
+        pixels_per_point: f32,
+        font: &FontId,
+        definitions: &egui::FontDefinitions,
+        options: egui::epaint::text::TextOptions,
+    ) -> bool {
+        self.width == width
+            && self.pixels_per_point == pixels_per_point
+            && &self.font == font
+            && self.options == options
+            && self.definitions.font_data.len() == definitions.font_data.len()
+            && self
+                .definitions
+                .font_data
+                .iter()
+                .zip(&definitions.font_data)
+                .all(|((name, data), (other_name, other_data))| {
+                    // Do not traverse font bytes; replacement conservatively invalidates.
+                    name == other_name && Arc::ptr_eq(data, other_data)
+                })
+            && self.definitions.families == definitions.families
+    }
+
+    fn admitted(
+        width: f32,
+        pixels_per_point: f32,
+        font: FontId,
+        definitions: &egui::FontDefinitions,
+        options: egui::epaint::text::TextOptions,
+        on_clone: impl FnOnce(&egui::FontDefinitions),
+    ) -> Option<Self> {
+        geometry_font_metadata(definitions)?;
+        let definitions = definitions.clone();
+        on_clone(&definitions);
+        geometry_font_metadata(&definitions)?;
+        Some(Self {
+            width,
+            pixels_per_point,
+            font,
+            definitions,
+            options,
+        })
+    }
+}
+
+#[derive(Default)]
+struct GeometryFontMetadata {
+    string_capacity_bytes: usize,
+    custom_family_name_bytes: usize,
+    family_reference_capacity: usize,
+}
+
+fn geometry_font_metadata(definitions: &egui::FontDefinitions) -> Option<GeometryFontMetadata> {
+    if definitions.font_data.len() > MAX_GEOMETRY_FONT_MAP_ENTRIES
+        || definitions.families.len() > MAX_GEOMETRY_FONT_MAP_ENTRIES
+    {
+        return None;
+    }
+    let mut metadata = GeometryFontMetadata::default();
+    for name in definitions.font_data.keys() {
+        metadata.string_capacity_bytes = metadata
+            .string_capacity_bytes
+            .checked_add(name.capacity())?;
+        if metadata.string_capacity_bytes > MAX_GEOMETRY_FONT_NAME_BYTES {
+            return None;
+        }
+    }
+    for (family, names) in &definitions.families {
+        metadata.family_reference_capacity = metadata
+            .family_reference_capacity
+            .checked_add(names.capacity())?;
+        if metadata.family_reference_capacity > MAX_GEOMETRY_FONT_FAMILY_REFERENCES {
+            return None;
+        }
+        if let egui::FontFamily::Name(name) = family {
+            metadata.custom_family_name_bytes =
+                metadata.custom_family_name_bytes.checked_add(name.len())?;
+        }
+        for name in names {
+            metadata.string_capacity_bytes = metadata
+                .string_capacity_bytes
+                .checked_add(name.capacity())?;
+            if metadata
+                .string_capacity_bytes
+                .checked_add(metadata.custom_family_name_bytes)?
+                > MAX_GEOMETRY_FONT_NAME_BYTES
+            {
+                return None;
+            }
+        }
+        if metadata
+            .string_capacity_bytes
+            .checked_add(metadata.custom_family_name_bytes)?
+            > MAX_GEOMETRY_FONT_NAME_BYTES
+        {
+            return None;
+        }
+    }
+    Some(metadata)
 }
 
 #[derive(Clone, Copy)]
@@ -1931,25 +2123,39 @@ impl OutlinePreparation {
         let width = ui.available_width();
         let pixels_per_point = ui.ctx().pixels_per_point();
         let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
-        let valid = self.key.as_ref().is_some_and(|key| {
-            key.width == width
-                && key.pixels_per_point == pixels_per_point
-                && key.font == font
-                && ui.painter().fonts(|fonts| {
-                    key.definitions == *fonts.definitions() && key.options == *fonts.options()
+        let current = ui.painter().fonts(|fonts| {
+            geometry_font_metadata(fonts.definitions()).map(|_| {
+                self.key.as_ref().is_some_and(|key| {
+                    key.matches(
+                        width,
+                        pixels_per_point,
+                        &font,
+                        fonts.definitions(),
+                        *fonts.options(),
+                    )
                 })
+            })
         });
-        if !valid {
-            self.rows.clear();
-            self.key = Some(ui.painter().fonts(|fonts| OutlineGeometryKey {
-                width,
-                pixels_per_point,
-                font,
-                definitions: fonts.definitions().clone(),
-                options: *fonts.options(),
-            }));
+        if current != Some(true) {
+            self.clear();
+            self.key = current.and_then(|_| {
+                ui.painter().fonts(|fonts| {
+                    OutlineGeometryKey::admitted(
+                        width,
+                        pixels_per_point,
+                        font,
+                        fonts.definitions(),
+                        *fonts.options(),
+                        |_| {},
+                    )
+                })
+            });
         }
-        let rows = rows.min(MAX_PREPARED_OUTLINE_ROWS);
+        let rows = if self.key.is_some() {
+            rows.min(MAX_PREPARED_OUTLINE_ROWS)
+        } else {
+            0
+        };
         if self.rows.capacity() < rows {
             self.rows.reserve_exact(rows - self.rows.len());
         }
@@ -5804,6 +6010,8 @@ mod tests {
             candidate.explicit_job_clones, candidate.layouts,
             "{control}"
         );
+        assert_eq!(candidate.geometry_key_clones, 0, "{control}");
+        assert_eq!(candidate.geometry_metadata_rejections, 0, "{control}");
         assert!(
             (1..=96).contains(&candidate.layouts),
             "{control}: {}",
@@ -5850,6 +6058,257 @@ mod tests {
             definition_strings + family_strings,
             family_vectors,
         );
+        println!(
+            "source dependency metadata {control}: key resets={} clones={} rejected={} cloned String capacities={} family Vec capacities={} shared custom-family name bytes={}; separate from layout work, not allocator/RSS totals",
+            candidate.geometry_key_resets,
+            candidate.geometry_key_clones,
+            candidate.geometry_metadata_rejections,
+            candidate.geometry_clone_string_capacity_bytes,
+            candidate.geometry_clone_family_vector_capacity_bytes,
+            candidate.geometry_clone_custom_family_name_bytes,
+        );
+    }
+
+    fn assert_source_font_metadata_rejected(
+        pair: &[(egui::Context, MarkdownViewerTab); 2],
+        rows: usize,
+        control: usize,
+    ) {
+        let preparation = &pair[1].1.source_preparation;
+        let probe = preparation.probe.as_ref().unwrap();
+        assert!(preparation.geometry_key.is_none(), "control {control}");
+        assert!(preparation.jobs.values().all(|job| job.geometry.is_none()));
+        assert_eq!(probe.layouts, rows, "control {control}");
+        assert_eq!(probe.shared_label_inputs, rows, "control {control}");
+        assert_eq!(probe.explicit_job_clones, 0, "ordinary Label fallback");
+        assert_eq!(probe.geometry_key_clones, 0, "reject before cloning");
+        assert_eq!(probe.geometry_metadata_rejections, 1);
+        assert_eq!(probe.geometry_clone_string_capacity_bytes, 0);
+        assert_eq!(probe.geometry_clone_family_vector_capacity_bytes, 0);
+        assert_eq!(probe.geometry_clone_custom_family_name_bytes, 0);
+        println!(
+            "source dependency rejection control={control}: rows={} layouts={} definition clones={} metadata payload=0",
+            probe.visited_lines, probe.layouts, probe.geometry_key_clones,
+        );
+    }
+
+    #[test]
+    fn source_geometry_font_metadata_overflow_uses_live_labels_and_recovers() {
+        let line = "metadata café 漢字   ";
+        let text = format!("{line}\n{}", mixed_caption_fixture());
+        let rows = text.split_inclusive('\n').count();
+        let size = vec2(1180.0, 760.0);
+        for control in 0..5 {
+            let mut pair = source_geometry_pair(&text);
+            source_preparation_frame(&mut pair, 0, size, Vec::new());
+            source_preparation_frame(&mut pair, 1, size, Vec::new());
+            assert_source_geometry_warm(&pair, &format!("metadata control={control} valid"));
+            let mut definitions = egui::FontDefinitions::default();
+            match control {
+                0 => {
+                    let data = definitions.font_data.values().next().unwrap().clone();
+                    while definitions.font_data.len() <= MAX_GEOMETRY_FONT_MAP_ENTRIES {
+                        definitions.font_data.insert(
+                            format!("alias-{}", definitions.font_data.len()),
+                            data.clone(),
+                        );
+                    }
+                }
+                1 => {
+                    while definitions.families.len() <= MAX_GEOMETRY_FONT_MAP_ENTRIES {
+                        definitions.families.insert(
+                            egui::FontFamily::Name(
+                                format!("family-{}", definitions.families.len()).into(),
+                            ),
+                            Vec::new(),
+                        );
+                    }
+                }
+                2 => {
+                    let data = definitions.font_data.values().next().unwrap().clone();
+                    definitions
+                        .font_data
+                        .insert("x".repeat(MAX_GEOMETRY_FONT_NAME_BYTES + 1), data);
+                }
+                3 => {
+                    definitions.families.insert(
+                        egui::FontFamily::Name("x".repeat(MAX_GEOMETRY_FONT_NAME_BYTES + 1).into()),
+                        Vec::new(),
+                    );
+                }
+                _ => {
+                    let names = definitions
+                        .families
+                        .get_mut(&egui::FontFamily::Monospace)
+                        .unwrap();
+                    let name = names[0].clone();
+                    names.resize(MAX_GEOMETRY_FONT_FAMILY_REFERENCES + 1, name);
+                }
+            }
+            assert!(geometry_font_metadata(&definitions).is_none());
+            for (context, _) in &pair {
+                context.set_fonts(definitions.clone());
+            }
+            source_preparation_frame(&mut pair, 2, size, Vec::new());
+            assert_source_font_metadata_rejected(&pair, rows, control);
+            let output = source_preparation_frame(&mut pair, 3, size, Vec::new());
+            assert_source_font_metadata_rejected(&pair, rows, control);
+            let (rect, clip) = visible_code_geometry(&output[0], line).unwrap();
+            let start = rect.min + vec2(1.0, CODE_LINE_HEIGHT / 2.0);
+            let end = egui::pos2(rect.right() + 8.0, rect.center().y);
+            assert!(clip.contains(start) && clip.contains(end));
+            source_preparation_frame(
+                &mut pair,
+                4,
+                size,
+                vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton {
+                        pos: start,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            source_preparation_frame(&mut pair, 5, size, vec![egui::Event::PointerMoved(end)]);
+            source_preparation_frame(
+                &mut pair,
+                6,
+                size,
+                vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            let output = source_preparation_frame(&mut pair, 7, size, vec![egui::Event::Copy]);
+            assert!(output[1].platform_output.commands.iter().any(
+                |command| matches!(command, egui::OutputCommand::CopyText(text) if text == line)
+            ));
+            assert_source_font_metadata_rejected(&pair, rows, control);
+            for (context, _) in &pair {
+                context.set_fonts(egui::FontDefinitions::default());
+            }
+            source_preparation_frame(&mut pair, 8, size, Vec::new());
+            let probe = pair[1].1.source_preparation.probe.as_ref().unwrap();
+            assert_eq!(probe.layouts, rows, "admitted recovery is cold");
+            assert_eq!(probe.geometry_key_clones, 1);
+            assert_eq!(probe.geometry_metadata_rejections, 0);
+            assert!(
+                probe.geometry_clone_string_capacity_bytes
+                    + probe.geometry_clone_custom_family_name_bytes
+                    <= MAX_GEOMETRY_FONT_NAME_BYTES
+            );
+            assert!(
+                probe.geometry_clone_family_vector_capacity_bytes
+                    <= MAX_GEOMETRY_FONT_FAMILY_REFERENCES * std::mem::size_of::<String>()
+            );
+            println!(
+                "source dependency recovery control={control}: layouts={} clones={} String capacities={} family Vec capacities={} custom-family name bytes={}",
+                probe.layouts,
+                probe.geometry_key_clones,
+                probe.geometry_clone_string_capacity_bytes,
+                probe.geometry_clone_family_vector_capacity_bytes,
+                probe.geometry_clone_custom_family_name_bytes,
+            );
+            source_preparation_frame(&mut pair, 9, size, Vec::new());
+            assert_source_geometry_warm(&pair, &format!("metadata control={control} recovered"));
+        }
+    }
+
+    #[test]
+    fn source_geometry_font_metadata_admits_exact_caps_without_warm_key_clones() {
+        let mut definitions = egui::FontDefinitions::default();
+        let data = definitions.font_data.values().next().unwrap().clone();
+        while definitions.font_data.len() < MAX_GEOMETRY_FONT_MAP_ENTRIES {
+            definitions
+                .font_data
+                .insert(format!("a{}", definitions.font_data.len()), data.clone());
+        }
+        while definitions.families.len() < MAX_GEOMETRY_FONT_MAP_ENTRIES - 1 {
+            definitions.families.insert(
+                egui::FontFamily::Name(format!("f{}", definitions.families.len()).into()),
+                Vec::new(),
+            );
+        }
+        let other_capacity: usize = definitions
+            .families
+            .iter()
+            .filter(|(family, _)| **family != egui::FontFamily::Monospace)
+            .map(|(_, names)| names.capacity())
+            .sum();
+        let names = definitions
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap();
+        let capacity = MAX_GEOMETRY_FONT_FAMILY_REFERENCES - other_capacity;
+        names.reserve_exact(capacity - names.len());
+        names.resize(capacity, names[0].clone());
+        // Match egui's cloned input, not spare capacity in the fixture builder.
+        definitions = definitions.clone();
+        let metadata = geometry_font_metadata(&definitions).unwrap();
+        definitions.families.insert(
+            egui::FontFamily::Name(
+                "x".repeat(
+                    MAX_GEOMETRY_FONT_NAME_BYTES
+                        - metadata.string_capacity_bytes
+                        - metadata.custom_family_name_bytes,
+                )
+                .into(),
+            ),
+            Vec::new(),
+        );
+        let mut pair = source_geometry_pair(&mixed_caption_fixture());
+        for (context, _) in &pair {
+            context.set_fonts(definitions.clone());
+        }
+        let size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        let preparation = &pair[1].1.source_preparation;
+        let key = preparation.geometry_key.as_ref().unwrap();
+        let metadata = geometry_font_metadata(&key.definitions).unwrap();
+        assert_eq!(
+            key.definitions.font_data.len(),
+            MAX_GEOMETRY_FONT_MAP_ENTRIES
+        );
+        assert_eq!(
+            key.definitions.families.len(),
+            MAX_GEOMETRY_FONT_MAP_ENTRIES
+        );
+        assert_eq!(
+            metadata.string_capacity_bytes + metadata.custom_family_name_bytes,
+            MAX_GEOMETRY_FONT_NAME_BYTES
+        );
+        assert_eq!(
+            metadata.family_reference_capacity,
+            MAX_GEOMETRY_FONT_FAMILY_REFERENCES
+        );
+        let probe = preparation.probe.as_ref().unwrap();
+        assert_eq!(probe.geometry_key_clones, 1);
+        assert_eq!(
+            probe.geometry_clone_string_capacity_bytes
+                + probe.geometry_clone_custom_family_name_bytes,
+            MAX_GEOMETRY_FONT_NAME_BYTES
+        );
+        assert_eq!(
+            probe.geometry_clone_family_vector_capacity_bytes,
+            MAX_GEOMETRY_FONT_FAMILY_REFERENCES * std::mem::size_of::<String>()
+        );
+        println!(
+            "source dependency exact caps: maps={}/{} cloned String capacities={} shared custom-family name bytes={} family Vec capacities={} clones={}",
+            key.definitions.font_data.len(),
+            key.definitions.families.len(),
+            probe.geometry_clone_string_capacity_bytes,
+            probe.geometry_clone_custom_family_name_bytes,
+            probe.geometry_clone_family_vector_capacity_bytes,
+            probe.geometry_key_clones,
+        );
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_geometry_warm(&pair, "exact metadata ceilings");
+        source_preparation_frame(&mut pair, 2, size, Vec::new());
+        assert_source_geometry_warm(&pair, "exact metadata ceilings unchanged again");
     }
 
     #[test]
@@ -8463,6 +8922,67 @@ mod tests {
             context.set_theme(egui::ThemePreference::Light);
         }
         outline_preparation_frame(&mut pair, 20, size, 8000.0, Vec::new());
+    }
+
+    #[test]
+    fn outline_preparation_font_metadata_overflow_discards_geometry_and_recovers() {
+        let mut pair = outline_preparation_pair(&outline_preparation_fixture(400));
+        let size = vec2(216.0, 480.0);
+        for frame in 0..3 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        assert!(
+            pair[1]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .layouts
+                <= 32
+        );
+        let mut definitions = egui::FontDefinitions::default();
+        definitions.families.insert(
+            egui::FontFamily::Name("x".repeat(MAX_GEOMETRY_FONT_NAME_BYTES + 1).into()),
+            Vec::new(),
+        );
+        for (context, _) in &pair {
+            context.set_fonts(definitions.clone());
+        }
+        for frame in 3..5 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+            let preparation = &pair[1].1.outline_preparation;
+            assert!(preparation.key.is_none());
+            assert!(preparation.rows.is_empty());
+            assert_eq!(preparation.probe.as_ref().unwrap().layouts, 400);
+        }
+        for (context, _) in &pair {
+            context.set_fonts(egui::FontDefinitions::default());
+        }
+        outline_preparation_frame(&mut pair, 5, size, 0.0, Vec::new());
+        assert_eq!(
+            pair[1]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .layouts,
+            400
+        );
+        for frame in 6..8 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        assert!(
+            pair[1]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .layouts
+                <= 32
+        );
     }
 
     #[test]

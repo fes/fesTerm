@@ -247,9 +247,33 @@ The new per-entry metadata is one `Option<SourceRowGeometry>` (five f32 values
 plus its discriminant/padding); its actual Rust size is counted independently
 of the unchanged charged text/section payload. One active dependency key also
 owns cloned font-definition map/family metadata and shared font-data Arcs, not
-another font-byte copy. Key replacement releases the previous definitions;
-the map/family entries and their string/vector capacities are reported separately
-rather than disguised as part of the 4 MiB instruction allowance.
+another font-byte copy. Source and Outline each admit at most one dependency
+key. Before any definition clone, each font-data/family map must have at most
+128 entries; summed owned key/name String capacities plus the UTF-8 lengths of
+shared custom `FontFamily::Name` keys must fit 8192 bytes. Total family Vec
+**capacity**, not only length, must fit 256 name-reference slots (6144 bytes
+when `String` is 24 bytes). Spare capacity is conservatively charged. Checked
+addition protects every cumulative count. Actual cloned capacities are checked
+again before retention; font bytes and custom-family name bytes remain shared.
+Map-node storage is bounded by the two map cardinalities, not an asserted
+allocator-byte total. These allowances are separate from the unchanged 4 MiB
+instruction payload; they are internal cache eligibility, not user settings.
+
+Pre-admission overflow drops the owner's previous key and clears all stale row
+geometry before rendering ordinary live labels, without cloning rejected
+definitions. A failed actual cloned-capacity verification also drops the
+candidate. Neither case retains new geometry; valid definitions must rebuild
+cold before warm reuse resumes. Replacement drops the old key **before** construction:
+there is no old/new cloned-key overlap per owner. An unchanged frame performs
+bounded borrowed admission/comparison, not key reconstruction. One admission
+scan visits at most 128 font keys, 128 family entries and 256 names; replacement
+uses at most three such scans including actual cloned-capacity verification.
+Comparison uses font-data Arc identity, never traversing large font bytes;
+equal-byte replacement is conservatively invalidated. String comparisons stay
+within admitted name bounds. Source key reset/rejection/clone counts and actual
+cloned String/Vec capacities are reported separately from label/layout work.
+The earlier 140/168-byte fixture observations were **not admission ceilings**;
+the missing bound was found during handoff and repaired before publication.
 Visible, cold, unsupported-layout and uncached rows use ordinary label behavior.
 Width, pixels per point, explicit source font, active font definitions and text
 options invalidate geometry. Snapshot/query replacement and current-match job
@@ -263,8 +287,12 @@ complete clipped shapes, every response (including intrinsic size and
 sense), accessibility, selection/Copy and offscreen byte/heading navigation to
 the descriptor-cached ordinary path. Cold/warm/scroll/width/font/scale/options/
 theme/revision controls count actual layout requests and their text payloads,
-not job-cache hits. The warm 400-section narrow/normal controls retain all 4800
-rows while reducing 4800 ordinary requests to 31/34 (34/37 after scrolling),
+not job-cache hits. Font-map cardinality, owned-name bytes (including custom
+family keys) and family-reference overflow require ordinary work with identical
+full shapes/responses/accessibility and raw Unicode Copy. Recovery and exact
+128/8192/256 admission-boundary controls require cold rebuilding followed by
+warm reuse without another key clone. The warm 400-section narrow/normal controls
+retain all 4800 rows while reducing 4800 ordinary requests to 31/34 (34/37 after scrolling),
 below the required limit of 96. Cloned candidate String/Vec capacities are
 4408/4822 bytes versus the ordinary shared Label inputs' 680870-byte clone
 payload. The ordinary clone condition follows the pinned Label implementation;
