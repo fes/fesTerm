@@ -1578,6 +1578,8 @@
         "moving_an_editor_out_of_a_closing_window_keeps_its_document_registered",
         "application_teardown_releases_all_remaining_document_views",
         "saving_writes_the_file_and_clears_the_unsaved_marker",
+        "unchanged_refresh_restores_a_temporarily_unavailable_source",
+        "unchanged_refresh_rejects_a_hard_link_in_a_replacement_parent",
         "saved_authority_remains_bound_to_the_destination_parent",
         "saving_into_a_file_that_changed_first_conflicts_and_writes_nothing",
         "a_file_replaced_by_an_atomic_save_elsewhere_does_not_look_unchanged",

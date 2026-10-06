@@ -252,7 +252,7 @@ pub(crate) struct OverlayState {
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
-    /// The "Open Markdown File…" picker (#132), reusing the SFTP file
+    /// The "Open File…" picker (#132), reusing the SFTP file
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
@@ -265,7 +265,7 @@ pub(crate) struct OverlayState {
     /// resolves, set when the picker was opened from inside a viewer
     /// (`Ctrl+O`). `None` means "open the picked file in a new tab".
     pub(crate) markdown_file_picker_replaces: Option<TabId>,
-    /// The directory the last "Open Markdown File…" picker was browsing when
+    /// The directory the last "Open File…" picker was browsing when
     /// it closed. The next picker resumes here instead of starting over at
     /// the home directory, which is the behaviour users expect from a file
     /// dialog when opening several files from the same folder.

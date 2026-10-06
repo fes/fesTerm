@@ -437,7 +437,7 @@ previously valid snapshot.
   non-persisted approval; viewer parsing/loading respects fixed byte, line,
   nesting, table-cell, code-block, and resource limits.
 - **GUI/action edges affected:** New stable workflow IDs are required for local
-  "Open Markdown File…", remote SFTP "Preview Markdown", Preview/Source/Find/
+  "Open File…" routing, remote SFTP "Preview Markdown", Preview/Source/Find/
   Outline actions, explicit image loads, and offline-snapshot reload behavior.
   `validation/traceability.json` should be updated in the implementing change
   once those IDs exist.

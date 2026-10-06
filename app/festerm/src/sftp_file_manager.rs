@@ -5311,9 +5311,6 @@ pub(crate) fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
     }
 }
 
-/// Whether double-clicking this item should open the Markdown viewer
-/// (issue #133), rather than being a no-op (or, for directories, handled
-/// separately in `open_item`).
 /// Whether the picker will open this item. Every file is: fesTerm cannot
 /// tell a `Makefile`, a `.service` or a `.hpp` from a `.txt` by its name, and
 /// hiding a file because of its extension makes it unopenable rather than
@@ -6237,7 +6234,7 @@ fn resolve_picker_path(text: &str, directory: &Path, home: &Path) -> Result<Path
     Ok(directory.join(path))
 }
 
-/// Local-filesystem-only file picker for "Open Markdown File…" (#132),
+/// Local-filesystem-only file picker for "Open File…" (#132),
 /// reusing the SFTP file manager's local-pane browsing model (breadcrumbs,
 /// up/home/refresh navigation, sortable columns, item icons, single
 /// selection) instead of the OS-native `rfd::FileDialog` previously used.

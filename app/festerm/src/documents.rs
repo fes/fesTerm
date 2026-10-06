@@ -458,6 +458,7 @@ impl DocumentRegistry {
             Ok(saved) => {
                 document.generation = Some(saved.generation);
                 document.source_authority = Some(saved.source_authority);
+                document.read_only = saved.read_only;
                 document.text.mark_saved();
                 document.conflict = None;
                 document.last_error = None;
@@ -534,8 +535,26 @@ impl DocumentRegistry {
         if let Some(existing) = self.by_key.get(&origin.key()).copied() {
             // The file the user chose is open elsewhere, and it now holds the
             // bytes just written, so that document is brought up to date
-            // rather than shadowed.
-            self.reload_from_source(existing);
+            // from the exact save result rather than reopening a pathname that
+            // may already name a different parent.
+            let mut reloaded = TextDocument::from_bytes(&bytes, self.bounds)
+                .expect("bytes from a bounded open document remain bounded text");
+            reloaded.mark_saved();
+            if let Some(document) = self.documents.get_mut(&existing) {
+                document.syntax = DocumentSyntax::new(document.origin.file_name(), reloaded.text());
+                document.text = reloaded;
+                document.generation = Some(saved.generation);
+                document.source_authority = Some(saved.source_authority);
+                document.read_only = saved.read_only;
+                document.availability = Availability::Available;
+                document.conflict = None;
+                document.last_error = None;
+                document.save = SaveProgress::Idle;
+                document.reloaded = Some(Instant::now());
+                document.checked = Instant::now();
+                document.settled = None;
+                document.auto_save_blocked_at = None;
+            }
             self.retain(existing);
             return Some((SaveOutcome::Saved, Some(existing)));
         }
@@ -547,7 +566,7 @@ impl DocumentRegistry {
             text,
             Some(saved.generation),
             Some(saved.source_authority),
-            false,
+            saved.read_only,
         );
         Some((SaveOutcome::Saved, Some(new_id)))
     }
@@ -682,7 +701,25 @@ impl DocumentRegistry {
 
         document.checked = Instant::now();
         let outcome = match document_store::freshness(&path, known) {
-            Freshness::Unchanged => RefreshOutcome::Unchanged,
+            Freshness::Unchanged => {
+                let authority_current =
+                    document.source_authority.as_ref().is_some_and(|authority| {
+                        document_store::source_authority_is_current(authority, known)
+                    });
+                if authority_current {
+                    document.availability = Availability::Available;
+                    RefreshOutcome::Unchanged
+                } else {
+                    let newly_unavailable =
+                        matches!(document.availability, Availability::Available);
+                    document.availability = Availability::Unavailable(UnavailableReason::Missing);
+                    if newly_unavailable {
+                        RefreshOutcome::Unavailable(UnavailableReason::Missing)
+                    } else {
+                        RefreshOutcome::Unchanged
+                    }
+                }
+            }
             Freshness::Changed(_) => match document_store::load(&path, bounds) {
                 Ok(loaded) if !document.text.is_dirty() => {
                     document.text = loaded.document;
@@ -969,6 +1006,64 @@ mod tests {
         assert_eq!(
             registry.get(id).unwrap().status().severity(),
             Severity::Informational
+        );
+    }
+
+    #[test]
+    fn unchanged_refresh_restores_a_temporarily_unavailable_source() {
+        let directory = TemporaryDirectory::new("refresh-restores-authority");
+        let path = directory.file("notes.md", "alpha\n");
+        let held = directory.path.join("held.md");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+
+        fs::rename(&path, &held).unwrap();
+        assert!(matches!(
+            registry.refresh(id),
+            Some(RefreshOutcome::Unavailable(_))
+        ));
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .local_source_generation()
+            .is_none());
+
+        fs::rename(&held, &path).unwrap();
+        assert_eq!(registry.refresh(id), Some(RefreshOutcome::Unchanged));
+        assert!(
+            registry
+                .get(id)
+                .unwrap()
+                .local_source_generation()
+                .is_some(),
+            "restoring the exact source and parent must restore Preview authority"
+        );
+    }
+
+    #[test]
+    fn unchanged_refresh_rejects_a_hard_link_in_a_replacement_parent() {
+        let directory = TemporaryDirectory::new("refresh-parent");
+        let retained = TemporaryDirectory::new("refresh-parent-retained");
+        fs::remove_dir(&retained.path).unwrap();
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+
+        fs::rename(&directory.path, &retained.path).unwrap();
+        fs::create_dir(&directory.path).unwrap();
+        fs::hard_link(retained.path.join("notes.md"), &path).unwrap();
+
+        assert!(matches!(
+            registry.refresh(id),
+            Some(RefreshOutcome::Unavailable(_))
+        ));
+        assert!(
+            registry
+                .get(id)
+                .unwrap()
+                .local_source_generation()
+                .is_none(),
+            "the same file generation must not transfer authority to a replacement parent"
         );
     }
 

@@ -225,7 +225,7 @@ Keyboard paths:
 - `Ctrl/Cmd+F` opens Find; Enter/Shift+Enter moves next/previous; Escape clears
   Find before closing the viewer.
 - `Ctrl/Cmd+R` manually reloads the source after revalidating identity.
-- `Ctrl/Cmd+Shift+M` toggles Preview/Source when it does not conflict with a
+- `Ctrl/Cmd+Shift+V` toggles Preview/Source when it does not conflict with a
   platform-reserved binding; the command palette is authoritative.
 - `Ctrl/Cmd+Shift+O` toggles the heading outline.
 - Tab traverses toolbar, outline, links, resource actions, table regions, and
@@ -290,7 +290,7 @@ reading order, platform UI scaling, high contrast, and reduced motion.
 
 ## Acceptance sequence
 
-1. From `dev-shell`, select **Open Markdown File…** from More actions and select
+1. From `dev-shell`, select **Open File…** from More actions and select
    a local README; a sibling editor chip opens in Preview without changing the
    terminal session.
 2. Navigate the heading outline, a table, task list, link, and code block using

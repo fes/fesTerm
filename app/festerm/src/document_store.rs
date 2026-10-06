@@ -242,6 +242,7 @@ pub enum SaveFailure {
 pub(crate) struct SavedDocument {
     pub(crate) generation: Generation,
     pub(crate) source_authority: LocalSourceAuthority,
+    pub(crate) read_only: bool,
 }
 
 impl SaveFailure {
@@ -334,6 +335,21 @@ pub(crate) fn open_canonical_directory(parent: &Path) -> Result<cap_std::fs::Dir
         directory = directory.open_dir_nofollow(name)?;
     }
     Ok(directory)
+}
+
+pub(crate) fn source_authority_is_current(
+    authority: &LocalSourceAuthority,
+    generation: Generation,
+) -> bool {
+    let Some(parent) = authority.canonical_path.parent() else {
+        return false;
+    };
+    let Ok(directory) = open_canonical_directory(parent) else {
+        return false;
+    };
+    authority.parent_identity.matches_directory(&directory)
+        && open_canonical_file(&directory, &authority.canonical_path)
+            .is_ok_and(|file| generation.matches_file(&file))
 }
 
 pub(crate) fn open_canonical_file(
@@ -452,16 +468,24 @@ pub fn save(
         // not a reason to refuse an otherwise complete save.
         let _ = fs::set_permissions(temporary.path(), original.permissions());
     }
+    let generation =
+        Generation::from_file(temporary.file_mut()).map_err(|_| SaveFailure::Interrupted)?;
+    let read_only = temporary
+        .file_mut()
+        .metadata()
+        .map_err(|_| SaveFailure::Interrupted)?
+        .permissions()
+        .readonly();
     temporary.close_file();
 
     replace_file(temporary.path(), path)?;
     temporary.persist();
     sync_directory(parent);
 
-    let generation = Generation::at(path).map_err(|_| SaveFailure::Interrupted)?;
     Ok(SavedDocument {
         generation,
         source_authority,
+        read_only,
     })
 }
 

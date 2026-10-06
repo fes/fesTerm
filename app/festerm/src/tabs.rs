@@ -2111,8 +2111,8 @@ pub enum AppCommand {
     ReloadTextDocument,
     /// Dismisses a conflict banner without writing anything.
     KeepMyTextVersion,
-    /// Opens, or focuses, a Markdown preview tab bound to the active
-    /// editor's document, so it renders unsaved text too (ADR 0034 §3).
+    /// Reloads the active standalone Markdown viewer. Saved-local editor
+    /// Preview follows the document refresh commands instead.
     ReloadMarkdown,
     ToggleMarkdownPreviewSource,
     ToggleMarkdownOutline,

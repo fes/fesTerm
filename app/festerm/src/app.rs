@@ -107,7 +107,7 @@ enum ApplicationShortcut {
     MarkdownReload,
     MarkdownPreviewSource,
     MarkdownOutline,
-    /// Opens the "Open Markdown File…" picker (`Ctrl+O`/`Cmd+O`), the
+    /// Opens the "Open File…" picker (`Ctrl+O`/`Cmd+O`), the
     /// near-universal "open a document" chord. Inside a Markdown viewer the
     /// picked file replaces that viewer's document; anywhere else it opens a
     /// new tab.
