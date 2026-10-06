@@ -45,9 +45,61 @@ Actions are disabled with an explanation when there is no selection, the destina
 
 ## Transfer behavior
 
-Transfers are always **copies**, never moves. Selection remains after starting so the user can verify what was queued. A bottom transfer drawer appears only while work exists and shows aggregate progress, the current item, byte progress where known, destination, and one status per queued item. Users may cancel pending/current work; completed items remain briefly and can be cleared. A failed item shows a concise reason plus **Retry** and **Details** without stopping unrelated queued items.
+Transfers are always **copies**, never moves. Selection remains after starting so the user can verify what was queued. A bottom transfer drawer appears while it has active work or retained history and shows aggregate progress, the current item, byte progress where known, destination, and per-item state. Users may cancel pending/current work; finished items can be cleared. A retained failed item shows a concise reason plus **Retry** and **Details** without stopping unrelated queued items.
 
 Refresh the affected destination directory after each committed item while preserving selection and scroll position where possible. Partial files use a temporary sibling name and are renamed only after successful completion where the backend supports it; a canceled/failed temporary is cleaned up when safe and otherwise reported explicitly.
+
+### Bounded GUI backlog and history
+
+Each GUI SFTP tab admits at most **64 pending commands** and retains at most
+**128 pending worker/local-directory events**. Remote operations await event
+capacity asynchronously; only the dedicated local-loader thread may block on
+delivery. Each frontend poll and worker transfer-event batch handles at most
+**64 events**, with another repaint requested for remaining frontend work.
+Adjacent progress for the same batch and transfer may be replaced by its newest
+value; collision, completion, failure, cancellation, skip, cleanup and
+destination-refresh barriers remain ordered and are not coalesced.
+Observed cleanup notices enter the separate bounded cleanup reporter before
+any GUI-capacity wait; a retained barrier prevents progress folding across
+the notice, and closing the owner cannot discard an already-observed report.
+
+A full or closed command bridge reports a nonfatal refusal; it does not imply
+that the action succeeded. An unadmitted remote navigation leaves path, history,
+scroll and loading state unchanged; an unadmitted reconnect does not change
+connection/spinner state; an unadmitted Markdown read preserves the
+previous pending request. Collision decisions stay open until admitted, and
+rejected external drops return failure rather than a successful item count.
+Successful backend admission publishes queued row metadata before collision
+or terminal events, so Skip and pre-copy failure remain visible even when
+`ItemStarted` never occurs. Backend refusal creates no phantom drawer rows.
+The drawer's **Cancel** action is one ordered bulk-cancel command through both
+bridges, not one command per row: full admission refuses the whole action with
+the existing error treatment, and one free slot is sufficient to retry.
+It cancels existing work preceding that command, including paused collisions;
+work queued afterward is not canceled.
+An already-delivered collision prompt retires when its row becomes terminal,
+rather than offering decisions for work that bulk Cancel has ended.
+The backend's existing **256-item batch limit** is checked before the batch
+enters the GUI command bridge. Queue counts are not total payload-byte budgets;
+aggregate directory and recursive-plan admission is separate work.
+
+The drawer retains the **128 most recently finished records**, including
+failures, ordered by completion rather than start time. Oldest finished records
+retire automatically with a visible cumulative count; a long-running item that
+finishes late is still recent. Active and collision-paused work is not evicted.
+Retirement removes the row's request, detail and collision storage, keeps an
+indexed transfer-ID lookup, and releases exceptional row/index capacity.
+Row controls are scoped by transfer ID, so retiring an earlier row cannot
+reuse another transfer's action/focus identity.
+The existing Clear action removes successful, skipped and canceled rows but
+leaves failures available while retained. Retirement is tab-local and does not
+persist history or change the filesystem recovery-output policy.
+
+History rows occupy a vertically scrollable area capped at 240 logical pixels.
+The retained rows are rendered normally, not virtualized; the finished-record
+cap bounds historical rendering work. Owner cancellation remains independent
+of command/event capacity. Native drawer reachability, retirement-notice
+readability and assistive-technology behavior remain `SFTP-03` evidence.
 
 ### Owner cancellation and cleanup
 
