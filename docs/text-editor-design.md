@@ -111,7 +111,9 @@ The editor never resolves a divergence silently.
   requiring kernel security labels to match in place. Windows applies and
   verifies the target owner/group/DACL/attributes on the prepared file before
   publication while the retained payload handle denies every other read/write
-  open until it is published and closed. Its private staging directory and every child are created
+  open until it is published and closed. An NTFS EFS-encrypted target is
+  refused before staging because fesTerm cannot yet preserve that encryption.
+  Its private staging directory and every child are created
   natively relative to exact retained handles; each returned handle must be
   non-reparse, current-user-owned, protected current-user-only, and on the
   expected volume before any document bytes are written or copied. ACL-less or

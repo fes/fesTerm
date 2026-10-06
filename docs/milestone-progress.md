@@ -62,7 +62,9 @@ handle that is reparse, cross-volume, not current-user-owned, or not protected
 current-user-only before writing or copying document bytes. Unix restores
 the destination owner, group, mode, ACL and user-managed xattrs from verified handles after
 the durable content write; Windows applies and verifies the original owner,
-group, DACL and attributes on the prepared file before publication; a new target remains private. Temporary
+group, DACL and attributes on the prepared file before publication while an
+exclusive retained handle blocks staged reads/writes; NTFS EFS targets refuse
+before staging rather than becoming plaintext. A new target remains private. Temporary
 names use OS randomness beneath an owner-only same-filesystem staging directory
 and are checked against their open handles. Both platforms capture the
 no-follow current target into private staging with a no-overwrite move, verify

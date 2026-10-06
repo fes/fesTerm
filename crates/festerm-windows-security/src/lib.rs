@@ -47,9 +47,9 @@ mod imp {
         Storage::FileSystem::{
             FileBasicInfo, FileRenameInfoEx, GetFileInformationByHandle,
             SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS,
-            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-            FILE_BASIC_INFO, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, SYNCHRONIZE,
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_RENAME_INFO, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
         },
         System::{
             Console::{
@@ -91,12 +91,24 @@ mod imp {
     pub struct SecurityMetadata {
         descriptor: Vec<u8>,
         attributes: u32,
+        encrypted: bool,
     }
 
     const FILE_ATTRIBUTE_VALID_SET_FLAGS: u32 = 0x0000_31A7;
 
     fn settable_file_attributes(attributes: u32) -> u32 {
         attributes & FILE_ATTRIBUTE_VALID_SET_FLAGS
+    }
+
+    fn file_is_encrypted(attributes: u32) -> bool {
+        attributes & FILE_ATTRIBUTE_ENCRYPTED != 0
+    }
+
+    impl SecurityMetadata {
+        /// EFS encryption cannot be reproduced with `FILE_BASIC_INFO`.
+        pub const fn is_encrypted(&self) -> bool {
+            self.encrypted
+        }
     }
 
     /// Snapshots owner, group, DACL, and file attributes through an open handle.
@@ -139,6 +151,7 @@ mod imp {
         Ok(SecurityMetadata {
             descriptor,
             attributes: settable_file_attributes(information.dwFileAttributes),
+            encrypted: file_is_encrypted(information.dwFileAttributes),
         })
     }
 
@@ -152,6 +165,12 @@ mod imp {
     pub fn apply_security_metadata(file: &File, metadata: &SecurityMetadata) -> io::Result<()> {
         const INFORMATION: u32 =
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        if metadata.encrypted {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "NTFS EFS encryption cannot be preserved through basic file metadata",
+            ));
+        }
         let handle = file.as_raw_handle() as HANDLE;
         if unsafe {
             SetKernelObjectSecurity(
@@ -901,6 +920,25 @@ mod imp {
                 FILE_ATTRIBUTE_VALID_SET_FLAGS
             );
             assert_eq!(settable_file_attributes(0x0000_0E10), 0);
+            assert!(file_is_encrypted(FILE_ATTRIBUTE_ENCRYPTED));
+            assert!(!file_is_encrypted(FILE_ATTRIBUTE_NORMAL));
+        }
+
+        #[test]
+        fn encrypted_security_metadata_is_refused_instead_of_applied_as_plaintext() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let file =
+                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+            let encrypted = SecurityMetadata {
+                descriptor: Vec::new(),
+                attributes: FILE_ATTRIBUTE_NORMAL,
+                encrypted: true,
+            };
+
+            let error = apply_security_metadata(&file, &encrypted).unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         }
 
         fn make_unprotected(file: &File) {

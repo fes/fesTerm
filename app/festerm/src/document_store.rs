@@ -366,6 +366,7 @@ pub enum SaveFailure {
     Interrupted,
     RecoveryRequired,
     MetadataPreservation,
+    EncryptedFile,
     UnsupportedFilesystem,
 }
 
@@ -387,6 +388,7 @@ impl SaveFailure {
             Self::Interrupted => "Saving did not complete",
             Self::RecoveryRequired => "Saving needs manual recovery",
             Self::MetadataPreservation => "This file's access cannot be preserved",
+            Self::EncryptedFile => "This file's encryption cannot be preserved",
             Self::UnsupportedFilesystem => "This disk cannot support safe saving",
         }
     }
@@ -410,6 +412,9 @@ impl SaveFailure {
             }
             Self::MetadataPreservation => {
                 "The file's owner, group, ACL, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a file you own."
+            }
+            Self::EncryptedFile => {
+                "fesTerm cannot safely preserve Windows EFS encryption during replacement. Use Save As to choose a new destination, or edit it with an EFS-aware tool."
             }
             Self::UnsupportedFilesystem => {
                 "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk."
@@ -643,6 +648,13 @@ pub fn save(
                 .map_err(classify_write_error)
         })
         .transpose()?;
+    #[cfg(windows)]
+    if security_metadata
+        .as_ref()
+        .is_some_and(festerm_windows_security::SecurityMetadata::is_encrypted)
+    {
+        return Err(SaveFailure::EncryptedFile);
+    }
 
     let mut temporary = TemporaryFile::create(&save_directory.directory)?;
     before_save_write();
@@ -1661,6 +1673,11 @@ mod tests {
             classify_metadata_error(std::io::Error::from(std::io::ErrorKind::Unsupported));
         assert_eq!(unsupported, SaveFailure::UnsupportedFilesystem);
         assert!(unsupported.detail().contains("different local disk"));
+
+        let encrypted = SaveFailure::EncryptedFile;
+        assert!(encrypted.headline().contains("encryption"));
+        assert!(encrypted.detail().contains("EFS"));
+        assert!(encrypted.detail().contains("Save As"));
     }
 
     #[test]

@@ -238,7 +238,9 @@ security labels remain in place and must already match the verified source
 snapshot. Windows applies and verifies the captured owner,
 group, DACL and attributes on the prepared file while its retained handle
 denies every other read or write open until publication completes and the
-handle closes;
+handle closes. An individually NTFS EFS-encrypted target is refused before
+staging or writing because basic attribute restoration cannot reproduce its
+encryption;
 inability to apply them refuses before publication. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
 an owner-only staging directory on the destination filesystem. Unix verifies
