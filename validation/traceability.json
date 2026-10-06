@@ -1604,6 +1604,7 @@
         "unprotected_created_child_is_rejected_before_caller_bytes_can_be_written",
         "exclusive_private_file_blocks_other_readers_after_its_dacl_is_broadened",
         "encrypted_security_metadata_is_refused_instead_of_applied_as_plaintext",
+        "alternate_data_streams_are_detected_and_refused",
         "saving_into_a_file_that_changed_first_conflicts_and_writes_nothing",
         "a_file_replaced_by_an_atomic_save_elsewhere_does_not_look_unchanged",
         "saving_refuses_an_atomic_replacement_with_matching_timestamps_and_size",

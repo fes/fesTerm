@@ -240,7 +240,9 @@ group, DACL and attributes on the prepared file while its retained handle
 denies every other read or write open until publication completes and the
 handle closes. An individually NTFS EFS-encrypted target is refused before
 staging or writing because basic attribute restoration cannot reproduce its
-encryption;
+encryption. A target with any NTFS alternate data stream, including
+`Zone.Identifier` Mark-of-the-Web, is likewise refused before staging until
+complete handle-bound stream copying and verification exists;
 inability to apply them refuses before publication. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
 an owner-only staging directory on the destination filesystem. Unix verifies

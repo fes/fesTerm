@@ -21,15 +21,17 @@ mod imp {
     use windows_sys::Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            NtCreateFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-            FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+            FileStreamInformation, NtCreateFile, NtQueryInformationFile, FILE_CREATE,
+            FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
+            FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
         },
     };
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, GetLastError, LocalFree, RtlNtStatusToDosError, SetHandleInformation,
             ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
-            INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_SUCCESS, UNICODE_STRING,
+            INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
+            STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx,
@@ -92,6 +94,7 @@ mod imp {
         descriptor: Vec<u8>,
         attributes: u32,
         encrypted: bool,
+        has_named_streams: bool,
     }
 
     const FILE_ATTRIBUTE_VALID_SET_FLAGS: u32 = 0x0000_31A7;
@@ -108,6 +111,102 @@ mod imp {
         /// EFS encryption cannot be reproduced with `FILE_BASIC_INFO`.
         pub const fn is_encrypted(&self) -> bool {
             self.encrypted
+        }
+
+        /// Named streams, including Mark-of-the-Web, require exact copying.
+        pub const fn has_named_streams(&self) -> bool {
+            self.has_named_streams
+        }
+    }
+
+    fn file_has_named_streams(file: &File) -> io::Result<bool> {
+        const INITIAL_BUFFER_SIZE: usize = 4 * 1024;
+        const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+        let mut buffer_size = INITIAL_BUFFER_SIZE;
+        loop {
+            let mut storage = vec![0usize; buffer_size.div_ceil(mem::size_of::<usize>())];
+            let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
+            let result = unsafe {
+                NtQueryInformationFile(
+                    file.as_raw_handle() as HANDLE,
+                    &raw mut status,
+                    storage.as_mut_ptr().cast(),
+                    buffer_size as u32,
+                    FileStreamInformation,
+                )
+            };
+            if matches!(
+                result,
+                STATUS_BUFFER_OVERFLOW | STATUS_BUFFER_TOO_SMALL | STATUS_INFO_LENGTH_MISMATCH
+            ) {
+                if buffer_size >= MAX_BUFFER_SIZE {
+                    return Err(io::Error::from(io::ErrorKind::InvalidData));
+                }
+                buffer_size = (buffer_size * 2).min(MAX_BUFFER_SIZE);
+                continue;
+            }
+            if result != STATUS_SUCCESS {
+                return Err(io::Error::from_raw_os_error(unsafe {
+                    RtlNtStatusToDosError(result) as i32
+                }));
+            }
+            let returned = status.Information;
+            if returned > buffer_size {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            return stream_buffer_has_named_streams(&storage, returned);
+        }
+    }
+
+    fn stream_buffer_has_named_streams(storage: &[usize], returned: usize) -> io::Result<bool> {
+        const DEFAULT_DATA_STREAM: [u16; 7] = [
+            b':' as u16,
+            b':' as u16,
+            b'$' as u16,
+            b'D' as u16,
+            b'A' as u16,
+            b'T' as u16,
+            b'A' as u16,
+        ];
+        let header = mem::offset_of!(FILE_STREAM_INFORMATION, StreamName);
+        if returned == 0 {
+            return Ok(false);
+        }
+        let mut offset = 0usize;
+        loop {
+            if returned.saturating_sub(offset) < header {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            let entry = unsafe {
+                &*storage
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_STREAM_INFORMATION>()
+            };
+            let name_bytes = entry.StreamNameLength as usize;
+            if !name_bytes.is_multiple_of(mem::size_of::<u16>())
+                || name_bytes > returned.saturating_sub(offset + header)
+            {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            let name = unsafe {
+                std::slice::from_raw_parts(
+                    ptr::addr_of!(entry.StreamName).cast::<u16>(),
+                    name_bytes / mem::size_of::<u16>(),
+                )
+            };
+            if name != DEFAULT_DATA_STREAM {
+                return Ok(true);
+            }
+            let next = entry.NextEntryOffset as usize;
+            if next == 0 {
+                return Ok(false);
+            }
+            if next < header || next > returned.saturating_sub(offset) {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            offset += next;
         }
     }
 
@@ -152,6 +251,7 @@ mod imp {
             descriptor,
             attributes: settable_file_attributes(information.dwFileAttributes),
             encrypted: file_is_encrypted(information.dwFileAttributes),
+            has_named_streams: file_has_named_streams(file)?,
         })
     }
 
@@ -169,6 +269,12 @@ mod imp {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "NTFS EFS encryption cannot be preserved through basic file metadata",
+            ));
+        }
+        if metadata.has_named_streams {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "NTFS alternate data streams cannot be preserved through basic file metadata",
             ));
         }
         let handle = file.as_raw_handle() as HANDLE;
@@ -934,9 +1040,34 @@ mod imp {
                 descriptor: Vec::new(),
                 attributes: FILE_ATTRIBUTE_NORMAL,
                 encrypted: true,
+                has_named_streams: false,
             };
 
             let error = apply_security_metadata(&file, &encrypted).unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        }
+
+        #[test]
+        fn alternate_data_streams_are_detected_and_refused() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let mut target =
+                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+            target.write_all(b"content").unwrap();
+            target.sync_all().unwrap();
+            fs::write(
+                directory.0.join("target.md:Zone.Identifier"),
+                b"[ZoneTransfer]\r\nZoneId=3\r\n",
+            )
+            .unwrap();
+            let metadata = security_metadata(&target).unwrap();
+            assert!(metadata.has_named_streams());
+            let replacement =
+                create_current_user_only_file(&directory_handle, Path::new("replacement.md"))
+                    .unwrap();
+
+            let error = apply_security_metadata(&replacement, &metadata).unwrap_err();
 
             assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         }

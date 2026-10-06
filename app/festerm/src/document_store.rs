@@ -367,6 +367,7 @@ pub enum SaveFailure {
     RecoveryRequired,
     MetadataPreservation,
     EncryptedFile,
+    NamedStreams,
     UnsupportedFilesystem,
 }
 
@@ -389,6 +390,7 @@ impl SaveFailure {
             Self::RecoveryRequired => "Saving needs manual recovery",
             Self::MetadataPreservation => "This file's access cannot be preserved",
             Self::EncryptedFile => "This file's encryption cannot be preserved",
+            Self::NamedStreams => "This file's Windows data streams cannot be preserved",
             Self::UnsupportedFilesystem => "This disk cannot support safe saving",
         }
     }
@@ -415,6 +417,9 @@ impl SaveFailure {
             }
             Self::EncryptedFile => {
                 "fesTerm cannot safely preserve Windows EFS encryption during replacement. Use Save As to choose a new destination, or edit it with an EFS-aware tool."
+            }
+            Self::NamedStreams => {
+                "The file has NTFS alternate data streams such as Zone.Identifier that fesTerm cannot safely preserve yet. Use Save As to choose a new destination."
             }
             Self::UnsupportedFilesystem => {
                 "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk."
@@ -654,6 +659,13 @@ pub fn save(
         .is_some_and(festerm_windows_security::SecurityMetadata::is_encrypted)
     {
         return Err(SaveFailure::EncryptedFile);
+    }
+    #[cfg(windows)]
+    if security_metadata
+        .as_ref()
+        .is_some_and(festerm_windows_security::SecurityMetadata::has_named_streams)
+    {
+        return Err(SaveFailure::NamedStreams);
     }
 
     let mut temporary = TemporaryFile::create(&save_directory.directory)?;
@@ -1678,6 +1690,11 @@ mod tests {
         assert!(encrypted.headline().contains("encryption"));
         assert!(encrypted.detail().contains("EFS"));
         assert!(encrypted.detail().contains("Save As"));
+
+        let streams = SaveFailure::NamedStreams;
+        assert!(streams.headline().contains("data streams"));
+        assert!(streams.detail().contains("Zone.Identifier"));
+        assert!(streams.detail().contains("Save As"));
     }
 
     #[test]
