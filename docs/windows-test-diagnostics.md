@@ -52,7 +52,13 @@ separate; their raw logs/panic reports are not safe automatic CI artifacts.
 
 Each root test process is launched under `DEBUG_ONLY_THIS_PROCESS`, suspended
 until the debugger owns its startup. Descendants are **not** debugged or
-recorded. The runner observes normal debug events, passes application
+recorded. The child receives a native Unicode environment-block copy with only
+`_NO_DEBUG_HEAP=1` overridden: Windows must not enable its debugger-default heap
+validation and change allocation behavior compared with ordinary, uninstrumented
+tests. Hidden drive entries and UTF-16 values are preserved. The parent
+environment and registry are untouched, and environment contents are never
+included in receipts. The safe `debug_heap_policy` label records this policy.
+The runner observes normal debug events, passes application
 exceptions through unchanged, and captures a second-chance fault before
 Windows terminates the process. One-shot entry probes at
 `ntdll!RtlExitUserProcess` and `ntdll!NtTerminateProcess` capture a nonzero
@@ -117,6 +123,33 @@ caller stack. An earlier `NtTerminateProcess` invocation targeting a different
 process can consume that probe; it is not proof that the root exited there.
 No debugger can retrospectively establish the cause of the original run.
 
+### Collector-induced syntax budget failure
+
+The first cumulative gate at
+`e7a9a902be5e01160c36238a928745a450ce078a` retained a real status-101 failure:
+`festerm-syntax::tests::only_the_range_asked_for_is_queried` produced no spans.
+This is separate from #330's unexplained exit 2173. Its original failed gate
+and receipt remain evidence, not replaced by a green rerun.
+
+Matched controls used the **same original executable**, SHA-256
+`dc7cfc3e5c0621c98cd88654468db8a960a59ff4e1872d4a24c8a9e03357b744`,
+without rebuilding or changing the syntax source, its 40 ms parse budget, test
+assertions or default test concurrency. Both bare full-scope controls passed;
+both original-wrapper full-scope controls failed the same assertion. The
+single exact test also passed bare and failed under the original wrapper.
+Event-service timing showed no debug events between creation of that test
+thread and its assertion panic; startup module handling was sub-millisecond.
+This did not support a live symbol/stack-handler pause as the cause.
+
+Changing only `_NO_DEBUG_HEAP=1` made the original wrapper's full and exact
+scopes pass. An independent owned fixture read the native heap-validation flag
+mask: bare **0**, original debugger **0x70**, fixed debugger **0**. The new
+child-only environment policy therefore restores bare heap behavior instead
+of increasing the product's deadline or hiding its failure. The fixed wrapper
+passed the same full/exact scopes with unchanged event, stack and module
+handling. Debugger scheduling overhead still exists; this is not a claim of
+zero observation cost or complete workspace qualification.
+
 Limits: 512 event and module records; eight stack captures, 64 threads and up to
 24 frames per capture; 8192 reported test names; 512-byte output-line parsing
 buffers; a 4 MiB receipt ceiling with explicit truncation. Root execution has
@@ -146,5 +179,7 @@ C# compiler; it requires no GPU or desktop interaction. It proves original
 0/101/2173/high-bit status propagation, genuine second-chance native exception,
 termination stacks, bounded owned-tree timeout cleanup with a same-name foreign
 sentinel, argument rejection, explicit unavailable/failed diagnostics,
-content-free completed-test context and PowerShell/Cargo argument boundaries.
+content-free completed-test context, PowerShell/Cargo argument boundaries,
+bare/debugger heap-policy parity and preservation of parent, Unicode and
+hidden-drive environment entries without recording their contents.
 These are runner proofs, **not** a reproduction of the unexplained UI exit.

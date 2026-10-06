@@ -13,6 +13,8 @@ internal static class ExitProbe
     private static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")]
     private static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint allocation, uint protection);
+    [DllImport("ntdll.dll")]
+    private static extern uint RtlGetNtGlobalFlags();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void Fault();
 
@@ -22,6 +24,15 @@ internal static class ExitProbe
         Console.WriteLine("test fixture::completed ... ok");
         Console.WriteLine("private-payload-must-not-enter-receipts");
         if (mode == "pass") return 0;
+        if (mode == "heap") {
+            Console.WriteLine("DEBUG_HEAP_FLAGS=" + (RtlGetNtGlobalFlags() & 0x70));
+            return 0;
+        }
+        if (mode == "environment") {
+            return Environment.GetEnvironmentVariable("FESTERM_DIAGNOSTIC_ENV_CONTROL") ==
+                "private-env-\ud83d\ude80-after" &&
+                Environment.GetEnvironmentVariable("_NO_DEBUG_HEAP") == "1" ? 0 : 7;
+        }
         if (mode == "failure") {
             Console.WriteLine("test fixture::assertion ... FAILED");
             return 101;

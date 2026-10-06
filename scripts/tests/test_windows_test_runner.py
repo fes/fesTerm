@@ -129,13 +129,13 @@ class NativeRunnerTests(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.directory)
 
-    def execute(self, mode, timeout=20):
+    def execute(self, mode, timeout=20, environment=None):
         output = self.directory / uuid.uuid4().hex
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "windows_test_runner.py"),
              "--output-root", str(output), "--timeout-seconds", str(timeout),
              "--", str(self.executable), mode],
-            cwd=ROOT, capture_output=True, text=True, timeout=40, check=False,
+            cwd=ROOT, env=environment, capture_output=True, text=True, timeout=40, check=False,
         )
         receipts = list(output.glob("*.json"))
         self.assertEqual(len(receipts), 1, result.stdout + result.stderr)
@@ -147,6 +147,46 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(receipt["executable"]["name"], "exit-probe.exe")
         self.assertRegex(receipt["executable"]["sha256"], r"^[0-9a-f]{64}$")
         return result, receipt
+
+    def test_debugger_startup_preserves_bare_windows_heap_policy(self):
+        bare = subprocess.run(
+            [str(self.executable), "heap"], capture_output=True, text=True,
+            timeout=20, check=False,
+        )
+        self.assertEqual(bare.returncode, 0, bare.stderr)
+        wrapped, receipt = self.execute("heap")
+        bare_flags = re.search(r"DEBUG_HEAP_FLAGS=(\d+)", bare.stdout)[1]
+        wrapped_flags = re.search(r"DEBUG_HEAP_FLAGS=(\d+)", wrapped.stdout)[1]
+        self.assertEqual(wrapped_flags, bare_flags, "the observer changed native heap allocation behavior")
+        self.assertEqual(wrapped.returncode, bare.returncode)
+        self.assertIn("debug_heap_policy", receipt)
+
+    def test_child_environment_preserves_unicode_values_without_changing_parent_or_receipt(self):
+        with patch.dict(os.environ, {
+            "_NO_DEBUG_HEAP": "0",
+            "FESTERM_DIAGNOSTIC_ENV_CONTROL": "private-env-\U0001f680-after",
+        }):
+            result, receipt = self.execute("environment", environment=os.environ.copy())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(os.environ["_NO_DEBUG_HEAP"], "0")
+            self.assertNotIn("private-env", json.dumps(receipt))
+
+    def test_native_environment_preserves_hidden_entries_after_surrogate_pairs(self):
+        record = {"events": [], "modules": []}
+        debugger = NativeDebugger(record)
+        entries = ["=C:=C:\\owned-\U0001f680", "ALPHA=private-env-\U0001f680",
+                   "_no_debug_heap=0", "ZETA=still-present"]
+        text = "\0".join(entries) + "\0"
+        native = ctypes.create_unicode_buffer(text, len(text.encode("utf-16-le")) // 2 + 1)
+        with patch.object(debugger, "get_environment", return_value=ctypes.addressof(native)), \
+             patch.object(debugger, "free_environment", return_value=True) as free:
+            copied = debugger.normal_heap_environment()
+        copied_entries = ctypes.string_at(
+            ctypes.addressof(copied), ctypes.sizeof(copied),
+        ).decode("utf-16-le").rstrip("\0").split("\0")
+        self.assertEqual(set(copied_entries), set(entries[:2] + entries[3:] + ["_NO_DEBUG_HEAP=1"]))
+        free.assert_called_once_with(ctypes.addressof(native))
+        self.assertNotIn("private-env", json.dumps(record))
 
     def test_pass_and_rust_failure_preserve_status_and_completed_context(self):
         for mode, code, outcome in (("pass", 0, "passed"), ("failure", 101, "rust_test_failure")):
