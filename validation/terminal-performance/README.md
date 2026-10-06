@@ -144,6 +144,33 @@ CP-15 native responsiveness, caret/focus/IME and usability remain open.
 
 ```sh
 cargo test --locked -p festerm-document --lib single_pass_multi_edit -- --nocapture
+## Borrowed ordinary vi motion construction
+
+C1 in #320 removes full-document character/offset vector construction from
+ready/Normal motion and count-prefix keys. Compiled old-path controls over
+128 keys construct cumulative final capacities of 603,982,848 bytes on a
+393,216-byte ASCII document and 402,655,232 bytes on a 524,288-byte Unicode
+document. Candidate full-index capacity is zero; instrumented motion-scan
+byte visits total 1,206/1,945, below the 16,384-visit guard. Dot-repeat's
+final diff removes two character arrays totaling 2,097,168 capacity bytes in
+the old control; candidate index capacity is zero.
+
+These count final constructed capacities and instrumented byte/character
+scan spans, not all reallocations/allocator-call bytes, machine loads, time,
+peak/retained RSS or fragmentation. Keys/recording and changed diff payloads
+still have their ordinary owners; operator/pending, Insert/Replace and Visual
+still use keystroke-local indexed fallback. Long counted word/line jumps can
+scan what they cross. A trillion-count empty-line fixed point is bounded.
+
+Seven deterministic regressions cover 53 ASCII/Unicode fixtures, byte/split/
+out-of-range carets, counts, frozen word and existing indexed line oracles,
+mixed-mode/register/recording/repeat churn, positive fallback instrumentation,
+and independent old char-array diff equivalence. No revision/text cache or
+limit increase; CP-15 native responsiveness/IME/usability and #297 attribution
+remain separate.
+
+```sh
+cargo test --locked -p festerm-document --lib vi_local_motion -- --nocapture
 ```
 
 ## Bounded six-session aging

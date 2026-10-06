@@ -616,6 +616,21 @@ redo, revision and saved state, alongside existing metadata/line/stale/UTF-8
 and production shared-view/refusal tests. CP-15 native caret/IME/readability
 and memory/fragmentation conclusions remain separate.
 
+### Borrowed vi motion verification
+
+`EDIT-07` has compiled old-path index-capacity controls for 128 ordinary keys
+on large ASCII/Unicode sources and dot-repeat's final diff. Normal motion/count
+construction now uses zero full-index capacity; instrumented motion-scan
+visits are bounded independently of unrelated document prefixes. Frozen
+scalar word oracles and indexed line/vertical/`G` oracles cover 53 Unicode/
+ASCII fixtures, all byte/split/out-of-range carets and absent/zero/ordinary/
+large counts. Mixed-mode/operator/visual/repeat/recording churn also checks
+pending state, register, recording, caret/action and fallback retirement.
+A trillion-count empty-line fixed point performs bounded unchanged work.
+Streaming repeat diffs equal the old char-array oracle across Unicode
+insert/remove/replace, equal text, whole removal and prefix/suffix overlap.
+CP-15 native/IME/readability and RSS/fragmentation remain separate.
+
 ### M9 scrollback and reflow verification
 
 `HIST-04` anchor-work regressions count actual lookup steps: capture/resolution

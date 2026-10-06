@@ -406,6 +406,15 @@ history commit. Single/equal-length undo/redo stays in place; length-changing
 multi-edit replay temporarily owns one additional bounded result and drops the
 replaced buffer immediately, without adding a retained owner or widening bounds.
 
+Ordinary ready/Normal vi motions and count prefixes use borrowed UTF-8
+boundaries/local line scans, without constructing full-document character or
+byte-offset vectors. Word motions share one algorithm between borrowed byte
+coordinates and the existing indexed operator fallback. Unsupported/pending,
+Insert/Replace and Visual routes retain that keystroke-local fallback.
+Dot-repeat's final diff streams common prefix/suffix characters and owns only
+its changed payloads, not two extra full-document character arrays. No document
+snapshot, revision cache or additional retained owner is added.
+
 ### `festerm-test-support`
 
 Provides shared test infrastructure:

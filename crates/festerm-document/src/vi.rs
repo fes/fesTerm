@@ -14,13 +14,21 @@
 //! be honoured returns [`ViAction::Refused`] carrying an empty edit list.
 //!
 //! All offsets the engine speaks in are byte offsets into that normalised
-//! text, and every one is computed in char-index space and mapped back, so a
+//! text, using borrowed UTF-8 motion scans or a char-indexed fallback, so a
 //! motion, text object, or operator range can never land inside a multi-byte
 //! character — the class of bug that once panicked a sibling module on
 //! `find_all("é")`.
 
 use crate::search::SearchError;
 use crate::text::TextEdit;
+
+#[cfg(test)]
+thread_local! {
+    static VI_BUFFER_INDEX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static VI_DIFF_INDEX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static VI_MOTION_SCAN_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static VI_MOTION_SCAN_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
 
 const MAX_VI_RECORDING_KEYS: usize = 8192;
 const SMALL_RECORDING_CAPACITY: usize = 32;
@@ -165,10 +173,12 @@ enum LastChange {
     OverLimit,
 }
 
-/// The view-scoped state machine. One per editor view; it never outlives a
+/// The view-scoped state machine. One per editor view; it never retains a
 /// keystroke's borrow of the document text.
 #[derive(Clone, Debug)]
 pub struct ViEngine {
+    #[cfg(test)]
+    force_indexed_motions: bool,
     mode: ViMode,
     stage: Stage,
     count: Option<usize>,
@@ -198,6 +208,8 @@ impl Default for ViEngine {
 impl ViEngine {
     pub fn new() -> Self {
         Self {
+            #[cfg(test)]
+            force_indexed_motions: false,
             mode: ViMode::Normal,
             stage: Stage::Ready,
             count: None,
@@ -264,9 +276,14 @@ impl ViEngine {
             }
         }
 
-        let buf = Buffer::new(text);
-        let caret = clamp_caret(&buf, caret);
-        let (action, new_caret) = self.step(&buf, key, caret);
+        let caret = floor_text_boundary(text, caret);
+        let (action, new_caret) = match self.borrowed_normal_motion(key, text, caret) {
+            Some(response) => response,
+            None => {
+                let buf = Buffer::new(text);
+                self.step(&buf, key, caret)
+            }
+        };
 
         let warn = !self.replaying && self.update_recording(&action);
         let mut response = self.respond(action, new_caret);
@@ -274,6 +291,40 @@ impl ViEngine {
             response.warning = Some(Self::repeat_limit_error());
         }
         response
+    }
+
+    fn borrowed_normal_motion(
+        &mut self,
+        key: ViKey,
+        text: &str,
+        caret: usize,
+    ) -> Option<(ViAction, usize)> {
+        #[cfg(test)]
+        if self.force_indexed_motions {
+            return None;
+        }
+        if self.mode != ViMode::Normal || !matches!(self.stage, Stage::Ready) {
+            return None;
+        }
+        let ViKey::Char(ch) = key else {
+            return None;
+        };
+        if self.consume_count_digit(ch) {
+            return Some((ViAction::None, caret));
+        }
+        let target = borrowed_motion(text, caret, ch, self.count)?;
+        self.count = None;
+        Some((ViAction::None, target))
+    }
+
+    fn consume_count_digit(&mut self, ch: char) -> bool {
+        if ch.is_ascii_digit() && !(ch == '0' && self.count.is_none()) {
+            let digit = ch as usize - '0' as usize;
+            self.count = Some(self.count.unwrap_or(0) * 10 + digit);
+            true
+        } else {
+            false
+        }
     }
 
     fn respond(&self, action: ViAction, caret: usize) -> ViResponse {
@@ -517,9 +568,7 @@ impl ViEngine {
 
         // A count builds up until a command consumes it; `0` is the
         // start-of-line motion only when no count is being typed.
-        if ch.is_ascii_digit() && !(ch == '0' && self.count.is_none()) {
-            let digit = ch as usize - '0' as usize;
-            self.count = Some(self.count.unwrap_or(0) * 10 + digit);
+        if self.consume_count_digit(ch) {
             return (ViAction::None, caret);
         }
 
@@ -699,9 +748,7 @@ impl ViEngine {
         };
 
         // A count may follow the operator too (`d3w`); fold digits in.
-        if ch.is_ascii_digit() && !(ch == '0' && self.count.is_none()) {
-            let digit = ch as usize - '0' as usize;
-            self.count = Some(self.count.unwrap_or(0) * 10 + digit);
+        if self.consume_count_digit(ch) {
             return (ViAction::None, caret);
         }
 
@@ -883,9 +930,7 @@ impl ViEngine {
             _ => return (ViAction::None, caret),
         };
 
-        if ch.is_ascii_digit() && !(ch == '0' && self.count.is_none()) {
-            let digit = ch as usize - '0' as usize;
-            self.count = Some(self.count.unwrap_or(0) * 10 + digit);
+        if self.consume_count_digit(ch) {
             return (ViAction::None, caret);
         }
         let count = self.count.take();
@@ -1383,6 +1428,164 @@ enum Motion {
     },
 }
 
+fn floor_text_boundary(text: &str, caret: usize) -> usize {
+    let mut caret = caret.min(text.len());
+    while !text.is_char_boundary(caret) {
+        caret -= 1;
+    }
+    caret
+}
+
+#[cfg(test)]
+fn observe_motion_bytes(count: usize) {
+    let visited = VI_MOTION_SCAN_BYTES.with(|bytes| {
+        let visited = bytes.get() + count;
+        bytes.set(visited);
+        visited
+    });
+    VI_MOTION_SCAN_LIMIT.with(|limit| {
+        if let Some(limit) = limit.get() {
+            assert!(
+                visited <= limit,
+                "motion visited {visited} bytes, limit {limit}"
+            );
+        }
+    });
+}
+
+fn line_start_byte(text: &str, caret: usize) -> usize {
+    text[..caret]
+        .bytes()
+        .rposition(|byte| {
+            #[cfg(test)]
+            observe_motion_bytes(1);
+            byte == b'\n'
+        })
+        .map_or(0, |index| index + 1)
+}
+
+fn line_end_byte(text: &str, caret: usize) -> usize {
+    text[caret..]
+        .bytes()
+        .position(|byte| {
+            #[cfg(test)]
+            observe_motion_bytes(1);
+            byte == b'\n'
+        })
+        .map_or(text.len(), |index| caret + index)
+}
+
+fn clamp_text_cursor(text: &str, caret: usize) -> usize {
+    if text.character(caret).is_none_or(|ch| ch == '\n') && caret > 0 {
+        let previous = text.previous(caret);
+        if text.character(previous) != Some('\n') {
+            return previous;
+        }
+    }
+    caret
+}
+
+fn borrowed_motion(text: &str, caret: usize, key: char, count: Option<usize>) -> Option<usize> {
+    let n = count.unwrap_or(1);
+    // Preserve the indexed path's existing signed-count interpretation.
+    if n > isize::MAX as usize {
+        return None;
+    }
+    let target = match key {
+        'h' => {
+            let start = line_start_byte(text, caret);
+            let mut target = caret;
+            for _ in 0..n {
+                if target == start {
+                    break;
+                }
+                target = text.previous(target);
+            }
+            target
+        }
+        'l' => {
+            let mut target = caret;
+            for _ in 0..n {
+                if text.character(target).is_none_or(|ch| ch == '\n') {
+                    break;
+                }
+                target = text.next(target);
+            }
+            target
+        }
+        '0' => line_start_byte(text, caret),
+        '^' => {
+            let start = line_start_byte(text, caret);
+            start + leading_blank_bytes(&text[start..])
+        }
+        '$' => {
+            let mut end = line_end_byte(text, caret);
+            for _ in 0..n.saturating_sub(1) {
+                if end == text.len() {
+                    break;
+                }
+                end = line_end_byte(text, end + 1);
+            }
+            end
+        }
+        'j' | 'k' => {
+            let mut start = line_start_byte(text, caret);
+            let column = text[start..caret]
+                .chars()
+                .inspect(|ch| {
+                    #[cfg(test)]
+                    observe_motion_bytes(ch.len_utf8());
+                    #[cfg(not(test))]
+                    let _ = ch;
+                })
+                .count();
+            for _ in 0..n {
+                if key == 'j' {
+                    let end = line_end_byte(text, start);
+                    if end == text.len() {
+                        break;
+                    }
+                    start = end + 1;
+                } else {
+                    if start == 0 {
+                        break;
+                    }
+                    start = line_start_byte(text, start - 1);
+                }
+            }
+            let mut target = start;
+            for _ in 0..column {
+                if text.character(target).is_none_or(|ch| ch == '\n') {
+                    break;
+                }
+                target = text.next(target);
+            }
+            target
+        }
+        'G' => {
+            let start = if let Some(count) = count {
+                let mut start = 0;
+                for _ in 0..count.saturating_sub(1) {
+                    let end = line_end_byte(text, start);
+                    if end == text.len() {
+                        break;
+                    }
+                    start = end + 1;
+                }
+                start
+            } else {
+                line_start_byte(text, text.len())
+            };
+            start + leading_blank_bytes(&text[start..])
+        }
+        'w' | 'W' => word_forward(text, caret, n, key == 'W'),
+        'b' | 'B' => word_back(text, caret, n, key == 'B'),
+        'e' | 'E' => word_end(text, caret, n, key == 'E'),
+        _ => return None,
+    };
+    Some(clamp_text_cursor(text, target))
+}
+
 /// Applies Vim's exclusive-motion adjustment for an operator whose motion ends
 /// in column 1: the end is pulled back to the end of the previous line.
 /// Returns `None` when the motion does not end at a line start.
@@ -1631,83 +1834,180 @@ fn class(c: char) -> Class {
     }
 }
 
-fn word_forward(buf: &Buffer, mut ci: usize, count: usize, big: bool) -> usize {
-    let n = buf.nchars();
+trait MotionText {
+    fn end(&self) -> usize;
+    fn character(&self, position: usize) -> Option<char>;
+    fn next(&self, position: usize) -> usize;
+    fn previous(&self, position: usize) -> usize;
+}
+
+impl MotionText for Buffer {
+    fn end(&self) -> usize {
+        self.nchars()
+    }
+
+    fn character(&self, position: usize) -> Option<char> {
+        self.ch(position).inspect(|ch| {
+            #[cfg(test)]
+            observe_motion_bytes(ch.len_utf8());
+            #[cfg(not(test))]
+            let _ = ch;
+        })
+    }
+
+    fn next(&self, position: usize) -> usize {
+        (position + 1).min(self.nchars())
+    }
+
+    fn previous(&self, position: usize) -> usize {
+        position.saturating_sub(1)
+    }
+}
+
+impl MotionText for str {
+    fn end(&self) -> usize {
+        self.len()
+    }
+
+    fn character(&self, position: usize) -> Option<char> {
+        self[position..].chars().next().inspect(|ch| {
+            #[cfg(test)]
+            observe_motion_bytes(ch.len_utf8());
+            #[cfg(not(test))]
+            let _ = ch;
+        })
+    }
+
+    fn next(&self, position: usize) -> usize {
+        self.character(position)
+            .map_or(self.len(), |ch| position + ch.len_utf8())
+    }
+
+    fn previous(&self, position: usize) -> usize {
+        self[..position]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(offset, ch)| {
+                #[cfg(test)]
+                observe_motion_bytes(ch.len_utf8());
+                #[cfg(not(test))]
+                let _ = ch;
+                offset
+            })
+    }
+}
+
+fn word_forward<T: MotionText + ?Sized>(buf: &T, mut ci: usize, count: usize, big: bool) -> usize {
+    let n = buf.end();
     for _ in 0..count {
+        let previous = ci;
         if ci >= n {
             return n;
         }
-        let start_class = class(buf.chars[ci]);
+        let start_class = class(buf.character(ci).expect("motion cursor before end"));
         if start_class != Class::Blank {
             if big {
-                while ci < n && class(buf.chars[ci]) != Class::Blank {
-                    ci += 1;
+                while ci < n
+                    && class(buf.character(ci).expect("motion cursor before end")) != Class::Blank
+                {
+                    ci = buf.next(ci);
                 }
             } else {
-                while ci < n && class(buf.chars[ci]) == start_class {
-                    ci += 1;
+                while ci < n
+                    && class(buf.character(ci).expect("motion cursor before end")) == start_class
+                {
+                    ci = buf.next(ci);
                 }
             }
         }
-        while ci < n && class(buf.chars[ci]) == Class::Blank {
+        while ci < n && class(buf.character(ci).expect("motion cursor before end")) == Class::Blank
+        {
             // An empty line counts as a word: `w` stops on it rather than
             // skipping through the blank run.
-            if buf.chars[ci] == '\n' && (ci == 0 || buf.chars[ci - 1] == '\n') {
+            if buf.character(ci) == Some('\n')
+                && (ci == 0 || buf.character(buf.previous(ci)) == Some('\n'))
+            {
                 break;
             }
-            ci += 1;
+            ci = buf.next(ci);
+        }
+        // An empty-line stop is a fixed point for remaining counted steps.
+        if ci == previous {
+            break;
         }
     }
     ci.min(n)
 }
 
-fn word_end(buf: &Buffer, mut ci: usize, count: usize, big: bool) -> usize {
-    let n = buf.nchars();
+fn word_end<T: MotionText + ?Sized>(buf: &T, mut ci: usize, count: usize, big: bool) -> usize {
+    let n = buf.end();
     for _ in 0..count {
-        if ci + 1 >= n {
-            return n.saturating_sub(1);
+        if buf.next(ci) >= n {
+            return buf.previous(n);
         }
-        ci += 1;
-        while ci < n && class(buf.chars[ci]) == Class::Blank {
-            ci += 1;
+        ci = buf.next(ci);
+        while ci < n && class(buf.character(ci).expect("motion cursor before end")) == Class::Blank
+        {
+            ci = buf.next(ci);
         }
         if ci >= n {
-            return n - 1;
+            return buf.previous(n);
         }
-        let c = class(buf.chars[ci]);
+        let c = class(buf.character(ci).expect("motion cursor before end"));
         if big {
-            while ci + 1 < n && class(buf.chars[ci + 1]) != Class::Blank {
-                ci += 1;
+            while buf.next(ci) < n
+                && class(
+                    buf.character(buf.next(ci))
+                        .expect("motion cursor before end"),
+                ) != Class::Blank
+            {
+                ci = buf.next(ci);
             }
         } else {
-            while ci + 1 < n && class(buf.chars[ci + 1]) == c {
-                ci += 1;
+            while buf.next(ci) < n
+                && class(
+                    buf.character(buf.next(ci))
+                        .expect("motion cursor before end"),
+                ) == c
+            {
+                ci = buf.next(ci);
             }
         }
     }
-    ci.min(n.saturating_sub(1))
+    ci.min(buf.previous(n))
 }
 
-fn word_back(buf: &Buffer, mut ci: usize, count: usize, big: bool) -> usize {
+fn word_back<T: MotionText + ?Sized>(buf: &T, mut ci: usize, count: usize, big: bool) -> usize {
     for _ in 0..count {
         if ci == 0 {
             return 0;
         }
-        ci -= 1;
-        while ci > 0 && class(buf.chars[ci]) == Class::Blank {
-            ci -= 1;
+        ci = buf.previous(ci);
+        while ci > 0 && class(buf.character(ci).expect("motion cursor before end")) == Class::Blank
+        {
+            ci = buf.previous(ci);
         }
-        if class(buf.chars[ci]) == Class::Blank {
+        if class(buf.character(ci).expect("motion cursor before end")) == Class::Blank {
             return 0;
         }
-        let c = class(buf.chars[ci]);
+        let c = class(buf.character(ci).expect("motion cursor before end"));
         if big {
-            while ci > 0 && class(buf.chars[ci - 1]) != Class::Blank {
-                ci -= 1;
+            while ci > 0
+                && class(
+                    buf.character(buf.previous(ci))
+                        .expect("motion cursor before end"),
+                ) != Class::Blank
+            {
+                ci = buf.previous(ci);
             }
         } else {
-            while ci > 0 && class(buf.chars[ci - 1]) == c {
-                ci -= 1;
+            while ci > 0
+                && class(
+                    buf.character(buf.previous(ci))
+                        .expect("motion cursor before end"),
+                ) == c
+            {
+                ci = buf.previous(ci);
             }
         }
     }
@@ -1787,6 +2087,14 @@ impl Buffer {
             byte += c.len_utf8();
         }
         byte_starts.push(byte);
+        #[cfg(test)]
+        VI_BUFFER_INDEX_BYTES.with(|bytes| {
+            bytes.set(
+                bytes.get()
+                    + chars.capacity() * std::mem::size_of::<char>()
+                    + byte_starts.capacity() * std::mem::size_of::<usize>(),
+            )
+        });
         Self { chars, byte_starts }
     }
 
@@ -1911,6 +2219,7 @@ fn ordered(a: usize, b: usize) -> (usize, usize) {
     }
 }
 
+#[cfg(test)]
 fn clamp_caret(buf: &Buffer, caret: usize) -> usize {
     let caret = caret.min(buf.byte(buf.nchars()));
     let ci = buf.ci_of_byte(caret);
@@ -1946,7 +2255,11 @@ fn join_separator(buf: &Buffer, end_of_first: usize, next_first: usize) -> &'sta
 
 fn leading_blank_bytes(text: &str) -> usize {
     text.bytes()
-        .take_while(|&b| b == b' ' || b == b'\t')
+        .take_while(|&b| {
+            #[cfg(test)]
+            observe_motion_bytes(1);
+            b == b' ' || b == b'\t'
+        })
         .count()
 }
 
@@ -1965,25 +2278,21 @@ fn single_edit_diff(old: &str, new: &str) -> Option<TextEdit> {
     if old == new {
         return None;
     }
-    let old_chars: Vec<char> = old.chars().collect();
-    let new_chars: Vec<char> = new.chars().collect();
-    let mut prefix = 0;
-    while prefix < old_chars.len()
-        && prefix < new_chars.len()
-        && old_chars[prefix] == new_chars[prefix]
-    {
-        prefix += 1;
-    }
-    let mut suffix = 0;
-    while suffix < old_chars.len() - prefix
-        && suffix < new_chars.len() - prefix
-        && old_chars[old_chars.len() - 1 - suffix] == new_chars[new_chars.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
-    let start_byte: usize = old_chars[..prefix].iter().map(|c| c.len_utf8()).sum();
-    let removed: String = old_chars[prefix..old_chars.len() - suffix].iter().collect();
-    let inserted: String = new_chars[prefix..new_chars.len() - suffix].iter().collect();
+    let start_byte: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(left, right)| left == right)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum();
+    let suffix: usize = old[start_byte..]
+        .chars()
+        .rev()
+        .zip(new[start_byte..].chars().rev())
+        .take_while(|(left, right)| left == right)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum();
+    let removed = old[start_byte..old.len() - suffix].to_owned();
+    let inserted = new[start_byte..new.len() - suffix].to_owned();
     Some(TextEdit {
         start: start_byte,
         removed,
@@ -2030,6 +2339,331 @@ mod tests {
             calls <= 1,
             "vi builder made {calls} length-changing splices"
         );
+    }
+
+    fn local_motion_index_control(line: &str) {
+        let text = line.repeat(32_768);
+        let mut caret = text.len() - line.len();
+        let mut engine = ViEngine::new();
+        VI_BUFFER_INDEX_BYTES.with(|bytes| bytes.set(0));
+        VI_MOTION_SCAN_BYTES.with(|bytes| bytes.set(0));
+        let motions = chars("hljk0^$wbeWBE");
+        for index in 0..64 {
+            caret = engine.on_key(ViKey::Char('2'), &text, caret).caret;
+            let response = engine.on_key(motions[index % motions.len()], &text, caret);
+            assert!(matches!(response.action, ViAction::None));
+            assert!(text.is_char_boundary(response.caret));
+            caret = response.caret;
+        }
+        let bytes = VI_BUFFER_INDEX_BYTES.with(std::cell::Cell::get);
+        println!(
+            "vi_local_motion_index_bytes={bytes}, source_bytes={}",
+            text.len()
+        );
+        assert_eq!(bytes, 0, "ordinary motions allocated full-document indexes");
+        let scanned = VI_MOTION_SCAN_BYTES.with(std::cell::Cell::get);
+        println!("vi_local_motion_scanned_bytes={scanned}");
+        assert!(scanned <= 16_384, "local motions scanned {scanned} bytes");
+    }
+
+    fn legacy_word_target(buf: &Buffer, mut ci: usize, key: char, count: usize) -> usize {
+        let n = buf.nchars();
+        let big = key.is_uppercase();
+        for _ in 0..count {
+            match key {
+                'w' | 'W' => {
+                    if ci >= n {
+                        return n;
+                    }
+                    let here = class(buf.chars[ci]);
+                    if here != Class::Blank {
+                        while ci < n
+                            && if big {
+                                class(buf.chars[ci]) != Class::Blank
+                            } else {
+                                class(buf.chars[ci]) == here
+                            }
+                        {
+                            ci += 1;
+                        }
+                    }
+                    while ci < n && class(buf.chars[ci]) == Class::Blank {
+                        if buf.chars[ci] == '\n' && (ci == 0 || buf.chars[ci - 1] == '\n') {
+                            break;
+                        }
+                        ci += 1;
+                    }
+                }
+                'e' | 'E' => {
+                    if ci + 1 >= n {
+                        return n.saturating_sub(1);
+                    }
+                    ci += 1;
+                    while ci < n && class(buf.chars[ci]) == Class::Blank {
+                        ci += 1;
+                    }
+                    if ci >= n {
+                        return n - 1;
+                    }
+                    let here = class(buf.chars[ci]);
+                    while ci + 1 < n
+                        && if big {
+                            class(buf.chars[ci + 1]) != Class::Blank
+                        } else {
+                            class(buf.chars[ci + 1]) == here
+                        }
+                    {
+                        ci += 1;
+                    }
+                }
+                'b' | 'B' => {
+                    if ci == 0 {
+                        return 0;
+                    }
+                    ci -= 1;
+                    while ci > 0 && class(buf.chars[ci]) == Class::Blank {
+                        ci -= 1;
+                    }
+                    if class(buf.chars[ci]) == Class::Blank {
+                        return 0;
+                    }
+                    let here = class(buf.chars[ci]);
+                    while ci > 0
+                        && if big {
+                            class(buf.chars[ci - 1]) != Class::Blank
+                        } else {
+                            class(buf.chars[ci - 1]) == here
+                        }
+                    {
+                        ci -= 1;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        if matches!(key, 'e' | 'E') {
+            ci.min(n.saturating_sub(1))
+        } else {
+            ci.min(n)
+        }
+    }
+
+    fn local_motion_fixtures() -> Vec<String> {
+        let mut fixtures = ["", "a", "\n", "\n\nx", "  \té界, αβ🙂\n\r\nlast\n"]
+            .map(str::to_owned)
+            .to_vec();
+        let alphabet = ['a', 'é', '界', '🙂', ' ', '\t', '\r', '\n', '_', ','];
+        for seed in 0..48 {
+            let mut state = seed + 1;
+            let mut text = String::new();
+            for _ in 0..32 {
+                state = (state * 17 + 13) % 997;
+                text.push(alphabet[state % alphabet.len()]);
+            }
+            fixtures.push(text);
+        }
+        fixtures
+    }
+
+    #[test]
+    fn vi_local_motion_matches_indexed_motion_oracle() {
+        for text in local_motion_fixtures() {
+            let buf = Buffer::new(&text);
+            for supplied in (0..=text.len() + 2).chain([usize::MAX]) {
+                let caret = clamp_caret(&buf, supplied);
+                assert_eq!(floor_text_boundary(&text, supplied), caret);
+                for key in "hlwWbBeE0^$jkG".chars() {
+                    for count in [None, Some(0), Some(1), Some(2), Some(100)] {
+                        let expected = if matches!(key, 'w' | 'W' | 'b' | 'B' | 'e' | 'E') {
+                            let ci = buf.ci_of_byte(caret);
+                            let n = count.unwrap_or(1);
+                            let target = legacy_word_target(&buf, ci, key, n);
+                            let indexed = match key {
+                                'w' | 'W' => word_forward(&buf, ci, n, key == 'W'),
+                                'b' | 'B' => word_back(&buf, ci, n, key == 'B'),
+                                'e' | 'E' => word_end(&buf, ci, n, key == 'E'),
+                                _ => unreachable!(),
+                            };
+                            assert_eq!(indexed, target);
+                            clamp_cursor(&buf, target)
+                        } else {
+                            let motion = resolve_motion(&buf, caret, key, count, None).unwrap();
+                            move_cursor(&buf, caret, &motion)
+                        };
+                        assert_eq!(
+                            borrowed_motion(&text, caret, key, count),
+                            Some(expected),
+                            "{text:?}, caret={supplied}, key={key}, count={count:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vi_local_motion_engine_churn_matches_indexed_path_and_retires_fallback() {
+        let mut fast = ViEngine::new();
+        let mut indexed = ViEngine {
+            force_indexed_motions: true,
+            ..ViEngine::new()
+        };
+        let mut text = "é界 café\n\nαβ,  文🙂\nlast".to_owned();
+        let (mut caret, mut expected_caret) = (0, 0);
+        let mut keys = chars("2jkl0^$wbeWBElbGiλβ");
+        keys.push(ViKey::Escape);
+        keys.extend(chars("0vll"));
+        keys.push(ViKey::Escape);
+        keys.extend(chars("2d3w.2bVj"));
+        keys.push(ViKey::Escape);
+        keys.extend(chars("0^$u"));
+        keys.push(ViKey::Ctrl('r'));
+        keys.extend(chars("ghm"));
+        keys.push(ViKey::Escape);
+        for _ in 0..20 {
+            for &key in &keys {
+                let actual = fast.on_key(key, &text, caret);
+                let expected = indexed.on_key(key, &text, expected_caret);
+                assert_eq!(
+                    format!("{actual:?}"),
+                    format!("{expected:?}"),
+                    "key={key:?}"
+                );
+                assert_eq!(fast.record, indexed.record);
+                assert_eq!(fast.register, indexed.register);
+                assert_eq!(fast.count, indexed.count);
+                assert_eq!(fast.operator_count, indexed.operator_count);
+                assert_eq!(fast.visual_anchor, indexed.visual_anchor);
+                assert_eq!(fast.change_in_progress, indexed.change_in_progress);
+                assert_eq!(fast.recording_state, indexed.recording_state);
+                assert_eq!(
+                    format!("{:?}", fast.last_change),
+                    format!("{:?}", indexed.last_change)
+                );
+                if let ViAction::Edit(edits) = actual.action {
+                    text = apply_edits_to_string(&text, &edits);
+                }
+                caret = actual.caret;
+                expected_caret = expected.caret;
+            }
+        }
+        VI_BUFFER_INDEX_BYTES.with(|bytes| bytes.set(0));
+        let mut fallback = ViEngine::new();
+        fallback.on_key(ViKey::Char('d'), "abc", 0);
+        assert!(VI_BUFFER_INDEX_BYTES.with(std::cell::Cell::get) > 0);
+        fallback.on_key(ViKey::Escape, "abc", 0);
+        VI_BUFFER_INDEX_BYTES.with(|bytes| bytes.set(0));
+        fallback.on_key(ViKey::Char('l'), "abc", 0);
+        assert_eq!(VI_BUFFER_INDEX_BYTES.with(std::cell::Cell::get), 0);
+    }
+
+    #[test]
+    fn vi_local_motion_large_ascii_avoids_full_indexes() {
+        local_motion_index_control("ab cd_ef,gh\n");
+    }
+
+    #[test]
+    fn vi_local_motion_large_unicode_avoids_full_indexes() {
+        local_motion_index_control("é界 αβ,🙂\n");
+    }
+
+    #[test]
+    fn vi_local_motion_empty_line_count_remains_bounded() {
+        struct RestoreLimit(Option<usize>);
+        impl Drop for RestoreLimit {
+            fn drop(&mut self) {
+                VI_MOTION_SCAN_LIMIT.with(|limit| limit.set(self.0));
+            }
+        }
+        let mut engine = ViEngine::new();
+        let text = "one\n\nlast";
+        VI_MOTION_SCAN_BYTES.with(|bytes| bytes.set(0));
+        VI_BUFFER_INDEX_BYTES.with(|bytes| bytes.set(0));
+        let _limit = RestoreLimit(VI_MOTION_SCAN_LIMIT.with(|limit| limit.replace(Some(32))));
+        for key in chars("1000000000000w") {
+            let response = engine.on_key(key, text, 4);
+            assert_eq!(response.caret, 4);
+            assert!(matches!(response.action, ViAction::None));
+        }
+        assert!(!engine.is_pending());
+        assert!(VI_MOTION_SCAN_BYTES.with(std::cell::Cell::get) <= 32);
+        assert_eq!(VI_BUFFER_INDEX_BYTES.with(std::cell::Cell::get), 0);
+    }
+
+    #[test]
+    fn vi_local_motion_repeat_diff_avoids_char_arrays() {
+        let old = "é界 αβ,🙂\n".repeat(32_768);
+        let mut new = old.clone();
+        let middle = old.len() / 2;
+        new.replace_range(middle..middle + "é".len(), "x");
+        VI_DIFF_INDEX_BYTES.with(|bytes| bytes.set(0));
+        assert_eq!(
+            single_edit_diff(&old, &new),
+            Some(TextEdit {
+                start: middle,
+                removed: "é".to_owned(),
+                inserted: "x".to_owned(),
+            })
+        );
+        let bytes = VI_DIFF_INDEX_BYTES.with(std::cell::Cell::get);
+        println!("vi_repeat_diff_index_bytes={bytes}");
+        assert_eq!(bytes, 0, "repeat diff allocated whole-document char arrays");
+    }
+
+    #[test]
+    fn vi_local_motion_repeat_diff_matches_char_array_oracle() {
+        fn legacy_diff(old: &str, new: &str) -> Option<TextEdit> {
+            if old == new {
+                return None;
+            }
+            let left: Vec<_> = old.chars().collect();
+            let right: Vec<_> = new.chars().collect();
+            let mut prefix = 0;
+            while prefix < left.len() && prefix < right.len() && left[prefix] == right[prefix] {
+                prefix += 1;
+            }
+            let mut suffix = 0;
+            while suffix < left.len() - prefix
+                && suffix < right.len() - prefix
+                && left[left.len() - 1 - suffix] == right[right.len() - 1 - suffix]
+            {
+                suffix += 1;
+            }
+            Some(TextEdit {
+                start: left[..prefix].iter().map(|ch| ch.len_utf8()).sum(),
+                removed: left[prefix..left.len() - suffix].iter().collect(),
+                inserted: right[prefix..right.len() - suffix].iter().collect(),
+            })
+        }
+        for old in local_motion_fixtures() {
+            let mut variants = vec![
+                old.clone(),
+                String::new(),
+                format!("{old}Ω"),
+                format!("Ω{old}"),
+            ];
+            for (start, ch) in old.char_indices() {
+                let mut removed = old.clone();
+                removed.replace_range(start..start + ch.len_utf8(), "");
+                variants.push(removed);
+                let mut replaced = old.clone();
+                replaced.replace_range(start..start + ch.len_utf8(), "λ🙂");
+                variants.push(replaced);
+                let mut inserted = old.clone();
+                inserted.insert_str(start, "λ🙂");
+                variants.push(inserted);
+            }
+            for new in variants {
+                let edit = single_edit_diff(&old, &new);
+                assert_eq!(edit, legacy_diff(&old, &new), "{old:?} -> {new:?}");
+                let mut applied = old.clone();
+                if let Some(edit) = edit {
+                    applied
+                        .replace_range(edit.start..edit.start + edit.removed.len(), &edit.inserted);
+                }
+                assert_eq!(applied, new);
+            }
+        }
     }
 
     /// Drives the engine through a sequence of keys, committing every returned

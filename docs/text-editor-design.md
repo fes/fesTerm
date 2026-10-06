@@ -288,6 +288,17 @@ and replay borrows its keys rather than cloning another key array. The repeat
 budget does not bound document, register, undo, or replay scratch-text storage;
 those have separate ownership and size policies.
 
+Ordinary ready/Normal `h/l/j/k`, word, line-boundary and `G` motions plus
+count prefixes now borrow the current UTF-8 text without full-document
+character/offset indexes. Byte and indexed word coordinates share one
+algorithm; an empty-line fixed point does not repeat identical work for a
+large count. The final dot-repeat diff streams common prefix/suffix characters
+and copies only changed payloads. Operator/pending, Insert/Replace and Visual
+paths retain their keystroke-local indexes; long word/count/line jumps can
+still scan the text they actually cross. No persistent text/index cache is
+added: an in-place edit can preserve both address and length without preserving
+content. Document, register and recording limits and vi fidelity are unchanged.
+
 The `:` commands are all fesTerm-routed, which is the whole point of them.
 `:w` dispatches Save and reports success only once the durable replacement
 completes. `:w {path}` and `:saveas` dispatch the reviewed Save As sheet with
