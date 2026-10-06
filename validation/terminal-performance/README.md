@@ -33,6 +33,32 @@ This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
 
+## Single-pass document multi-edit construction
+
+C2 in #320 shares one borrowed-span result builder across document apply and
+vi scratch, with equivalent inverse construction for length-changing
+multi-edit undo/redo. Each compiled old-path control made 2,000 splices for
+2,000 replacements; all four candidate paths make zero. Actual write-site
+byte counters match one result length for apply/undo/redo. These are operation
+and construction-byte observations, not CPU, elapsed time or allocated-byte
+measurements.
+
+Old splice oracles cover Unicode, adjacent/coincident insertions, deletions
+and no-ops. A byte-bound refusal constructs no output and preserves redo,
+saved/dirty identity and revision. Existing line, metadata, stale, order,
+UTF-8, shared-view and production refusal tests remain required.
+
+Single edits and equal-length replay keep in-place undo/redo; pointer and
+capacity checks guard that path. Length-changing multi-edit replay can
+temporarily own an extra result bounded by the existing document limit
+(4 MiB by default), then drops the replaced buffer. No retained owner or
+limit change; no total-peak/RSS/fragmentation or #297-causality claim.
+CP-15 native responsiveness, caret/focus/IME and usability remain open.
+
+```sh
+cargo test --locked -p festerm-document --lib single_pass_multi_edit -- --nocapture
+```
+
 ## Bounded six-session aging
 
 `scripts/check-windows-session-aging.ps1` runs a separately opt-in, repository-owned

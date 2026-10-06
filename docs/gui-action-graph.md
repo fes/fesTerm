@@ -709,6 +709,16 @@ exists.
 | `EDIT-16` | `Editor → SyntaxHighlighting` | Open a source file in a supported language, one in a language with no grammar, and one past the highlighting size bound; then toggle highlighting off. | Colour is presentation only: it never changes the document's bytes, revision, dirty state, or undo depth; the parse is cached per document revision and shared by every view of the file; only the visible range is queried; an unknown language, an exceeded bound, or a grammar failure falls back to plain text and says which, without a dialog; no application or document state is expressed through a syntax colour. | Turn Syntax highlighting off in the options menu. | P,H,V,N,U; design-approved |
 | `EDIT-17` | `Application → UntitledEditor` | Choose **New File** from More actions or the native File menu. | A separate blank editor opens immediately with a unique `Untitled-N.txt` identity, explicit unwritten dirty/unsaved state, and `UNTITLED` origin, without a synthetic undo entry or revision bump. Undoing real edits does not mark never-saved content clean. Auto-save is unavailable before a destination exists, and the first Save enters the ordinary Save As flow. No existing New Session, New Window, or Start Local Shell shortcut is reassigned. | Save As to bind the document to a file, or close through the final-view dirty-document policy. | P,H,V,N,U; implemented |
 
+For `EDIT-03`, `EDIT-05`, `EDIT-07` and `EDIT-13`, ordered multi-edit apply,
+inverse replay and vi scratch share borrowed-span construction instead of
+repeated suffix shifts. Unicode and coincident insertions match the old splice
+oracle, one transaction remains one undo, and preallocation byte refusal
+preserves history/revision/saved state. Single/equal-length replay stays in
+place; length-changing multi-edit replay may temporarily own one extra bounded
+result without adding a retained owner. Actual splice/write counts are
+automated; native responsiveness/caret/IME, memory peaks and fragmentation
+remain separate evidence.
+
 For `EDIT-16` and the fenced-code part of `MD-04`, repeated documents and
 blocks reuse only the immutable compiled query for their language. Parser,
 tree, text, revision, spans and query-cursor state remain independent across

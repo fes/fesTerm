@@ -370,6 +370,14 @@ or network dependencies:
 Reading and writing bytes, watching for outside changes, and every widget stay
 in `festerm-app`.
 
+Ordered multi-edits build one result from borrowed unchanged/replacement spans;
+inverse construction tracks original and applied coordinates without cloning
+inverse payloads. Apply, replay and vi scratch share that helper. Document byte
+admission precedes output allocation, followed by existing line bounds before
+history commit. Single/equal-length undo/redo stays in place; length-changing
+multi-edit replay temporarily owns one additional bounded result and drops the
+replaced buffer immediately, without adding a retained owner or widening bounds.
+
 ### `festerm-test-support`
 
 Provides shared test infrastructure:
