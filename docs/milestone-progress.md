@@ -111,6 +111,29 @@ The mirror, sanitized clone, decoded state and allocator/private transport
 costs remain. Pre-sizing initializes the destination, so this is no CPU
 improvement claim. Native signed-package/visual recovery remains CP-11, and
 this does not identify #297's multi-day growth cause.
+## Removing presentation-cell allocation churn
+
+The allocation review in #320 found work left before the painted-row cache:
+presentation copies still owned a heap `String` per ordinary cell, every dirty
+row replaced its vector, and scrolling recreated row storage at unchanged
+dimensions. A compiled dirty-row backing regression failed against the old
+implementation. A CPU-only system-allocator probe measured 339,968 allocation
+calls for 4,096 one-row refreshes and 498,688 calls for 256 viewport refreshes.
+
+Presentation now uses the core's existing inline `CompactString` representation
+and reuses row backing at unchanged dimensions. Dimension changes still retire
+old capacity, and replacing exceptional long text drops its heap payload
+instead of keeping a high-water string buffer. Shaping runs remain ordinary
+owned strings; values, Unicode/continuations, styles, hyperlinks, selection and
+shared revision-token semantics are unchanged.
+
+The same fixtures now make 8,192 and 512 allocation calls respectively: only
+the update-row vector and shared revision token allocate. There are no
+reallocations. A separate long-to-short control observes the actual old payload
+being freed. Six portable regressions, existing rendering tests and the
+opt-in allocation oracle protect the change. These are copy-stage allocation
+counts/requested bytes, not total retained RAM, allocator fragmentation,
+whole-frame CPU or evidence for #297.
 
 ## Bounding actual undo storage without discarding a refused change
 

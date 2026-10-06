@@ -85,6 +85,16 @@ if ($env:OS -eq 'Windows_NT') {
     if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed.' }
 }
 
+Invoke-NativeCommand {
+    cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check
+}
+if ($LASTEXITCODE -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=presentation-cache-allocations status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=presentation-cache-allocations status=fail"
+    $status = 'fail'
+}
+
 if ($env:OS -eq 'Windows_NT') {
     $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
     $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'

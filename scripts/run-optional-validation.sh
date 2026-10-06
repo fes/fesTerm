@@ -33,6 +33,12 @@ else
     printf 'suite=ios-simulator status=skipped reason=macos-required\n' >>"$result_path"
 fi
 cargo build --workspace
+if cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check; then
+    printf 'suite=presentation-cache-allocations status=pass\n' >>"$result_path"
+else
+    printf 'suite=presentation-cache-allocations status=fail\n' >>"$result_path"
+    status=fail
+fi
 if python3 scripts/check_keyboard_routing.py; then
     printf 'suite=keyboard-routing-synthesized status=pass\n' >>"$result_path"
 else
