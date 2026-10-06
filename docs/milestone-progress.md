@@ -55,23 +55,25 @@ reparse-point rebinding cannot retarget a read. Nonblocking Unix opens still
 keep FIFOs from pinning a worker waiting for a writer.
 
 The same review found that save temporaries received bytes before their access
-metadata was secured. Save now creates the intermediate file as Unix `0600` or
-with a protected current-user-only Windows DACL before writing. Unix restores
+metadata was secured. Save now clears inherited Unix staging/file ACLs and
+verifies `0700`/`0600`, or creates a protected current-user-only Windows DACL,
+before writing. Unix restores
 the destination owner, group, mode, ACL and xattrs from verified handles after
-the durable content write; Windows uses `ReplaceFileW` so an existing target's
-DACL and attributes survive, while a new target remains private. Temporary
+the durable content write; Windows applies and verifies the original owner,
+group, DACL and attributes on the prepared file before publication; a new target remains private. Temporary
 names use OS randomness beneath an owner-only same-filesystem staging directory
-and are checked against their open handles. Unix exchange retains the displaced
-file while Windows privately copies the verified original before
-`ReplaceFileW`; published/original generations, the Unix security snapshot,
+and are checked against their open handles. Both platforms capture the
+no-follow current target into private staging with a no-overwrite move, verify
+it, then no-overwrite publish only if no concurrent winner claimed the briefly
+vacant name. Published/original generations, the Unix security snapshot,
 and the Windows owner/group/DACL/attribute snapshot are verified. A prepared copy and private displaced/original copy
 remain on any late, ambiguous or partial failure; no unconditional pathname
 rollback can delete a later winner. Deterministic Unix coverage observes the
 empty private temporary before the write, preserves an extended ACL, detects
-mode/xattr races, substitutes the staging name, and changes the target before
-and after publication. Native Windows coverage inspects the protected
-staging/file DACL and replacement metadata; helper coverage also exercises
-nested backup paths.
+mode/xattr races, substitutes the staging name, and changes the target before,
+during and after publication. Native Windows coverage inspects the protected
+staging/file DACL, metadata application, no-follow opening and no-overwrite
+capture/publication.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan

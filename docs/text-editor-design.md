@@ -101,17 +101,22 @@ The editor never resolves a divergence silently.
 - A **dirty** document whose file changed underneath enters **Conflict**, and
   the banner offers Compare, Reload, Keep my version, and Save As. Nothing is
   overwritten and nothing is discarded until the user says which version wins.
-- A save is **generation-validated and atomic**: written to a temporary file
+- A save is **generation-validated and conditionally published**: written to a temporary file
   created private in the retained destination directory, flushed durably, then
-  replaced only after access metadata is secured. Unix restores target
-  owner/group/mode/ACL metadata through verified handles before replacement;
-  Windows preserves an existing target's DACL and attributes with
-  `ReplaceFileW`. A new destination remains owner-only. Prepared files remain
+  replaced only after access metadata is secured. Unix clears inherited ACLs
+  and verifies `0700` staging/`0600` files before writing, then restores target
+  owner/group/mode/ACL metadata through verified handles. Windows applies and
+  verifies the target owner/group/DACL/attributes on the prepared file before
+  publication; inability to do so refuses before mutation. A new destination remains owner-only. Prepared files remain
   beneath a private same-filesystem staging directory, with an independently
-  written private recovery copy before publication. Unix atomic exchange retains
-  the displaced target; Windows retains a separately copied original before
-  `ReplaceFileW`. Old/new generations, the Unix owner/group/mode/ACL/xattr
-  snapshot, and the Windows owner/group/DACL/attribute snapshot are verified. A late or ambiguous change
+  written private recovery copy before publication. Both platforms first move
+  the no-follow current target into private staging without overwrite, verify
+  it, then publish the prepared file into the vacant name without overwrite.
+  The name can be briefly absent, but a newer entry is never displaced by stale
+  editor bytes. A final no-follow target opening checks the old generation
+  immediately before capture; old/new generations, the Unix
+  owner/group/mode/ACL/xattr snapshot, and the Windows
+  owner/group/DACL/attribute snapshot are verified. A late or ambiguous change
   is never deleted by pathname rollback: every recoverable version remains in
   the private `.festerm-save-*.stage` directory and the editor reports manual
   recovery. Access-metadata or publication-identity failure is a failed save,

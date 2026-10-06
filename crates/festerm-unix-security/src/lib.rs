@@ -84,6 +84,43 @@ mod imp {
         file.sync_all()
     }
 
+    pub fn make_private_directory(directory: &File) -> io::Result<()> {
+        use nix::sys::stat::{fchmod, Mode};
+
+        #[cfg(target_os = "linux")]
+        for attribute in ["system.posix_acl_access", "system.posix_acl_default"] {
+            if directory.list_xattr()?.any(|name| name == attribute) {
+                directory.remove_xattr(attribute)?;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        clear_macos_acl(directory)?;
+        fchmod(directory, Mode::from_bits_truncate(0o700)).map_err(io::Error::from)?;
+        let private = security_metadata(directory)?;
+        let inherited_acl = {
+            #[cfg(target_os = "linux")]
+            {
+                private.attributes.iter().any(|(name, _)| {
+                    name == "system.posix_acl_access" || name == "system.posix_acl_default"
+                })
+            }
+            #[cfg(target_os = "macos")]
+            {
+                !private.acl.is_empty()
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                false
+            }
+        };
+        if private.mode != 0o700 || inherited_acl {
+            return Err(io::Error::other(format!(
+                "could not make save staging directory private: {private:?}"
+            )));
+        }
+        directory.sync_all()
+    }
+
     #[cfg(target_os = "macos")]
     pub fn preserve_security_metadata(
         original: &File,
@@ -252,25 +289,6 @@ mod imp {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn atomic_exchange(
-        first_directory: &File,
-        first: &Path,
-        second_directory: &File,
-        second: &Path,
-    ) -> io::Result<()> {
-        use nix::fcntl::{renameat2, RenameFlags};
-
-        renameat2(
-            first_directory,
-            first,
-            second_directory,
-            second,
-            RenameFlags::RENAME_EXCHANGE,
-        )
-        .map_err(io::Error::from)
-    }
-
-    #[cfg(target_os = "linux")]
     pub fn rename_noreplace(
         source_directory: &File,
         source: &Path,
@@ -287,22 +305,6 @@ mod imp {
             RenameFlags::RENAME_NOREPLACE,
         )
         .map_err(io::Error::from)
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn atomic_exchange(
-        first_directory: &File,
-        first: &Path,
-        second_directory: &File,
-        second: &Path,
-    ) -> io::Result<()> {
-        renameatx(
-            first_directory,
-            first,
-            second_directory,
-            second,
-            nix::libc::RENAME_SWAP,
-        )
     }
 
     #[cfg(target_os = "macos")]
@@ -355,19 +357,6 @@ mod imp {
     }
 
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-    pub fn atomic_exchange(
-        _first_directory: &File,
-        _first: &Path,
-        _second_directory: &File,
-        _second: &Path,
-    ) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "atomic file exchange is unavailable on this platform",
-        ))
-    }
-
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
     pub fn rename_noreplace(
         _source_directory: &File,
         _source: &Path,
@@ -383,8 +372,8 @@ mod imp {
 
 #[cfg(unix)]
 pub use imp::{
-    atomic_exchange, make_private, preserve_security_metadata, rename_noreplace, security_metadata,
-    security_metadata_matches, SecurityMetadata,
+    make_private, make_private_directory, preserve_security_metadata, rename_noreplace,
+    security_metadata, security_metadata_matches, SecurityMetadata,
 };
 
 #[cfg(test)]
@@ -426,15 +415,9 @@ mod tests {
     }
 
     #[test]
-    fn exchange_and_noreplace_are_atomic_within_one_directory() {
+    fn noreplace_is_atomic_within_one_directory() {
         let directory = TemporaryDirectory::new();
-        fs::write(directory.path("first"), b"first").unwrap();
-        fs::write(directory.path("second"), b"second").unwrap();
         let handle = directory.open();
-
-        atomic_exchange(&handle, Path::new("first"), &handle, Path::new("second")).unwrap();
-        assert_eq!(fs::read(directory.path("first")).unwrap(), b"second");
-        assert_eq!(fs::read(directory.path("second")).unwrap(), b"first");
 
         fs::write(directory.path("third"), b"third").unwrap();
         rename_noreplace(&handle, Path::new("third"), &handle, Path::new("fourth")).unwrap();
@@ -473,6 +456,59 @@ mod tests {
         assert!(!security_metadata_matches(&file, &snapshot).unwrap());
         make_private(&file).unwrap();
         assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn private_directory_clears_inherited_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new();
+        fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o777)).unwrap();
+        let handle = directory.open();
+        #[cfg(target_os = "linux")]
+        {
+            use xattr::FileExt;
+            handle
+                .set_xattr("system.posix_acl_access", &named_user_acl(65_534))
+                .unwrap();
+            handle
+                .set_xattr("system.posix_acl_default", &named_user_acl(65_534))
+                .unwrap();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            let status = Command::new("chmod")
+                .args([
+                    "+a",
+                    "everyone allow read,write,execute,file_inherit,directory_inherit",
+                ])
+                .arg(&directory.0)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        make_private_directory(&handle).unwrap();
+
+        assert_eq!(
+            handle.metadata().unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        #[cfg(target_os = "linux")]
+        {
+            use xattr::FileExt;
+            assert!(handle
+                .get_xattr("system.posix_acl_access")
+                .unwrap()
+                .is_none());
+            assert!(handle
+                .get_xattr("system.posix_acl_default")
+                .unwrap()
+                .is_none());
+        }
+        #[cfg(target_os = "macos")]
+        assert!(acl_lines(&directory.0).is_empty());
     }
 
     #[cfg(target_os = "linux")]

@@ -21,23 +21,25 @@ mod imp {
 
     use windows_sys::Win32::{
         Foundation::{
-            CloseHandle, GetLastError, SetHandleInformation, GENERIC_ALL, GENERIC_READ,
-            GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+            CloseHandle, GetLastError, SetHandleInformation, GENERIC_ALL, GENERIC_READ, HANDLE,
+            HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
         },
         Security::{
             AddAccessAllowedAceEx, EqualSid, GetKernelObjectSecurity, GetLengthSid,
             GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
-            SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetTokenInformation,
-            TokenDefaultDacl, TokenUser, ACL, ACL_REVISION, DACL_SECURITY_INFORMATION,
-            GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
-            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL,
-            TOKEN_QUERY, TOKEN_USER,
+            SetKernelObjectSecurity, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+            SetTokenInformation, TokenDefaultDacl, TokenUser, ACL, ACL_REVISION,
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT,
+            TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
-            CreateDirectoryW, CreateFileW, FileRenameInfoEx, GetFileInformationByHandle,
-            GetFinalPathNameByHandleW, ReplaceFileW, SetFileInformationByHandle,
+            CreateDirectoryW, CreateFileW, FileBasicInfo, FileRenameInfoEx,
+            GetFileInformationByHandle, GetFinalPathNameByHandleW, SetFileInformationByHandle,
             BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
-            FILE_NAME_NORMALIZED, FILE_RENAME_INFO, VOLUME_NAME_DOS,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_NAME_NORMALIZED, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, OPEN_EXISTING, VOLUME_NAME_DOS,
         },
         System::{
             Console::{
@@ -109,6 +111,46 @@ mod imp {
     /// Reports whether a handle still has the captured security metadata.
     pub fn security_metadata_matches(file: &File, expected: &SecurityMetadata) -> io::Result<bool> {
         security_metadata(file).map(|current| current == *expected)
+    }
+
+    /// Applies captured owner, group, DACL, and file attributes to a prepared
+    /// replacement before it can become visible.
+    pub fn apply_security_metadata(file: &File, metadata: &SecurityMetadata) -> io::Result<()> {
+        const INFORMATION: u32 =
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let handle = file.as_raw_handle() as HANDLE;
+        if unsafe {
+            SetKernelObjectSecurity(
+                handle,
+                INFORMATION,
+                metadata.descriptor.as_ptr().cast_mut().cast(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let basic = FILE_BASIC_INFO {
+            FileAttributes: metadata.attributes,
+            ..FILE_BASIC_INFO::default()
+        };
+        if unsafe {
+            SetFileInformationByHandle(
+                handle,
+                FileBasicInfo,
+                (&raw const basic).cast(),
+                mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if security_metadata_matches(file, metadata)? {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "prepared Windows security metadata did not match its source",
+            ))
+        }
     }
 
     impl DefaultDaclGuard {
@@ -262,7 +304,7 @@ mod imp {
         let handle = unsafe {
             CreateFileW(
                 wide.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE | DELETE,
+                FILE_ALL_ACCESS | DELETE,
                 0,
                 &raw const attributes,
                 CREATE_NEW,
@@ -274,6 +316,56 @@ mod imp {
             Err(io::Error::last_os_error())
         } else {
             Ok(unsafe { File::from_raw_handle(handle) })
+        }
+    }
+
+    /// Opens a file beneath a retained directory without traversing a final
+    /// reparse point.
+    pub fn open_file_no_reparse(directory: &File, name: &Path) -> io::Result<File> {
+        open_file_no_reparse_with_access(directory, name, GENERIC_READ)
+    }
+
+    /// Opens a no-follow file handle that can be moved into private recovery
+    /// storage.
+    pub fn open_file_no_reparse_for_rename(directory: &File, name: &Path) -> io::Result<File> {
+        open_file_no_reparse_with_access(directory, name, GENERIC_READ | DELETE)
+    }
+
+    fn open_file_no_reparse_with_access(
+        directory: &File,
+        name: &Path,
+        access: u32,
+    ) -> io::Result<File> {
+        let path = wide_path(&directory_child_path(directory, name)?);
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                access,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let file = unsafe { File::from_raw_handle(handle) };
+        let mut information = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe {
+            GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &raw mut information)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the file is a reparse point",
+            ))
+        } else {
+            Ok(file)
         }
     }
 
@@ -343,37 +435,6 @@ mod imp {
         }
     }
 
-    /// Atomically replaces `target` with `replacement`, preserving the target
-    /// file's Windows attributes and ACL. The caller must verify the resulting
-    /// target's identity through its retained directory capability before
-    /// reporting success.
-    pub fn replace_file_preserving_security(
-        directory: &File,
-        replacement: &Path,
-        target: &Path,
-        backup: Option<&Path>,
-    ) -> io::Result<()> {
-        let replacement = wide_path(&directory_child_path(directory, replacement)?);
-        let target = wide_path(&directory_child_path(directory, target)?);
-        let backup = backup
-            .map(|backup| directory_child_path(directory, backup).map(|path| wide_path(&path)))
-            .transpose()?;
-        replace_paths(&replacement, &target, backup.as_deref())
-    }
-
-    /// Replaces a target using a replacement held beneath a separately retained
-    /// directory capability.
-    pub fn replace_file_preserving_security_from(
-        replacement_directory: &File,
-        replacement: &Path,
-        target_directory: &File,
-        target: &Path,
-    ) -> io::Result<()> {
-        let replacement = wide_path(&directory_child_path(replacement_directory, replacement)?);
-        let target = wide_path(&directory_child_path(target_directory, target)?);
-        replace_paths(&replacement, &target, None)
-    }
-
     /// Atomically publishes an open file under a target directory without
     /// replacing an existing target.
     pub fn rename_file_noreplace(
@@ -422,28 +483,6 @@ mod imp {
             )
         };
         if renamed == 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
-    fn replace_paths(
-        replacement: &[u16],
-        target: &[u16],
-        backup: Option<&[u16]>,
-    ) -> io::Result<()> {
-        let replaced = unsafe {
-            ReplaceFileW(
-                target.as_ptr(),
-                replacement.as_ptr(),
-                backup.map_or(ptr::null(), |backup| backup.as_ptr()),
-                0,
-                ptr::null(),
-                ptr::null(),
-            )
-        };
-        if replaced == 0 {
             Err(io::Error::last_os_error())
         } else {
             Ok(())
@@ -689,39 +728,23 @@ mod imp {
             target.sync_all().unwrap();
             assert_current_user_only_dacl(&target);
             let target_security = security_metadata(&target).unwrap();
-            drop(target);
 
             let mut replacement =
                 create_current_user_only_file(&staging_handle, Path::new("replacement.tmp"))
                     .unwrap();
             replacement.write_all(b"after").unwrap();
             replacement.sync_all().unwrap();
-            drop(replacement);
-            replace_file_preserving_security(
-                &directory_handle,
-                Path::new("private.stage/replacement.tmp"),
-                Path::new("target.md"),
-                Some(Path::new("private.stage/backup.md")),
-            )
-            .unwrap();
+            apply_security_metadata(&replacement, &target_security).unwrap();
+            assert!(security_metadata_matches(&replacement, &target_security).unwrap());
+            rename_file_noreplace(&target, &staging_handle, Path::new("original")).unwrap();
+            rename_file_noreplace(&replacement, &directory_handle, Path::new("target.md")).unwrap();
 
             let target = File::open(directory.0.join("target.md")).unwrap();
             assert_current_user_only_dacl(&target);
             assert!(security_metadata_matches(&target, &target_security).unwrap());
+            assert!(open_file_no_reparse(&directory_handle, Path::new("target.md")).is_ok());
             assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"after");
-            assert_eq!(fs::read(staging.0.join("backup.md")).unwrap(), b"before");
-
-            replace_file_preserving_security(
-                &directory_handle,
-                Path::new("private.stage/backup.md"),
-                Path::new("target.md"),
-                Some(Path::new("private.stage/rollback.md")),
-            )
-            .unwrap();
-            let target = File::open(directory.0.join("target.md")).unwrap();
-            assert_current_user_only_dacl(&target);
-            assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"before");
-            assert_eq!(fs::read(staging.0.join("rollback.md")).unwrap(), b"after");
+            assert_eq!(fs::read(staging.0.join("original")).unwrap(), b"before");
         }
 
         fn assert_current_user_only_dacl(file: &File) {
@@ -788,8 +811,8 @@ mod imp {
 
 #[cfg(windows)]
 pub use imp::{
-    create_current_user_only_directory, create_current_user_only_file,
-    disable_std_handle_inheritance, rename_file_noreplace, replace_file_preserving_security,
-    replace_file_preserving_security_from, restrict_default_dacl_to_current_user,
-    security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
+    apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
+    disable_std_handle_inheritance, open_file_no_reparse, open_file_no_reparse_for_rename,
+    rename_file_noreplace, restrict_default_dacl_to_current_user, security_metadata,
+    security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
 };

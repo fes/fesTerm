@@ -205,29 +205,35 @@ any stronger attribute a server supplies. A save revalidates the generation
 first; if it changed, the write does not happen and the document enters Conflict
 — including when Auto-save is what triggered the save.
 
-Replacement is write-to-temporary-then-rename in the same directory. The
-temporary is private before it receives bytes: mode `0600` on Unix and a
-protected current-user-only DACL on Windows. Unix writes and flushes while the
-temporary remains private, then copies the existing target's owner, group,
-mode and ACL from verified file handles and durably flushes that metadata
-before replacement. Windows uses `ReplaceFileW` for an existing target so its
-attributes and DACL survive; a new Save As target keeps the private DACL.
-Names are cryptographically unpredictable and live beneath an owner-only
-staging directory on the destination filesystem. The prepared inode is
+Replacement is write-to-temporary-then-rename in the same directory. Before
+any document bytes are written, the Unix staging directory has inherited
+access/default ACLs cleared and is verified as mode `0700`; each Unix payload
+and recovery file likewise has inherited ACLs cleared and is verified as mode
+`0600`. Windows uses protected current-user-only DACLs. Unix writes and flushes
+while the temporary remains private, then copies the existing target's owner,
+group, mode and ACL from verified file handles and durably flushes that
+metadata before replacement. Windows applies and verifies the captured owner,
+group, DACL and attributes on the prepared file;
+inability to apply them refuses before publication. A new Save As target keeps
+the private DACL. Names are cryptographically unpredictable and live beneath
+an owner-only staging directory on the destination filesystem. The prepared inode is
 verified through both its handle and staging name, and an independently
-written private recovery copy exists before publication. Publication atomically
-exchanges the prepared and current files on Unix. Windows first copies the
-verified original into the private staging directory, then calls `ReplaceFileW`
-without a pathname backup. The published generation and retained-original
-generation are validated after publication. Unix owner/group/mode/ACL/xattr
+written private recovery copy exists before publication. Existing-target
+publication uses two capability-bound no-overwrite moves on both platforms:
+the no-follow current target is first moved into private staging and verified,
+then the prepared payload is moved into the now-vacant target name only if no
+concurrent winner has claimed it. The target name can therefore be briefly
+absent, but stale editor bytes can never displace a newer entry. The published
+generation and retained-original generation are validated after publication.
+Unix owner/group/mode/ACL/xattr
 snapshots and Windows owner/group/DACL/attribute snapshots are revalidated
-immediately before publication and against the published target afterward. A mismatch never triggers an unconditional second
+against a no-follow opening of the current target immediately before
+publication and against the published target afterward. A mismatch never triggers an unconditional second
 pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error. This
-also covers documented partial `ReplaceFileW` failures; a safely identifiable
-missing target is restored without deleting any recovery copy, while
-ambiguous arrangements are retained. Creation and publication stay tied to
+also covers partial move failures; every ambiguous arrangement is retained for
+manual recovery. Creation and publication stay tied to
 the retained directory capability, and any identity or security-metadata
 failure refuses the save rather than silently weakening access. Where a
 remote server cannot rename over an existing file, the fallback is named
@@ -580,13 +586,14 @@ network surface, and no document content in logs, diagnostics, or workspace
 metadata. Temporary files are created private before receiving content. Unix
 owner/group/mode/ACL/xattr metadata is restored through verified handles only
 after the durable content write and while the file remains beneath an
-owner-only staging directory; Windows replacement retains the destination DACL
-rather than replacing it with directory-inherited access. Unpredictable names,
-pre-publication identity/security snapshots, a prepared recovery link and
-post-exchange displaced-generation checks prevent a substituted temporary or
-late target replacement from being accepted or deleted.
+owner-only staging directory; Windows applies and verifies the destination
+owner/group/DACL/attributes before publication rather than inheriting broader
+access. Unpredictable names, pre-publication identity/security snapshots, a
+prepared recovery copy, and no-overwrite target capture/publication prevent a
+substituted temporary or late target replacement from being accepted or
+deleted.
 
-**Platform.** Watcher behaviour, atomic replacement, permission and ownership
+**Platform.** Watcher behaviour, conditional replacement, permission and ownership
 preservation, and file-identity reporting differ across macOS, Windows, and
 Linux; each needs its own evidence. Remote behaviour additionally depends on
 server support for rename-over-existing.
@@ -624,7 +631,7 @@ existing Markdown rendering stays out of scope.
   the `text-editing` coverage entry is `deferred` until implementation. The
   implementation change must land tests for document identity and aliasing,
   shared-edit propagation across views and windows, generation revalidation and
-  refused overwrite, atomic replacement and interrupted writes, own-save event
+  refused overwrite, conditional publication and interrupted writes, own-save event
   suppression, clean-reload and dirty-conflict paths, offline/reconnect
   revalidation, auto-save debounce and pause conditions, final-view dirty close,
   replace-all as one undo transaction, fixed-column and line-number
@@ -657,7 +664,7 @@ existing Markdown rendering stays out of scope.
   usability and screen-reader delivery remain `CP-15`; transient allocation
   peaks and allocator fragmentation are not certified by these tests.
 - **Native/manual evidence required:** a new manual scenario registered with the
-  implementation, covering real watcher behaviour, atomic replacement,
+  implementation, covering real watcher behaviour, conditional publication,
   permission preservation, and remote disconnect/reconnect on each platform.
   `CP-06` continues to cover the read-only viewer routes.
 - **Coverage superseded:** none yet. When the editor ships, `MD-06`'s "no
