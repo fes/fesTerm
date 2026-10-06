@@ -695,6 +695,11 @@ heading identities/accessibility nodes and offscreen keyboard navigation.
 Visible ink is compared against the ordinary renderer; overflow beyond the
 4096-row preparation cap must retain every heading. Shared Preview's reused
 heading-position storage must still replace old revision positions.
+Source's bounded unwrapped job preparation must preserve every selectable
+label, exact syntax/Find formats, wrapping under width/font/scale/theme changes,
+offscreen byte navigation, Unicode/CRLF/trailing-space selection/Copy and live
+accessibility. Entry/payload/query overflow falls back without hiding text or
+truncating Find; snapshot replacement/close releases the actual cached owners.
 
 Automated `MD-04` Find regressions preserve the complete ordered match set,
 including long Unicode lines and multiline queries, and compare indexed

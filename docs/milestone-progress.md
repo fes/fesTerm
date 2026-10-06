@@ -36,6 +36,39 @@ set; the narrower run cannot qualify omitted variants or native presentation.
 The addition is diagnostic, not a production rendering optimization or a
 claimed cause of multi-day growth.
 
+## Reusing bounded Markdown Source formatting without retaining text layouts
+
+After the Outline-first candidate, #348 still had an expensive Source path:
+every forced frame rebuilt source spans, syntax-role vectors and Find-colored
+jobs for every line even though unchanged frames did not reparse the document.
+The next slice reuses only unwrapped formatting instructions and source spans,
+not galleys, row geometry or atlas UVs. Every selectable label, its identity,
+wrapping, active font/scale layout, accessibility and Copy behavior remains live.
+
+Each loaded viewer owns at most 8192 jobs and 4 MiB of their actual text/section
+capacities; metadata is separately bounded by the entry count. Snapshot and
+Find-query changes clear the owner. Moving Find refreshes affected cached lines,
+while long queries and entry/payload overflow use the ordinary path without
+truncating the result set or dropping content. The same owned 400-section
+fixture is compared against compiled ordinary preparation. On Windows its 4800
+live lines remained visited on every pass, but warm unchanged/scrolled and
+width/font/scale/theme controls rebuilt zero jobs versus 4800, and zero job text
+bytes versus 66,470. The cold snapshot retained 2,537,670 charged payload bytes
+(2,539,780 with Find); syntax-budget outcomes are shared with the ordinary oracle.
+Moving a two-line CRLF Find refreshes all four old/new rows. Entry overflow
+retained exactly 8192 jobs with 1,114,112 charged bytes and kept the extra line;
+an over-budget 4 MiB line and a 4097-byte query fell back without lost text.
+Dependency/revision and Unicode/CRLF/selection/Copy checks compare full clipped
+shapes and complete live
+accessibility/response identities, not just counts.
+
+This is Source preparation reuse, not full #348 remediation. The full Source
+label/layout loop (including egui's job clones), Preview block traversal and
+separate editor outline remain follow-ups. Native latency,
+clipboard/accessibility delivery and real Markdown
+GPU workload qualification remain separate parent-controlled evidence; no
+fragmentation, leak or #297 causality is inferred.
+
 ## Reducing unchanged Markdown outline preparation without virtualizing content
 
 The #348 forced-frame diagnostic found that constructing a 400-section Preview

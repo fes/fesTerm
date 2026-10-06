@@ -215,10 +215,29 @@ disappear. No galley or atlas UV survives a frame in this cache.
 The shared editor Preview also reuses its existing heading-position vector,
 clearing positions before each render; the standalone viewer no longer collects
 unused positions. These are bounded preparation/allocation reductions, not
-Preview block virtualization. Source line construction, full Preview traversal,
+Preview block virtualization. Full Source traversal/layout, full Preview traversal,
 and the editor's separate outline remain follow-up work. Deterministic
 old-control/candidate layout counts and visible-shape/navigation/accessibility
 oracles do not establish native latency, GPU drawing or total-memory gains.
+
+Source also retains bounded **unwrapped formatting instructions**, not laid-out
+text: at most 8192 line jobs and 4 MiB of their actual string/section-vector
+capacities per loaded viewer snapshot. Entry/Arc/map metadata is separately
+bounded by the entry count; this is not a process-memory cap. Snapshot replacement
+and Find-query changes discard the jobs. Moving the current match refreshes
+cached lines overlapping its old/new location; all matches remain available.
+Queries over 4096 UTF-8 bytes use ordinary preparation without truncating Find,
+and lines that exceed either cache bound use the ordinary path.
+
+Every Source line remains the same live selectable label. Each frame egui
+reapplies wrapping, alignment, active fonts, scale, text options and live
+selection/accessibility; the retained instructions use the existing explicit
+source font and syntax/Find colors. Width/font/theme changes do not retain an
+old galley or old line geometry. Source spans remain tied to the immutable
+snapshot, and no helper rewrites decoded text, line endings or raw Copy
+payloads. Preparation counters qualify only this work reduction, not remaining
+label/layout traversal or egui's job clones, native input latency, total
+allocation savings or GPU drawing.
 
 Preview code-byte navigation forwards the existing selected row's vertical
 target after its horizontal code scroller closes. Find and the shared editor
