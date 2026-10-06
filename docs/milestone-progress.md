@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Waiting for actual Markdown retry readiness
+
+Historical Ubuntu CI for #354, run `37517459623` at
+`e7a9a902be5e01160c36238a928745a450ce078a`, exposed a separate asynchronous
+Preview-image retry test flake: `Harness::run` required repaint quiescence
+within four steps while a repaired image's real worker was still active.
+The same post-click call remained in the otherwise green `5fa487c` cumulative
+source; the editor-image readiness correction did not cover this Preview test.
+
+The Preview regression now delivers the explicit retry click through its
+existing bounded `harness.step()` loop and waits for an actually loaded image,
+not repaint quiescence. Initial failure, the no-automatic-retry checks, manual
+completion, automatic-admission count and the original five-second deadline
+remain unchanged. This is the same narrow test-driver correction as the editor
+case, not a loader, budget, worker or product-behavior change. It neither
+explains the original #330 exit 2173 nor claims that an ancestor's failed
+CI run was repaired by a later green run.
+
 ## Measuring the real large Markdown drawing path
 
 The #348 investigation had preparation counters and small gallery captures,
