@@ -217,6 +217,13 @@ hardware and usability scenarios above remain pending.
 
 ### Terminal interaction, history, and overlays
 
+`HIST-04` now has deterministic actual-step and public height-resize
+cursor/selection evidence using the existing row index, plus linear-oracle
+mutation/affinity and stale-hint/ID-rollover checks. This proves localized
+lookup work, not native latency, process memory or fragmentation. TI-04/TI-05
+near-budget native resize/scroll/input feel and platform/usability evidence
+remain open; their classification is unchanged.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | TI-01 | Type/edit at a controlled prompt; selection, Copy, Paste, focus transitions, cursor, and resize remain coherent. | Native functional | Yes: existing native smoke expansion |
