@@ -14,7 +14,7 @@
 
 #[cfg(not(windows))]
 use std::fs::Metadata;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -27,6 +27,21 @@ use festerm_document::{DocumentBounds, RefusalReason, TextDocument};
 const TEMPORARY_FILE_ATTEMPTS: u32 = 16;
 
 static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_SAVE_DIRECTORY_CAPTURE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn after_save_directory_capture() {
+    #[cfg(test)]
+    AFTER_SAVE_DIRECTORY_CAPTURE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
 
 /// What we knew about the file the last time we read or wrote it.
 ///
@@ -441,8 +456,11 @@ pub fn save(
     bytes: &[u8],
     expected: Option<Generation>,
 ) -> Result<SavedDocument, SaveFailure> {
+    let parent = parent_directory(path)?;
+    let save_directory = source_authority_for_save(path, parent)?;
+    after_save_directory_capture();
     if let Some(expected) = expected {
-        match freshness(path, expected) {
+        match freshness_in_directory(&save_directory.directory, &save_directory.target, expected) {
             Freshness::Unchanged => {}
             Freshness::Changed(current) => return Err(SaveFailure::Conflict(current)),
             Freshness::Gone(LoadFailure::PermissionDenied) => {
@@ -452,21 +470,21 @@ pub fn save(
         }
     }
 
-    let parent = parent_directory(path)?;
-    let source_authority = source_authority_for_save(path, parent)?;
-    let original = match fs::metadata(path) {
+    let original = match save_directory.directory.metadata(&save_directory.target) {
         Ok(metadata) if metadata.is_file() => Some(metadata),
         Ok(_) => return Err(SaveFailure::NotAFile),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(classify_write_error(error)),
     };
 
-    let mut temporary = TemporaryFile::create(parent)?;
+    let mut temporary = TemporaryFile::create(&save_directory.directory)?;
     write_all_durably(temporary.file_mut(), bytes)?;
     if let Some(original) = &original {
         // Best effort: a filesystem that will not carry permissions over is
         // not a reason to refuse an otherwise complete save.
-        let _ = fs::set_permissions(temporary.path(), original.permissions());
+        let _ = save_directory
+            .directory
+            .set_permissions(temporary.name(), original.permissions());
     }
     let generation =
         Generation::from_file(temporary.file_mut()).map_err(|_| SaveFailure::Interrupted)?;
@@ -478,30 +496,71 @@ pub fn save(
         .readonly();
     temporary.close_file();
 
-    replace_file(temporary.path(), path)?;
+    replace_file(
+        &save_directory.directory,
+        temporary.name(),
+        &save_directory.target,
+    )?;
     temporary.persist();
-    sync_directory(parent);
+    sync_directory(&save_directory.directory);
 
     Ok(SavedDocument {
         generation,
-        source_authority,
+        source_authority: save_directory.source_authority,
         read_only,
     })
 }
 
-fn source_authority_for_save(
-    path: &Path,
-    parent: &Path,
-) -> Result<LocalSourceAuthority, SaveFailure> {
+struct SaveDirectory {
+    directory: cap_std::fs::Dir,
+    target: PathBuf,
+    source_authority: LocalSourceAuthority,
+}
+
+fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory, SaveFailure> {
     let file_name = path.file_name().ok_or(SaveFailure::NoDirectory)?;
     let canonical_parent = fs::canonicalize(parent).map_err(classify_write_error)?;
     let directory = open_canonical_directory(&canonical_parent).map_err(classify_write_error)?;
     let parent_identity =
         DirectoryIdentity::from_directory(&directory).map_err(classify_write_error)?;
-    Ok(LocalSourceAuthority {
-        canonical_path: canonical_parent.join(file_name),
-        parent_identity,
+    let target = PathBuf::from(file_name);
+    Ok(SaveDirectory {
+        directory,
+        source_authority: LocalSourceAuthority {
+            canonical_path: canonical_parent.join(file_name),
+            parent_identity,
+        },
+        target,
     })
+}
+
+fn freshness_in_directory(
+    directory: &cap_std::fs::Dir,
+    target: &Path,
+    known: Generation,
+) -> Freshness {
+    match directory.metadata(target) {
+        Ok(metadata) if !metadata.is_file() => Freshness::Gone(LoadFailure::NotAFile),
+        Ok(_) => {
+            let mut options = cap_std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK);
+            }
+            let current = directory
+                .open_with(target, &options)
+                .map(cap_std::fs::File::into_std)
+                .and_then(|file| Generation::from_file(&file));
+            match current {
+                Ok(current) if current == known => Freshness::Unchanged,
+                Ok(current) => Freshness::Changed(current),
+                Err(error) => Freshness::Gone(classify_read_error(error)),
+            }
+        }
+        Err(error) => Freshness::Gone(classify_read_error(error)),
+    }
 }
 
 fn write_all_durably(file: &mut File, bytes: &[u8]) -> Result<(), SaveFailure> {
@@ -542,21 +601,25 @@ fn parent_directory(path: &Path) -> Result<&Path, SaveFailure> {
 
 /// A file that deletes itself unless it is explicitly kept, so a save that
 /// fails half way through leaves no debris beside the user's file.
-struct TemporaryFile {
-    path: PathBuf,
+struct TemporaryFile<'a> {
+    directory: &'a cap_std::fs::Dir,
+    name: PathBuf,
     file: Option<File>,
     persist: bool,
 }
 
-impl TemporaryFile {
-    fn create(parent: &Path) -> Result<Self, SaveFailure> {
+impl<'a> TemporaryFile<'a> {
+    fn create(directory: &'a cap_std::fs::Dir) -> Result<Self, SaveFailure> {
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
-            let path = temporary_path(parent);
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let name = temporary_path();
+            let mut options = cap_std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            match directory.open_with(&name, &options) {
                 Ok(file) => {
                     return Ok(Self {
-                        path,
-                        file: Some(file),
+                        directory,
+                        name,
+                        file: Some(file.into_std()),
                         persist: false,
                     });
                 }
@@ -577,8 +640,8 @@ impl TemporaryFile {
         self.file.take();
     }
 
-    fn path(&self) -> &Path {
-        &self.path
+    fn name(&self) -> &Path {
+        &self.name
     }
 
     fn persist(&mut self) {
@@ -586,31 +649,41 @@ impl TemporaryFile {
     }
 }
 
-impl Drop for TemporaryFile {
+impl Drop for TemporaryFile<'_> {
     fn drop(&mut self) {
         if !self.persist {
-            let _ = fs::remove_file(&self.path);
+            let _ = self.directory.remove_file(&self.name);
         }
     }
 }
 
-fn temporary_path(parent: &Path) -> PathBuf {
+fn temporary_path() -> PathBuf {
     let identifier = NEXT_TEMPORARY_FILE_ID.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(".festerm-save-{}-{identifier}.tmp", process::id()))
+    PathBuf::from(format!(".festerm-save-{}-{identifier}.tmp", process::id()))
 }
 
 #[cfg(not(windows))]
-fn replace_file(temporary: &Path, target: &Path) -> Result<(), SaveFailure> {
-    fs::rename(temporary, target).map_err(classify_write_error)
+fn replace_file(
+    directory: &cap_std::fs::Dir,
+    temporary: &Path,
+    target: &Path,
+) -> Result<(), SaveFailure> {
+    directory
+        .rename(temporary, directory, target)
+        .map_err(classify_write_error)
 }
 
 #[cfg(windows)]
-fn replace_file(temporary: &Path, target: &Path) -> Result<(), SaveFailure> {
-    match fs::rename(temporary, target) {
+fn replace_file(
+    directory: &cap_std::fs::Dir,
+    temporary: &Path,
+    target: &Path,
+) -> Result<(), SaveFailure> {
+    match directory.rename(temporary, directory, target) {
         Ok(()) => Ok(()),
-        Err(error) if target.exists() => {
+        Err(error) if directory.metadata(target).is_ok() => {
             let permission = error.kind() == std::io::ErrorKind::PermissionDenied;
-            replace_existing_windows_file(temporary, target, permission)
+            replace_existing_windows_file(directory, temporary, target, permission)
         }
         Err(error) => Err(classify_write_error(error)),
     }
@@ -621,42 +694,43 @@ fn replace_file(temporary: &Path, target: &Path) -> Result<(), SaveFailure> {
 /// thing that goes missing.
 #[cfg(windows)]
 fn replace_existing_windows_file(
+    directory: &cap_std::fs::Dir,
     temporary: &Path,
     target: &Path,
     permission: bool,
 ) -> Result<(), SaveFailure> {
-    if !fs::metadata(target)
+    if !directory
+        .metadata(target)
         .map_err(classify_write_error)?
         .is_file()
     {
         return Err(SaveFailure::NotAFile);
     }
-    let parent = parent_directory(target)?;
-    let previous = temporary_path(parent).with_extension("previous");
-    if fs::rename(target, &previous).is_err() {
+    let previous = temporary_path().with_extension("previous");
+    if directory.rename(target, directory, &previous).is_err() {
         return Err(if permission {
             SaveFailure::PermissionDenied
         } else {
             SaveFailure::Interrupted
         });
     }
-    if let Err(error) = fs::rename(temporary, target) {
-        let _ = fs::rename(&previous, target);
+    if let Err(error) = directory.rename(temporary, directory, target) {
+        let _ = directory.rename(&previous, directory, target);
         return Err(classify_write_error(error));
     }
-    let _ = fs::remove_file(previous);
+    let _ = directory.remove_file(previous);
     Ok(())
 }
 
 #[cfg(unix)]
-fn sync_directory(parent: &Path) {
-    if let Ok(directory) = File::open(parent) {
-        let _ = directory.sync_all();
+fn sync_directory(directory: &cap_std::fs::Dir) {
+    if let Ok(directory) = directory.try_clone() {
+        let _ = directory.into_std_file().sync_all();
     }
 }
 
 #[cfg(not(unix))]
-fn sync_directory(_parent: &Path) {}
+fn sync_directory(_directory: &cap_std::fs::Dir) {}
 
 #[cfg(test)]
 mod tests {
@@ -918,6 +992,37 @@ mod tests {
                 .parent_identity()
                 .matches_directory(&replacement),
             "a later hard-link replacement must not change the parent captured by Save"
+        );
+    }
+
+    #[test]
+    fn save_uses_the_captured_parent_after_its_path_is_rebound() {
+        let directory = TemporaryDirectory::new("save-captured-parent");
+        let retained = TemporaryDirectory::new("save-captured-parent-retained");
+        fs::remove_dir(&retained.path).unwrap();
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let original = directory.path.clone();
+        let moved = retained.path.clone();
+        AFTER_SAVE_DIRECTORY_CAPTURE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&original, &moved).unwrap();
+                fs::create_dir(&original).unwrap();
+                fs::write(original.join("notes.md"), "replacement\n").unwrap();
+            }));
+        });
+
+        save(&path, b"after\n", Some(loaded.generation)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(retained.path.join("notes.md")).unwrap(),
+            "after\n",
+            "the captured source parent receives the atomic replacement"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "replacement\n",
+            "a later pathname occupant must not receive saved bytes"
         );
     }
 

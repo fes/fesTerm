@@ -108,9 +108,8 @@ enum ApplicationShortcut {
     MarkdownPreviewSource,
     MarkdownOutline,
     /// Opens the "Open File…" picker (`Ctrl+O`/`Cmd+O`), the
-    /// near-universal "open a document" chord. Inside a Markdown viewer the
-    /// picked file replaces that viewer's document; anywhere else it opens a
-    /// new tab.
+    /// near-universal "open a document" chord. Markdown opens in editor
+    /// Preview; other bounded text opens in Edit.
     ///
     /// On Windows/Linux this deliberately yields to a focused terminal
     /// session, because there the chord *is* `^O` (0x0F): nano binds it to

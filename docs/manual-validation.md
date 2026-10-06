@@ -485,8 +485,10 @@ source-root/image/intermediate names, source retarget plus reload, and Windows
 reparse points, final source name surrogates, and parent replacement containing a hard
 link to the same source. A source that cannot be resolved must keep its text
 Preview and explain image refusal. Save and Save As must capture the destination
-parent identity before writing; inability to establish that authority refuses
-before mutation rather than recovering against a later replacement parent.
+parent identity before writing and perform temporary creation/replacement
+through that retained directory capability; inability to establish that
+authority refuses before mutation rather than recovering against a later
+replacement parent.
 Review keyboard retry after repairing a failed file and screen-reader/refusal
 wording. Shared allowances/workers, actual
 read/header limits, real editor/button routing, stale results, reparse/close,

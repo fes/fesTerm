@@ -1937,15 +1937,14 @@ pub enum AppCommand {
     CreateSshProfileFromDraft {
         draft: SshProfileDraftSeed,
     },
-    /// Opens the Markdown file picker and, once a file is chosen, an editor
-    /// tab in Preview mode. Handled by the composition root because choosing the
-    /// file is host I/O, not state the tab layer owns.
+    /// Opens the shared file picker. The composition root routes Markdown to
+    /// editor Preview and other bounded text to Edit.
     OpenMarkdownWorkspace,
     OpenLocalMarkdownFile {
         path: PathBuf,
-        /// Legacy caller context retained while local opens converge on the
-        /// shared editor. Ordinary callers leave this `None`; local dispatch
-        /// focuses or opens the one document registry entry for `path`.
+        /// Legacy caller context retained for command compatibility. Local
+        /// dispatch focuses or opens the one document registry entry for
+        /// `path`.
         replacing: Option<TabId>,
     },
     /// Opens a second editor view of the document the active editor holds.

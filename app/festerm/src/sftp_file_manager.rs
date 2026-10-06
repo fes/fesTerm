@@ -6155,9 +6155,8 @@ pub(crate) fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
 pub(crate) enum MarkdownPickerOutcome {
     /// Nothing decided yet; the picker stays open.
     Pending,
-    /// A Markdown file was picked (double-click or Enter); the caller
-    /// should dispatch `AppCommand::OpenLocalMarkdownFile` with this path
-    /// and close the picker.
+    /// A regular file was picked; the caller routes Markdown to Preview and
+    /// other bounded text to Edit, then closes the picker.
     Open(PathBuf),
     /// The user dismissed the picker (Cancel or Escape) without picking a
     /// file.

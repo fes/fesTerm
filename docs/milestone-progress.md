@@ -46,8 +46,9 @@ and Markdown generation, then resolves the image beneath the same handle.
 Canonical final-name checks reject source name surrogates while ordinary
 Windows Cloud Files can still hydrate. Reload/save authority changes retire old
 image state before reparse. Save and Save As capture the destination parent
-before mutation and refuse if they cannot establish that authority rather than
-later adopting a replacement parent. Component, hard-link parent, root-name and
+before mutation, retain its capability through replacement and sync, and refuse
+if they cannot establish that authority rather than later adopting a
+replacement parent. Component, hard-link parent, root-name and
 reparse-point rebinding cannot retarget a read. Nonblocking Unix opens still
 keep FIFOs from pinning a worker waiting for a writer.
 
