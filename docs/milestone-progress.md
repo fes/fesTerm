@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding dependency-font metadata before Source publication
+
+The Source handoff counted geometry slots and actual fixture metadata, but its
+font-map ownership was not explicitly bounded: 140 String bytes and 168 family
+Vec bytes were observations, not ceilings. The audit stopped publication
+rather than treating a small current font set as an admission policy.
+
+Source and Outline now share conservative pre-clone eligibility: 128 entries
+per map, 8192 cumulative String-capacity/custom-family-name bytes and 256 family
+reference capacity slots. Rejection drops the previous key and stale geometry,
+then keeps every ordinary live label. Valid definitions recover cold then warm.
+Old keys are dropped before replacement, comparison never traverses font bytes,
+and key-clone payloads remain separate from label/layout work. Exact-limit and
+over-limit controls preserve full Source shapes, responses, accessibility and
+raw Unicode Copy; the existing width/font/scale/Find/navigation controls remain.
+This repairs a cache bound, not total allocator/RSS accounting or native/GPU
+performance evidence. #348 and cumulative runtime qualification remain open.
+
 ## Waiting for actual Markdown retry readiness
 
 Historical Ubuntu CI for #354, run `37517459623` at
@@ -68,7 +86,8 @@ requests are 31/34, becoming 34/37 after scrolling, while all 4800 responses and
 accessibility nodes remain live. The candidate clones 4408/4822 bytes of
 String/Vec capacity rather than the ordinary shared Label inputs' 680870-byte
 payload; this is not total allocator or RSS evidence. New geometry accounts
-for 24 bytes per admitted job plus one bounded active font/layout key.
+for 24 bytes per admitted job plus one active font/layout key. Its missing
+font-map admission ceilings were found in the later handoff audit above.
 
 The API check came first: egui already accepts a shared job, but its live Label
 clones before applying wrapping and the memoized fonts API requires ownership.
