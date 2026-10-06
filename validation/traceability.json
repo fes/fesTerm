@@ -1539,6 +1539,7 @@
         "image_budget_unresolvable_local_source_keeps_preview_and_explains_image_refusal",
         "image_budget_reload_rebinds_preview_authority_to_the_loaded_generation",
         "image_budget_preview_reparse_cannot_adopt_an_old_workers_result",
+        "image_budget_preview_reparse_preserves_unchanged_completed_images",
         "image_budget_failed_preview_parse_releases_images_without_reloading_the_hidden_snapshot",
         "image_budget_preview_failed_image_can_be_explicitly_retried_without_automatic_retry",
         "opening_one_path_twice_shares_a_single_buffer",

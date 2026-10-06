@@ -361,9 +361,13 @@ file generation, never a presentation label or the `preview.md` fallback.
 An external reload, explicit reload, successful save, first Save or Save
 As/rebinding replaces the recorded source generation and drops the old
 approvals, caches and receivers before reparsing those bytes.
-Reparsing invalidates snapshot-specific image state; a failed parse releases
-hidden image owners without loading the retained old document. Both surfaces
-use the same admission/poll/retry implementation and typed
+An ordinary editor reparse retains completed image/error state only where the
+new parse has the same reference kind, class and target at the same index;
+changed references and all pending receivers are discarded. This preserves the
+64-reference admission count and avoids repeated file reads, decodes, texture
+uploads and layout collapse while typing. A failed parse releases hidden image
+owners without loading the retained old document. Both surfaces use the same
+admission/poll/retry implementation and typed
 `LoadMarkdownLocalImage` command. Nonlocal Preview explains the saved-local
 requirement without offering a non-working local-load button.
 
@@ -489,7 +493,8 @@ previously valid snapshot.
 - **Automated evidence:** `image_budget_*` lifecycle/admission/retirement
   regressions, the actual editor/file-open/manual-button command test,
   nonlocal path-looking origins, first Save/Save As rebinding, stale-worker
-  results, failed parses, explicit retry, shared bytes/worker slots, bounded
+  results, unchanged-image reparse retention, failed parses, explicit retry,
+  shared bytes/worker slots, bounded
   read/header controls and Settings/save/restart/reset/failed-save coverage
   are registered in `validation/traceability.json`. Symlink-file source
   identity, loaded-generation replacement/reload, final/intermediate symlink

@@ -278,12 +278,6 @@ fn open_file_no_follow(path: &Path) -> Result<File, std::io::Error> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
     options.open(path)
 }
 

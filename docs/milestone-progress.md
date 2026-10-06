@@ -59,9 +59,10 @@ Existing admissions survive saturation or lowering.
 Deterministic regressions exercise real editor Preview and its image button,
 shared bytes/workers, first Save/Save As and nonlocal origins, a symlinked
 Markdown source, replacement between load and authority, alias retarget plus
-reload, component/root rebinding, stale results, failed parsing, retirement and
-Settings persistence/reset. CP-06/CP-15 retain native visual/accessibility and
-Windows reparse-point evidence. Decoder-private memory, native renderer and GPU
+reload, component/root rebinding, unchanged-image retention across prose
+reparse, stale results, failed parsing, retirement and Settings
+persistence/reset. CP-06/CP-15 retain native visual/accessibility and Windows
+reparse-point evidence. Decoder-private memory, native renderer and GPU
 retirement, allocator fragmentation and total RSS are outside this allowance;
 the repair does not establish #297's multi-day growth cause.
 

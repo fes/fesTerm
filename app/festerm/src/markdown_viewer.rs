@@ -2660,12 +2660,6 @@ fn validate_markdown_generation(
         use cap_std::fs::OpenOptionsExt;
         options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
     }
-    #[cfg(windows)]
-    {
-        use cap_std::fs::OpenOptionsExt;
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
     let file = directory.open_with(Path::new(file_name), &options)?;
     if generation.matches_file(&file.into_std()) {
         Ok(())
@@ -3954,13 +3948,7 @@ impl MarkdownPreviewPane {
     }
 
     fn parse(&mut self, text: String) {
-        self.resource_approvals.clear();
-        self.loaded_images.clear();
         self.pending_image_loads.clear();
-        self.image_errors.clear();
-        self.automatic_image_loads = 0;
-        self.automatic_image_references.clear();
-        self.image_retries.clear();
         let bytes = text.as_bytes();
         match MarkdownLoader::default().load(
             self.source.clone(),
@@ -3969,6 +3957,36 @@ impl MarkdownPreviewPane {
             &Default::default(),
         ) {
             Ok(document) => {
+                let retained: HashSet<usize> = self
+                    .document
+                    .as_ref()
+                    .map(|previous| {
+                        previous
+                            .resource_references()
+                            .iter()
+                            .zip(document.resource_references())
+                            .enumerate()
+                            .filter_map(|(index, (old, new))| {
+                                (old.kind() == new.kind()
+                                    && old.class() == new.class()
+                                    && old.target() == new.target())
+                                .then_some(index)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.resource_approvals
+                    .approved
+                    .retain(|index| retained.contains(index));
+                self.loaded_images
+                    .retain(|index, _| retained.contains(index));
+                self.image_errors
+                    .retain(|index, _| retained.contains(index));
+                self.automatic_image_references
+                    .retain(|index| retained.contains(index));
+                self.image_retries
+                    .retain(|index, _| retained.contains(index));
+                self.automatic_image_loads = self.automatic_image_references.len();
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
                 self.source_syntax = None;
                 self.outline_selected = document.headings().first().map(|_| 0);
@@ -3976,6 +3994,12 @@ impl MarkdownPreviewPane {
                 self.error = None;
             }
             Err(error) => {
+                self.resource_approvals.clear();
+                self.loaded_images.clear();
+                self.image_errors.clear();
+                self.automatic_image_loads = 0;
+                self.automatic_image_references.clear();
+                self.image_retries.clear();
                 // The text stays editable whatever the preview makes of it,
                 // so a failed parse leaves the last good rendering in place
                 // and says why it stopped moving.
@@ -6032,6 +6056,38 @@ mod tests {
         output.textures_delta.clear();
         assert!(preview.pending_image_loads.is_empty());
         assert_eq!(preview.automatic_image_loads, 0);
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_preview_reparse_preserves_unchanged_completed_images() {
+        let directory = image_test_directory("preview-stable-image");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut preview = saved_local_preview(
+            LocalMarkdownSource::new(markdown).unwrap(),
+            "![Image](image.png)\n",
+        );
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        let usage = budget.usage_for_test();
+
+        preview.parse("# Edited prose\n\n![Image](image.png)\n".to_owned());
+
+        assert_eq!(preview.loaded_images.len(), 1);
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(preview.resource_approvals.is_approved(0));
+        assert_eq!(preview.automatic_image_loads, 1);
+        assert_eq!(budget.usage_for_test(), usage);
+        drop(preview);
+        context.tex_manager().write().take_delta().clear();
         budget.generation();
         assert_eq!(budget.usage_for_test(), (0, 0));
         fs::remove_dir_all(directory).unwrap();

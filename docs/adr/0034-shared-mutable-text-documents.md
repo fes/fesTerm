@@ -168,9 +168,11 @@ path component or the directory's name is rebound during the read.
 External/explicit reload and successful save replace that source generation;
 the editor discards old approvals, image caches and pending
 receivers before reparsing the new bytes. First Save and Save As/rebinding do
-the same for a new origin. An unavailable parse releases hidden images without
-starting loads for the old snapshot. This does not move image ownership or
-terminal mutation into the document registry.
+the same for a new origin. An ordinary edit reparse retains completed state
+only for an unchanged same-index image reference and discards pending or
+changed work; an unavailable parse releases hidden images without starting
+loads for the old snapshot. This does not move image ownership or terminal
+mutation into the document registry.
 
 The alternative — a viewer tab and an editor tab for one file — was what
 fesTerm did, and it made a Markdown file two places that could disagree, each
@@ -604,8 +606,9 @@ existing Markdown rendering stays out of scope.
   `EDIT-04` have deterministic production-editor/manual-command,
   typed-origin denial, first-save/Save As rebinding, shared allowance/worker,
   explicit-retry, failed-parse, stale-result, canonical symlinked-source,
-  source-generation replacement/reload and capability-rebinding coverage. ADR
-  0030 owns the image-policy limits and exclusions. Native image presentation,
+  source-generation replacement/reload, unchanged-image reparse retention and
+  capability-rebinding coverage. ADR 0030 owns the image-policy limits and
+  exclusions. Native image presentation,
   refusal/recovery comprehension and accessibility remain `CP-06`/`CP-15`.
 - **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
   `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
