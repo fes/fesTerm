@@ -1351,6 +1351,15 @@ Close.
 This automates fixture reachability, not native chip interaction or completed
 WARP rendering. AS-03, native narrow-window/animation usability and the
 matrix's remaining platform prerequisites stay pending.
+Four opt-in large Markdown WARP controls now use the actual Preview/Source
+viewer at normal/narrow widths, with 400 owned sections/fences and no external
+resources. CPU readiness proves the rendered heading or raw Source marker and
+final section's code. The replay preserves exact original-renderer comparison,
+draw/readback buckets and observed production panel paints; it is not a
+surrogate editor fixture. This automates bounded `MD-04` construction/rendering
+evidence only. Find, real scrolling, native screen-reader delivery, physical
+input-to-photon and CP-06/CP-16/CP-17 evidence remain separate and unmeasured.
+
 
 `TYPE-01`/`TERM-01` glyph-layout retirement has automated survivor, hot-set
 churn, bounded slot, forced-collision, owner-drop and reset checks, alongside

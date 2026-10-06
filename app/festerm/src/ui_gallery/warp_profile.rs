@@ -8,6 +8,7 @@ use super::SurfaceKind;
 pub(super) enum SceneSet {
     All,
     PickerControls,
+    MarkdownControls,
 }
 
 impl SceneSet {
@@ -17,7 +18,10 @@ impl SceneSet {
             Some(value) => match value.to_str() {
                 Some("all") => Ok(Self::All),
                 Some("picker-controls") => Ok(Self::PickerControls),
-                _ => Err("FESTERM_WARP_UI_SCENES must be all or picker-controls"),
+                Some("markdown-controls") => Ok(Self::MarkdownControls),
+                _ => {
+                    Err("FESTERM_WARP_UI_SCENES must be all, picker-controls or markdown-controls")
+                }
             },
         }
     }
@@ -26,18 +30,25 @@ impl SceneSet {
         match self {
             Self::All => "all",
             Self::PickerControls => "picker-controls",
+            Self::MarkdownControls => "markdown-controls",
         }
     }
 
     pub(super) fn includes(self, kind: SurfaceKind) -> bool {
-        self == Self::All
-            || matches!(
+        match self {
+            Self::All => true,
+            Self::PickerControls => matches!(
                 kind,
                 SurfaceKind::OpenSmall
                     | SurfaceKind::OpenError
                     | SurfaceKind::SaveSmall
                     | SurfaceKind::SaveError
-            )
+            ),
+            Self::MarkdownControls => matches!(
+                kind,
+                SurfaceKind::MarkdownPreview | SurfaceKind::MarkdownSource
+            ),
+        }
     }
 }
 
@@ -279,7 +290,35 @@ fn warp_scene_selection_preserves_full_default_and_bounds_picker_controls() {
             "save-as-error-narrow",
         ]
     );
-    for invalid in ["", "picker-controls,all", "unknown", "ALL"] {
+    let selected = SceneSet::parse(Some(OsStr::new("markdown-controls"))).unwrap();
+    let scenes = super::markdown_surface_scenes();
+    assert_eq!(
+        scenes
+            .iter()
+            .filter(|scene| selected.includes(scene.kind))
+            .map(|scene| scene.id)
+            .collect::<Vec<_>>(),
+        [
+            "markdown-large-preview",
+            "markdown-large-preview-narrow",
+            "markdown-large-source",
+            "markdown-large-source-narrow",
+        ],
+    );
+    assert!(scenes
+        .iter()
+        .all(|scene| !SceneSet::PickerControls.includes(scene.kind)));
+    assert!(super::bounded_surface_scenes()
+        .iter()
+        .all(|scene| !selected.includes(scene.kind)));
+    for invalid in [
+        "",
+        "picker-controls,all",
+        "markdown-controls,all",
+        "markdown-controls ",
+        "unknown",
+        "ALL",
+    ] {
         assert!(SceneSet::parse(Some(OsStr::new(invalid))).is_err());
     }
     #[cfg(windows)]
