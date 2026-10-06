@@ -203,6 +203,14 @@ hash/slot identity and bounded slot reuse are automated cache-work checks.
 The extra bounded metadata and fuller warm-cache retention are intentional;
 these tests do not assert lower total memory, native CPU or CP-18 acceptance.
 
+For `TERM-01`, proposed ADR 0045 moves backend-owned atlas admission before
+pixel capture, after tessellation includes same-frame glyph growth. Refusal
+preserves ordinary shapes, retires only the current painter's snapshot and
+retains observable unsupported-frame recovery. Hook revalidation prevents a
+retired admission callback from acquiring or clearing replacement state.
+Native texture limits and eligible zero-retention controls are unchanged;
+architectural approval is required before merge, and CP-18 remains open.
+
 ## How to use the graph
 
 ### Isolated iOS feasibility host

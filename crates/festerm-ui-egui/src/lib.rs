@@ -47,8 +47,9 @@ pub use input::{
     TERMINAL_RESIZE_DEBOUNCE,
 };
 pub use native_painter::{
-    install_root_terminal_painter, install_root_terminal_painter_with_options,
-    remove_root_terminal_painter, FontAtlasCapture, NativePainterOptions, TerminalPaintFrame,
+    install_root_terminal_painter, install_root_terminal_painter_with_admission,
+    install_root_terminal_painter_with_options, remove_root_terminal_painter, FontAtlasCapture,
+    NativePainterOptions, TerminalPaintFrame,
 };
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};

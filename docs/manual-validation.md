@@ -1047,6 +1047,14 @@ appearance/usability and CP-18 native resource/latency obligations remain open.
 
 ### Experimental Direct2D qualification
 
+`TERM-01` atlas preflight has automated copy-refusal, font-delta, replacement,
+snapshot-owner retirement and recovery evidence. Backend-owned admission
+preserves the existing single-texture/aggregate limits; eligible zero-retention
+controls still capture, and ordinary fallback remains the pixel oracle.
+Proposed ADR 0045 changes ADR 0043's oversized capture ordering and needs
+architectural approval before merge. CP-18 resource/presentation/latency and
+#297 attribution remain open; no native evidence is relabeled.
+
 Native quad preparation has a device-free deterministic allocation control in
 `crates/festerm-windows-direct2d/native/quad_tests.cpp`. It compares the actual
 production predicate and complete prepared operations with the frozen former
