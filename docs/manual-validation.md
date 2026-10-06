@@ -975,8 +975,13 @@ to that eight-scene selector on Windows x64. It requires an exact unique black
 translucent full-root untextured rectangle, retains every pixel across six
 balanced ordered pairs and observes the one additional executed callback.
 Invalid or ambiguous candidates fail; the production shader/guards and native
-classifications are unchanged. Actual runtime contribution remains unqualified
-until the selected diagnostic executes; this adds no native/manual acceptance.
+classifications are unchanged. Clean `90c0ed5` completed all eight actual controls:
+eight preserved PNGs, forty ordinary and ninety-six paired measured pixel guards,
+original alpha/geometry and exactly one additional executed callback passed.
+Six balanced pairs observed 22.8-62.7% lower completed draw/readback medians.
+This establishes a shared-host backdrop-route/batching contribution, not native
+latency, a shipping optimization or native/manual acceptance; see the
+[completed attribution record](../validation/windows-warp/README.md#2026-10-06-completed-same-frame-picker-attribution).
 
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external

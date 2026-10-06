@@ -146,6 +146,43 @@ resource-cap or multi-day cause is inferred. Small normal-CI controls check
 selection/matcher refusal and full-frame pixel/order fidelity at two scales;
 actual eight-picker execution remains separately required.
 
+#### 2026-10-06 completed same-frame picker attribution
+
+Clean cumulative `90c0ed5df4920cbf40e3ea96e609ce6f19df1417` completed all eight
+actual picker controls in 109.07 seconds on the same Windows x64 DX12 CPU
+`Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2. No other owned build or
+probe was active at slot acquisition; this does not establish an otherwise
+quiet shared host. The release test binary SHA256 is
+`b4242be38ffd06ec9fbf680cbbd87e76b53805390735bcfd9022cadbfae057af`.
+
+All eight preserved `5fa487c` reference PNGs are identical. Forty ordinary
+measured original-renderer guards and all ninety-six paired measured pixel
+guards passed. Each backdrop retains RGBA `[0, 0, 0, 100]`, eight vertices and
+thirty indices. The additional panel actually executes once: normal Open File
+4 to 5, narrow Open File 2 to 3, and Save As 3 to 4. Ordered six-pair samples,
+three AB/three BA orders, source/adapter/format, viewport/scale, percentile
+convention, finite completion buckets and dimension-derived payload equations
+were checked independently.
+
+| Actual picker | Ordinary median (ms) | Textureless-black median (ms) | Lower completed draw/readback |
+| --- | ---: | ---: | ---: |
+| Open File ready normal | 1023.614 | 381.466 | 62.7% |
+| Open File ready narrow | 408.965 | 315.784 | 22.8% |
+| Open File error normal | 907.726 | 528.335 | 41.8% |
+| Open File error narrow | 394.636 | 302.896 | 23.2% |
+| Save As ready normal | 1103.716 | 688.421 | 37.6% |
+| Save As ready narrow | 382.145 | 293.165 | 23.3% |
+| Save As error normal | 1078.298 | 657.809 | 39.0% |
+| Save As error narrow | 366.816 | 279.036 | 23.9% |
+
+These same-frame shared-host observations establish a material contribution
+from the backdrop's existing textured route plus its batching, without removing
+dimming, changing its geometry/alpha, or substituting a different fixture.
+They do not isolate shader instructions, qualify strict CPU/native latency,
+or demonstrate a shipping fix: the production backdrop remains unchanged.
+Substantial drawing cost remains. The separate two-scale full-frame fidelity
+regression passed in 0.37 seconds; no native/manual row or budget is accepted.
+
 ### Gallery capture and shared fixture identity
 
 Gallery generation uses
