@@ -195,6 +195,14 @@ revision semantics remain unchanged. A CPU-only system-allocator oracle
 measures this copy stage separately from painted-row reuse, native GPU work,
 process residency and frame time.
 
+For `TYPE-01` and `TERM-01`, the glyph-layout cache retains its 4,096-entry
+bound but retires only the least-recently-used entry on a capacity-crossing
+miss. Indexed recency touches do not scan arrays or copy keys; font/atlas and
+manual resets still invalidate every affected layout. Collision-safe recorded
+hash/slot identity and bounded slot reuse are automated cache-work checks.
+The extra bounded metadata and fuller warm-cache retention are intentional;
+these tests do not assert lower total memory, native CPU or CP-18 acceptance.
+
 ## How to use the graph
 
 ### Isolated iOS feasibility host
