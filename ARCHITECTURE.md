@@ -332,8 +332,14 @@ and the renderer's owned shaping-run strings remain unchanged.
 Cell metrics and point-to-cell helpers remain UI-owned and convert only to
 valid core dimensions. A selected bundled primary face alone determines cell
 metrics. The glyph cache is generation-keyed so replacing egui's font atlas
-cannot reuse stale layouts. One-cell layout remains the default; an explicit
-ligature policy may shape compatible ASCII runs inside their preallocated
+cannot reuse stale layouts. Its unchanged 4,096-entry bound uses indexed LRU
+retirement: a capacity-crossing miss drops one owned layout, not every warm
+entry. Cached hits update constant-time links without scanning or copying text.
+Slot IDs and recorded hashes are bounded metadata, not glyph identity; manual
+and font/atlas resets release that tracking storage along with cached layouts.
+This intentionally retains a full bounded warm cache after saturation, rather
+than claiming reduced retained bytes. One-cell layout remains the default;
+an explicit ligature policy may shape compatible ASCII runs inside their preallocated
 cell spans.
 Width-two leading cells and their continuations are submitted as one
 two-column paint span.
