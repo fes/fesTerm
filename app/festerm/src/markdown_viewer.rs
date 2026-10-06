@@ -672,9 +672,10 @@ impl MarkdownViewerTab {
         self.poll_background_work(ui.ctx());
         self.start_automatic_image_loads(ui.ctx());
         let mut command = self.consume_shortcuts(ui.ctx(), tab_id);
-        egui::Frame::new()
-            .fill(theme::SURFACE_WINDOW)
-            .show(ui, |ui| {
+        crate::software_background::show_frame(
+            ui,
+            egui::Frame::new().fill(theme::SURFACE_WINDOW),
+            |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     // `.fmd-toolbar { padding: 5px 9px }` over the full
@@ -753,7 +754,8 @@ impl MarkdownViewerTab {
                         self.show_footer(ui);
                     }
                 });
-            });
+            },
+        );
         command
     }
 
@@ -5581,6 +5583,135 @@ mod tests {
             pair[1].1.source_preparation.jobs.len(), pair[1].1.source_preparation.payload_bytes,
         );
     }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn markdown_outer_frame_preserves_real_preview_source_pixels_dpi_and_opacity() {
+        use eframe::{egui_wgpu, wgpu};
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let adapter = state.adapter.get_info();
+        assert_eq!(adapter.backend, wgpu::Backend::Dx12);
+        assert_eq!(adapter.device_type, wgpu::DeviceType::Cpu);
+        assert_eq!(state.target_format, wgpu::TextureFormat::Rgba8Unorm);
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let tab_id = crate::tabs::AppState::for_test().active();
+        for mode in [MarkdownViewerMode::Preview, MarkdownViewerMode::Source] {
+            for (width, scale, opacity) in [
+                (430.0, 1.0, 1.0),
+                (430.0, 1.25, 1.0),
+                (1180.0, 1.0, 1.0),
+                (1180.0, 1.25, 1.0),
+                (430.0, 1.25, 0.5),
+            ] {
+                let mut pair = source_preparation_pair(&mixed_fixture_sections(4));
+                for (_, viewer) in &mut pair {
+                    viewer.mode = mode;
+                    viewer.outline_open = true;
+                    viewer
+                        .find
+                        .set_query(viewer.document.as_ref().unwrap(), "value".into());
+                    viewer.open_find();
+                }
+                let probe = crate::software_background::PanelTestProbe::install(&pair[1].0, &state);
+                let mut output = Vec::new();
+                let mut images = Vec::new();
+                for (context, viewer) in &mut pair {
+                    let mut input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 760.0),
+                        )),
+                        ..Default::default()
+                    };
+                    input
+                        .viewports
+                        .get_mut(&egui::ViewportId::ROOT)
+                        .unwrap()
+                        .native_pixels_per_point = Some(scale);
+                    let mut last = None;
+                    for frame in 0..4 {
+                        input.time = Some(frame as f64 / 60.0);
+                        let mut current = context.run_ui(input.clone(), |ui| {
+                            ui.painter().rect_filled(
+                                ui.max_rect(),
+                                0.0,
+                                egui::Color32::from_rgb(70, 25, 80),
+                            );
+                            ui.set_opacity(opacity);
+                            ui.set_clip_rect(egui::Rect::from_min_max(
+                                egui::pos2(11.25, 13.5),
+                                egui::pos2(width - 14.5, 744.75),
+                            ));
+                            assert!(viewer.show(ui, tab_id).is_none());
+                        });
+                        renderer.handle_delta(&mut current.textures_delta);
+                        last = Some(current);
+                    }
+                    let last = last.unwrap();
+                    images.push(
+                        renderer
+                            .render(context, &last)
+                            .expect("Markdown framebuffer"),
+                    );
+                    output.push(last);
+                }
+                assert_eq!(images[0].dimensions(), images[1].dimensions());
+                let mismatches = images[0]
+                    .pixels()
+                    .zip(images[1].pixels())
+                    .filter(|(ordinary, candidate)| ordinary != candidate)
+                    .count();
+                assert_eq!(
+                    mismatches, 0,
+                    "{mode:?}, width={width}, scale={scale}, opacity={opacity}"
+                );
+                assert_eq!(
+                    probe.paints(),
+                    usize::from(opacity == 1.0),
+                    "exactly the eligible outer frame must use the callback"
+                );
+                assert_eq!(
+                    format!("{:?}", output[0].platform_output.accesskit_update),
+                    format!("{:?}", output[1].platform_output.accesskit_update),
+                    "actual caller keeps complete live accessibility"
+                );
+                assert_eq!(
+                    pair[0]
+                        .1
+                        .source_preparation
+                        .probe
+                        .as_ref()
+                        .unwrap()
+                        .observations,
+                    pair[1]
+                        .1
+                        .source_preparation
+                        .probe
+                        .as_ref()
+                        .unwrap()
+                        .observations,
+                    "actual Source response geometry and identities"
+                );
+                assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
+                assert_eq!(pair[0].1.outline_selected, pair[1].1.outline_selected);
+                println!(
+                    "Markdown outer frame {mode:?}: width={width}, scale={scale}, opacity={opacity}, format={:?}, callbacks={}, differing pixels={mismatches}",
+                    state.target_format, probe.paints()
+                );
+            }
+        }
+    }
+
     #[test]
     fn source_preparation_reuses_jobs_with_live_wrap_font_theme_and_revision_layout() {
         for sections in [64, 400] {

@@ -36,6 +36,24 @@ set; the narrower run cannot qualify omitted variants or native presentation.
 The addition is diagnostic, not a production rendering optimization or a
 claimed cause of multi-day growth.
 
+## Reusing the existing opaque-frame path at the real Markdown caller
+
+The completed picker draw evidence prompted a narrowly coupled rendering check:
+the standalone Markdown viewer still painted an ordinary opaque
+`SURFACE_WINDOW` outer frame. It now passes only that frame through the existing
+`software_background::show_frame`; the shader, adapter/format policy, guards,
+ordinary fallback and all nested Preview/Source widgets remain unchanged.
+
+The regression renders the real viewer, not a substitute panel, against its
+ordinary route on Windows DX12 CPU `Rgba8Unorm`. Four narrow/wide and 1/1.25x
+scale controls in each mode, with fractional clipping and Find open, retain
+exact pixels and execute exactly one outer-frame callback. Each mode's
+0.5-opacity control retains exact pixels and executes none. Accessibility,
+Source response geometry and navigation/outline state remain identical.
+These are fidelity/caller checks, not performance measurements: #348 remains
+open, and the parent-owned real Markdown workload must independently attribute
+completed draw and native latency.
+
 ## Reusing bounded Markdown Source formatting without retaining text layouts
 
 After the Outline-first candidate, #348 still had an expensive Source path:
