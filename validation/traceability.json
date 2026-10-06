@@ -2543,6 +2543,7 @@
         "source_preparation_reuses_jobs_with_live_wrap_font_theme_and_revision_layout",
         "source_preparation_preserves_find_offscreen_bytes_unicode_selection_and_copy",
         "source_preparation_caps_payload_queries_entries_and_releases_snapshot_owners",
+        "markdown_outer_frame_preserves_real_preview_source_pixels_dpi_and_opacity",
         "local_markdown_display_paths_hide_windows_verbatim_prefixes",
         "find_highlighting_tracks_inline_code_text_offsets",
         "find_highlighting_tracks_link_label_offsets",

@@ -700,6 +700,10 @@ label, exact syntax/Find formats, wrapping under width/font/scale/theme changes,
 offscreen byte navigation, Unicode/CRLF/trailing-space selection/Copy and live
 accessibility. Entry/payload/query overflow falls back without hiding text or
 truncating Find; snapshot replacement/close releases the actual cached owners.
+The standalone viewer's shared outer-frame paint route must match the actual
+Preview/Source caller pixels at narrow/wide widths and 1/1.25x scale, retain live
+accessibility/response identities, and use ordinary fallback at reduced opacity.
+The callback oracle does not establish completed Markdown draw time.
 
 Automated `MD-04` Find regressions preserve the complete ordered match set,
 including long Unicode lines and multiline queries, and compare indexed

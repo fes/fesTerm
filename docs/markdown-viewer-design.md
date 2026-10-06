@@ -239,6 +239,17 @@ payloads. Preparation counters qualify only this work reduction, not remaining
 label/layout traversal or egui's job clones, native input latency, total
 allocation savings or GPU drawing.
 
+The standalone viewer's ordinary opaque `SURFACE_WINDOW` outer frame goes
+through the existing `software_background::show_frame`, just like other
+eligible application surfaces. Only that frame changes painting route; child
+Preview/Source frames, text, controls and resource policy are unchanged.
+The helper retains its existing renderer/opacity/visibility/root-viewport/
+transform/frame guards and ordinary fallback. Real Preview/Source caller
+pixels are compared exactly on Windows DX12 CPU `Rgba8Unorm`, at narrow/wide
+widths and 1/1.25x scale with fractional clipping; 0.5 opacity must stay ordinary.
+This qualifies rendering fidelity and callback execution, not draw time or
+native latency. Completed real Markdown workload attribution remains separate.
+
 Preview code-byte navigation forwards the existing selected row's vertical
 target after its horizontal code scroller closes. Find and the shared editor
 Preview therefore reach offscreen fences instead of consuming the byte request

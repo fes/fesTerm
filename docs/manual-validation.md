@@ -501,6 +501,14 @@ are formatting instructions only; every frame still lays out the labels.
 These preparation counters do not qualify native clipboard/screen-reader
 delivery, input-to-display latency or GPU drawing; those statuses remain pending.
 
+CP-06 outer-frame rendering: Windows DX12 CPU caller comparisons cover actual
+Preview and Source at 430/1180-point widths, 1/1.25x scale and fractional clipping.
+All eight opaque controls execute exactly one shared frame callback and retain
+identical pixels; the two 0.5-opacity controls execute none and remain identical.
+Live accessibility and Source response geometry are also compared. This is
+automated fidelity evidence, not completed Markdown draw timing or native
+clipboard/screen-reader usability; those pending statuses are unchanged.
+
 CP-06/CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.
 Across windows, lower **Image memory budget** below admitted usage, check that
