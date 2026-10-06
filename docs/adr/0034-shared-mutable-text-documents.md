@@ -606,6 +606,19 @@ existing Markdown rendering stays out of scope.
   report content-free refusals. Native input/IME, focus/caret, narrow-pane
   usability and screen-reader delivery remain `CP-15`; transient allocation
   peaks and allocator fragmentation are not certified by these tests.
+- **Ordered rewrite refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07` and `EDIT-13`
+  add `single_pass_multi_edit_apply_avoids_repeated_splices`,
+  `single_pass_multi_edit_undo_avoids_repeated_splices`,
+  `single_pass_multi_edit_redo_avoids_repeated_splices`,
+  `single_pass_multi_edit_vi_builder_avoids_repeated_splices`,
+  `single_pass_multi_edit_matches_splice_oracle_for_unicode_and_coincident_edits`,
+  `single_pass_multi_edit_preserves_in_place_single_and_equal_length_replay`,
+  `single_pass_multi_edit_byte_refusal_preserves_redo_without_constructing_output`.
+  These retain transaction/UTF-8/atomic-refusal semantics and prove one result
+  write rather than repeated length-changing splices. Single/equal-length
+  replay remains in place; multi-edit replay may own a temporary extra bounded
+  result, not a new retained owner. CP-15 native evidence and fragmentation/RSS
+  conclusions remain separate.
 - **Native/manual evidence required:** a new manual scenario registered with the
   implementation, covering real watcher behaviour, atomic replacement,
   permission preservation, and remote disconnect/reconnect on each platform.

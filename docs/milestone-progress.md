@@ -198,6 +198,28 @@ still walks logical content, debug invariant auditing remains intentional,
 and stale-hint fallback can still be linear outside the resize fast path.
 These are lookup-work results, not whole-process memory, fragmentation,
 native latency or #297-causality evidence; native TI-04/TI-05 remain open.
+## Constructing multi-edit results without repeated suffix shifts
+
+C2 in #320 found repeated length-changing splices in document apply, undo,
+redo and vi repeat's scratch builder. Compiled old-path controls performed
+2,000 splices each for one 2,000-edit transaction; undo also cloned inverse
+payloads. A shared borrowed-span constructor now writes the result once,
+tracking original and applied coordinates for inverse edits without signed
+offset tricks. All four controls now make zero splices; write-site counters
+match one result length.
+
+Byte admission precedes draft construction while existing prepared-undo and
+line-bound checks preserve atomic refusal, redo and saved/revision state.
+Unicode, coincident insertions, deletions and no-ops match the old splice
+oracle. Single edits and equal-length multi-edit undo/redo remain in place,
+with pointer/capacity proof, avoiding a full-document-copy regression for
+ordinary undo. Length-changing multi-edit replay deliberately trades temporary
+ownership of one extra bounded result for linear construction; it drops the
+replaced buffer immediately and adds no retained owner.
+
+Document/history limits and shared-view semantics are unchanged. CP-15
+native responsiveness/caret/IME/readability, total-memory/fragmentation and
+#297 attribution remain separate from these deterministic work results.
 
 ## Bounding actual undo storage without discarding a refused change
 

@@ -604,6 +604,18 @@ workloads.
   rejected changed trust, or rejected credentials. Extend app-level tab,
   profile, and restoration scenarios separately.
 
+### Ordered editor multi-edit verification
+
+`EDIT-03/05/07/13` now cross-check ordered apply/undo/redo against the old
+splice oracle for Unicode, adjacent/coincident insertions, deletions and
+no-ops. Actual-call controls for 2,000 length-changing edits show apply, undo,
+redo and vi scratch each moving from 2,000 splices to zero; result-write
+counters equal exactly one output length. Pointer/capacity checks preserve
+in-place single/equal-length replay. Preallocation byte refusal preserves
+redo, revision and saved state, alongside existing metadata/line/stale/UTF-8
+and production shared-view/refusal tests. CP-15 native caret/IME/readability
+and memory/fragmentation conclusions remain separate.
+
 ### M9 scrollback and reflow verification
 
 `HIST-04` anchor-work regressions count actual lookup steps: capture/resolution

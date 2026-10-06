@@ -1955,11 +1955,7 @@ fn last_char_len(text: &str) -> usize {
 }
 
 fn apply_edits_to_string(text: &str, edits: &[TextEdit]) -> String {
-    let mut out = text.to_owned();
-    for edit in edits.iter().rev() {
-        out.replace_range(edit.start..edit.start + edit.removed.len(), &edit.inserted);
-    }
-    out
+    crate::text::rewrite_ordered_edits(text, edits, crate::text::EditDirection::Forward)
 }
 
 /// The single prefix/suffix edit that turns `old` into `new`, computed on char
@@ -2014,6 +2010,26 @@ mod tests {
 
     fn chars(s: &str) -> Vec<ViKey> {
         s.chars().map(ViKey::Char).collect()
+    }
+
+    #[test]
+    fn single_pass_multi_edit_vi_builder_avoids_repeated_splices() {
+        let text = "ab ".repeat(2_000);
+        let edits = (0..2_000)
+            .map(|index| TextEdit {
+                start: index * 3,
+                removed: "ab".to_owned(),
+                inserted: "LONG".to_owned(),
+            })
+            .collect::<Vec<_>>();
+        crate::text::TEXT_SPLICE_CALLS.with(|calls| calls.set(0));
+        assert_eq!(apply_edits_to_string(&text, &edits), "LONG ".repeat(2_000));
+        let calls = crate::text::TEXT_SPLICE_CALLS.with(std::cell::Cell::get);
+        println!("multi_edit_vi_splice_calls={calls}");
+        assert!(
+            calls <= 1,
+            "vi builder made {calls} length-changing splices"
+        );
     }
 
     /// Drives the engine through a sequence of keys, committing every returned

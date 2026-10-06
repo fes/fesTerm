@@ -743,6 +743,16 @@ exists.
 | `EDIT-17` | `Application → UntitledEditor` | Choose **New File** from More actions or the native File menu. | A separate blank editor opens immediately with a unique `Untitled-N.txt` identity, explicit unwritten dirty/unsaved state, and `UNTITLED` origin, without a synthetic undo entry or revision bump. Undoing real edits does not mark never-saved content clean. Auto-save is unavailable before a destination exists, and the first Save enters the ordinary Save As flow. No existing New Session, New Window, or Start Local Shell shortcut is reassigned. | Save As to bind the document to a file, or close through the final-view dirty-document policy. | P,H,V,N,U; implemented |
 | `EDIT-18` | `SavedLocalEditor → PreviewImages` | Open a saved local Markdown file, including a symlinked filename, in Preview/Split; explicitly load beyond the automatic reference limit; first Save/Save As/rebind to a different parent or nonlocal origin, fail source resolution, and fail a reparse. | Complete canonical typed local file identity alone authorizes reads; lexical symlink-file parents, labels and fallback names never do. An unresolvable local source keeps readable text Preview with a visible image-refusal reason. Preview uses `MD-05`/`SET-13` policy and the same central image command as the viewer. Reparse/rebinding discards old approvals/cache/receivers; stale results cannot populate the new snapshot. Failed parsing releases hidden images without reloading the old snapshot. Remote/untitled/history Preview explains the saved-local requirement instead of offering a non-working local-load button. Document bytes, dirty state and undo are unchanged by image work. | Close the view/fixtures, or return to Edit. | P,H,N,U; partial |
 
+For `EDIT-03`, `EDIT-05`, `EDIT-07` and `EDIT-13`, ordered multi-edit apply,
+inverse replay and vi scratch share borrowed-span construction instead of
+repeated suffix shifts. Unicode and coincident insertions match the old splice
+oracle, one transaction remains one undo, and preallocation byte refusal
+preserves history/revision/saved state. Single/equal-length replay stays in
+place; length-changing multi-edit replay may temporarily own one extra bounded
+result without adding a retained owner. Actual splice/write counts are
+automated; native responsiveness/caret/IME, memory peaks and fragmentation
+remain separate evidence.
+
 For `EDIT-16` and the fenced-code part of `MD-04`, repeated documents and
 blocks reuse only the immutable compiled query for their language. Parser,
 tree, text, revision, spans and query-cursor state remain independent across

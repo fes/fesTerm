@@ -117,6 +117,15 @@ The history limit covers retained allocations, not candidate text, staged
 allocation overlap, undo/redo scratch, per-view text/layout, allocator overhead
 or process RSS. Reducing those separate transient costs remains distinct work.
 
+Length-changing multi-edit construction now emits the result in one ordered
+pass rather than repeatedly shifting suffixes. Apply and vi scratch use the
+same borrowed-span helper; inverse construction accounts for changed offsets
+without cloning inverse strings. Byte admission precedes result allocation,
+with existing line checks before commit. Single/equal-length undo/redo keeps
+its in-place path; multi-edit replay can briefly own an extra result bounded
+by the document limit (4 MiB by default), released/replaced within that call.
+It adds no long-lived owner and does not certify total peaks or fragmentation.
+
 Auto-save runs one debounce per document and is coalesced by construction,
 because a write is only considered once the content has stopped changing.
 Failures are not retried on a timer: the document stays dirty, keeps its error,
