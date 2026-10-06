@@ -108,7 +108,7 @@ rm -f "$emoji_result_path"
 
 if [ "${FESTERM_RUN_SURFACE_PROFILE:-}" = "1" ]; then
     if cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1; then
-        printf 'suite=interactive-surface-profile status=pass\n' >>"$result_path"
+        printf 'suite=interactive-surface-profile status=pass scene_set=%s\n' "${FESTERM_SURFACE_PROFILE_SCENES:-all}" >>"$result_path"
     else
         printf 'suite=interactive-surface-profile status=fail\n' >>"$result_path"
         status=fail

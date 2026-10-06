@@ -437,7 +437,8 @@ if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
             cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
         }
         if ($LASTEXITCODE -ne 0) { throw 'Interactive surface profile failed.' }
-        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass"
+        $profileScenes = if ([string]::IsNullOrEmpty($env:FESTERM_SURFACE_PROFILE_SCENES)) { 'all' } else { $env:FESTERM_SURFACE_PROFILE_SCENES }
+        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass scene_set=$profileScenes"
     } catch {
         Write-Warning $_
         Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=fail"
