@@ -53,7 +53,14 @@ python scripts\build_ui_state_doc.py --surface-matrix-report target\evidence\sur
 
 Both probes remain under their existing optional-runner flags
 `FESTERM_RUN_SURFACE_PROFILE=1` / `FESTERM_RUN_WARP_UI_PROBE=1`; neither becomes
-a default benchmark or snapshot gate. Gallery generation uses
+a default benchmark or snapshot gate. The construction probe alone accepts
+`FESTERM_SURFACE_PROFILE_SCENES=original-controls` for its original twelve
+document/list controls and model diagnostics. This explicit subset excludes
+all 52 appended variants, records that scope in its report and aggregate
+runner result, and changes no semantic guard or WARP replay selection.
+Unset the selector (or use `all`) for the full construction matrix.
+No missing variant or native row gains coverage from the controls-only result.
+Gallery generation uses
 `FESTERM_UI_GALLERY_OUT` pointed at a fresh owned directory before updating
 the reviewed document/images. `capture_surface_gallery(SurfaceKind, narrow)`
 is the shared full-root themed fixture API for style review.

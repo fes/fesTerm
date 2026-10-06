@@ -20,6 +20,67 @@ use crate::{
 const WARMUP_FRAMES: usize = 8;
 const MEASURED_FRAMES: usize = 40;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileScenes {
+    All,
+    OriginalControls,
+}
+
+impl ProfileScenes {
+    fn parse(value: Option<&str>) -> Result<Self, &'static str> {
+        match value {
+            None | Some("all") => Ok(Self::All),
+            Some("original-controls") => Ok(Self::OriginalControls),
+            Some(_) => Err("FESTERM_SURFACE_PROFILE_SCENES must be all or original-controls"),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::OriginalControls => "original-controls",
+        }
+    }
+
+    fn includes_expanded(self) -> bool {
+        self == Self::All
+    }
+}
+
+#[test]
+fn profile_scene_selection_preserves_full_default_and_names_explicit_scope() {
+    for (value, expected, name, expanded) in [
+        (None, ProfileScenes::All, "all", true),
+        (Some("all"), ProfileScenes::All, "all", true),
+        (
+            Some("original-controls"),
+            ProfileScenes::OriginalControls,
+            "original-controls",
+            false,
+        ),
+    ] {
+        let selected = ProfileScenes::parse(value).unwrap();
+        assert_eq!(selected, expected);
+        assert_eq!(selected.name(), name);
+        assert_eq!(selected.includes_expanded(), expanded);
+    }
+}
+
+#[test]
+fn profile_scene_selection_rejects_empty_unknown_or_composite_scope() {
+    for value in [
+        "",
+        "original",
+        "all,original-controls",
+        "original-controls,original-controls",
+        " original-controls",
+        "ORIGINAL-CONTROLS",
+        "original-controls\nall",
+    ] {
+        assert!(ProfileScenes::parse(Some(value)).is_err(), "{value:?}");
+    }
+}
+
 #[derive(Serialize)]
 struct Sample {
     name: &'static str,
@@ -319,6 +380,13 @@ fn profile_interactive_surfaces() {
         std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
         Ok("1")
     );
+    let selection = std::env::var_os("FESTERM_SURFACE_PROFILE_SCENES");
+    let scenes = ProfileScenes::parse(selection.as_deref().map(|value| {
+        value
+            .to_str()
+            .expect("FESTERM_SURFACE_PROFILE_SCENES must be valid UTF-8")
+    }))
+    .expect("invalid interactive surface profile selection");
     let output = PathBuf::from(
         std::env::var_os("FESTERM_SURFACE_PROFILE_OUT").expect("set FESTERM_SURFACE_PROFILE_OUT"),
     );
@@ -514,22 +582,26 @@ fn profile_interactive_surfaces() {
 
     // Append the new matrix after all original controls/model probes so they
     // retain their workload order and are not preconditioned by picker I/O.
-    for scene in crate::ui_gallery::bounded_surface_scenes() {
-        let scene_output = output.join(scene.id);
-        std::fs::create_dir(&scene_output).unwrap();
-        std::fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
-        let sample = measure_surface(scene, &scene_output.join("fixtures"));
-        std::fs::write(
-            scene_output.join("profile.json"),
-            serde_json::to_string_pretty(&sample).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(scene_output.join("status.json"), r#"{"status":"complete"}"#).unwrap();
-        samples.push(sample);
+    if scenes.includes_expanded() {
+        for scene in crate::ui_gallery::bounded_surface_scenes() {
+            let scene_output = output.join(scene.id);
+            std::fs::create_dir(&scene_output).unwrap();
+            std::fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
+            let sample = measure_surface(scene, &scene_output.join("fixtures"));
+            std::fs::write(
+                scene_output.join("profile.json"),
+                serde_json::to_string_pretty(&sample).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(scene_output.join("status.json"), r#"{"status":"complete"}"#).unwrap();
+            samples.push(sample);
+        }
     }
 
     let report = serde_json::json!({
         "schema": "festerm-interactive-surface-profile-v2",
+        "scene_set": scenes.name(),
+        "expanded_matrix_status": if scenes.includes_expanded() { "measured" } else { "not selected" },
         "package_version": env!("CARGO_PKG_VERSION"),
         "release": !cfg!(debug_assertions),
         "viewport_points": [1180, 760],
