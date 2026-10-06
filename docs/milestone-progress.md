@@ -453,6 +453,24 @@ bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.
 
+## Retaining actionable Windows test-exit evidence
+
+The original #330 Windows UI-test exit 2173 left only snapshot images, while a
+same-head rerun passed without explaining the failure. Required Windows Cargo
+tests now use a root-process-only native debugger runner that preserves their
+parallel execution and original status, while retaining bounded, content-free
+exit/exception/termination, thread-stack, executable/source and module identity
+metadata. Non-GPU calibration proves both the controlled 2173 exit and native
+fault/timeout paths before the workspace tests run. No raw dumps, ordinary logs,
+user journals or WER registry changes are involved.
+
+The earlier CDB calibration fixture is reused, but its replay/quit behavior is
+not an acceptable substitute for original test-status propagation. Missing
+tools and diagnostic failures remain explicit nonzero outcomes, not green
+fallbacks. The new evidence can support the next causal investigation; it does
+not identify the cause of 2173 or relabel the separate Direct2D lifetime repair.
+See [the runner's privacy boundary and limitations](windows-test-diagnostics.md).
+
 ## Retiring imported Direct2D targets before teardown
 
 The intermittent Windows crash investigation in #330 exposed a concrete
