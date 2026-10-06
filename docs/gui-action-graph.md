@@ -727,6 +727,13 @@ CPU correctness, not timing benefit, native clipboard delivery or usability;
 the separate synthetic measurement and its adverse controls do not replace
 native evidence.
 
+The opt-in `markdown-controls` WARP replay adds four actual `MD-04`
+Preview/Source construction and completed-render controls at normal/narrow
+widths. The CPU semantic regression verifies rendered-heading versus raw
+Source readiness and the last of 400 owned code sections. The replay keeps
+same-frame original-renderer pixel guards and separate draw/readback buckets;
+it does not cover Find, native input/presentation, scrolling or usability.
+
 Code-byte navigation regressions for `MD-04` and `EDIT-09` render all 400
 fences, prove the tail is initially outside the viewport, then require its
 selected row to be visible through viewer Find and the shared editor Preview.

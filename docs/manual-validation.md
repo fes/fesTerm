@@ -959,6 +959,15 @@ An explicit eight-scene picker subset leaves omitted variants unmeasured.
 These diagnostics do not automate CP-16/CP-17 input, presentation, mixed-DPI,
 native responsiveness or accessibility acceptance.
 
+Four opt-in large Markdown WARP controls now use the actual Preview/Source
+viewer at normal/narrow widths, with 400 owned sections/fences and no external
+resources. CPU readiness proves the rendered heading or raw Source marker and
+final section's code. The replay preserves exact original-renderer comparison,
+draw/readback buckets and observed production panel paints; it is not a
+surrogate editor fixture. This automates bounded `MD-04` construction/rendering
+evidence only. Find, real scrolling, native screen-reader delivery, physical
+input-to-photon and CP-06/CP-16/CP-17 evidence remain separate and unmeasured.
+
 The editor's opaque outer frame now uses the same eligible textureless-panel
 helper as existing chrome; layout, child widgets and all ordinary-path guards
 are unchanged. A real-editor regression asserts executed painting and exact

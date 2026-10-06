@@ -216,8 +216,17 @@ This instrumentation attributes the combined #350 bucket; it changes no
 production picker rendering and makes no efficiency claim by itself.
 
 `FESTERM_WARP_UI_SCENES=picker-controls` selects only the small-ready/error
-Open File and Save As fixtures at both widths (eight scenes). Unset or `all`
-retains all four original controls and 52 expanded variants. Empty, unknown,
+Open File and Save As fixtures at both widths (eight scenes).
+`FESTERM_WARP_UI_SCENES=markdown-controls` selects four actual large Markdown
+Preview/Source scenes at normal/narrow widths. Each uses the same owned
+400-section remote-origin snapshot with 400 Rust fences, with no images,
+network, user files or clipboard. Readiness checks the actual rendered heading
+or raw Source marker and the final section's code; it never substitutes the
+text editor or a loading placeholder. Find is explicitly unmeasured.
+
+Unset or `all` retains all four original controls and the 52 existing expanded
+variants, and adds these four Markdown variants. The gallery/construction
+catalog remains unchanged. Empty, unknown,
 composite and non-UTF-8 selections fail before creating output. Reports and
 the Windows optional-suite receipt name the selected scene set; omitted
 variants remain unmeasured. For a bounded diagnostic:
@@ -229,6 +238,14 @@ $env:FESTERM_WARP_UI_OUT = 'C:\evidence\picker-buckets-attempt-01'
 $env:WGPU_BACKEND = 'dx12'
 cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
 ```
+
+Use a fresh output path and `markdown-controls` instead for the four Markdown
+scenes. They retain the same seven draw buckets, original-renderer pixel
+guards, actual installed-panel counts and bounded temporary-payload reporting.
+The constructor/steady UI samples include real Preview or Source traversal;
+preparation-cache counters are not a proxy for this measured work. These
+controls do not qualify Find, scrolling interaction, native presentation,
+physical input-to-photon latency or a net gain without matched measurements.
 
 Cold-process start is explicitly `null/not measured`: a fresh context in an
 already-running test process is not a cold application. Package/revision,

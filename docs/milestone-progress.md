@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Measuring the real large Markdown drawing path
+
+The #348 investigation had preparation counters and small gallery captures,
+but no bounded completed-render workload for a real large Markdown viewer.
+The WARP replay now has four Preview/Source normal/narrow controls using the
+same owned 400-section snapshot. Semantic readiness distinguishes rendered
+headings from raw Source and proves the final code section remains live; no
+network, images, user document or text-editor substitute is involved.
+
+The strict `markdown-controls` selector keeps the diagnostic small while the
+full replay deliberately retains the existing controls and adds all four new
+ones. Original-renderer pixels, actual eligible panel painting, seven draw/
+readback buckets and temporary payload counts stay independently observable.
+Preparation reuse alone does not prove end-to-end rendering gain. Find,
+scrolling, native presentation and physical latency remain separate evidence.
+
 ## Routing the editor surface through eligible panel painting
 
 The first bounded #351 replay completed all eight picker controls with exact
