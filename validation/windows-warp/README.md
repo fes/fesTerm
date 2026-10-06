@@ -176,6 +176,12 @@ replay command and a fresh output directory. Unset the backdrop variable for
 the unchanged default replay; other values, selectors and non-Windows-x64
 requests fail explicitly before fixture execution.
 
+When the default picker uses the measured backdrop route, this test-only option
+first selects its ordinary painting through a per-context fixture control.
+The frozen-frame conversion then measures the same original rectangle and
+balanced pairs. No production environment variable disables the optimization;
+an unset option measures the actual default application path.
+
 Each actual picker must have exactly one full-root translucent black,
 untextured, unrounded, unblurred and unstroked backdrop with full viewport
 clipping coverage. Only that original white-UV mesh uses the existing installed
@@ -228,6 +234,20 @@ They do not isolate shader instructions, qualify strict CPU/native latency,
 or demonstrate a shipping fix: the production backdrop remains unchanged.
 Substantial drawing cost remains. The separate two-scale full-frame fidelity
 regression passed in 0.37 seconds; no native/manual row or budget is accepted.
+
+#### Default picker backdrop route
+
+Only Open File and Save As opt into the installed supported Windows DX12 CPU
+panel renderer for their exact unique full-root translucent black backdrop.
+The ordinary Modal owns content, allocation, IDs, responses and input handling.
+The caller replaces only its newly emitted backdrop shape after checking
+root/visibility/painter opacity/origin/transform, original alpha/clip and
+untextured/unrounded/unstroked/unblurred geometry. Other shapes, modals,
+opaque-frame guards, renderer ownership and unsupported fallback stay intact.
+The two-scale regression compares full pixels and modal/content/backdrop
+responses plus no-renderer, nonzero-origin, transform and colored fallbacks.
+This route needs its own cumulative measured qualification; the `90c0ed5`
+table remains the earlier diagnostic source, not default-path acceptance.
 
 ### Gallery capture and shared fixture identity
 

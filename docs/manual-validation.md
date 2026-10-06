@@ -999,6 +999,14 @@ This establishes a shared-host backdrop-route/batching contribution, not native
 latency, a shipping optimization or native/manual acceptance; see the
 [completed attribution record](../validation/windows-warp/README.md#2026-10-06-completed-same-frame-picker-attribution).
 
+The measured route is now narrowly wired to the exact owned Open File/Save As
+backdrop while retaining the ordinary Modal and all live content/responses.
+Full pixel/response and unsupported/origin/transform/colored-fallback controls
+cover the two-scale renderer slice; the opted-in attribution retains an
+explicit test-only ordinary route. Its default-path cumulative rendering,
+native input/presentation, hardware/mixed-DPI and resource evidence remain
+separate. No native/manual classification or accepted budget changes.
+
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external
 resources. CPU readiness proves the rendered heading or raw Source marker and
