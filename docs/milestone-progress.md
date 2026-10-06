@@ -49,6 +49,24 @@ native latency or implement a production fix. The
 [exact scene record](../validation/windows-warp/README.md#2026-10-06-completed-same-frame-picker-attribution)
 retains the source, binary, sample convention and limitations.
 
+## Keeping picker dimming while avoiding its textured full-window draw
+
+The completed #350 same-frame controls identified a material backdrop-route
+and batching contribution, without justifying removal of dimming. Open File and
+Save As now still run the ordinary `egui::Modal`, with its original live widgets,
+responses and input policy. Only the exact unique full-root black backdrop in
+that owned modal's newly painted range uses the already installed WARP panel
+pipeline, retaining its alpha, clipping and ordinary tessellated geometry.
+
+Other modals, shaders, opaque-frame guards and adapter/format eligibility are
+unchanged. Invisible/translucent painter, non-root/origin/transform, colored,
+clipped, ambiguous and unsupported cases retain ordinary painting. No galleys,
+new renderer owner, production switch or retained geometry cache is introduced.
+The optional attribution explicitly selects the ordinary backdrop through a
+test-only per-context control, so its original-pixel and balanced-pair oracle
+remains usable after the default picker path changes. Actual cumulative
+rendering and native evidence remain distinct from the earlier diagnostic.
+
 ## Measuring the real large Markdown drawing path
 
 The #348 investigation had preparation counters and small gallery captures,

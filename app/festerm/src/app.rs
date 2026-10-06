@@ -4227,16 +4227,18 @@ impl FesTermApp {
             &frame,
             egui::vec2(700.0, 600.0),
         );
-        egui::Modal::new(egui::Id::new("text_editor_save_as"))
-            .frame(frame)
-            .show(ctx, |ui| {
+        crate::software_background::show_picker_modal(
+            ctx,
+            egui::Modal::new(egui::Id::new("text_editor_save_as")).frame(frame),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Save As");
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
-            });
+            },
+        );
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path }) => {
                 self.close_save_as_picker(ctx);
@@ -4280,16 +4282,18 @@ impl FesTermApp {
             &frame,
             egui::vec2(640.0, 560.0),
         );
-        egui::Modal::new(egui::Id::new("markdown_file_picker"))
-            .frame(frame)
-            .show(ctx, |ui| {
+        crate::software_background::show_picker_modal(
+            ctx,
+            egui::Modal::new(egui::Id::new("markdown_file_picker")).frame(frame),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Open File");
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
-            });
+            },
+        );
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
                 self.remember_markdown_file_picker_directory();
