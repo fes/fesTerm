@@ -102,7 +102,10 @@ impl OpenDocument {
         self.source_authority
             .as_ref()
             .zip(self.generation)
-            .filter(|_| matches!(self.origin, DocumentOrigin::Local(_)))
+            .filter(|_| {
+                matches!(self.origin, DocumentOrigin::Local(_))
+                    && matches!(self.availability, Availability::Available)
+            })
     }
 
     pub(crate) const fn views(&self) -> usize {
@@ -452,10 +455,9 @@ impl DocumentRegistry {
         let bytes = document.text.to_bytes();
 
         let outcome = match document_store::save(&path, &bytes, document.generation) {
-            Ok(generation) => {
-                document.generation = Some(generation);
-                document.source_authority =
-                    document_store::source_authority_for_generation(&path, generation);
+            Ok(saved) => {
+                document.generation = Some(saved.generation);
+                document.source_authority = Some(saved.source_authority);
                 document.text.mark_saved();
                 document.conflict = None;
                 document.last_error = None;
@@ -518,8 +520,8 @@ impl DocumentRegistry {
         let bytes = document.text.to_bytes();
         let text = document.text.clone();
 
-        let generation = match document_store::save(path, &bytes, None) {
-            Ok(generation) => generation,
+        let saved = match document_store::save(path, &bytes, None) {
+            Ok(saved) => saved,
             Err(failure) => {
                 let error = SaveError::new(failure.headline(), failure.detail());
                 if let Some(document) = self.documents.get_mut(&id) {
@@ -540,8 +542,13 @@ impl DocumentRegistry {
 
         let mut text = text;
         text.mark_saved();
-        let source_authority = document_store::source_authority_for_generation(path, generation);
-        let new_id = self.insert(origin, text, Some(generation), source_authority, false);
+        let new_id = self.insert(
+            origin,
+            text,
+            Some(saved.generation),
+            Some(saved.source_authority),
+            false,
+        );
         Some((SaveOutcome::Saved, Some(new_id)))
     }
 
@@ -675,13 +682,7 @@ impl DocumentRegistry {
 
         document.checked = Instant::now();
         let outcome = match document_store::freshness(&path, known) {
-            Freshness::Unchanged => {
-                if document.source_authority.is_none() {
-                    document.source_authority =
-                        document_store::source_authority_for_generation(&path, known);
-                }
-                RefreshOutcome::Unchanged
-            }
+            Freshness::Unchanged => RefreshOutcome::Unchanged,
             Freshness::Changed(_) => match document_store::load(&path, bounds) {
                 Ok(loaded) if !document.text.is_dirty() => {
                     document.text = loaded.document;
@@ -968,29 +969,6 @@ mod tests {
         assert_eq!(
             registry.get(id).unwrap().status().severity(),
             Severity::Informational
-        );
-    }
-
-    #[test]
-    fn unchanged_refresh_recovers_missing_local_source_authority() {
-        let directory = TemporaryDirectory::new("authority-recovery");
-        let path = directory.file("notes.md", "alpha\n");
-        let mut registry = DocumentRegistry::new();
-        let id = registry.open_local(&path).unwrap();
-        registry.get_mut(id).unwrap().source_authority = None;
-
-        assert_eq!(
-            registry.refresh(id),
-            Some(RefreshOutcome::Unchanged),
-            "authority recovery must not pretend the document bytes changed"
-        );
-        assert!(
-            registry
-                .get(id)
-                .unwrap()
-                .local_source_generation()
-                .is_some(),
-            "a later unchanged refresh must repair a transient post-save resolution failure"
         );
     }
 

@@ -2782,12 +2782,6 @@ fn saved_local_preview_source(
         "Local images are unavailable because the loaded Markdown source has no stable generation."
             .to_owned()
     })?;
-    if !crate::document_store::source_authority_is_current(authority, generation) {
-        return Err(
-            "Local images are unavailable because the saved Markdown file could not be resolved."
-                .to_owned(),
-        );
-    }
     let source = LocalMarkdownSource::new(authority.canonical_path().to_path_buf()).map_err(|_| {
         "Local images are unavailable because the saved Markdown file has an invalid source identity."
             .to_owned()
@@ -3530,6 +3524,10 @@ mod tests {
         let documents = DocumentRegistry::shared();
         let id = documents.borrow_mut().open_local(&path).unwrap();
         fs::remove_file(path).unwrap();
+        assert!(matches!(
+            documents.borrow_mut().refresh(id),
+            Some(crate::documents::RefreshOutcome::Unavailable(_))
+        ));
         let editor = TextEditorTab::new(id, &documents);
         let reason = editor.local_preview_source.as_ref().unwrap_err().clone();
         let harness = Harness::builder()

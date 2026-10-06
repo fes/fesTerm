@@ -580,9 +580,7 @@ fn secret_store_message(error: SecretStoreError) -> &'static str {
 
 /// Where a file picked in the Open File sheet should land.
 ///
-/// Markdown has a reader worth landing in, and its Edit action is one press
-/// away. Anything else has nothing to render, so it opens in the editor
-/// rather than in a viewer that would only show it back as its own source.
+/// Markdown starts in the editor's Preview mode. Other text starts in Edit.
 fn picked_file_command(path: std::path::PathBuf, replacing: Option<TabId>) -> AppCommand {
     if is_markdown_path(&path) {
         AppCommand::OpenLocalMarkdownFile { path, replacing }
@@ -591,8 +589,7 @@ fn picked_file_command(path: std::path::PathBuf, replacing: Option<TabId>) -> Ap
     }
 }
 
-/// Whether a picked path is Markdown, and so belongs in the viewer rather
-/// than straight in the editor.
+/// Whether a picked path is Markdown, and so starts in editor Preview.
 fn is_markdown_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())

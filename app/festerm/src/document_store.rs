@@ -238,6 +238,12 @@ pub enum SaveFailure {
     Interrupted,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SavedDocument {
+    pub(crate) generation: Generation,
+    pub(crate) source_authority: LocalSourceAuthority,
+}
+
 impl SaveFailure {
     pub fn headline(&self) -> &'static str {
         match self {
@@ -303,30 +309,6 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
         source_authority,
         read_only: metadata.permissions().readonly(),
     })
-}
-
-pub(crate) fn source_authority_for_generation(
-    path: &Path,
-    generation: Generation,
-) -> Option<LocalSourceAuthority> {
-    let canonical = fs::canonicalize(path).ok()?;
-    let (authority, file) = open_canonical_source(&canonical).ok()?;
-    generation.matches_file(&file).then_some(authority)
-}
-
-pub(crate) fn source_authority_is_current(
-    authority: &LocalSourceAuthority,
-    generation: Generation,
-) -> bool {
-    let Some(parent) = authority.canonical_path.parent() else {
-        return false;
-    };
-    let Ok(directory) = open_canonical_directory(parent) else {
-        return false;
-    };
-    authority.parent_identity.matches_directory(&directory)
-        && open_canonical_file(&directory, &authority.canonical_path)
-            .is_ok_and(|file| generation.matches_file(&file))
 }
 
 pub(crate) fn open_canonical_directory(parent: &Path) -> Result<cap_std::fs::Dir, std::io::Error> {
@@ -442,7 +424,7 @@ pub fn save(
     path: &Path,
     bytes: &[u8],
     expected: Option<Generation>,
-) -> Result<Generation, SaveFailure> {
+) -> Result<SavedDocument, SaveFailure> {
     if let Some(expected) = expected {
         match freshness(path, expected) {
             Freshness::Unchanged => {}
@@ -455,6 +437,7 @@ pub fn save(
     }
 
     let parent = parent_directory(path)?;
+    let source_authority = source_authority_for_save(path, parent)?;
     let original = match fs::metadata(path) {
         Ok(metadata) if metadata.is_file() => Some(metadata),
         Ok(_) => return Err(SaveFailure::NotAFile),
@@ -475,7 +458,26 @@ pub fn save(
     temporary.persist();
     sync_directory(parent);
 
-    Generation::at(path).map_err(|_| SaveFailure::Interrupted)
+    let generation = Generation::at(path).map_err(|_| SaveFailure::Interrupted)?;
+    Ok(SavedDocument {
+        generation,
+        source_authority,
+    })
+}
+
+fn source_authority_for_save(
+    path: &Path,
+    parent: &Path,
+) -> Result<LocalSourceAuthority, SaveFailure> {
+    let file_name = path.file_name().ok_or(SaveFailure::NoDirectory)?;
+    let canonical_parent = fs::canonicalize(parent).map_err(classify_write_error)?;
+    let directory = open_canonical_directory(&canonical_parent).map_err(classify_write_error)?;
+    let parent_identity =
+        DirectoryIdentity::from_directory(&directory).map_err(classify_write_error)?;
+    Ok(LocalSourceAuthority {
+        canonical_path: canonical_parent.join(file_name),
+        parent_identity,
+    })
 }
 
 fn write_all_durably(file: &mut File, bytes: &[u8]) -> Result<(), SaveFailure> {
@@ -726,11 +728,15 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
 
-        let generation = save(&path, b"after\n", Some(loaded.generation)).unwrap();
+        let saved = save(&path, b"after\n", Some(loaded.generation)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
-        assert_eq!(freshness(&path, generation), Freshness::Unchanged);
-        assert_ne!(generation, loaded.generation);
+        assert_eq!(freshness(&path, saved.generation), Freshness::Unchanged);
+        assert_ne!(saved.generation, loaded.generation);
+        assert_eq!(
+            saved.source_authority.canonical_path(),
+            fs::canonicalize(&path).unwrap()
+        );
     }
 
     #[test]
@@ -861,10 +867,34 @@ mod tests {
         let directory = TemporaryDirectory::new("saveas");
         let path = directory.path.join("fresh.md");
 
-        let generation = save(&path, b"new\n", None).unwrap();
+        let saved = save(&path, b"new\n", None).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
-        assert_eq!(generation.size(), 4);
+        assert_eq!(saved.generation.size(), 4);
+    }
+
+    #[test]
+    fn saved_authority_remains_bound_to_the_destination_parent() {
+        let directory = TemporaryDirectory::new("saved-parent");
+        let retained = TemporaryDirectory::new("saved-parent-retained");
+        fs::remove_dir(&retained.path).unwrap();
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let saved = save(&path, b"after\n", Some(loaded.generation)).unwrap();
+
+        fs::rename(&directory.path, &retained.path).unwrap();
+        fs::create_dir(&directory.path).unwrap();
+        fs::hard_link(retained.path.join("notes.md"), &path).unwrap();
+        let replacement =
+            open_canonical_directory(&fs::canonicalize(&directory.path).unwrap()).unwrap();
+
+        assert!(
+            !saved
+                .source_authority
+                .parent_identity()
+                .matches_directory(&replacement),
+            "a later hard-link replacement must not change the parent captured by Save"
+        );
     }
 
     #[test]

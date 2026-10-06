@@ -170,9 +170,10 @@ path component or the directory's name is rebound during the read.
 External/explicit reload and successful save replace that source authority;
 the editor discards old approvals, image caches and pending
 receivers before reparsing the new bytes. First Save and Save As/rebinding do
-the same for a new origin. If post-save authority resolution fails transiently,
-an unchanged freshness poll retries it rather than leaving images unavailable
-until another save. An ordinary edit reparse retains completed state
+the same for a new origin. Save captures the destination parent's identity
+before creating or replacing bytes; if that authority cannot be established,
+the save refuses before mutation rather than later adopting whichever parent
+occupies the pathname. An ordinary edit reparse retains completed state
 only for an unchanged same-index image reference and discards pending or
 changed work; an unavailable parse releases hidden images without starting
 loads for the old snapshot. This does not move image ownership or terminal

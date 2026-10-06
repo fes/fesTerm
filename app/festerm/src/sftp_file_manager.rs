@@ -2161,7 +2161,7 @@ impl SftpFileManagerTab {
     /// for this frame -- the synchronous local case from `open_item`, or
     /// the asynchronous remote case filled by `apply_event` earlier in this
     /// same `poll()` call -- and turns it into the `AppCommand` that opens
-    /// (or refreshes) the corresponding viewer tab.
+    /// local Markdown in editor Preview or a remote snapshot in the viewer.
     fn take_pending_markdown_command(&mut self) -> Option<crate::tabs::AppCommand> {
         if let Some(command) = self.pending_markdown_command.take() {
             return Some(command);

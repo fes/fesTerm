@@ -290,15 +290,17 @@ reading order, platform UI scaling, high contrast, and reduced motion.
 
 ## Acceptance sequence
 
-1. From `dev-shell`, select **Open Markdown File…** from More actions and select a local README;
-   a sibling viewer chip opens without changing the terminal session.
+1. From `dev-shell`, select **Open Markdown File…** from More actions and select
+   a local README; a sibling editor chip opens in Preview without changing the
+   terminal session.
 2. Navigate the heading outline, a table, task list, link, and code block using
-   keyboard and screen reader; Copy a code block and verify exact plain text.
-3. Find `security`, move between matches, then switch Preview/Source while
-   preserving the current section and match.
-4. Reach a relative image placeholder and explicitly load a bounded local
-   raster; verify network/data/SVG resources remain blocked and nothing loads
-   before the action.
+   keyboard and screen reader; switch through `Edit | Preview | Split`, Copy a
+   code block, and verify exact plain text.
+3. Find `security`, move between matches, and preserve the current section and
+   match while changing editor modes.
+4. Verify the first 64 bounded relative raster references load automatically,
+   explicitly load an over-budget reference, and confirm network/data/SVG
+   resources remain blocked.
 5. Preview a remote Markdown file from SFTP, disconnect, and verify the complete
    snapshot remains readable but visibly stale; reconnect/reload only against
    the same verified origin.

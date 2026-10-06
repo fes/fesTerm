@@ -507,8 +507,8 @@ previously valid snapshot.
   in-root aliases are covered on Unix.
   Windows uses unprivileged junction fixtures for intermediate and
   root-acquisition rebinding. Portable tests cover visible unresolvable-source
-  refusal, source-generation and parent-identity mismatch, post-save authority
-  recovery, and directory-handle release after success/failure. The FIFO and
+  refusal, source-generation and parent-identity mismatch, save-time parent
+  binding, and directory-handle release after success/failure. The FIFO and
   final-source symlink regressions remain Unix-only; Windows Cloud Files and
   file-symlink presentation remain native evidence.
 - **Native/manual evidence required:** `CP-06` retains standalone remote-viewer
