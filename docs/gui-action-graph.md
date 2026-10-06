@@ -763,6 +763,16 @@ result without adding a retained owner. Actual splice/write counts are
 automated; native responsiveness/caret/IME, memory peaks and fragmentation
 remain separate evidence.
 
+For `EDIT-07`, ready/Normal motions and count prefixes borrow current UTF-8
+text without constructing whole-document character/offset indexes. Indexed
+and borrowed word coordinates share semantics; large counts stop repeated
+work at an unchanged empty-line target. Repeat's final diff streams common
+character prefixes/suffixes without two full-document character arrays.
+Frozen indexed oracles, mixed-mode/repeat/recording churn and actual index/
+local-scan controls preserve caret, action, pending and register state.
+Operator/pending, Insert/Replace and Visual fallbacks remain keystroke-local;
+no retained cache, limit increase, native responsiveness or RSS claim.
+
 For `EDIT-16` and the fenced-code part of `MD-04`, repeated documents and
 blocks reuse only the immutable compiled query for their language. Parser,
 tree, text, revision, spans and query-cursor state remain independent across
