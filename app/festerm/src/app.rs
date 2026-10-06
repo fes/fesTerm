@@ -4910,7 +4910,9 @@ impl FesTermApp {
                     "The serial session could not start. Review Diagnostics for the failure detail."
                 }
             }),
-            ChipStatus::Disconnected => Some("The connection has been lost."),
+            ChipStatus::Disconnected => session
+                .recovery_retry_message()
+                .or(Some("The connection has been lost.")),
             ChipStatus::Exited => Some("The session has exited."),
             ChipStatus::Reconnecting => Some(if persistent_session.is_some() {
                 "Attempting to resume the durable remote session."
@@ -5877,6 +5879,7 @@ impl FesTermApp {
                         ui.ctx(),
                         session.chip_status(),
                         session.reconnect_available(),
+                        session.recovery_retry_message(),
                     );
                 }
             }
@@ -10424,6 +10427,121 @@ mod tests {
             .row_text(0)
             .expect("first terminal row")
             .contains("retained content"));
+    }
+
+    #[test]
+    fn native_recovery_disconnect_guidance_is_visible_beside_reconnect_and_resume() {
+        for inspector_open in [false, true] {
+            let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([
+                festerm_session::SessionEvent::Output(b"retained native history".to_vec()),
+                festerm_session::SessionEvent::Lifecycle(
+                    festerm_session::SessionLifecycle::Disconnected(
+                        festerm_session::SessionError::new(
+                            festerm_session::SessionErrorKind::Output,
+                            festerm_sessiond::RECOVERY_RETRY_MESSAGE,
+                        ),
+                    ),
+                ),
+            ]);
+            app.state.session_tab_mut(tab).unwrap().inspector_transport =
+                InspectorTransport::Local {
+                    persistence: Some(crate::tabs::InspectorPersistence {
+                        provider_label: "fesTerm native",
+                        session_name: "owned-recovery-fixture".to_owned(),
+                    }),
+                };
+            if inspector_open {
+                app.state.dispatch(
+                    AppCommand::ToggleSessionInspector,
+                    &egui::Context::default(),
+                );
+            }
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 800.0))
+                .with_max_steps(16)
+                .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            harness.run();
+            assert_eq!(
+                harness
+                    .query_all_by_label(festerm_sessiond::RECOVERY_RETRY_MESSAGE)
+                    .count(),
+                if inspector_open { 2 } else { 1 },
+                "guidance must be visible without opening Diagnostics"
+            );
+            assert!(harness
+                .query_by_label("Copy redacted routing report")
+                .is_none());
+            for guidance in harness.query_all_by_label(festerm_sessiond::RECOVERY_RETRY_MESSAGE) {
+                assert!(guidance.rect().left() >= 0.0);
+                assert!(guidance.rect().right() <= 900.0);
+                assert!(guidance.rect().bottom() <= 800.0);
+            }
+            harness
+                .get_by_label(if inspector_open {
+                    "Resume"
+                } else {
+                    "Reconnect"
+                })
+                .click();
+            harness.run();
+            assert_eq!(harness.state().state.active(), tab);
+            assert_eq!(
+                transport.operations(),
+                vec![crate::session_controller::fake::FakeSshOperation::Reconnect]
+            );
+            assert_eq!(
+                harness
+                    .query_all_by_label(festerm_sessiond::RECOVERY_RETRY_MESSAGE)
+                    .count(),
+                0
+            );
+            assert!(harness
+                .state()
+                .state
+                .session_tab(tab)
+                .unwrap()
+                .terminal
+                .row_text(0)
+                .unwrap()
+                .contains("retained native history"));
+        }
+    }
+
+    #[test]
+    fn native_recovery_primary_ui_does_not_promote_raw_disconnect_details() {
+        let message = format!(
+            "{}; diagnostic-only detail",
+            festerm_sessiond::RECOVERY_RETRY_MESSAGE
+        );
+        let (mut app, tab, _) =
+            FesTermApp::for_test_with_fake_ssh_session([festerm_session::SessionEvent::Lifecycle(
+                festerm_session::SessionLifecycle::Disconnected(
+                    festerm_session::SessionError::new(
+                        festerm_session::SessionErrorKind::Output,
+                        &message,
+                    ),
+                ),
+            )]);
+        app.state.session_tab_mut(tab).unwrap().inspector_transport = InspectorTransport::Local {
+            persistence: Some(crate::tabs::InspectorPersistence {
+                provider_label: "fesTerm native",
+                session_name: "owned-recovery-fixture".to_owned(),
+            }),
+        };
+        app.state.dispatch(
+            AppCommand::ToggleSessionInspector,
+            &egui::Context::default(),
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 800.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.query_by_label(&message).is_none());
+        assert!(harness
+            .query_by_label(festerm_sessiond::RECOVERY_RETRY_MESSAGE)
+            .is_none());
+        harness.get_by_label("The connection has been lost.");
+        harness.get_by_label("Resume");
     }
 
     #[test]

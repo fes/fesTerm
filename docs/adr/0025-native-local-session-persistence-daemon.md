@@ -131,7 +131,8 @@ special case. Concretely:
   (for example: closing a laptop, later reopening fesTerm, and reattaching
   to the same still-running local session) — there is no special case for
   "the same logical tab reconnecting" versus "a different client attaching";
-  the newest attach always wins. This is a deliberate departure from tmux's
+  the newest successfully adopted attach wins. Overload refusal does not
+  displace the active client. This is a deliberate departure from tmux's
   multiplex default, chosen because fesTerm's GUI is a single-focus-window
   model (one tab is either showing a session live or it is not) rather than
   tmux's terminal-multiplexer philosophy of many simultaneous panes/clients
@@ -157,6 +158,23 @@ special case. Concretely:
   operations, explicit connection deadlines/cancellation, and owned-handle
   teardown without waiting for peer consumption. This keeps raw Win32 and
   unsafe ownership code out of the daemon and application crates.
+- **Windows attachment admission is bounded separately from command
+  backpressure.** Each daemon retains at most **16 waiting accepted pipes**.
+  The broker uses nonblocking admission and immediately closes an excess new
+  handle without a refusal write or flush; existing active ownership is
+  untouched. It reports the full queue through ordinary diagnostics and the
+  opt-in daemon trace. The frontend sees a recovery disconnect and offers
+  Reconnect/Resume guidance rather than a truncated snapshot or success.
+  Consuming a slot admits a later retry. This is a per-session backlog limit,
+  not a limit on open terminals, total live handles, kernel memory, or RSS.
+  The one terminal listener failure has its own bounded slot, so saturation
+  cannot hide listener loss. The daemon processes at most one candidate per
+  loop turn instead of draining a continuously replenished queue, and closes
+  queued handles at shutdown before output draining and worker joins. The
+  existing 15-second synchronous recovery-adoption deadline remains; this
+  does not make adoption asynchronous or establish a shorter responsiveness
+  bound. Successful adoption/takeover, owner-only IPC and protocol epochs are
+  unchanged.
 - **The attached byte stream is duplex and bounded at the session boundary.**
   Shell output after the recovery prelude remains an unstructured byte stream
   with fixed takeover/exit sentinels. Protocol-v2 attach begins with one
@@ -446,7 +464,10 @@ installer/application cleanup.
   one detached local daemon per reusable session identity, exposes it only
   through owner-scoped local IPC, serializes registry mutation, retains a
   daemon-owned authoritative terminal mirror plus bounded attach snapshots,
-  and gives the newest attaching client exclusive ownership.
+  and gives the newest successfully adopted client exclusive ownership.
+  Windows waiting attachment admission is capped at 16 with explicit
+  refusal, independent listener-failure delivery and one adoption per loop
+  turn; overflow preserves the active client.
 - **GUI/action edges affected:** `PROF-06` now covers selecting the native
   local provider, attach-or-create launch, Inspector facts, non-destructive
   tab detach, replay, and newest-client takeover.
@@ -467,6 +488,20 @@ installer/application cleanup.
   prevent output or takeover.
   Manual reconnect must preserve session identity, reject duplicate attempts,
   avoid starting a missing daemon, and discard previous-connection input.
+  Windows admission regressions prove exact 16/17 refusal and immediate
+  ownership release, 1,024 refusal/consume/retry cycles, one-candidate
+  fairness under refill, fatal-listener priority, bounded failure storage
+  and shutdown disposal. The owned Windows-pipe test
+  `windows_attachment_queue_native_overflow_keeps_active_bytes_and_allows_retry`
+  exercises the production broker, preserves active bidirectional bytes at
+  saturation, fences retry admission and verifies queued-handle teardown.
+  `initial_recovery_eof_reports_retryable_disconnect_without_adoption`
+  proves lifecycle retry guidance without recovery adoption on every platform.
+  `native_recovery_disconnect_guidance_is_visible_beside_reconnect_and_resume`
+  proves the production GUI displays that guidance with Diagnostics closed in
+  both the viewport overlay and Inspector, dispatches same-tab recovery, and
+  removes stale guidance after retry. The primary UI does not promote arbitrary
+  backend error details.
   `native_discovery_churn_preserves_process_and_rejects_replaced_generations`
   verifies isolated batches, same-child PID after fresh post-reattach input,
   natural exit removal and rejection of same-name replacements. Registry tests
