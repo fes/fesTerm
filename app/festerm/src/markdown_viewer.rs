@@ -25,6 +25,7 @@ use festerm_markdown::{
 use festerm_ui_egui::{icon, icon::Icon, theme};
 use image::ImageDecoder;
 
+use crate::document_store::Generation;
 use crate::markdown_images::{
     DecodedImage, ImageLoadFailure, ImageMemoryBudget, ImageReservation, ImageRetry, ImageWorker,
     MAX_CONCURRENT_IMAGE_LOADS, RETAINED_IMAGE_OVERHEAD,
@@ -863,6 +864,7 @@ impl MarkdownViewerTab {
     fn image_state(&mut self) -> MarkdownImageState<'_> {
         MarkdownImageState {
             source: &self.source,
+            source_generation: None,
             document: self.document.as_ref(),
             texture_label: &self.title,
             resource_approvals: &mut self.resource_approvals,
@@ -878,6 +880,7 @@ impl MarkdownViewerTab {
 
 struct MarkdownImageState<'a> {
     source: &'a MarkdownSource,
+    source_generation: Option<Generation>,
     document: Option<&'a MarkdownDocument>,
     texture_label: &'a str,
     resource_approvals: &'a mut ResourceApprovalState,
@@ -963,6 +966,7 @@ impl MarkdownImageState<'_> {
             }
         };
         let markdown_path = local.path().clone();
+        let source_generation = self.source_generation;
         let target = reference.target().to_owned();
         let texture_side = context.input(|input| input.max_texture_side);
         match spawn_image_worker(
@@ -971,7 +975,14 @@ impl MarkdownImageState<'_> {
             scratch,
             context.clone(),
             move |scratch, _, budget| {
-                read_local_image_with_budget(&markdown_path, &target, budget, scratch, texture_side)
+                read_local_image_with_budget(
+                    &markdown_path,
+                    source_generation,
+                    &target,
+                    budget,
+                    scratch,
+                    texture_side,
+                )
             },
             |work| {
                 thread::Builder::new()
@@ -2566,6 +2577,7 @@ fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorIma
     let mut scratch = budget.reserve(IMAGE_READ_RESERVATION, None).unwrap();
     read_local_image_with_budget(
         markdown_path,
+        None,
         target,
         &budget,
         &mut scratch,
@@ -2630,8 +2642,44 @@ fn open_canonical_image_directory(parent: &Path) -> std::io::Result<cap_std::fs:
     Ok(directory)
 }
 
+fn validate_markdown_generation(
+    directory: &cap_std::fs::Dir,
+    markdown_path: &Path,
+    generation: Generation,
+) -> std::io::Result<()> {
+    let file_name = markdown_path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Markdown source has no file name",
+        )
+    })?;
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = directory.open_with(Path::new(file_name), &options)?;
+    if generation.matches_file(&file.into_std()) {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Markdown source no longer matches the loaded document generation",
+        ))
+    }
+}
+
 fn read_local_image_with_budget(
     markdown_path: &Path,
+    source_generation: Option<Generation>,
     target: &str,
     budget: &ImageMemoryBudget,
     scratch: &mut ImageReservation,
@@ -2651,6 +2699,11 @@ fn read_local_image_with_budget(
     before_local_image_directory_open();
     let directory = open_canonical_image_directory(parent)
         .map_err(|_| permanent("The Markdown image directory could not be opened safely."))?;
+    if let Some(generation) = source_generation {
+        validate_markdown_generation(&directory, markdown_path, generation).map_err(|_| {
+            permanent("Local images are unavailable because the saved Markdown file changed.")
+        })?;
+    }
     let candidate = parent.join(target);
     let canonical = fs::canonicalize(&candidate)
         .map_err(|_| permanent("The requested local image could not be found."))?;
@@ -2665,6 +2718,7 @@ fn read_local_image_with_budget(
         use cap_std::fs::OpenOptionsExt;
         options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK);
     }
+
     // Pathname admission is not an authority: resolve again beneath the
     // captured directory handle, including intermediate symlinks/reparse points.
     let file = directory
@@ -3746,6 +3800,7 @@ pub(crate) struct MarkdownPreviewPane {
     #[cfg(test)]
     code_copy_probe: Option<CodeCopyProbe>,
     source: MarkdownSource,
+    source_generation: Option<Generation>,
     document: Option<MarkdownDocument>,
     error: Option<String>,
     /// The text the current parse was made from, so an unchanged frame costs
@@ -3784,6 +3839,7 @@ impl MarkdownPreviewPane {
             #[cfg(test)]
             code_copy_probe: None,
             source,
+            source_generation: None,
             document: None,
             error: None,
             parsed: String::new(),
@@ -3814,8 +3870,13 @@ impl MarkdownPreviewPane {
         pane
     }
 
-    pub(crate) fn for_saved_local_source(source: LocalMarkdownSource, text: &str) -> Self {
+    pub(crate) fn for_saved_local_source(
+        source: LocalMarkdownSource,
+        generation: Generation,
+        text: &str,
+    ) -> Self {
         let mut pane = Self::new(MarkdownSource::from(source), text);
+        pane.source_generation = Some(generation);
         pane.resource_approvals.local_image_reads_blocked = false;
         pane
     }
@@ -3840,6 +3901,7 @@ impl MarkdownPreviewPane {
     fn image_state(&mut self) -> MarkdownImageState<'_> {
         MarkdownImageState {
             source: &self.source,
+            source_generation: self.source_generation,
             document: self.document.as_ref(),
             texture_label: "editor-preview",
             resource_approvals: &mut self.resource_approvals,
@@ -3884,6 +3946,11 @@ impl MarkdownPreviewPane {
     #[cfg(test)]
     pub(crate) fn image_loaded_for_test(&self, index: usize) -> bool {
         self.loaded_images.contains_key(&index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn image_error_for_test(&self, index: usize) -> Option<&str> {
+        self.image_errors.get(&index).map(String::as_str)
     }
 
     fn parse(&mut self, text: String) {
@@ -5792,6 +5859,14 @@ mod tests {
         );
     }
 
+    fn saved_local_preview(source: LocalMarkdownSource, text: &str) -> MarkdownPreviewPane {
+        let generation =
+            crate::document_store::load(source.path(), festerm_document::DocumentBounds::default())
+                .unwrap()
+                .generation;
+        MarkdownPreviewPane::for_saved_local_source(source, generation, text)
+    }
+
     fn pump_preview_images(
         pane: &mut MarkdownPreviewPane,
         context: &egui::Context,
@@ -5827,10 +5902,7 @@ mod tests {
             .len()
             == 1));
         let retained = RETAINED_IMAGE_OVERHEAD + 2 * 1536 * 1536 * 4;
-        let mut preview = MarkdownPreviewPane::for_saved_local_source(
-            LocalMarkdownSource::new(markdown).unwrap(),
-            body,
-        );
+        let mut preview = saved_local_preview(LocalMarkdownSource::new(markdown).unwrap(), body);
         assert!(pump_preview_images(&mut preview, &context, |pane| !pane
             .image_errors
             .is_empty()));
@@ -5877,10 +5949,7 @@ mod tests {
             .map(|_| budget.start_worker(&context).unwrap())
             .collect();
         let mut viewer = MarkdownViewerTab::open_local(markdown.clone());
-        let mut preview = MarkdownPreviewPane::for_saved_local_source(
-            LocalMarkdownSource::new(markdown).unwrap(),
-            body,
-        );
+        let mut preview = saved_local_preview(LocalMarkdownSource::new(markdown).unwrap(), body);
         viewer.load_local_image(0, &context);
         preview.load_local_image(0, &context);
         assert!(viewer.pending_image_loads.is_empty());
@@ -5903,7 +5972,9 @@ mod tests {
     fn image_budget_preview_failed_image_can_be_explicitly_retried_without_automatic_retry() {
         use egui_kittest::kittest::Queryable;
         let directory = image_test_directory("preview-manual-retry");
-        let source = LocalMarkdownSource::new(directory.join("readme.md")).unwrap();
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let source = LocalMarkdownSource::new(markdown).unwrap();
         let mut harness = Harness::builder().build_ui_state(
             |ui, pane: &mut MarkdownPreviewPane| {
                 pane.show(ui);
@@ -5913,7 +5984,7 @@ mod tests {
                     }
                 }
             },
-            MarkdownPreviewPane::for_saved_local_source(source, "![Image](image.png)\n"),
+            saved_local_preview(source, "![Image](image.png)\n"),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         while harness.state().image_errors.is_empty() {
@@ -5942,9 +6013,10 @@ mod tests {
     fn image_budget_failed_preview_parse_releases_images_without_reloading_the_hidden_snapshot() {
         let directory = image_test_directory("preview-parse-failure");
         write_test_png(&directory.join("image.png"), 2, 2);
+        fs::write(directory.join("readme.md"), "![Image](image.png)\n").unwrap();
         let context = egui::Context::default();
         let budget = ImageMemoryBudget::for_context(&context, Default::default());
-        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+        let mut preview = saved_local_preview(
             LocalMarkdownSource::new(directory.join("readme.md")).unwrap(),
             "![Image](image.png)\n",
         );
@@ -5980,6 +6052,30 @@ mod tests {
                 .unwrap_err()
                 .contains("Only relative")
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_authority_rejects_source_replacement_after_document_load() {
+        let directory = image_test_directory("image-source-generation");
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Original](image.png)\n").unwrap();
+        let loaded =
+            crate::document_store::load(&markdown, festerm_document::DocumentBounds::default())
+                .unwrap();
+        let replacement = directory.join("replacement.md");
+        fs::write(&replacement, "![Replacement](image.png)\n").unwrap();
+        fs::rename(&replacement, &markdown).unwrap();
+
+        let capability =
+            open_canonical_image_directory(loaded.canonical_path.parent().unwrap()).unwrap();
+        assert!(validate_markdown_generation(
+            &capability,
+            &loaded.canonical_path,
+            loaded.generation
+        )
+        .is_err());
+        drop(capability);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -6158,9 +6254,10 @@ mod tests {
         write_test_png(&directory.join("old.png"), 2, 2);
         write_test_png(&directory.join("new.png"), 4, 4);
         let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Old](old.png)\n").unwrap();
         let context = egui::Context::default();
         let budget = ImageMemoryBudget::for_context(&context, Default::default());
-        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+        let mut preview = saved_local_preview(
             LocalMarkdownSource::new(markdown.clone()).unwrap(),
             "![Old](old.png)\n",
         );
@@ -6180,7 +6277,7 @@ mod tests {
                     .recv_timeout(Duration::from_secs(5))
                     .unwrap();
                 let result =
-                    read_local_image_with_budget(&markdown, "old.png", budget, scratch, 4096);
+                    read_local_image_with_budget(&markdown, None, "old.png", budget, scratch, 4096);
                 finished_sender.send(()).unwrap();
                 result
             },

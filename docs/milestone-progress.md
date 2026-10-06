@@ -36,9 +36,17 @@ Both surfaces now borrow one admission/poll/retry implementation and share a
 512 MiB managed allowance plus four actual running workers. A bounded Settings
 choice applies live and survives save failures without an unsaved broadcast.
 Whole-load reservation happens atomically before owned expansion, and actual
-reading probes at most one byte beyond 8 MiB. Directory-handle confinement
-rejects rooted/traversal/symlink escapes, and nonblocking Unix opens keep FIFOs
-from pinning a worker waiting for a writer.
+reading probes at most one byte beyond 8 MiB. Security review found that a
+symlinked Markdown filename selected its lexical parent and that canonical
+containment was followed by a pathname reopen. The complete Markdown source is
+now loaded through one no-follow handle that records its canonical path and
+exact identity, size and modification generation. Each image read captures
+that real parent without following changed aliases, verifies the Markdown file
+through the capability against the loaded generation, then resolves the image
+beneath the same handle. Reload/save generation changes retire old image state
+before reparse; component, root-name and reparse-point rebinding cannot
+retarget a read. Nonblocking Unix opens still keep FIFOs from pinning a worker
+waiting for a writer.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan
@@ -49,11 +57,13 @@ allowance rather than retrying one another's released scratch storage.
 Existing admissions survive saturation or lowering.
 
 Deterministic regressions exercise real editor Preview and its image button,
-shared bytes/workers, first Save/Save As and nonlocal origins, stale results,
-failed parsing, retirement and Settings persistence/reset. CP-06/CP-15 retain
-native visual/accessibility evidence. Decoder-private memory, native renderer
-and GPU retirement, allocator fragmentation and total RSS are outside this
-allowance; the repair does not establish #297's multi-day growth cause.
+shared bytes/workers, first Save/Save As and nonlocal origins, a symlinked
+Markdown source, replacement between load and authority, alias retarget plus
+reload, component/root rebinding, stale results, failed parsing, retirement and
+Settings persistence/reset. CP-06/CP-15 retain native visual/accessibility and
+Windows reparse-point evidence. Decoder-private memory, native renderer and GPU
+retirement, allocator fragmentation and total RSS are outside this allowance;
+the repair does not establish #297's multi-day growth cause.
 
 ## Bounding actual undo storage without discarding a refused change
 

@@ -481,21 +481,24 @@ existing images remain and new growth is explained, then increase it and verify
 recovery. First Save/Save As must use the new real parent; remote, untitled and
 terminal-history labels must never grant local image reads. Inspect rooted and
 canonical traversal/symlink refusal, symlinked Markdown filenames, changed
-source-root/image/intermediate names and Windows reparse points. A source that
-cannot be resolved must keep its text Preview and explain image refusal.
+source-root/image/intermediate names, source retarget plus reload, and Windows
+reparse points. A source that cannot be resolved must keep its text Preview and
+explain image refusal.
 Review keyboard retry after repairing a failed file and screen-reader/refusal
 wording. Shared allowances/workers, actual
 read/header limits, real editor/button routing, stale results, reparse/close,
-settings/save/restart/reset/failed-save and Unix FIFO refusal are automated.
-Deterministic production-route tests cover Unix symlink-file authority,
-final/intermediate symlink races, captured-root rebinding and supported in-root
-aliases. Unprivileged Windows junction tests cover intermediate and root
-acquisition races; portable tests cover visible source-resolution refusal and
-directory-handle release after successful/refused reads. Windows file-symlink
-native presentation still needs an owned fixture on a Developer Mode or
-symlink-privileged machine; the unprivileged junction tests do not claim it.
-Native visual/focus/accessibility and filesystem-permission review remain
-pending; this is not total-RAM/VRAM or long-running RSS acceptance.
+settings/save/restart/reset/failed-save, loaded-generation authority, reload
+invalidation and Unix FIFO refusal are automated. Deterministic
+production-route tests cover Unix symlink-file authority, source-generation
+replacement, final/intermediate symlink races, captured-root rebinding and
+supported in-root aliases. Unprivileged Windows junction tests cover
+intermediate and root-acquisition races; portable tests cover visible
+source-resolution refusal, generation mismatch and directory-handle release
+after successful/refused reads. Windows file-symlink native presentation still
+needs an owned fixture on a Developer Mode or symlink-privileged machine; the
+unprivileged junction tests do not claim it. Native
+visual/focus/accessibility and filesystem-permission review remain pending;
+this is not total-RAM/VRAM or long-running RSS acceptance.
 
 CP-15 undo retention: exercise an owned large multiline file with widget
 paste, vi edit and toolbar/colon substitution. A whole change whose undo

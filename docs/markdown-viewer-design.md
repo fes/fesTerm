@@ -167,16 +167,18 @@ Permanent failures do not retry every frame; explicit retry remains available.
 The complete canonical saved Markdown file identity grants reads, never its
 lexical symlink-file parent, a presentation label or a fallback path. A source
 that cannot be resolved keeps its text Preview and visibly disables image reads.
-Actual encoded input is bounded to 8 MiB, dimensions to 16 Mi-pixels and
-the live texture-axis limit, before owned expansion. Canonical image destinations
-must stay inside the opened file's canonical parent directory; filesystem-rooted
-paths and traversal/symlink escapes are blocked. Root acquisition walks the
-already-authorized canonical parent without following newly inserted aliases;
-final image resolution stays beneath that directory handle even when names or
-intermediate components are rebound. Opened-handle metadata must identify a
-regular file before any content read. Authorized in-root image aliases remain
-readable. Directory capabilities belong only to active reads, not open tabs.
-Unix nonblocking opens reject
+The document store records canonical path and identity/size/modification
+generation from the no-follow handle that supplied the editor bytes.
+Reload/save generation changes retire old image state before reparsing. Each
+image read walks that canonical parent without following newly inserted
+aliases, verifies the Markdown file through the captured directory against the
+loaded generation, and resolves the canonical in-root image destination
+beneath the same handle. Source replacement, component rebinding and
+symlink/reparse-point escapes therefore cannot retarget a load; authorized
+in-root aliases remain readable. Directory capabilities belong only to active
+reads, not open tabs. Actual encoded input is bounded to 8 MiB, dimensions to
+16 Mi-pixels and the live texture-axis limit, before owned expansion. Opened
+metadata must identify a regular file, and Unix nonblocking opens reject
 special files without waiting for a FIFO writer. Reservations track actual
 worker/result/texture/CPU-upload owners through close and snapshot replacement.
 See ADR 0030 for the conservative envelope and bounded retirement traversal.

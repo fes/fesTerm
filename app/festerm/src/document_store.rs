@@ -15,7 +15,7 @@
 #[cfg(not(windows))]
 use std::fs::Metadata;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,16 +61,27 @@ impl Generation {
 
     #[cfg(not(windows))]
     fn at(path: &Path) -> Result<Self, std::io::Error> {
-        fs::metadata(path).map(|metadata| Self::from_metadata(&metadata))
+        File::open(path).and_then(|file| Self::from_file(&file))
+    }
+
+    #[cfg(not(windows))]
+    fn from_file(file: &File) -> Result<Self, std::io::Error> {
+        file.metadata()
+            .map(|metadata| Self::from_metadata(&metadata))
     }
 
     /// Reads metadata and identity from the same open file.
     #[cfg(windows)]
     fn at(path: &Path) -> Result<Self, std::io::Error> {
         let file = File::open(path)?;
+        Self::from_file(&file)
+    }
+
+    #[cfg(windows)]
+    fn from_file(file: &File) -> Result<Self, std::io::Error> {
         let metadata = file.metadata()?;
         // Creation times can collide or survive replacement through NTFS tunneling.
-        let information = winapi_util::file::information(&file)?;
+        let information = winapi_util::file::information(file)?;
         Ok(Self {
             size: metadata.len(),
             modified: metadata.modified().ok(),
@@ -85,6 +96,10 @@ impl Generation {
     /// wording when the source goes away.
     pub const fn size(self) -> u64 {
         self.size
+    }
+
+    pub(crate) fn matches_file(self, file: &File) -> bool {
+        Self::from_file(file).is_ok_and(|current| current == self)
     }
 }
 
@@ -107,6 +122,7 @@ fn file_identity(_metadata: &Metadata) -> Option<FileIdentity> {
 pub struct LoadedDocument {
     pub document: TextDocument,
     pub generation: Generation,
+    pub canonical_path: PathBuf,
     /// True when the file's permissions say we would not be able to save over
     /// it, which the editor shows before the user has typed anything.
     pub read_only: bool,
@@ -214,7 +230,9 @@ impl SaveFailure {
 
 /// Reads a file into an editable document.
 pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadFailure> {
-    let metadata = fs::metadata(path).map_err(classify_read_error)?;
+    let canonical_path = fs::canonicalize(path).map_err(classify_read_error)?;
+    let mut file = open_file_no_follow(&canonical_path).map_err(classify_read_error)?;
+    let metadata = file.metadata().map_err(classify_read_error)?;
     if !metadata.is_file() {
         return Err(LoadFailure::NotAFile);
     }
@@ -223,17 +241,50 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
         .check_declared_size(declared)
         .map_err(LoadFailure::Refused)?;
 
-    let bytes = fs::read(path).map_err(classify_read_error)?;
-    // Re-stat after the read so the generation describes the bytes we hold
-    // rather than the file as it was before someone else touched it.
-    let generation = Generation::at(path).map_err(classify_read_error)?;
+    let before = Generation::from_file(&file).map_err(classify_read_error)?;
+    let mut bytes = Vec::with_capacity(declared);
+    Read::by_ref(&mut file)
+        .take(bounds.max_bytes() as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(classify_read_error)?;
+    bounds
+        .check_declared_size(bytes.len())
+        .map_err(LoadFailure::Refused)?;
+    let generation = Generation::from_file(&file).map_err(classify_read_error)?;
+    if generation != before {
+        return Err(LoadFailure::Unreadable);
+    }
     let document = TextDocument::from_bytes(&bytes, bounds).map_err(LoadFailure::Refused)?;
 
     Ok(LoadedDocument {
         document,
         generation,
+        canonical_path,
         read_only: metadata.permissions().readonly(),
     })
+}
+
+pub fn canonical_path_for_generation(path: &Path, generation: Generation) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    let file = open_file_no_follow(&canonical).ok()?;
+    generation.matches_file(&file).then_some(canonical)
+}
+
+fn open_file_no_follow(path: &Path) -> Result<File, std::io::Error> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
 }
 
 /// Asks whether a path still holds the generation we loaded.

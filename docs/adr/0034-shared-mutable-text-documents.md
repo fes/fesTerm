@@ -156,11 +156,19 @@ remains only for what the editor cannot hold: a remote snapshot or an HTTP
 document with no local file behind it.
 
 Saved-local Preview uses ADR 0030's bounded relative-image loader and shared
-managed-image allowance. The grant is derived from the document's typed local
-origin, not its displayed label; remote, untitled and terminal-history origins
-never authorize local images. First Save and Save As/rebinding replace the
-Preview's source, approvals, image caches and pending receivers. Snapshot
-reparses do the same, and an unavailable parse releases hidden images without
+managed-image allowance. The grant is derived from the canonical file behind
+the document's typed local origin, not its displayed label or a symlink's
+lexical parent; remote, untitled and terminal-history origins never authorize
+local images. The document store records the canonical path and generation
+from the same no-follow handle that supplied the editor bytes. Each image read
+grants the canonical parent's directory capability only when the Markdown file
+opened through it still matches that identity, size and modification
+generation. Image opens then remain beneath that captured directory even if a
+path component or the directory's name is rebound during the read.
+External/explicit reload and successful save replace that source generation;
+the editor discards old approvals, image caches and pending
+receivers before reparsing the new bytes. First Save and Save As/rebinding do
+the same for a new origin. An unavailable parse releases hidden images without
 starting loads for the old snapshot. This does not move image ownership or
 terminal mutation into the document registry.
 
@@ -595,8 +603,9 @@ existing Markdown rendering stays out of scope.
 - **Saved-local Preview refinement:** `EDIT-18`, `MD-05`, `SET-13` and
   `EDIT-04` have deterministic production-editor/manual-command,
   typed-origin denial, first-save/Save As rebinding, shared allowance/worker,
-  explicit-retry, failed-parse and stale-result coverage. ADR 0030 owns the
-  image-policy limits and exclusions. Native image presentation,
+  explicit-retry, failed-parse, stale-result, canonical symlinked-source,
+  source-generation replacement/reload and capability-rebinding coverage. ADR
+  0030 owns the image-policy limits and exclusions. Native image presentation,
   refusal/recovery comprehension and accessibility remain `CP-06`/`CP-15`.
 - **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
   `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte

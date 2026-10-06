@@ -302,21 +302,27 @@ escapes.
 The complete saved Markdown filename is canonicalized before establishing
 editor Preview's resource root. If that fails, text Preview remains available
 with a visible image-refusal explanation; a display fallback never grants
-filesystem access.
+filesystem access. The document store reads through one no-follow file handle
+and records that handle's canonical path, identity, size and modification
+generation. Preview carries that exact generation rather than recanonicalizing
+its typed origin independently.
 
 Image-root acquisition uses `cap-std` and `cap-fs-ext` 4.0.3. Starting at the
 filesystem root, each component of the already-authorized canonical parent is
 opened with `DirExt::open_dir_nofollow`; the parent is not recanonicalized into
-a different grant after the source identity is bound. Image-path
-canonicalization preserves supported in-root aliases and checks containment,
-but is not sufficient authority: `Dir::open_with` resolves the admitted
-relative destination beneath the captured directory handle, enforcing the
-library's sandboxed traversal contract. Regular-file and length checks, and
-bounded reading, use the resulting file handle without reopening its name.
-No directory capability is retained by a tab, decoded image or texture; the
-root handle is dropped immediately after file acquisition and on every
-refusal. This closes final/intermediate symlink and Windows reparse races
-without adding hand-written native filesystem primitives.
+a different grant after the source identity is bound. Before image admission,
+the Markdown filename is opened through that captured directory and must match
+the generation that supplied the editor bytes. Source replacement or parent
+rebinding therefore denies image authority. Image-path canonicalization
+preserves supported in-root aliases and checks containment, but is not
+sufficient authority: `Dir::open_with` resolves the admitted relative
+destination beneath the same directory handle, enforcing the library's
+sandboxed traversal contract. Regular-file and length checks, and bounded
+reading, use the resulting file handle without reopening its name. No
+directory capability is retained by a tab, decoded image or texture; the root
+handle is dropped immediately after file acquisition and on every refusal.
+This closes source-generation, final/intermediate symlink and Windows reparse
+races without adding hand-written native filesystem primitives.
 
 ### Amendment: shared managed-image allowance and editor Preview
 
@@ -350,12 +356,14 @@ Exceptional retirement-ledger capacity is discarded once sparse; that copy
 visits at most 128 retained entries rather than moving an arbitrarily large
 live ledger.
 
-Preview authority comes only from `DocumentOrigin::Local` and its real path,
-never a presentation label or the `preview.md` fallback. First Save and
-Save As/rebinding establish the new origin and drop old approvals, caches
-and receivers. Reparsing invalidates snapshot-specific image state; a failed
-parse releases hidden image owners without loading the retained old document.
-Both surfaces use the same admission/poll/retry implementation and typed
+Preview authority comes only from `DocumentOrigin::Local` and its canonical
+file generation, never a presentation label or the `preview.md` fallback.
+An external reload, explicit reload, successful save, first Save or Save
+As/rebinding replaces the recorded source generation and drops the old
+approvals, caches and receivers before reparsing those bytes.
+Reparsing invalidates snapshot-specific image state; a failed parse releases
+hidden image owners without loading the retained old document. Both surfaces
+use the same admission/poll/retry implementation and typed
 `LoadMarkdownLocalImage` command. Nonlocal Preview explains the saved-local
 requirement without offering a non-working local-load button.
 
@@ -484,12 +492,13 @@ previously valid snapshot.
   results, failed parses, explicit retry, shared bytes/worker slots, bounded
   read/header controls and Settings/save/restart/reset/failed-save coverage
   are registered in `validation/traceability.json`. Symlink-file source
-  identity, final/intermediate symlink rebinding, captured-root name rebinding
-  and supported relative/absolute in-root aliases are covered on Unix.
+  identity, loaded-generation replacement/reload, final/intermediate symlink
+  rebinding, captured-root name rebinding and supported relative/absolute
+  in-root aliases are covered on Unix.
   Windows uses unprivileged junction fixtures for intermediate and
   root-acquisition rebinding. Portable tests cover visible unresolvable-source
-  refusal and directory-handle release after success/failure. The FIFO
-  regression remains Unix-only.
+  refusal, source-generation mismatch and directory-handle release after
+  success/failure. The FIFO regression remains Unix-only.
 - **Native/manual evidence required:** `CP-06` and `CP-15` retain cross-platform
   visual, focus, accessibility, path/symlink and refusal/recovery review.
   Deterministic headless tests do not count as native acceptance or RSS evidence.

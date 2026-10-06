@@ -55,6 +55,7 @@ pub(crate) struct OpenDocument {
     origin: DocumentOrigin,
     text: TextDocument,
     generation: Option<Generation>,
+    canonical_path: Option<std::path::PathBuf>,
     views: usize,
     read_only: bool,
     availability: Availability,
@@ -93,6 +94,13 @@ impl OpenDocument {
 
     pub(crate) const fn text_mut(&mut self) -> &mut TextDocument {
         &mut self.text
+    }
+
+    pub(crate) fn local_source_generation(&self) -> Option<(&Path, Generation)> {
+        self.canonical_path
+            .as_deref()
+            .zip(self.generation)
+            .filter(|_| matches!(self.origin, DocumentOrigin::Local(_)))
     }
 
     pub(crate) const fn views(&self) -> usize {
@@ -249,6 +257,7 @@ impl DocumentRegistry {
             origin,
             loaded.document,
             Some(loaded.generation),
+            Some(loaded.canonical_path),
             loaded.read_only,
         ))
     }
@@ -265,7 +274,7 @@ impl DocumentRegistry {
             self.retain(id);
             return id;
         }
-        self.insert(origin, text, None, read_only)
+        self.insert(origin, text, None, None, read_only)
     }
 
     /// Replaces the bytes for an already-open remote document snapshot, or
@@ -288,7 +297,7 @@ impl DocumentRegistry {
             self.retain(id);
             return id;
         }
-        self.insert(origin, text, None, read_only)
+        self.insert(origin, text, None, None, read_only)
     }
 
     fn insert(
@@ -296,6 +305,7 @@ impl DocumentRegistry {
         origin: DocumentOrigin,
         text: TextDocument,
         generation: Option<Generation>,
+        canonical_path: Option<std::path::PathBuf>,
         read_only: bool,
     ) -> DocumentId {
         self.next_id += 1;
@@ -309,6 +319,7 @@ impl DocumentRegistry {
                 origin,
                 text,
                 generation,
+                canonical_path,
                 views: 1,
                 read_only,
                 availability: Availability::Available,
@@ -354,7 +365,7 @@ impl DocumentRegistry {
             .expect("generated untitled origins are valid");
         let text = TextDocument::from_unsaved_bytes(bytes, self.bounds)
             .expect("untitled snapshots are preflighted against editor bounds");
-        self.insert(DocumentOrigin::from(origin), text, None, false)
+        self.insert(DocumentOrigin::from(origin), text, None, None, false)
     }
 
     /// Records one fewer view. The document is forgotten when the last view
@@ -441,6 +452,8 @@ impl DocumentRegistry {
         let outcome = match document_store::save(&path, &bytes, document.generation) {
             Ok(generation) => {
                 document.generation = Some(generation);
+                document.canonical_path =
+                    document_store::canonical_path_for_generation(&path, generation);
                 document.text.mark_saved();
                 document.conflict = None;
                 document.last_error = None;
@@ -525,7 +538,8 @@ impl DocumentRegistry {
 
         let mut text = text;
         text.mark_saved();
-        let new_id = self.insert(origin, text, Some(generation), false);
+        let canonical_path = document_store::canonical_path_for_generation(path, generation);
+        let new_id = self.insert(origin, text, Some(generation), canonical_path, false);
         Some((SaveOutcome::Saved, Some(new_id)))
     }
 
@@ -664,6 +678,7 @@ impl DocumentRegistry {
                 Ok(loaded) if !document.text.is_dirty() => {
                     document.text = loaded.document;
                     document.generation = Some(loaded.generation);
+                    document.canonical_path = Some(loaded.canonical_path);
                     document.read_only = loaded.read_only;
                     document.availability = Availability::Available;
                     document.conflict = None;
@@ -725,6 +740,7 @@ impl DocumentRegistry {
             Ok(loaded) => {
                 document.text = loaded.document;
                 document.generation = Some(loaded.generation);
+                document.canonical_path = Some(loaded.canonical_path);
                 document.read_only = loaded.read_only;
                 document.availability = Availability::Available;
                 document.conflict = None;
