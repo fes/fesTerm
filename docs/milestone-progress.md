@@ -3,6 +3,36 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding Windows daemon attachment backlog without evicting its owner
+
+The allocation/lifecycle audit in #320 found an unbounded channel of accepted
+Windows pipe handles. Recovery adoption consumed that queue serially and
+could wait 15 seconds per candidate; continuous arrivals could also keep the
+drain loop from returning to terminal/control work.
+
+The approved policy is 16 waiting connections per persistent-shell daemon,
+with immediate refusal/closure of excess new handles. It is not a cap on open
+terminals and overflow does not steal the active connection. Listener failure
+uses an independent one-slot channel, each daemon turn processes only one
+candidate, and shutdown releases queued handles before draining output or
+joining workers. Early recovery EOF gives factual busy/shutdown and
+Reconnect/Resume guidance without adding a wire protocol or blocking refusal
+write.
+
+Review caught that the lifecycle reason was initially hidden behind
+Diagnostics. The known content-free guidance is now shown directly beside
+Reconnect in the viewport and above Resume in the Inspector. A compiled
+production-GUI control failed with no visible guidance before the repair;
+regressions cover both retry routes, same-tab history preservation, stale
+message removal and keeping arbitrary backend details out of primary UI.
+
+Three compiled legacy controls demonstrated admission of the 17th handle,
+17 adoptions in one refilled turn, and 16 adoptions before a queued listener
+failure. Deterministic ownership/churn tests and a production-broker Windows
+pipe fixture cover refusal, retry, active bytes and teardown. The existing
+15-second synchronous recovery deadline, snapshot peak costs and CP-11
+signed-package/usability gates remain separate; this is not a diagnosis of
+#297 aging or allocator fragmentation.
 ## Bounding GUI SFTP backlog and retiring finished history
 
 Review of #331 found two missing lifecycle paths: a collision could occur
@@ -52,6 +82,7 @@ Aggregate directory/plan
 bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.
+
 ## Retiring imported Direct2D targets before teardown
 
 The intermittent Windows crash investigation in #330 exposed a concrete

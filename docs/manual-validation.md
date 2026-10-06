@@ -675,6 +675,23 @@ visual recovery during rapid resizing remain native evidence, not implied by
 these tests. A replacement handshake can pause daemon processing for up to
 15 seconds; CLI attach is a text projection rather than full styled rendering.
 
+Windows attachment-backlog checks are now automated with the production
+broker and owned local pipes: 16 waiting connections, EOF/refusal on the 17th,
+unchanged active bidirectional bytes, admission after consuming a slot, and
+queued-handle closure with normal broker exit. Portable regressions cover
+1,024 refusal/consume/retry cycles, immediate ownership release, one adoption
+per turn under refill, independent bounded listener-failure delivery, and
+early-recovery disconnect guidance without adopting a snapshot. A production
+GUI regression now proves the guidance is visible in the viewport overlay and
+Inspector state message with Diagnostics closed, both Reconnect and Resume
+dispatch the same-tab recovery command, and accepting recovery removes stale
+guidance while preserving history. Only the known content-free recovery
+message is promoted; arbitrary backend details remain in Diagnostics.
+CP-11 still requires signed-package reconnect/focus, cross-user isolation and
+native usability evidence, including narrow-window readability of the retry
+guidance. These checks neither remove the existing 15-second adoption wait
+nor prove a global daemon RSS or recovery-snapshot peak budget.
+
 ### Rendering performance
 
 Issue #327 and proposed ADR 0044 track the macOS ordinary-row-cache repair.
