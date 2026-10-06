@@ -12,8 +12,8 @@ use std::{
 };
 
 use eframe::egui::{
-    self, text::LayoutJob, text::TextFormat, vec2, Align, Color32, FontId, RichText, Sense,
-    WidgetInfo, WidgetType,
+    self, emath::GuiRounding, text::LayoutJob, text::TextFormat, vec2, Align, Color32, FontId,
+    RichText, Sense, WidgetInfo, WidgetType,
 };
 use festerm_markdown::{
     Block, CodeBlock, ContainerInline, HeadingBlock, HighlightedCodeLine, ImageInline, Inline,
@@ -1575,6 +1575,7 @@ struct SourcePreparation {
     query: Option<String>,
     jobs: BTreeMap<usize, PreparedSourceLine>,
     payload_bytes: usize,
+    geometry_key: Option<OutlineGeometryKey>,
     #[cfg(test)]
     probe: Option<SourcePreparationProbe>,
 }
@@ -1584,6 +1585,14 @@ struct PreparedSourceLine {
     current_match: Option<usize>,
     job: Arc<LayoutJob>,
     payload_bytes: usize,
+    geometry: Option<SourceRowGeometry>,
+}
+
+#[derive(Clone, Copy)]
+struct SourceRowGeometry {
+    size: egui::Vec2,
+    intrinsic_size: egui::Vec2,
+    wrap_width: f32,
 }
 
 impl SourcePreparation {
@@ -1591,6 +1600,7 @@ impl SourcePreparation {
         self.query = None;
         self.jobs.clear();
         self.payload_bytes = 0;
+        self.geometry_key = None;
     }
 
     fn begin(&mut self, find: &MarkdownFindState) {
@@ -1606,7 +1616,39 @@ impl SourcePreparation {
             probe.preparations = 0;
             probe.prepared_text_bytes = 0;
             probe.rebased_roles = 0;
+            probe.layouts = 0;
+            probe.layout_text_bytes = 0;
+            probe.shared_label_inputs = 0;
+            probe.label_clone_payload_bytes = 0;
+            probe.explicit_job_clones = 0;
+            probe.explicit_clone_capacity_bytes = 0;
             probe.observations.clear();
+        }
+    }
+
+    fn begin_geometry(&mut self, ui: &egui::Ui) {
+        let width = ui.available_width();
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let font = FontId::monospace(CODE_TEXT_SIZE);
+        let valid = self.geometry_key.as_ref().is_some_and(|key| {
+            key.width == width
+                && key.pixels_per_point == pixels_per_point
+                && key.font == font
+                && ui.painter().fonts(|fonts| {
+                    key.definitions == *fonts.definitions() && key.options == *fonts.options()
+                })
+        });
+        if !valid {
+            for prepared in self.jobs.values_mut() {
+                prepared.geometry = None;
+            }
+            self.geometry_key = Some(ui.painter().fonts(|fonts| OutlineGeometryKey {
+                width,
+                pixels_per_point,
+                font,
+                definitions: fonts.definitions().clone(),
+                options: *fonts.options(),
+            }));
         }
     }
 
@@ -1662,8 +1704,8 @@ impl SourcePreparation {
             && payload_bytes
                 <= MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES.saturating_sub(self.payload_bytes)
         {
-            // Only unwrapped formatting instructions survive. Egui still lays out
-            // every live selectable label with this pass's width/fonts/scale.
+            // Formatting instructions and finite local geometry are bounded by
+            // the same admitted owner. No galley or atlas reference survives.
             self.jobs.insert(
                 line_start,
                 PreparedSourceLine {
@@ -1671,6 +1713,7 @@ impl SourcePreparation {
                     current_match,
                     job: job.clone(),
                     payload_bytes,
+                    geometry: None,
                 },
             );
             self.payload_bytes += payload_bytes;
@@ -1678,16 +1721,142 @@ impl SourcePreparation {
         (span, job)
     }
 
+    fn label(
+        &mut self,
+        ui: &mut egui::Ui,
+        line_start: usize,
+        job: Arc<LayoutJob>,
+    ) -> egui::Response {
+        #[cfg(test)]
+        let ordinary = self
+            .probe
+            .as_ref()
+            .is_some_and(|probe| probe.ordinary || probe.geometry_ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        // render_source owns a fresh Frame child; its placer cannot inherit a grid.
+        let supported = *ui.layout() == egui::Layout::top_down(Align::Min)
+            && ui.available_width().is_finite()
+            && ui.available_width() > 0.0;
+        let geometry = (!ordinary && supported)
+            .then(|| {
+                self.jobs
+                    .get(&line_start)
+                    .and_then(|prepared| prepared.geometry)
+            })
+            .flatten()
+            .filter(|geometry| geometry.wrap_width == ui.available_width())
+            .filter(|geometry| {
+                let frame =
+                    egui::Rect::from_min_size(ui.next_widget_position(), geometry.size).round_ui();
+                let rect = ui.layout().align_size_within_rect(geometry.size, frame);
+                !rect.intersects(ui.clip_rect())
+            });
+        if let Some(geometry) = geometry {
+            // Label's selection/painting branch only runs for visible response
+            // rectangles. Keep its live allocation/info and exact measured sizes.
+            let mut sense = if ui.memory(|memory| memory.options.screen_reader) {
+                Sense::focusable_noninteractive()
+            } else {
+                Sense::hover()
+            };
+            let mut selection = if ui.input(|input| input.has_touch_screen()) {
+                Sense::click()
+            } else {
+                Sense::click_and_drag()
+            };
+            selection -= Sense::FOCUSABLE;
+            sense |= selection;
+            let (_, mut response) = ui.allocate_exact_size(geometry.size, sense);
+            debug_assert!(!ui.is_rect_visible(response.rect));
+            response.set_intrinsic_size(geometry.intrinsic_size);
+            response
+                .widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), &job.text));
+            return response;
+        }
+        let width = ui.available_width();
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.layouts += 1;
+            probe.layout_text_bytes += job.text.len();
+        }
+        if ordinary || !supported || !self.jobs.contains_key(&line_start) {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                // The pinned Label unwraps/clones this shared job before its
+                // memoized fonts call. Count that actual input condition, not
+                // the descriptor cache hit or the retained Vec capacities.
+                if Arc::strong_count(&job) > 1 {
+                    probe.shared_label_inputs += 1;
+                    probe.label_clone_payload_bytes += job.text.len()
+                        + job.sections.len() * std::mem::size_of::<egui::text::LayoutSection>();
+                }
+            }
+            return ui.add(egui::Label::new(job).selectable(true).wrap());
+        }
+        #[cfg(test)]
+        let shared = Arc::strong_count(&job) > 1;
+        let text = egui::WidgetText::from(job);
+        let mut job = Arc::unwrap_or_clone(text.into_layout_job(
+            ui.style(),
+            egui::FontSelection::Default,
+            ui.text_valign(),
+        ));
+        #[cfg(test)]
+        if shared {
+            if let Some(probe) = &mut self.probe {
+                probe.explicit_job_clones += 1;
+                probe.explicit_clone_capacity_bytes += job.text.capacity()
+                    + job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+            }
+        }
+        job.wrap.max_width = width;
+        job.halign = Align::Min;
+        job.justify = false;
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        // Capture the exact local desired size before world-coordinate rounding.
+        // The galley is frame-local; Label keeps its normal painting/selection.
+        let size = galley.size();
+        let intrinsic_size = galley.intrinsic_size();
+        let mut response = ui.add(egui::Label::new(galley).selectable(true).wrap());
+        response.set_intrinsic_size(intrinsic_size);
+        if size.is_finite()
+            && intrinsic_size.is_finite()
+            && size.x >= 0.0
+            && size.y > 0.0
+            && intrinsic_size.x >= 0.0
+            && intrinsic_size.y > 0.0
+        {
+            if let Some(prepared) = self.jobs.get_mut(&line_start) {
+                prepared.geometry = Some(SourceRowGeometry {
+                    size,
+                    intrinsic_size,
+                    wrap_width: width,
+                });
+            }
+        }
+        response
+    }
+
     #[cfg(test)]
     fn record(&mut self, span: SourceSpan, response: &egui::Response) {
         if let Some(probe) = &mut self.probe {
-            probe.observations.push((
+            probe.observations.push(SourceRowObservation {
                 span,
-                response.id,
-                response.rect,
-                response.interact_rect,
-                response.has_focus(),
-            ));
+                id: response.id,
+                rect: response.rect,
+                interact_rect: response.interact_rect,
+                intrinsic_size: response.intrinsic_size(),
+                sense: response.sense,
+                focused: response.has_focus(),
+                hovered: response.hovered(),
+                clicked: response.clicked(),
+                dragged: response.dragged(),
+                drag_started: response.drag_started(),
+                drag_stopped: response.drag_stopped(),
+                changed: response.changed(),
+                enabled: response.enabled(),
+            });
         }
     }
 }
@@ -1696,11 +1865,37 @@ impl SourcePreparation {
 #[derive(Default)]
 struct SourcePreparationProbe {
     ordinary: bool,
+    geometry_ordinary: bool,
     visited_lines: usize,
     preparations: usize,
     prepared_text_bytes: usize,
     rebased_roles: usize,
-    observations: Vec<(SourceSpan, egui::Id, egui::Rect, egui::Rect, bool)>,
+    layouts: usize,
+    layout_text_bytes: usize,
+    shared_label_inputs: usize,
+    label_clone_payload_bytes: usize,
+    explicit_job_clones: usize,
+    explicit_clone_capacity_bytes: usize,
+    observations: Vec<SourceRowObservation>,
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq)]
+struct SourceRowObservation {
+    span: SourceSpan,
+    id: egui::Id,
+    rect: egui::Rect,
+    interact_rect: egui::Rect,
+    intrinsic_size: Option<egui::Vec2>,
+    sense: Sense,
+    focused: bool,
+    hovered: bool,
+    clicked: bool,
+    dragged: bool,
+    drag_started: bool,
+    drag_stopped: bool,
+    changed: bool,
+    enabled: bool,
 }
 
 #[derive(Default)]
@@ -1711,6 +1906,7 @@ struct OutlinePreparation {
     probe: Option<OutlinePreparationProbe>,
 }
 
+#[derive(Clone, PartialEq)]
 struct OutlineGeometryKey {
     width: f32,
     pixels_per_point: f32,
@@ -2696,14 +2892,13 @@ impl MarkdownRenderState<'_> {
                 // other (ADR 0035 §8).
                 let syntax = source_syntax_spans(self.source_syntax, document.source_text());
                 self.source_preparation.begin(self.find);
+                self.source_preparation.begin_geometry(ui);
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let (span, job) = self.source_preparation.line(
                         line_start, line, document, self.find, syntax,
                     );
-                    let response = ui.add(
-                        egui::Label::new(job).selectable(true).wrap(),
-                    );
+                    let response = self.source_preparation.label(ui, line_start, job);
                     #[cfg(test)]
                     self.source_preparation.record(span, &response);
                     if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(span, target))
@@ -5520,6 +5715,16 @@ mod tests {
         size: egui::Vec2,
         events: Vec<egui::Event>,
     ) -> [egui::FullOutput; 2] {
+        source_preparation_frame_with_opacity(pair, frame, size, events, 1.0)
+    }
+
+    fn source_preparation_frame_with_opacity(
+        pair: &mut [(egui::Context, MarkdownViewerTab); 2],
+        frame: usize,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+        opacity: f32,
+    ) -> [egui::FullOutput; 2] {
         let tab_id = crate::tabs::AppState::for_test().active();
         let output = std::array::from_fn(|index| {
             let (context, viewer) = &mut pair[index];
@@ -5531,6 +5736,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
+                    ui.set_opacity(opacity);
                     assert!(viewer.show(ui, tab_id).is_none());
                 },
             );
@@ -5555,7 +5761,19 @@ mod tests {
         let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
         assert_eq!(ordinary.observations, candidate.observations);
         assert_eq!(ordinary.visited_lines, candidate.visited_lines);
-        assert_eq!(ordinary.preparations, ordinary.visited_lines);
+        if ordinary.ordinary {
+            assert_eq!(ordinary.preparations, ordinary.visited_lines);
+        }
+        if ordinary.geometry_ordinary {
+            assert_eq!(ordinary.layouts, ordinary.visited_lines);
+        }
+        for prepared in pair[1].1.source_preparation.jobs.values() {
+            if let Some(geometry) = prepared.geometry {
+                assert!(geometry.size.is_finite());
+                assert!(geometry.intrinsic_size.is_finite());
+                assert!(geometry.wrap_width.is_finite());
+            }
+        }
         assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
         assert_eq!(pair[0].1.find, pair[1].1.find);
         assert!(pair[1].1.source_preparation.jobs.len() <= MAX_PREPARED_SOURCE_JOBS);
@@ -5563,6 +5781,420 @@ mod tests {
             pair[1].1.source_preparation.payload_bytes <= MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES
         );
         output
+    }
+
+    fn source_geometry_pair(text: &str) -> [(egui::Context, MarkdownViewerTab); 2] {
+        let mut pair = source_preparation_pair(text);
+        for (index, (_, viewer)) in pair.iter_mut().enumerate() {
+            let probe = viewer.source_preparation.probe.as_mut().unwrap();
+            probe.ordinary = false;
+            probe.geometry_ordinary = index == 0;
+        }
+        pair
+    }
+
+    fn assert_source_geometry_warm(pair: &[(egui::Context, MarkdownViewerTab); 2], control: &str) {
+        let ordinary = pair[0].1.source_preparation.probe.as_ref().unwrap();
+        let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(ordinary.preparations, 0, "{control}");
+        assert_eq!(candidate.preparations, 0, "{control}");
+        assert_eq!(ordinary.layouts, ordinary.visited_lines, "{control}");
+        assert_eq!(ordinary.shared_label_inputs, ordinary.layouts, "{control}");
+        assert_eq!(
+            candidate.explicit_job_clones, candidate.layouts,
+            "{control}"
+        );
+        assert!(
+            (1..=96).contains(&candidate.layouts),
+            "{control}: {}",
+            candidate.layouts
+        );
+        assert!(candidate.layouts * 4 < ordinary.layouts, "{control}");
+        assert!(
+            candidate.explicit_clone_capacity_bytes * 4 < ordinary.label_clone_payload_bytes,
+            "{control}"
+        );
+        println!(
+            "source geometry {control}: rows old={} candidate={}, actual layouts old={} candidate={}, layout UTF-8 bytes old={} candidate={}, retained jobs={} payload bytes={}",
+            ordinary.visited_lines, candidate.visited_lines,
+            ordinary.layouts, candidate.layouts,
+            ordinary.layout_text_bytes, candidate.layout_text_bytes,
+            pair[1].1.source_preparation.jobs.len(), pair[1].1.source_preparation.payload_bytes,
+        );
+        println!(
+            "source geometry cloning {control}: ordinary shared Label inputs={} clone payload bytes={}, candidate explicit clones={} cloned String/Vec capacity bytes={}; payload capacities are not allocator usable-size, total allocations or retained font-atlas memory",
+            ordinary.shared_label_inputs, ordinary.label_clone_payload_bytes,
+            candidate.explicit_job_clones, candidate.explicit_clone_capacity_bytes,
+        );
+        let preparation = &pair[1].1.source_preparation;
+        let definitions = &preparation.geometry_key.as_ref().unwrap().definitions;
+        let definition_strings: usize = definitions.font_data.keys().map(String::capacity).sum();
+        let family_strings: usize = definitions
+            .families
+            .values()
+            .flatten()
+            .map(String::capacity)
+            .sum();
+        let family_vectors: usize = definitions
+            .families
+            .values()
+            .map(|names| names.capacity() * std::mem::size_of::<String>())
+            .sum();
+        println!(
+            "source geometry metadata {control}: slots={} slot bytes={} inline key bytes={} font map entries={} family map entries={} owned key/name string capacities={} owned family vector capacities={}; map-node allocator overhead and shared font bytes are not counted as instruction payload",
+            preparation.jobs.len(),
+            preparation.jobs.len() * std::mem::size_of::<Option<SourceRowGeometry>>(),
+            std::mem::size_of::<Option<OutlineGeometryKey>>(),
+            definitions.font_data.len(),
+            definitions.families.len(),
+            definition_strings + family_strings,
+            family_vectors,
+        );
+    }
+
+    #[test]
+    fn source_geometry_bounds_actual_warm_layouts_without_removing_live_rows() {
+        for sections in [64, 400] {
+            let text = mixed_fixture_sections(sections);
+            let rows = text.split_inclusive('\n').count();
+            for width in [430.0, 1180.0] {
+                let mut pair = source_geometry_pair(&text);
+                let size = vec2(width, 760.0);
+                source_preparation_frame(&mut pair, 0, size, Vec::new());
+                assert_eq!(
+                    pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+                    rows,
+                    "cold Source performs ordinary layout for every row"
+                );
+                for frame in 1..=12 {
+                    source_preparation_frame(&mut pair, frame, size, Vec::new());
+                    assert_source_geometry_warm(
+                        &pair,
+                        &format!("sections={sections}, width={width}, unchanged={frame}"),
+                    );
+                    let old = pair[0].1.source_preparation.probe.as_ref().unwrap();
+                    let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+                    assert!(candidate.layout_text_bytes * 4 < old.layout_text_bytes);
+                }
+                source_preparation_frame(
+                    &mut pair,
+                    13,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(egui::pos2(width / 2.0, 400.0)),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: vec2(0.0, -1100.0),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+                for frame in 14..=16 {
+                    source_preparation_frame(&mut pair, frame, size, Vec::new());
+                    assert_source_geometry_warm(
+                        &pair,
+                        &format!("sections={sections}, width={width}, scroll={frame}"),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_geometry_invalidates_real_width_fonts_scale_options_and_revision() {
+        let text = mixed_caption_fixture();
+        let rows = text.split_inclusive('\n').count();
+        let mut pair = source_geometry_pair(&text);
+        let mut size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_geometry_warm(&pair, "initial warm");
+        for dependency in 0..4 {
+            for (context, _) in &pair {
+                match dependency {
+                    0 => {}
+                    1 => context.set_pixels_per_point(1.25),
+                    2 => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts
+                            .families
+                            .get_mut(&egui::FontFamily::Monospace)
+                            .unwrap()
+                            .reverse();
+                        context.set_fonts(fonts);
+                    }
+                    _ => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                }
+            }
+            if dependency == 0 {
+                size.x = 430.0;
+            }
+            let frame = 2 + dependency * 3;
+            source_preparation_frame(&mut pair, frame, size, Vec::new());
+            assert_eq!(
+                pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+                rows,
+                "dependency {dependency} invalidates every row before replay"
+            );
+            for warm in frame + 1..=frame + 2 {
+                let previous = pair[1].1.source_preparation.geometry_key.clone().unwrap();
+                source_preparation_frame(&mut pair, warm, size, Vec::new());
+                let current = pair[1].1.source_preparation.geometry_key.as_ref().unwrap();
+                if *current != previous {
+                    assert_eq!(
+                        pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+                        rows,
+                        "actual geometry dependency changed again before frame {warm}"
+                    );
+                    println!(
+                        "source geometry dependency={dependency}, frame={warm}: actual width {} -> {}, scale {} -> {}; all {rows} rows relaid out",
+                        previous.width, current.width, previous.pixels_per_point, current.pixels_per_point
+                    );
+                } else {
+                    assert_source_geometry_warm(
+                        &pair,
+                        &format!("dependency={dependency}, frame={warm}"),
+                    );
+                }
+            }
+            assert_source_geometry_warm(&pair, &format!("dependency={dependency} stabilized"));
+        }
+        for (context, _) in &pair {
+            context.set_theme(egui::ThemePreference::Light);
+            context.memory_mut(|memory| memory.options.screen_reader = true);
+        }
+        for frame in 14..17 {
+            source_preparation_frame_with_opacity(&mut pair, frame, size, Vec::new(), 0.5);
+        }
+        assert_source_geometry_warm(&pair, "live theme, opacity and screen-reader sense");
+        let replacement = text.replace(
+            "ordinary text.",
+            &"Unicode café 漢字 🦀 e\u{301} ".repeat(40),
+        );
+        let (_, document) = load_remote_document(
+            test_remote_source("/owned/source.md"),
+            "/owned/source.md".into(),
+            replacement.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let syntax = source_syntax_spans(&mut None, &replacement).to_vec();
+        for (_, viewer) in &mut pair {
+            viewer.apply_load_result(Ok(("/owned/source.md".into(), document.clone())));
+            assert!(viewer.source_preparation.jobs.is_empty());
+            assert!(viewer.source_preparation.geometry_key.is_none());
+            viewer.source_syntax = Some(syntax.clone());
+        }
+        source_preparation_frame(&mut pair, 17, size, Vec::new());
+        assert_eq!(
+            pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+            rows
+        );
+        source_preparation_frame(&mut pair, 18, size, Vec::new());
+        assert_source_geometry_warm(&pair, "replaced long wrapped Unicode snapshot");
+    }
+
+    #[test]
+    fn source_geometry_keeps_ordinary_uncached_overflow_and_unsupported_layouts() {
+        let text = "bounded\n".repeat(MAX_PREPARED_SOURCE_JOBS + 1);
+        let mut pair = source_geometry_pair(&text);
+        for (_, viewer) in &mut pair {
+            // One role keeps each formatting job small enough to reach the
+            // entry cap independently of the separate payload cap.
+            viewer.source_syntax = Some(vec![festerm_syntax::Span {
+                start: 0,
+                end: text.len(),
+                role: festerm_syntax::Role::StringLiteral,
+            }]);
+        }
+        let size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(candidate.visited_lines, MAX_PREPARED_SOURCE_JOBS + 1);
+        assert_eq!(
+            pair[1].1.source_preparation.jobs.len(),
+            MAX_PREPARED_SOURCE_JOBS
+        );
+        assert_eq!(
+            candidate.preparations, 1,
+            "only the overflow row is rebuilt"
+        );
+        assert!((2..=97).contains(&candidate.layouts));
+        assert!(!pair[1]
+            .1
+            .source_preparation
+            .jobs
+            .contains_key(&(text.len() - "bounded\n".len())));
+        let raw = "# heading\nline café 漢字\n";
+        for layout in [
+            egui::Layout::top_down(Align::Center),
+            egui::Layout::top_down(Align::Min).with_cross_justify(true),
+            egui::Layout::left_to_right(Align::Center).with_main_wrap(true),
+        ] {
+            let document = document(raw);
+            let pair = source_geometry_pair(raw);
+            let mut preparations: [SourcePreparation; 2] =
+                std::array::from_fn(|index| SourcePreparation {
+                    probe: Some(SourcePreparationProbe {
+                        geometry_ordinary: index == 0,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            for frame in 0..2 {
+                let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
+                    let find = &pair[index].1.find;
+                    let preparation = &mut preparations[index];
+                    let mut output = pair[index].0.run_ui(egui::RawInput::default(), |ui| {
+                        ui.with_layout(layout, |ui| {
+                            preparation.begin(find);
+                            preparation.begin_geometry(ui);
+                            let mut start = 0;
+                            for line in raw.split_inclusive('\n') {
+                                let (span, job) =
+                                    preparation.line(start, line, &document, find, &[]);
+                                let response = preparation.label(ui, start, job);
+                                preparation.record(span, &response);
+                                start += line.len();
+                            }
+                        });
+                    });
+                    output.textures_delta.clear();
+                    output
+                });
+                assert_eq!(
+                    output[0].shapes, output[1].shapes,
+                    "unsupported layout, frame {frame}"
+                );
+                assert_eq!(
+                    format!("{:?}", output[0].platform_output.accesskit_update),
+                    format!("{:?}", output[1].platform_output.accesskit_update),
+                );
+                assert_eq!(
+                    preparations[0].probe.as_ref().unwrap().observations,
+                    preparations[1].probe.as_ref().unwrap().observations,
+                );
+                assert_eq!(preparations[1].probe.as_ref().unwrap().layouts, 2);
+                assert!(preparations[1]
+                    .jobs
+                    .values()
+                    .all(|prepared| prepared.geometry.is_none()));
+            }
+        }
+    }
+
+    #[test]
+    fn source_geometry_preserves_long_wrapped_crlf_find_and_offscreen_navigation() {
+        let line = format!(
+            "needle {} trailing   ",
+            "café 漢字 🦀 e\u{301}\t".repeat(40)
+        );
+        let raw = format!(
+            "# Unicode\r\n\r\n{line}\r\n{}\r\n## Tail\r\nlast needle café without newline",
+            "\r\n".repeat(400)
+        );
+        let mut pair = source_geometry_pair(&raw);
+        let size = vec2(430.0, 760.0);
+        let output = source_preparation_frame(&mut pair, 0, size, Vec::new());
+        let wrapped_rows = output[1]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == line => {
+                    Some(text.galley.rows.len())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            wrapped_rows > 8,
+            "the actual selectable label wraps the Unicode row"
+        );
+        let output = source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_geometry_warm(&pair, "long Unicode CRLF and empty rows");
+        let (rect, clip) = visible_code_geometry(&output[0], &line).unwrap();
+        let start = rect.min + vec2(1.0, CODE_LINE_HEIGHT / 2.0);
+        let end = egui::pos2(rect.right() + 8.0, rect.bottom() - CODE_LINE_HEIGHT / 2.0);
+        assert!(
+            clip.contains(start) && clip.contains(end),
+            "owned wrapped selection fits the viewport"
+        );
+        source_preparation_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        source_preparation_frame(&mut pair, 3, size, vec![egui::Event::PointerMoved(end)]);
+        source_preparation_frame(
+            &mut pair,
+            4,
+            size,
+            vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let output = source_preparation_frame(&mut pair, 5, size, vec![egui::Event::Copy]);
+        assert!(
+            output[1].platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == &line)
+            }),
+            "wrapped Unicode Copy preserves raw tab/combining/trailing text"
+        );
+        for (_, viewer) in &mut pair {
+            viewer
+                .find
+                .set_query(viewer.document.as_ref().unwrap(), "needle".into());
+            assert_eq!(viewer.find.matches().len(), 2);
+        }
+        source_preparation_frame(&mut pair, 6, size, Vec::new());
+        source_preparation_frame(&mut pair, 7, size, Vec::new());
+        assert_source_geometry_warm(&pair, "long wrapped Unicode Find");
+        for (_, viewer) in &mut pair {
+            viewer.find.previous();
+            viewer.pending_scroll = Some(PendingScroll::Byte(
+                viewer
+                    .find
+                    .current_match()
+                    .unwrap()
+                    .span()
+                    .start()
+                    .byte_offset(),
+            ));
+        }
+        let mut output = source_preparation_frame(&mut pair, 8, size, Vec::new());
+        for frame in 9..12 {
+            output = source_preparation_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert!(visible_code_geometry(&output[1], "last needle café without newline").is_some());
+        assert!(pair[1].1.pending_scroll.is_none());
+        assert_source_geometry_warm(&pair, "offscreen byte Find target");
+        for (_, viewer) in &mut pair {
+            viewer.find.clear();
+            viewer.pending_scroll = Some(PendingScroll::Heading(0));
+        }
+        let mut output = source_preparation_frame(&mut pair, 12, size, Vec::new());
+        for frame in 13..16 {
+            output = source_preparation_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert!(visible_code_geometry(&output[1], "# Unicode").is_some());
+        assert!(pair[1].1.pending_scroll.is_none());
+        assert_source_geometry_warm(&pair, "offscreen heading target");
     }
 
     fn assert_source_preparation_warm(
@@ -6023,6 +6655,11 @@ mod tests {
         source_preparation_frame(&mut pair, 1, vec2(1180.0, 760.0), Vec::new());
         assert!(weak.upgrade().is_none());
         assert!(pair[1].1.source_preparation.jobs.is_empty());
+        let probe = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(
+            probe.layouts, probe.visited_lines,
+            "uncached Find retains ordinary row layout"
+        );
         assert_eq!(
             pair[1].1.find.matches().len(),
             1,

@@ -215,7 +215,7 @@ disappear. No galley or atlas UV survives a frame in this cache.
 The shared editor Preview also reuses its existing heading-position vector,
 clearing positions before each render; the standalone viewer no longer collects
 unused positions. These are bounded preparation/allocation reductions, not
-Preview block virtualization. Full Source traversal/layout, full Preview traversal,
+Preview block virtualization. Full Source traversal, full Preview traversal,
 and the editor's separate outline remain follow-up work. Deterministic
 old-control/candidate layout counts and visible-shape/navigation/accessibility
 oracles do not establish native latency, GPU drawing or total-memory gains.
@@ -229,15 +229,54 @@ cached lines overlapping its old/new location; all matches remain available.
 Queries over 4096 UTF-8 bytes use ordinary preparation without truncating Find,
 and lines that exceed either cache bound use the ordinary path.
 
-Every Source line remains the same live selectable label. Each frame egui
-reapplies wrapping, alignment, active fonts, scale, text options and live
-selection/accessibility; the retained instructions use the existing explicit
-source font and syntax/Find colors. Width/font/theme changes do not retain an
-old galley or old line geometry. Source spans remain tied to the immutable
-snapshot, and no helper rewrites decoded text, line endings or raw Copy
-payloads. Preparation counters qualify only this work reduction, not remaining
-label/layout traversal or egui's job clones, native input latency, total
-allocation savings or GPU drawing.
+The existing egui 0.36.1 `WidgetText::LayoutJob(Arc<LayoutJob>)` API is already
+used here. Sharing the formatting job does not avoid its live `Label` clone:
+`Label::layout_in_ui` unwraps/clones the shared job before applying UI wrapping
+and alignment, and `FontsView::layout_job` takes an owned job even on a cache
+hit. The lower-level `epaint::text::layout` accepts an Arc, but bypasses that
+memoization and does not keep the ordinary Label layout path untouched. It is
+not a smaller exact replacement for warm Source labels. No dependency API or
+font-cache ownership change is part of this candidate.
+
+Every Source line retains its live identity, response and accessibility node.
+For admitted jobs in the ordinary top-down, left-aligned, non-grid layout,
+fully clipped-offscreen rows can reuse their exact measured local size and
+intrinsic size. This finite geometry belongs to the existing bounded job;
+there is no second text copy, persistent galley, atlas UV or separate row map.
+The new per-entry metadata is one `Option<SourceRowGeometry>` (five f32 values
+plus its discriminant/padding); its actual Rust size is counted independently
+of the unchanged charged text/section payload. One active dependency key also
+owns cloned font-definition map/family metadata and shared font-data Arcs, not
+another font-byte copy. Key replacement releases the previous definitions;
+the map/family entries and their string/vector capacities are reported separately
+rather than disguised as part of the 4 MiB instruction allowance.
+Visible, cold, unsupported-layout and uncached rows use ordinary label behavior.
+Width, pixels per point, explicit source font, active font definitions and text
+options invalidate geometry. Snapshot/query replacement and current-match job
+refresh discard it with its job. Theme, opacity, selection and screen-reader/
+touch interaction remain live; no approximate heights or omitted widgets are
+allowed. Source spans remain tied to the immutable snapshot, and no helper
+rewrites decoded text, line endings or raw Copy payloads.
+
+The geometry candidate's focused CPU regressions compare
+complete clipped shapes, every response (including intrinsic size and
+sense), accessibility, selection/Copy and offscreen byte/heading navigation to
+the descriptor-cached ordinary path. Cold/warm/scroll/width/font/scale/options/
+theme/revision controls count actual layout requests and their text payloads,
+not job-cache hits. The warm 400-section narrow/normal controls retain all 4800
+rows while reducing 4800 ordinary requests to 31/34 (34/37 after scrolling),
+below the required limit of 96. Cloned candidate String/Vec capacities are
+4408/4822 bytes versus the ordinary shared Label inputs' 680870-byte clone
+payload. The ordinary clone condition follows the pinned Label implementation;
+candidate capacities are captured after its actual unwrap/clone. These are
+specific owned-buffer payloads, not allocator usable-size or total allocations.
+The fixture's geometry slots add 115200 bytes (24 per admitted job; at most
+196608 at 8192), plus a 112-byte inline key and separately reported font map/
+family/string/vector metadata. Map-node allocator overhead is not claimed.
+Real dependency changes relayout every row, including the width settling one
+frame after a scale change; only an actually stable key qualifies as warm.
+Total UI time, GPU drawing, native latency and total memory remain separately
+unqualified. Full live Source traversal and Preview work remain open under #348.
 
 The standalone viewer's ordinary opaque `SURFACE_WINDOW` outer frame goes
 through the existing `software_background::show_frame`, just like other
