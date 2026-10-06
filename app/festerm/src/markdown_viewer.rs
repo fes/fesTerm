@@ -25,7 +25,7 @@ use festerm_markdown::{
 use festerm_ui_egui::{icon, icon::Icon, theme};
 use image::ImageDecoder;
 
-use crate::document_store::Generation;
+use crate::document_store::{DirectoryIdentity, Generation};
 use crate::markdown_images::{
     DecodedImage, ImageLoadFailure, ImageMemoryBudget, ImageReservation, ImageRetry, ImageWorker,
     MAX_CONCURRENT_IMAGE_LOADS, RETAINED_IMAGE_OVERHEAD,
@@ -865,6 +865,7 @@ impl MarkdownViewerTab {
         MarkdownImageState {
             source: &self.source,
             source_generation: None,
+            source_parent_identity: None,
             document: self.document.as_ref(),
             texture_label: &self.title,
             resource_approvals: &mut self.resource_approvals,
@@ -881,6 +882,7 @@ impl MarkdownViewerTab {
 struct MarkdownImageState<'a> {
     source: &'a MarkdownSource,
     source_generation: Option<Generation>,
+    source_parent_identity: Option<DirectoryIdentity>,
     document: Option<&'a MarkdownDocument>,
     texture_label: &'a str,
     resource_approvals: &'a mut ResourceApprovalState,
@@ -967,6 +969,7 @@ impl MarkdownImageState<'_> {
         };
         let markdown_path = local.path().clone();
         let source_generation = self.source_generation;
+        let source_parent_identity = self.source_parent_identity;
         let target = reference.target().to_owned();
         let texture_side = context.input(|input| input.max_texture_side);
         match spawn_image_worker(
@@ -978,6 +981,7 @@ impl MarkdownImageState<'_> {
                 read_local_image_with_budget(
                     &markdown_path,
                     source_generation,
+                    source_parent_identity,
                     &target,
                     budget,
                     scratch,
@@ -2578,6 +2582,7 @@ fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorIma
     read_local_image_with_budget(
         markdown_path,
         None,
+        None,
         target,
         &budget,
         &mut scratch,
@@ -2615,53 +2620,20 @@ fn before_local_image_directory_open() {
     });
 }
 
-fn open_canonical_image_directory(parent: &Path) -> std::io::Result<cap_std::fs::Dir> {
-    use cap_fs_ext::DirExt;
-    use std::io;
-
-    let invalid = || {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "The Markdown resource directory must be a canonical absolute path.",
-        )
-    };
-    if !parent.is_absolute() {
-        return Err(invalid());
-    }
-    let root = parent.ancestors().last().ok_or_else(invalid)?;
-    let relative = parent.strip_prefix(root).map_err(|_| invalid())?;
-    let mut directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
-    // The source's canonical parent is the grant. Following a newly inserted
-    // alias while acquiring it would silently grant a different directory.
-    for component in relative.components() {
-        let std::path::Component::Normal(name) = component else {
-            return Err(invalid());
-        };
-        directory = directory.open_dir_nofollow(name)?;
-    }
-    Ok(directory)
-}
-
 fn validate_markdown_generation(
     directory: &cap_std::fs::Dir,
     markdown_path: &Path,
     generation: Generation,
+    parent_identity: DirectoryIdentity,
 ) -> std::io::Result<()> {
-    let file_name = markdown_path.file_name().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Markdown source has no file name",
-        )
-    })?;
-    let mut options = cap_std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use cap_std::fs::OpenOptionsExt;
-        options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
+    if !parent_identity.matches_directory(directory) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Markdown source parent no longer matches the loaded document authority",
+        ));
     }
-    let file = directory.open_with(Path::new(file_name), &options)?;
-    if generation.matches_file(&file.into_std()) {
+    let file = crate::document_store::open_canonical_file(directory, markdown_path)?;
+    if generation.matches_file(&file) {
         Ok(())
     } else {
         Err(std::io::Error::new(
@@ -2674,6 +2646,7 @@ fn validate_markdown_generation(
 fn read_local_image_with_budget(
     markdown_path: &Path,
     source_generation: Option<Generation>,
+    source_parent_identity: Option<DirectoryIdentity>,
     target: &str,
     budget: &ImageMemoryBudget,
     scratch: &mut ImageReservation,
@@ -2691,12 +2664,13 @@ fn read_local_image_with_budget(
         ));
     }
     before_local_image_directory_open();
-    let directory = open_canonical_image_directory(parent)
+    let directory = crate::document_store::open_canonical_directory(parent)
         .map_err(|_| permanent("The Markdown image directory could not be opened safely."))?;
-    if let Some(generation) = source_generation {
-        validate_markdown_generation(&directory, markdown_path, generation).map_err(|_| {
-            permanent("Local images are unavailable because the saved Markdown file changed.")
-        })?;
+    if let (Some(generation), Some(parent_identity)) = (source_generation, source_parent_identity) {
+        validate_markdown_generation(&directory, markdown_path, generation, parent_identity)
+            .map_err(|_| {
+                permanent("Local images are unavailable because the saved Markdown file changed.")
+            })?;
     }
     let candidate = parent.join(target);
     let canonical = fs::canonicalize(&candidate)
@@ -3795,6 +3769,7 @@ pub(crate) struct MarkdownPreviewPane {
     code_copy_probe: Option<CodeCopyProbe>,
     source: MarkdownSource,
     source_generation: Option<Generation>,
+    source_parent_identity: Option<DirectoryIdentity>,
     document: Option<MarkdownDocument>,
     error: Option<String>,
     /// The text the current parse was made from, so an unchanged frame costs
@@ -3834,6 +3809,7 @@ impl MarkdownPreviewPane {
             code_copy_probe: None,
             source,
             source_generation: None,
+            source_parent_identity: None,
             document: None,
             error: None,
             parsed: String::new(),
@@ -3867,10 +3843,12 @@ impl MarkdownPreviewPane {
     pub(crate) fn for_saved_local_source(
         source: LocalMarkdownSource,
         generation: Generation,
+        parent_identity: DirectoryIdentity,
         text: &str,
     ) -> Self {
         let mut pane = Self::new(MarkdownSource::from(source), text);
         pane.source_generation = Some(generation);
+        pane.source_parent_identity = Some(parent_identity);
         pane.resource_approvals.local_image_reads_blocked = false;
         pane
     }
@@ -3896,6 +3874,7 @@ impl MarkdownPreviewPane {
         MarkdownImageState {
             source: &self.source,
             source_generation: self.source_generation,
+            source_parent_identity: self.source_parent_identity,
             document: self.document.as_ref(),
             texture_label: "editor-preview",
             resource_approvals: &mut self.resource_approvals,
@@ -5884,11 +5863,18 @@ mod tests {
     }
 
     fn saved_local_preview(source: LocalMarkdownSource, text: &str) -> MarkdownPreviewPane {
-        let generation =
+        let loaded =
             crate::document_store::load(source.path(), festerm_document::DocumentBounds::default())
-                .unwrap()
-                .generation;
-        MarkdownPreviewPane::for_saved_local_source(source, generation, text)
+                .unwrap();
+        let source =
+            LocalMarkdownSource::new(loaded.source_authority.canonical_path().to_path_buf())
+                .unwrap();
+        MarkdownPreviewPane::for_saved_local_source(
+            source,
+            loaded.generation,
+            loaded.source_authority.parent_identity(),
+            text,
+        )
     }
 
     fn pump_preview_images(
@@ -6123,14 +6109,78 @@ mod tests {
         fs::write(&replacement, "![Replacement](image.png)\n").unwrap();
         fs::rename(&replacement, &markdown).unwrap();
 
-        let capability =
-            open_canonical_image_directory(loaded.canonical_path.parent().unwrap()).unwrap();
+        let capability = crate::document_store::open_canonical_directory(
+            loaded.source_authority.canonical_path().parent().unwrap(),
+        )
+        .unwrap();
         assert!(validate_markdown_generation(
             &capability,
-            &loaded.canonical_path,
-            loaded.generation
+            loaded.source_authority.canonical_path(),
+            loaded.generation,
+            loaded.source_authority.parent_identity(),
         )
         .is_err());
+        drop(capability);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_authority_rejects_a_hard_link_in_a_replacement_parent() {
+        let directory = image_test_directory("image-parent-generation");
+        let retained = image_test_directory("image-parent-retained");
+        fs::remove_dir(&retained).unwrap();
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Original](image.png)\n").unwrap();
+        let loaded =
+            crate::document_store::load(&markdown, festerm_document::DocumentBounds::default())
+                .unwrap();
+
+        fs::rename(&directory, &retained).unwrap();
+        fs::create_dir(&directory).unwrap();
+        fs::hard_link(retained.join("readme.md"), &markdown).unwrap();
+        write_test_png(&directory.join("image.png"), 4, 4);
+
+        let capability = crate::document_store::open_canonical_directory(&directory).unwrap();
+        assert!(
+            validate_markdown_generation(
+                &capability,
+                loaded.source_authority.canonical_path(),
+                loaded.generation,
+                loaded.source_authority.parent_identity(),
+            )
+            .is_err(),
+            "the same Markdown file in a different directory must not transfer image authority"
+        );
+        drop(capability);
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_authority_rejects_a_final_source_symlink_to_the_same_file() {
+        let directory = image_test_directory("image-source-symlink");
+        let markdown = directory.join("readme.md");
+        let retained = directory.join("retained.md");
+        fs::write(&markdown, "![Original](image.png)\n").unwrap();
+        let loaded =
+            crate::document_store::load(&markdown, festerm_document::DocumentBounds::default())
+                .unwrap();
+
+        fs::rename(&markdown, &retained).unwrap();
+        std::os::unix::fs::symlink(&retained, &markdown).unwrap();
+
+        let capability = crate::document_store::open_canonical_directory(&directory).unwrap();
+        assert!(
+            validate_markdown_generation(
+                &capability,
+                loaded.source_authority.canonical_path(),
+                loaded.generation,
+                loaded.source_authority.parent_identity(),
+            )
+            .is_err(),
+            "a name-surrogate replacement must not preserve image authority"
+        );
         drop(capability);
         fs::remove_dir_all(directory).unwrap();
     }
@@ -6332,8 +6382,9 @@ mod tests {
                 release_receiver
                     .recv_timeout(Duration::from_secs(5))
                     .unwrap();
-                let result =
-                    read_local_image_with_budget(&markdown, None, "old.png", budget, scratch, 4096);
+                let result = read_local_image_with_budget(
+                    &markdown, None, None, "old.png", budget, scratch, 4096,
+                );
                 finished_sender.send(()).unwrap();
                 result
             },

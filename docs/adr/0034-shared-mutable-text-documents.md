@@ -159,16 +159,20 @@ Saved-local Preview uses ADR 0030's bounded relative-image loader and shared
 managed-image allowance. The grant is derived from the canonical file behind
 the document's typed local origin, not its displayed label or a symlink's
 lexical parent; remote, untitled and terminal-history origins never authorize
-local images. The document store records the canonical path and generation
-from the same no-follow handle that supplied the editor bytes. Each image read
-grants the canonical parent's directory capability only when the Markdown file
-opened through it still matches that identity, size and modification
-generation. Image opens then remain beneath that captured directory even if a
+local images. The document store records the canonical path, file generation, and stable
+parent-directory identity from the capability and handle that supplied the
+editor bytes. Each image read grants the canonical parent's directory
+capability only when both that parent identity and the Markdown file opened
+through it still match the loaded authority. Canonical final-name checks reject
+source name surrogates without disabling ordinary Windows Cloud Files
+hydration. Image opens then remain beneath that captured directory even if a
 path component or the directory's name is rebound during the read.
-External/explicit reload and successful save replace that source generation;
+External/explicit reload and successful save replace that source authority;
 the editor discards old approvals, image caches and pending
 receivers before reparsing the new bytes. First Save and Save As/rebinding do
-the same for a new origin. An ordinary edit reparse retains completed state
+the same for a new origin. If post-save authority resolution fails transiently,
+an unchanged freshness poll retries it rather than leaving images unavailable
+until another save. An ordinary edit reparse retains completed state
 only for an unchanged same-index image reference and discards pending or
 changed work; an unavailable parse releases hidden images without starting
 loads for the old snapshot. This does not move image ownership or terminal
@@ -609,7 +613,7 @@ existing Markdown rendering stays out of scope.
   source-generation replacement/reload, unchanged-image reparse retention and
   capability-rebinding coverage. ADR 0030 owns the image-policy limits and
   exclusions. Native image presentation,
-  refusal/recovery comprehension and accessibility remain `CP-06`/`CP-15`.
+  refusal/recovery comprehension and accessibility remain `CP-15`.
 - **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
   `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
   admission, churn/clone/clear, validated no-op, stable saved/base-token,

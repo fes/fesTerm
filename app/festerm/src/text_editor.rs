@@ -16,7 +16,7 @@ use festerm_document::{
 use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
 use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
-use crate::document_store::Generation;
+use crate::document_store::{DirectoryIdentity, Generation};
 use crate::documents::{OpenDocument, SharedDocuments};
 use crate::markdown_viewer::{
     elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
@@ -397,6 +397,7 @@ impl EditorMode {
 struct SavedLocalPreviewSource {
     source: LocalMarkdownSource,
     generation: Generation,
+    parent_identity: DirectoryIdentity,
 }
 
 pub(crate) struct TextEditorTab {
@@ -2777,21 +2778,25 @@ fn saved_local_preview_source(
     if !matches!(open.origin(), festerm_document::DocumentOrigin::Local(_)) {
         return Ok(None);
     }
-    let (path, generation) = open.local_source_generation().ok_or_else(|| {
+    let (authority, generation) = open.local_source_generation().ok_or_else(|| {
         "Local images are unavailable because the loaded Markdown source has no stable generation."
             .to_owned()
     })?;
-    let path = crate::document_store::canonical_path_for_generation(path, generation).ok_or_else(
-        || {
+    if !crate::document_store::source_authority_is_current(authority, generation) {
+        return Err(
             "Local images are unavailable because the saved Markdown file could not be resolved."
-                .to_owned()
-        },
-    )?;
-    let source = LocalMarkdownSource::new(path).map_err(|_| {
+                .to_owned(),
+        );
+    }
+    let source = LocalMarkdownSource::new(authority.canonical_path().to_path_buf()).map_err(|_| {
         "Local images are unavailable because the saved Markdown file has an invalid source identity."
             .to_owned()
     })?;
-    Ok(Some(SavedLocalPreviewSource { source, generation }))
+    Ok(Some(SavedLocalPreviewSource {
+        source,
+        generation,
+        parent_identity: authority.parent_identity(),
+    }))
 }
 
 fn editor_markdown_preview(
@@ -2803,6 +2808,7 @@ fn editor_markdown_preview(
         Ok(Some(source)) => MarkdownPreviewPane::for_saved_local_source(
             source.source.clone(),
             source.generation,
+            source.parent_identity,
             text,
         ),
         Ok(None) => MarkdownPreviewPane::new(preview_presentation_source(origin_label), text),

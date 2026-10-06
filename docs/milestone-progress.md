@@ -38,15 +38,17 @@ choice applies live and survives save failures without an unsaved broadcast.
 Whole-load reservation happens atomically before owned expansion, and actual
 reading probes at most one byte beyond 8 MiB. Security review found that a
 symlinked Markdown filename selected its lexical parent and that canonical
-containment was followed by a pathname reopen. The complete Markdown source is
-now loaded through one no-follow handle that records its canonical path and
-exact identity, size and modification generation. Each image read captures
-that real parent without following changed aliases, verifies the Markdown file
-through the capability against the loaded generation, then resolves the image
-beneath the same handle. Reload/save generation changes retire old image state
-before reparse; component, root-name and reparse-point rebinding cannot
-retarget a read. Nonblocking Unix opens still keep FIFOs from pinning a worker
-waiting for a writer.
+containment was followed by a pathname reopen. The complete Markdown source is now loaded through one handle beneath a
+captured canonical parent, recording its canonical path, exact file generation,
+and the parent's stable filesystem identity. Each image read reacquires that
+real parent without following changed aliases, verifies both parent identity
+and Markdown generation, then resolves the image beneath the same handle.
+Canonical final-name checks reject source name surrogates while ordinary
+Windows Cloud Files can still hydrate. Reload/save authority changes retire old
+image state before reparse; transient post-save resolution failures recover on
+an unchanged freshness poll. Component, hard-link parent, root-name and
+reparse-point rebinding cannot retarget a read. Nonblocking Unix opens still
+keep FIFOs from pinning a worker waiting for a writer.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan
@@ -61,8 +63,9 @@ shared bytes/workers, first Save/Save As and nonlocal origins, a symlinked
 Markdown source, replacement between load and authority, alias retarget plus
 reload, component/root rebinding, unchanged-image retention across prose
 reparse, stale results, failed parsing, retirement and Settings
-persistence/reset. CP-06/CP-15 retain native visual/accessibility and Windows
-reparse-point evidence. Decoder-private memory, native renderer and GPU
+persistence/reset. CP-06 retains remote-viewer qualification; CP-15 retains
+saved-local visual/accessibility, Windows Cloud Files and reparse-point
+evidence. Decoder-private memory, native renderer and GPU
 retirement, allocator fragmentation and total RSS are outside this allowance;
 the repair does not establish #297's multi-day growth cause.
 

@@ -49,6 +49,46 @@ struct FileIdentity {
     file: u64,
 }
 
+/// The stable filesystem identity of the directory that supplied a local file.
+///
+/// Directory timestamps and sizes change when an image beside a Markdown file
+/// changes, so only the OS identity participates in this authority check.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DirectoryIdentity(FileIdentity);
+
+impl DirectoryIdentity {
+    fn from_directory(directory: &cap_std::fs::Dir) -> Result<Self, std::io::Error> {
+        use cap_fs_ext::MetadataExt;
+
+        let metadata = directory.dir_metadata()?;
+        Ok(Self(FileIdentity {
+            volume: metadata.dev(),
+            file: metadata.ino(),
+        }))
+    }
+
+    pub(crate) fn matches_directory(self, directory: &cap_std::fs::Dir) -> bool {
+        Self::from_directory(directory).is_ok_and(|current| current == self)
+    }
+}
+
+/// The path and parent identity that supplied one loaded local document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LocalSourceAuthority {
+    canonical_path: PathBuf,
+    parent_identity: DirectoryIdentity,
+}
+
+impl LocalSourceAuthority {
+    pub(crate) fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    pub(crate) const fn parent_identity(&self) -> DirectoryIdentity {
+        self.parent_identity
+    }
+}
+
 impl Generation {
     #[cfg(not(windows))]
     fn from_metadata(metadata: &Metadata) -> Self {
@@ -122,7 +162,7 @@ fn file_identity(_metadata: &Metadata) -> Option<FileIdentity> {
 pub struct LoadedDocument {
     pub document: TextDocument,
     pub generation: Generation,
-    pub canonical_path: PathBuf,
+    pub(crate) source_authority: LocalSourceAuthority,
     /// True when the file's permissions say we would not be able to save over
     /// it, which the editor shows before the user has typed anything.
     pub read_only: bool,
@@ -231,7 +271,8 @@ impl SaveFailure {
 /// Reads a file into an editable document.
 pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadFailure> {
     let canonical_path = fs::canonicalize(path).map_err(classify_read_error)?;
-    let mut file = open_file_no_follow(&canonical_path).map_err(classify_read_error)?;
+    let (source_authority, mut file) =
+        open_canonical_source(&canonical_path).map_err(classify_read_error)?;
     let metadata = file.metadata().map_err(classify_read_error)?;
     if !metadata.is_file() {
         return Err(LoadFailure::NotAFile);
@@ -259,26 +300,114 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
     Ok(LoadedDocument {
         document,
         generation,
-        canonical_path,
+        source_authority,
         read_only: metadata.permissions().readonly(),
     })
 }
 
-pub fn canonical_path_for_generation(path: &Path, generation: Generation) -> Option<PathBuf> {
+pub(crate) fn source_authority_for_generation(
+    path: &Path,
+    generation: Generation,
+) -> Option<LocalSourceAuthority> {
     let canonical = fs::canonicalize(path).ok()?;
-    let file = open_file_no_follow(&canonical).ok()?;
-    generation.matches_file(&file).then_some(canonical)
+    let (authority, file) = open_canonical_source(&canonical).ok()?;
+    generation.matches_file(&file).then_some(authority)
 }
 
-fn open_file_no_follow(path: &Path) -> Result<File, std::io::Error> {
-    let mut options = OpenOptions::new();
+pub(crate) fn source_authority_is_current(
+    authority: &LocalSourceAuthority,
+    generation: Generation,
+) -> bool {
+    let Some(parent) = authority.canonical_path.parent() else {
+        return false;
+    };
+    let Ok(directory) = open_canonical_directory(parent) else {
+        return false;
+    };
+    authority.parent_identity.matches_directory(&directory)
+        && open_canonical_file(&directory, &authority.canonical_path)
+            .is_ok_and(|file| generation.matches_file(&file))
+}
+
+pub(crate) fn open_canonical_directory(parent: &Path) -> Result<cap_std::fs::Dir, std::io::Error> {
+    use cap_fs_ext::DirExt;
+    use std::io;
+
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The local source directory must be a canonical absolute path.",
+        )
+    };
+    if !parent.is_absolute() {
+        return Err(invalid());
+    }
+    let root = parent.ancestors().last().ok_or_else(invalid)?;
+    let relative = parent.strip_prefix(root).map_err(|_| invalid())?;
+    let mut directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(invalid());
+        };
+        directory = directory.open_dir_nofollow(name)?;
+    }
+    Ok(directory)
+}
+
+pub(crate) fn open_canonical_file(
+    directory: &cap_std::fs::Dir,
+    canonical_path: &Path,
+) -> Result<File, std::io::Error> {
+    if fs::canonicalize(canonical_path)? != canonical_path {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "The local source name is no longer canonical.",
+        ));
+    }
+    let file_name = canonical_path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "The local source has no file name.",
+        )
+    })?;
+    let mut options = cap_std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use cap_std::fs::OpenOptionsExt;
         options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW);
     }
-    options.open(path)
+    let file = directory
+        .open_with(Path::new(file_name), &options)?
+        .into_std();
+    if fs::canonicalize(canonical_path)? != canonical_path {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "The local source name changed while it was being opened.",
+        ));
+    }
+    Ok(file)
+}
+
+fn open_canonical_source(
+    canonical_path: &Path,
+) -> Result<(LocalSourceAuthority, File), std::io::Error> {
+    let parent = canonical_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "The local source has no parent directory.",
+        )
+    })?;
+    let directory = open_canonical_directory(parent)?;
+    let parent_identity = DirectoryIdentity::from_directory(&directory)?;
+    let file = open_canonical_file(&directory, canonical_path)?;
+    Ok((
+        LocalSourceAuthority {
+            canonical_path: canonical_path.to_path_buf(),
+            parent_identity,
+        },
+        file,
+    ))
 }
 
 /// Asks whether a path still holds the generation we loaded.

@@ -15,21 +15,22 @@ tables, task lists, code, links, selection, Copy, Find, and accessibility. It
 does not promise browser-identical rendering or become an editor, preview
 server, web browser, notebook, or general IDE.
 
-The viewer is a first-class non-terminal application surface in the existing
-chip row. Each open document owns one viewer chip labeled with its basename and
-a secondary origin (`Local` or the stable SSH/SFTP session or profile name).
-Opening the same canonical source again focuses its existing viewer; opening a
-different document creates another chip. Viewer lifecycles never resize, split,
-or take ownership of a terminal viewport.
+The standalone viewer is a first-class non-terminal application surface for
+bounded remote snapshots that have no editable local file behind them. Saved
+local Markdown instead owns one shared text-editor document and opens in that
+tab's Preview mode, with `Edit | Preview | Split` selecting its presentation.
+Opening the same canonical local source again focuses its existing editor view
+without discarding unsaved text. Neither surface resizes, splits, or takes
+ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
 - **Desktop Open With:** installed desktop packages advertise `.md` and
   `.markdown` without replacing the user's default application. Finder document
   events and `festerm --open -- <paths...>` enter a bounded application queue,
-  not terminal drag-and-drop or SFTP upload handling. New documents open in the
-  last-active window's Preview mode; an already-open document focuses its
-  existing view across windows without reloading unsaved text. Requests wait
+  not terminal drag-and-drop or SFTP upload handling. New local documents open
+  in the last-active window's editor Preview mode; an already-open document
+  focuses its existing view across windows without reloading unsaved text. Requests wait
   while a blocking dialog or open-error notice is active. Multiple files are
   opened in order, with ordinary local-document load failures shown explicitly.
   A file-bearing second launch forwards to the process owning the per-user
@@ -42,9 +43,10 @@ or take ownership of a terminal viewport.
   **Open path** opens a regular file or navigates into a directory; invalid paths
   retain the input and show the error. Ctrl+L (Command+L on macOS) focuses the
   field. Metadata lookup shares the bounded background directory loader, and
-  edits/navigation invalidate stale lookup results. A Markdown file lands here; anything else
-  opens in the text editor, which has nothing to render it as. An explicitly activated local `file:` link may offer **Preview
-  Markdown** when it resolves to a readable Markdown file.
+  edits/navigation invalidate stale lookup results. Every regular text file
+  opens in the shared editor; Markdown starts in Preview and other text starts
+  in Edit. An explicitly activated local `file:` link may offer **Open file**
+  when it resolves to a readable text document.
 - **SFTP:** a selected `.md`/`.markdown` row offers **Preview Markdown**. The
   viewer receives a bounded read-only snapshot through the SFTP/application
   layer; a remote path never becomes a local path.
@@ -71,9 +73,11 @@ document byte cap. Shell input/output and lifecycle commands continue while
 SFTP is pending. Manual or automatic transport replacement invalidates queued
 requests; no late result is relabelled as belonging to the new connection.
 
-## Viewer layout
+## Standalone viewer and shared Preview layout
 
-The application chrome remains unchanged. The viewer content contains:
+The application chrome remains unchanged. The standalone remote viewer content
+contains the following controls; saved-local editor Preview reuses the same
+bounded renderer inside its `Edit | Preview | Split` workflow:
 
 1. A compact document toolbar with origin icon/label, elided full path, manual
    Reload, Preview/Source switch, Find, Outline toggle, and overflow.

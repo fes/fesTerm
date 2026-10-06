@@ -26,7 +26,9 @@ use festerm_document::{
 
 use festerm_syntax::{DocumentSyntax, SyntaxStatus};
 
-use crate::document_store::{self, Freshness, Generation, LoadFailure, SaveFailure};
+use crate::document_store::{
+    self, Freshness, Generation, LoadFailure, LocalSourceAuthority, SaveFailure,
+};
 
 /// How often an open local document is re-checked against its file. Short
 /// enough that a `git checkout` in the next window is noticed while the user
@@ -55,7 +57,7 @@ pub(crate) struct OpenDocument {
     origin: DocumentOrigin,
     text: TextDocument,
     generation: Option<Generation>,
-    canonical_path: Option<std::path::PathBuf>,
+    source_authority: Option<LocalSourceAuthority>,
     views: usize,
     read_only: bool,
     availability: Availability,
@@ -96,9 +98,9 @@ impl OpenDocument {
         &mut self.text
     }
 
-    pub(crate) fn local_source_generation(&self) -> Option<(&Path, Generation)> {
-        self.canonical_path
-            .as_deref()
+    pub(crate) fn local_source_generation(&self) -> Option<(&LocalSourceAuthority, Generation)> {
+        self.source_authority
+            .as_ref()
             .zip(self.generation)
             .filter(|_| matches!(self.origin, DocumentOrigin::Local(_)))
     }
@@ -257,7 +259,7 @@ impl DocumentRegistry {
             origin,
             loaded.document,
             Some(loaded.generation),
-            Some(loaded.canonical_path),
+            Some(loaded.source_authority),
             loaded.read_only,
         ))
     }
@@ -305,7 +307,7 @@ impl DocumentRegistry {
         origin: DocumentOrigin,
         text: TextDocument,
         generation: Option<Generation>,
-        canonical_path: Option<std::path::PathBuf>,
+        source_authority: Option<LocalSourceAuthority>,
         read_only: bool,
     ) -> DocumentId {
         self.next_id += 1;
@@ -319,7 +321,7 @@ impl DocumentRegistry {
                 origin,
                 text,
                 generation,
-                canonical_path,
+                source_authority,
                 views: 1,
                 read_only,
                 availability: Availability::Available,
@@ -452,8 +454,8 @@ impl DocumentRegistry {
         let outcome = match document_store::save(&path, &bytes, document.generation) {
             Ok(generation) => {
                 document.generation = Some(generation);
-                document.canonical_path =
-                    document_store::canonical_path_for_generation(&path, generation);
+                document.source_authority =
+                    document_store::source_authority_for_generation(&path, generation);
                 document.text.mark_saved();
                 document.conflict = None;
                 document.last_error = None;
@@ -538,8 +540,8 @@ impl DocumentRegistry {
 
         let mut text = text;
         text.mark_saved();
-        let canonical_path = document_store::canonical_path_for_generation(path, generation);
-        let new_id = self.insert(origin, text, Some(generation), canonical_path, false);
+        let source_authority = document_store::source_authority_for_generation(path, generation);
+        let new_id = self.insert(origin, text, Some(generation), source_authority, false);
         Some((SaveOutcome::Saved, Some(new_id)))
     }
 
@@ -673,12 +675,18 @@ impl DocumentRegistry {
 
         document.checked = Instant::now();
         let outcome = match document_store::freshness(&path, known) {
-            Freshness::Unchanged => RefreshOutcome::Unchanged,
+            Freshness::Unchanged => {
+                if document.source_authority.is_none() {
+                    document.source_authority =
+                        document_store::source_authority_for_generation(&path, known);
+                }
+                RefreshOutcome::Unchanged
+            }
             Freshness::Changed(_) => match document_store::load(&path, bounds) {
                 Ok(loaded) if !document.text.is_dirty() => {
                     document.text = loaded.document;
                     document.generation = Some(loaded.generation);
-                    document.canonical_path = Some(loaded.canonical_path);
+                    document.source_authority = Some(loaded.source_authority);
                     document.read_only = loaded.read_only;
                     document.availability = Availability::Available;
                     document.conflict = None;
@@ -740,7 +748,7 @@ impl DocumentRegistry {
             Ok(loaded) => {
                 document.text = loaded.document;
                 document.generation = Some(loaded.generation);
-                document.canonical_path = Some(loaded.canonical_path);
+                document.source_authority = Some(loaded.source_authority);
                 document.read_only = loaded.read_only;
                 document.availability = Availability::Available;
                 document.conflict = None;
@@ -960,6 +968,29 @@ mod tests {
         assert_eq!(
             registry.get(id).unwrap().status().severity(),
             Severity::Informational
+        );
+    }
+
+    #[test]
+    fn unchanged_refresh_recovers_missing_local_source_authority() {
+        let directory = TemporaryDirectory::new("authority-recovery");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().source_authority = None;
+
+        assert_eq!(
+            registry.refresh(id),
+            Some(RefreshOutcome::Unchanged),
+            "authority recovery must not pretend the document bytes changed"
+        );
+        assert!(
+            registry
+                .get(id)
+                .unwrap()
+                .local_source_generation()
+                .is_some(),
+            "a later unchanged refresh must repair a transient post-save resolution failure"
         );
     }
 

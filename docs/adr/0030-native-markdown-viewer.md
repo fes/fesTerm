@@ -302,18 +302,22 @@ escapes.
 The complete saved Markdown filename is canonicalized before establishing
 editor Preview's resource root. If that fails, text Preview remains available
 with a visible image-refusal explanation; a display fallback never grants
-filesystem access. The document store reads through one no-follow file handle
-and records that handle's canonical path, identity, size and modification
-generation. Preview carries that exact generation rather than recanonicalizing
+filesystem access. The document store reads through one file handle acquired beneath a captured
+canonical parent and records that handle's canonical path, identity, size and
+modification generation plus the parent directory's stable filesystem
+identity. Preview carries that exact authority rather than recanonicalizing
 its typed origin independently.
 
 Image-root acquisition uses `cap-std` and `cap-fs-ext` 4.0.3. Starting at the
 filesystem root, each component of the already-authorized canonical parent is
 opened with `DirExt::open_dir_nofollow`; the parent is not recanonicalized into
-a different grant after the source identity is bound. Before image admission,
-the Markdown filename is opened through that captured directory and must match
-the generation that supplied the editor bytes. Source replacement or parent
-rebinding therefore denies image authority. Image-path canonicalization
+a different grant after the source identity is bound. Before image admission, the captured parent identity must still match and the
+Markdown filename is opened through that directory and must match the
+generation that supplied the editor bytes. Canonical final-name checks before
+and after open reject name-surrogate replacement while allowing ordinary
+Windows Cloud Files hydration. Source replacement, hard-link parent
+substitution, or parent rebinding therefore denies image authority.
+Image-path canonicalization
 preserves supported in-root aliases and checks containment, but is not
 sufficient authority: `Dir::open_with` resolves the admitted relative
 destination beneath the same directory handle, enforcing the library's
@@ -485,7 +489,7 @@ previously valid snapshot.
 - **Invariants introduced or changed:** combined managed-image ownership and
   actual running work are bounded across both presentation surfaces;
   saved-local Preview alone gains the existing relative-image policy.
-  Complete canonical source identity, no-follow root acquisition,
+  Complete canonical source and parent identity, no-follow root acquisition,
   directory-handle-contained final resolution and nonblocking Unix special-file
   refusal enforce that policy before content reading.
 - **GUI/action edges affected:** `MD-05`, `SET-13`, `EDIT-18` and the
@@ -497,15 +501,19 @@ previously valid snapshot.
   shared bytes/worker slots, bounded
   read/header controls and Settings/save/restart/reset/failed-save coverage
   are registered in `validation/traceability.json`. Symlink-file source
-  identity, loaded-generation replacement/reload, final/intermediate symlink
+  identity,   loaded-generation replacement/reload, hard-link parent replacement,
+  final-source/final-image/intermediate symlink
   rebinding, captured-root name rebinding and supported relative/absolute
   in-root aliases are covered on Unix.
   Windows uses unprivileged junction fixtures for intermediate and
   root-acquisition rebinding. Portable tests cover visible unresolvable-source
-  refusal, source-generation mismatch and directory-handle release after
-  success/failure. The FIFO regression remains Unix-only.
-- **Native/manual evidence required:** `CP-06` and `CP-15` retain cross-platform
-  visual, focus, accessibility, path/symlink and refusal/recovery review.
+  refusal, source-generation and parent-identity mismatch, post-save authority
+  recovery, and directory-handle release after success/failure. The FIFO and
+  final-source symlink regressions remain Unix-only; Windows Cloud Files and
+  file-symlink presentation remain native evidence.
+- **Native/manual evidence required:** `CP-06` retains standalone remote-viewer
+  visual, focus and accessibility review. `CP-15` retains saved-local Preview
+  visual, path/symlink, refusal/recovery and accessibility review.
   Deterministic headless tests do not count as native acceptance or RSS evidence.
 - **Coverage superseded:** local Preview placeholders were not evidence that
   the ordinary editor invoked the standalone viewer's loader; the production
