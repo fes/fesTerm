@@ -943,6 +943,13 @@ An explicit eight-scene picker subset leaves omitted variants unmeasured.
 These diagnostics do not automate CP-16/CP-17 input, presentation, mixed-DPI,
 native responsiveness or accessibility acceptance.
 
+The editor's opaque outer frame now uses the same eligible textureless-panel
+helper as existing chrome; layout, child widgets and all ordinary-path guards
+are unchanged. A real-editor regression asserts executed painting and exact
+pixels at narrow/wide sizes and 100%/125% scale, including the opacity fallback.
+This is automated caller/rendering evidence for EDIT-04/09, not native
+Markdown, clipboard, screen-reader or CP-16/17 acceptance.
+
 `TYPE-01`/`TERM-01` glyph-layout retirement has automated survivor, hot-set
 churn, bounded slot, forced-collision, owner-drop and reset checks, alongside
 existing both-platform rendering baselines. The 4,096-entry limit is unchanged;

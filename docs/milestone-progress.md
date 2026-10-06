@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Routing the editor surface through eligible panel painting
+
+The first bounded #351 replay completed all eight picker controls with exact
+reference pixels. Median completed drawing ranged from 0.40 to 1.54 seconds;
+completion waiting dominated, while readback waiting was 2-11 ms and image
+copying 6-28 ms. That narrows #350's combined bucket without attributing an
+individual paint operation or claiming native latency.
+
+The Save As controls also revealed that the underlying editor's large opaque
+outer frame still bypassed the existing textureless-panel helper. That frame
+now uses the shared helper without changing its geometry, children, widgets,
+colors or application commands. The established format, adapter, opacity,
+viewport and transform guards retain ordinary painting where necessary.
+A real-editor test checks executed painting and exact reference pixels at
+both widths and scales, plus opacity fallback. Matched release measurements
+and native evidence remain separate from this caller-level regression.
+
 ## Separating picker rendering from readback
 
 The full WARP replay found sub-millisecond picker construction alongside a
