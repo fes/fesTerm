@@ -3,6 +3,55 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding GUI SFTP backlog and retiring finished history
+
+Review of #331 found two missing lifecycle paths: a collision could occur
+before the drawer had a row, and the header's per-row Cancel fan-out could fill
+the new 64-command bridge after canceling only part of a larger queue. A
+compiled pre-start history control retained zero admitted rows instead of 96.
+The worker now publishes successful admission metadata before engine events;
+Skip and pre-copy failure enter the same indexed, bounded finished history
+without waiting for `ItemStarted`. Refused admission creates no phantom rows.
+Header Cancel now uses one ordered command through both bridges. Full admission
+refuses the whole action; one free slot can cancel all existing work, including
+96 real collision-paused transfers. The backend rebuilds/sorts its ready queue
+once rather than repeatedly filtering it, with a 1,024-item regression covering
+all batches and a separate check that later queued work remains unaffected.
+Collision presentation rechecks the indexed row's active state, so a delayed
+prompt cannot remain open after its transfer is canceled or otherwise finishes.
+
+The allocation/lifecycle audit in #320 found unbounded GUI SFTP command/event
+bridges, unrestricted frontend event draining, and a transfer drawer whose
+completed and failed rows grew for the lifetime of the tab. Each progress event
+also searched that growing row array. A controlled failure-history regression
+retained 512 records before the fix rather than the approved 128.
+
+The GUI now uses 64-command and 128-event bridges, a 64-event poll/batch budget,
+and repaint continuation instead of draining an arbitrary backlog in one call.
+Async producers await event capacity; the dedicated local loader may block
+until capacity or receiver retirement. Adjacent progress for one batch/transfer
+is coalesced without crossing critical barriers. Owner cancellation still
+bypasses those queues. Full/closed commands and batches above the existing
+256-item backend ceiling are visibly refused before bridge retention, without
+false drop success, lost pending Markdown requests, dismissed collision
+decisions or premature reconnect/navigation-state mutations.
+
+The owner approved retaining the 128 most recently finished rows, including
+failures, and reporting retirement. Completion order preserves a long-running
+item that finishes late; active/collision-paused work is not evicted. Indexed
+lookup avoids per-progress history searches, and exceptional row/index
+capacity retires after a peak. Transfer-scoped row controls preserve identity
+when earlier rows retire, rather than reusing another transfer's action ID.
+History has a 240-logical-pixel scroll area,
+not row virtualization, and the existing Clear action still preserves retained
+failures. Deterministic churn, boundaries, ordering, admission recovery and
+full-queue teardown cover the repaired contracts.
+Observed cleanup notices reach the separate bounded reporter before a
+GUI-capacity wait, rather than being discarded with an interrupted event batch.
+Aggregate directory/plan
+bytes and native drawer/refusal accessibility remain separate work and
+`SFTP-03` evidence. This does not prove a cause of #297 or allocator
+fragmentation.
 ## Retiring imported Direct2D targets before teardown
 
 The intermittent Windows crash investigation in #330 exposed a concrete
