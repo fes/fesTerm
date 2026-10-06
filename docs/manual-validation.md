@@ -869,6 +869,14 @@ second dirty document open in multiple views; primary-window Quit and updater
 install/restart must include the secondary session and refuse the unresolved
 documents rather than closing the process.
 
+CP-06 Source preparation: ordinary/candidate CPU checks cover the same owned
+400-section fixture, all live labels/accessibility nodes, Find and offscreen
+byte navigation, wrapping across width/font/scale/theme changes, Unicode/CRLF/
+trailing-space selection/Copy and bounded snapshot-owner release. Cached jobs
+are formatting instructions only; every frame still lays out the labels.
+These preparation counters do not qualify native clipboard/screen-reader
+delivery, input-to-display latency or GPU drawing; those statuses remain pending.
+
 CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.
 Across windows, lower **Image memory budget** below admitted usage, check that
