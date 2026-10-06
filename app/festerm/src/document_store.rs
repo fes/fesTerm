@@ -115,6 +115,60 @@ pub struct Generation {
     identity: Option<FileIdentity>,
 }
 
+/// What the Save As picker observed at the exact destination when the user
+/// confirmed it. Absence and an existing exact generation are deliberately
+/// distinct so later appearance or replacement cannot be interpreted as
+/// permission to overwrite a different object.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DestinationExpectation {
+    Absent,
+    Existing(Generation),
+}
+
+/// Picker-confirmed destination authority. The parent identity and canonical
+/// name prevent the save from switching to a replacement directory between
+/// confirmation, open-document resolution, and publication.
+#[derive(Clone, Debug)]
+pub(crate) struct ConfirmedDestination {
+    authority: LocalSourceAuthority,
+    expectation: DestinationExpectation,
+}
+
+impl ConfirmedDestination {
+    pub(crate) const fn expectation(&self) -> DestinationExpectation {
+        self.expectation
+    }
+
+    pub(crate) fn matches_source_authority(&self, authority: &LocalSourceAuthority) -> bool {
+        self.authority == *authority
+    }
+
+    pub(crate) fn matches_requested_path(&self, path: &Path) -> bool {
+        let Some(file_name) = path.file_name() else {
+            return false;
+        };
+        let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        else {
+            return false;
+        };
+        fs::canonicalize(parent)
+            .map(|parent| parent.join(file_name) == self.authority.canonical_path)
+            .unwrap_or(false)
+    }
+}
+
+/// The authority a save is allowed to mutate.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SaveExpectation<'a> {
+    Loaded {
+        generation: Generation,
+        authority: &'a LocalSourceAuthority,
+    },
+    Destination(&'a ConfirmedDestination),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileIdentity {
     /// The device on Unix, or the volume serial number on Windows.
@@ -519,28 +573,47 @@ pub fn freshness(path: &Path, known: Generation) -> Freshness {
     }
 }
 
-/// Replaces a file's contents atomically, refusing if it changed since
-/// `expected`.
-///
-/// `expected` is `None` for a path we have not loaded — a Save As to a new
-/// name — in which case any existing file is replaced, because the user has
-/// already been warned and pressed Save.
+/// Observes the exact Save As destination at confirmation time.
+pub(crate) fn observe_destination(path: &Path) -> Result<ConfirmedDestination, SaveFailure> {
+    let parent = parent_directory(path)?;
+    let save_directory = source_authority_for_save(path, parent)?;
+    let expectation = match open_original_file(&save_directory.directory, &save_directory.target)? {
+        Some(original) => DestinationExpectation::Existing(original.generation),
+        None => DestinationExpectation::Absent,
+    };
+    Ok(ConfirmedDestination {
+        authority: save_directory.source_authority,
+        expectation,
+    })
+}
+
+/// Conditionally publishes bytes under the authority represented by
+/// `expectation`. Ordinary Save uses the loaded generation and parent
+/// capability; Save As uses the absent-or-exact destination observation made
+/// when the picker was confirmed.
 pub fn save(
     path: &Path,
     bytes: &[u8],
-    expected: Option<Generation>,
-    loaded_authority: Option<&LocalSourceAuthority>,
+    expectation: SaveExpectation<'_>,
 ) -> Result<SavedDocument, SaveFailure> {
-    let save_directory = match (expected, loaded_authority) {
-        (Some(_), Some(authority)) => save_directory_from_loaded_authority(authority)?,
-        (None, None) => {
-            let parent = parent_directory(path)?;
-            source_authority_for_save(path, parent)?
+    let save_directory = match expectation {
+        SaveExpectation::Loaded { authority, .. } => {
+            save_directory_from_loaded_authority(authority)?
         }
-        _ => return Err(SaveFailure::Interrupted),
+        SaveExpectation::Destination(destination) if destination.matches_requested_path(path) => {
+            save_directory_from_loaded_authority(&destination.authority)?
+        }
+        SaveExpectation::Destination(_) => return Err(SaveFailure::Interrupted),
     };
     after_save_directory_capture();
-    if let Some(expected) = expected {
+    let expected_generation = match expectation {
+        SaveExpectation::Loaded { generation, .. } => Some(generation),
+        SaveExpectation::Destination(destination) => match destination.expectation {
+            DestinationExpectation::Existing(generation) => Some(generation),
+            DestinationExpectation::Absent => None,
+        },
+    };
+    if let Some(expected) = expected_generation {
         match freshness_in_directory(&save_directory.directory, &save_directory.target, expected) {
             Freshness::Unchanged => {}
             Freshness::Changed(current) => return Err(SaveFailure::Conflict(current)),
@@ -554,10 +627,13 @@ pub fn save(
     let original = open_original_file(&save_directory.directory, &save_directory.target)?;
     #[cfg(windows)]
     let mut original = original;
-    if let (Some(expected), Some(original)) = (expected, original.as_ref()) {
-        if original.generation != expected {
+    match (expected_generation, original.as_ref()) {
+        (Some(expected), Some(original)) if original.generation == expected => {}
+        (Some(_), None) => return Err(SaveFailure::Gone),
+        (Some(_), Some(original)) | (None, Some(original)) => {
             return Err(SaveFailure::Conflict(original.generation));
         }
+        (None, None) => {}
     }
     #[cfg(windows)]
     let security_metadata = original
@@ -1481,6 +1557,19 @@ mod tests {
         DocumentBounds::DEFAULT
     }
 
+    fn loaded_expectation(loaded: &LoadedDocument) -> SaveExpectation<'_> {
+        SaveExpectation::Loaded {
+            generation: loaded.generation,
+            authority: &loaded.source_authority,
+        }
+    }
+
+    fn absent_destination(path: &Path) -> ConfirmedDestination {
+        let destination = observe_destination(path).unwrap();
+        assert_eq!(destination.expectation(), DestinationExpectation::Absent);
+        destination
+    }
+
     fn replace_path(source: &Path, target: &Path) {
         #[cfg(windows)]
         fs::remove_file(target).unwrap();
@@ -1560,13 +1649,7 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
 
-        let saved = save(
-            &path,
-            b"after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        let saved = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
         assert_eq!(freshness(&path, saved.generation), Freshness::Unchanged);
@@ -1583,13 +1666,7 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
 
-        save(
-            &path,
-            b"after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
 
         let entries: Vec<_> = fs::read_dir(&directory.path)
             .unwrap()
@@ -1608,13 +1685,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &alias).unwrap();
         let loaded = load(&alias, bounds()).unwrap();
 
-        save(
-            &alias,
-            b"after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        save(&alias, b"after\n", loaded_expectation(&loaded)).unwrap();
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "after\n");
         assert!(
@@ -1634,13 +1705,7 @@ mod tests {
         let loaded = load(&path, bounds()).unwrap();
 
         fs::write(&path, "theirs, which is longer\n").unwrap();
-        let failure = save(
-            &path,
-            b"mine, edited\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"mine, edited\n", loaded_expectation(&loaded)).unwrap_err();
 
         assert!(matches!(failure, SaveFailure::Conflict(_)));
         assert_eq!(
@@ -1699,12 +1764,7 @@ mod tests {
         fs::rename(&elsewhere, &path).unwrap();
 
         assert!(matches!(
-            save(
-                &path,
-                b"my edits\n",
-                Some(loaded.generation),
-                Some(&loaded.source_authority),
-            ),
+            save(&path, b"my edits\n", loaded_expectation(&loaded),),
             Err(SaveFailure::Conflict(_))
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), "bbbbb\n");
@@ -1740,13 +1800,7 @@ mod tests {
         fs::remove_file(&path).unwrap();
 
         assert_eq!(
-            save(
-                &path,
-                b"mine\n",
-                Some(loaded.generation),
-                Some(&loaded.source_authority),
-            )
-            .unwrap_err(),
+            save(&path, b"mine\n", loaded_expectation(&loaded),).unwrap_err(),
             SaveFailure::Gone
         );
         assert!(!path.exists());
@@ -1756,11 +1810,53 @@ mod tests {
     fn saving_without_a_known_generation_writes_a_new_file() {
         let directory = TemporaryDirectory::new("saveas");
         let path = directory.path.join("fresh.md");
+        let destination = absent_destination(&path);
 
-        let saved = save(&path, b"new\n", None, None).unwrap();
+        let saved = save(&path, b"new\n", SaveExpectation::Destination(&destination)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
         assert_eq!(saved.generation.size(), 4);
+    }
+
+    #[test]
+    fn save_as_refuses_a_destination_that_appears_after_confirmation() {
+        let directory = TemporaryDirectory::new("saveas-appeared");
+        let path = directory.path.join("fresh.md");
+        let destination = observe_destination(&path).unwrap();
+        assert_eq!(destination.expectation(), DestinationExpectation::Absent);
+        fs::write(&path, b"winner\n").unwrap();
+
+        let failure = save(
+            &path,
+            b"editor\n",
+            SaveExpectation::Destination(&destination),
+        )
+        .unwrap_err();
+
+        assert!(matches!(failure, SaveFailure::Conflict(_)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "winner\n");
+    }
+
+    #[test]
+    fn save_as_refuses_a_destination_that_changes_after_confirmation() {
+        let directory = TemporaryDirectory::new("saveas-changed");
+        let path = directory.file("notes.md", "observed\n");
+        let destination = observe_destination(&path).unwrap();
+        assert!(matches!(
+            destination.expectation(),
+            DestinationExpectation::Existing(_)
+        ));
+        fs::write(&path, b"newer and different\n").unwrap();
+
+        let failure = save(
+            &path,
+            b"editor\n",
+            SaveExpectation::Destination(&destination),
+        )
+        .unwrap_err();
+
+        assert!(matches!(failure, SaveFailure::Conflict(_)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "newer and different\n");
     }
 
     #[test]
@@ -1770,13 +1866,7 @@ mod tests {
         fs::remove_dir(&retained.path).unwrap();
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
-        let saved = save(
-            &path,
-            b"after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        let saved = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
 
         fs::rename(&directory.path, &retained.path).unwrap();
         fs::create_dir(&directory.path).unwrap();
@@ -1810,13 +1900,7 @@ mod tests {
             }));
         });
 
-        save(
-            &path,
-            b"after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
 
         assert_eq!(
             fs::read_to_string(retained.path.join("notes.md")).unwrap(),
@@ -1838,8 +1922,8 @@ mod tests {
         fs::write(folder.join("sentinel.txt"), b"unchanged").unwrap();
 
         assert_eq!(
-            save(&folder, b"snapshot", None, None),
-            Err(SaveFailure::NotAFile)
+            observe_destination(&folder).unwrap_err(),
+            SaveFailure::NotAFile
         );
         assert!(folder.is_dir());
         assert_eq!(fs::read(folder.join("sentinel.txt")).unwrap(), b"unchanged");
@@ -1852,7 +1936,7 @@ mod tests {
         let path = directory.path.join("absent").join("fresh.md");
 
         assert_eq!(
-            save(&path, b"new\n", None, None).unwrap_err(),
+            observe_destination(&path).unwrap_err(),
             SaveFailure::NoDirectory
         );
     }
@@ -1867,13 +1951,7 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
         let loaded = load(&path, bounds()).unwrap();
 
-        save(
-            &path,
-            b"echo after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        save(&path, b"echo after\n", loaded_expectation(&loaded)).unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o750);
@@ -1913,13 +1991,7 @@ mod tests {
             }));
         });
 
-        save(
-            &path,
-            b"after\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
         assert_eq!(
@@ -1942,13 +2014,7 @@ mod tests {
             }));
         });
 
-        let failure = save(
-            &path,
-            b"editor\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
         assert!(matches!(failure, SaveFailure::Conflict(_)));
         assert_eq!(fs::read_to_string(&path).unwrap(), "newer\n");
@@ -1967,13 +2033,7 @@ mod tests {
             }));
         });
 
-        let failure = save(
-            &path,
-            b"editor\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
         assert_eq!(failure, SaveFailure::RecoveryRequired);
         assert_eq!(fs::read_to_string(&path).unwrap(), "winner\n");
@@ -2013,13 +2073,7 @@ mod tests {
             }));
         });
 
-        let failure = save(
-            &path,
-            b"editor\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
         assert_eq!(failure, SaveFailure::RecoveryRequired);
         assert_eq!(fs::read_to_string(&path).unwrap(), "later\n");
@@ -2071,13 +2125,7 @@ mod tests {
             }));
         });
 
-        save(
-            &path,
-            b"editor\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap();
+        save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
         assert_eq!(
@@ -2119,13 +2167,7 @@ mod tests {
             }));
         });
 
-        let failure = save(
-            &path,
-            b"editor\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
         assert!(matches!(failure, SaveFailure::Conflict(_)));
         assert_eq!(fs::read_to_string(&path).unwrap(), "loaded\n");
@@ -2152,13 +2194,7 @@ mod tests {
             }));
         });
 
-        let failure = save(
-            &path,
-            b"editor\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
         assert_eq!(failure, SaveFailure::RecoveryRequired);
         assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
@@ -2191,8 +2227,14 @@ mod tests {
 
         let directory = TemporaryDirectory::new("private-save-as");
         let path = directory.path.join("new.md");
+        let destination = absent_destination(&path);
 
-        save(&path, b"private\n", None, None).unwrap();
+        save(
+            &path,
+            b"private\n",
+            SaveExpectation::Destination(&destination),
+        )
+        .unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "private\n");
         assert_eq!(
@@ -2217,13 +2259,7 @@ mod tests {
             fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
             return;
         }
-        let failure = save(
-            &path,
-            b"edited\n",
-            Some(loaded.generation),
-            Some(&loaded.source_authority),
-        )
-        .unwrap_err();
+        let failure = save(&path, b"edited\n", loaded_expectation(&loaded)).unwrap_err();
 
         fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(failure, SaveFailure::PermissionDenied);

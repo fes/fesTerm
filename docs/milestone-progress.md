@@ -56,9 +56,10 @@ keep FIFOs from pinning a worker waiting for a writer.
 
 The same review found that save temporaries received bytes before their access
 metadata was secured. Save now clears inherited Unix staging/file ACLs and
-verifies `0700`/`0600`; Windows reapplies and verifies a protected one-ACE
-current-user DACL through the exact reopened staging handle before writing and
-before retaining a failed prepared payload. Unix restores
+verifies `0700`/`0600`; Windows creates staging directories and children with
+`NtCreateFile` relative to exact retained handles, then rejects any exact
+handle that is reparse, cross-volume, not current-user-owned, or not protected
+current-user-only before writing or copying document bytes. Unix restores
 the destination owner, group, mode, ACL and user-managed xattrs from verified handles after
 the durable content write; Windows applies and verifies the original owner,
 group, DACL and attributes on the prepared file before publication; a new target remains private. Temporary
@@ -75,8 +76,14 @@ rollback can delete a later winner. Deterministic Unix coverage observes the
 empty private temporary before the write, preserves an extended ACL, detects
 mode/xattr races, substitutes the staging name, and changes the target before,
 during and after publication. Native Windows coverage inspects the protected
-staging/file DACL, metadata application, no-follow opening and no-overwrite
-capture/publication.
+staging/file owner and DACL, exact-handle substitution resistance, pre-write
+rejection, metadata application, no-follow opening and no-overwrite
+capture/publication. Save As now carries an absent-or-exact-generation
+expectation from picker confirmation through publication; a later destination
+appearance/change conflicts. An already-open dirty/conflicted destination
+refuses before disk mutation, while a clean one contributes its recorded
+generation and receives the source buffer with undo history intact on
+successful rebind.
 
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan

@@ -20,6 +20,7 @@ use festerm_ssh::{
 };
 use festerm_ui_egui::theme;
 
+use crate::document_store::{self, ConfirmedDestination, DestinationExpectation};
 use crate::sftp_file_manager::{
     breadcrumb_segments, font_for_text_role, format_modified, format_size, item_glyph,
     local_home_directory, paint_sftp_glyph, path_key, show_table_header_cell, show_table_text_cell,
@@ -65,7 +66,10 @@ pub(crate) enum SaveAsOutcome {
     Pending,
     /// The user pressed Save. `path` is the absolute local destination,
     /// already joined from the browsed directory and the file-name field.
-    Save { path: PathBuf },
+    Save {
+        path: PathBuf,
+        destination: ConfirmedDestination,
+    },
     /// Dismissed with Cancel or Escape.
     Cancelled,
 }
@@ -546,9 +550,27 @@ impl SaveAsPicker {
             }
             let should_save = save_enabled && (save.clicked() || enter_saves);
             if let Some(directory) = self.current_directory().filter(|_| should_save) {
-                outcome = SaveAsOutcome::Save {
-                    path: directory.join(&trimmed),
-                };
+                let path = directory.join(&trimmed);
+                match document_store::observe_destination(&path) {
+                    Ok(destination) => {
+                        let observed_exists = matches!(
+                            destination.expectation(),
+                            DestinationExpectation::Existing(_)
+                        );
+                        if observed_exists == file_collision {
+                            outcome = SaveAsOutcome::Save { path, destination };
+                        } else {
+                            self.pane.set_error(
+                                "Destination changed after the folder was listed".to_owned(),
+                                "Refresh this folder, review the destination, and press Save again. Nothing was written.".to_owned(),
+                            );
+                        }
+                    }
+                    Err(failure) => {
+                        self.pane
+                            .set_error(failure.headline().to_owned(), failure.detail().to_owned());
+                    }
+                }
             }
         });
 
@@ -847,11 +869,37 @@ mod tests {
         harness.run();
 
         match harness.state().1.as_ref().expect("an outcome") {
-            SaveAsOutcome::Save { path } => {
+            SaveAsOutcome::Save { path, destination } => {
                 assert_eq!(path, &directory.path.join("draft.md"));
+                assert_eq!(destination.expectation(), DestinationExpectation::Absent);
             }
             other => panic!("expected Save, got {}", describe(other)),
         }
+    }
+
+    #[test]
+    fn save_as_refuses_a_file_that_appears_after_the_folder_was_listed() {
+        let directory = TemporaryDirectory::new("appeared-after-listing");
+        let mut harness = harness_for(&directory, "");
+
+        type_name(&mut harness, "winner.md");
+        directory.file("winner.md", "newer\n");
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert!(harness.state().1.is_none());
+        let error = harness
+            .state()
+            .0
+            .pane
+            .error
+            .as_deref()
+            .expect("visible stale-list refusal");
+        assert!(error.contains("Destination changed"));
+        assert_eq!(
+            fs::read_to_string(directory.path.join("winner.md")).unwrap(),
+            "newer\n"
+        );
     }
 
     #[test]
@@ -942,7 +990,7 @@ mod tests {
         harness.run_steps(2);
         assert!(matches!(
             harness.state().1.as_ref(),
-            Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("NOTES.md")
+            Some(SaveAsOutcome::Save { path, .. }) if path == &directory.path.join("NOTES.md")
         ));
     }
 
@@ -1047,6 +1095,7 @@ mod tests {
     #[test]
     fn virtualized_save_as_picker_reaches_and_selects_the_final_row() {
         let directory = TemporaryDirectory::new("virtual-rows");
+        directory.file("row-00999.txt", "x");
         let mut harness = harness_for(&directory, "new.txt");
         harness.state_mut().0.pane.set_snapshot(
             SftpDirectorySnapshot {
@@ -1088,7 +1137,7 @@ mod tests {
         harness.run();
         assert!(matches!(
             harness.state().1.as_ref(),
-            Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("row-00999.txt")
+            Some(SaveAsOutcome::Save { path, .. }) if path == &directory.path.join("row-00999.txt")
         ));
     }
 
@@ -1107,8 +1156,12 @@ mod tests {
         harness.run();
 
         match harness.state().1.as_ref().expect("an outcome") {
-            SaveAsOutcome::Save { path } => {
+            SaveAsOutcome::Save { path, destination } => {
                 assert_eq!(path, &directory.path.join("NOTES.md"));
+                assert!(matches!(
+                    destination.expectation(),
+                    DestinationExpectation::Existing(_)
+                ));
             }
             other => panic!("expected Save, got {}", describe(other)),
         }

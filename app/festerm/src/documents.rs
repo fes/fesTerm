@@ -27,7 +27,8 @@ use festerm_document::{
 use festerm_syntax::{DocumentSyntax, SyntaxStatus};
 
 use crate::document_store::{
-    self, Freshness, Generation, LoadFailure, LocalSourceAuthority, SaveFailure,
+    self, ConfirmedDestination, DestinationExpectation, Freshness, Generation, LoadFailure,
+    LocalSourceAuthority, SaveExpectation, SaveFailure,
 };
 
 /// How often an open local document is re-checked against its file. Short
@@ -454,12 +455,21 @@ impl DocumentRegistry {
         let path = origin.path().to_path_buf();
         let bytes = document.text.to_bytes();
 
-        let outcome = match document_store::save(
-            &path,
-            &bytes,
-            document.generation,
-            document.source_authority.as_ref(),
-        ) {
+        let expectation = match (document.generation, document.source_authority.as_ref()) {
+            (Some(generation), Some(authority)) => SaveExpectation::Loaded {
+                generation,
+                authority,
+            },
+            _ => {
+                let error = SaveError::new(
+                    "Saving did not complete",
+                    "The document no longer has exact authority for its source. Use Save As… to choose a destination.",
+                );
+                document.last_error = Some(error.clone());
+                return Some(SaveOutcome::Failed(error));
+            }
+        };
+        let outcome = match document_store::save(&path, &bytes, expectation) {
             Ok(saved) => {
                 document.generation = Some(saved.generation);
                 document.source_authority = Some(saved.source_authority);
@@ -505,13 +515,24 @@ impl DocumentRegistry {
     ///
     /// If the destination is already open, that document is what the view
     /// binds to. Two buffers for one file is precisely what the registry
-    /// exists to prevent (§1), so the open document is reloaded from the bytes
-    /// just written rather than a second copy being made.
+    /// exists to prevent (§1), so the open document adopts the saving buffer
+    /// and its undo history rather than a second copy being made.
     pub(crate) fn save_as(
         &mut self,
         id: DocumentId,
         path: &Path,
+        confirmed: &ConfirmedDestination,
     ) -> Option<(SaveOutcome, Option<DocumentId>)> {
+        if !confirmed.matches_requested_path(path) {
+            let error = SaveError::new(
+                "That destination changed after confirmation",
+                "Review the destination and confirm Save As again. Nothing was written.",
+            );
+            if let Some(source) = self.documents.get_mut(&id) {
+                source.last_error = Some(error.clone());
+            }
+            return Some((SaveOutcome::Failed(error), None));
+        }
         let origin = match LocalOrigin::new(path).map(DocumentOrigin::Local) {
             Ok(origin) => origin,
             Err(_) => {
@@ -522,28 +543,89 @@ impl DocumentRegistry {
                 return Some((SaveOutcome::Failed(error), None));
             }
         };
+        let keyed = self.by_key.get(&origin.key()).copied();
+        let mut matching = Vec::new();
+        if let Some(keyed) = keyed {
+            matching.push(keyed);
+        }
+        for (candidate, document) in &self.documents {
+            let authority_matches = document
+                .source_authority
+                .as_ref()
+                .is_some_and(|authority| confirmed.matches_source_authority(authority));
+            let origin_matches = matches!(
+                document.origin(),
+                DocumentOrigin::Local(local)
+                    if confirmed.matches_requested_path(local.path())
+            );
+            if (authority_matches || origin_matches) && !matching.contains(candidate) {
+                matching.push(*candidate);
+            }
+        }
+        if matching
+            .iter()
+            .filter(|candidate| **candidate != id)
+            .any(|candidate| {
+                self.documents.get(candidate).is_some_and(|destination| {
+                    destination.text.is_dirty() || destination.conflict.is_some()
+                })
+            })
+        {
+            let error = SaveError::new(
+                "That destination has unsaved work",
+                "Switch to the already-open destination, save or resolve its changes, then try Save As again. Nothing was written.",
+            );
+            if let Some(source) = self.documents.get_mut(&id) {
+                source.last_error = Some(error.clone());
+            }
+            return Some((SaveOutcome::Failed(error), None));
+        }
+        let existing = keyed.or_else(|| matching.first().copied());
+        if let Some(existing) = existing {
+            let destination = self.documents.get(&existing)?;
+            let Some(generation) = destination.generation else {
+                let error = SaveError::new(
+                    "That destination cannot be verified",
+                    "Refresh or reopen the already-open destination, then try Save As again. Nothing was written.",
+                );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
+                return Some((SaveOutcome::Failed(error), None));
+            };
+            if confirmed.expectation() != DestinationExpectation::Existing(generation) {
+                let error = SaveError::new(
+                    "That destination changed after confirmation",
+                    "Review the already-open destination and confirm Save As again. Nothing was written.",
+                );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
+                return Some((SaveOutcome::Failed(error), None));
+            }
+        }
         let document = self.documents.get(&id)?;
         let bytes = document.text.to_bytes();
         let text = document.text.clone();
 
-        let saved = match document_store::save(path, &bytes, None, None) {
-            Ok(saved) => saved,
-            Err(failure) => {
-                let error = SaveError::new(failure.headline(), failure.detail());
-                if let Some(document) = self.documents.get_mut(&id) {
-                    document.last_error = Some(error.clone());
+        let saved =
+            match document_store::save(path, &bytes, SaveExpectation::Destination(confirmed)) {
+                Ok(saved) => saved,
+                Err(failure) => {
+                    let error = SaveError::new(failure.headline(), failure.detail());
+                    if let Some(document) = self.documents.get_mut(&id) {
+                        document.last_error = Some(error.clone());
+                    }
+                    return Some((SaveOutcome::Failed(error), None));
                 }
-                return Some((SaveOutcome::Failed(error), None));
-            }
-        };
+            };
 
-        if let Some(existing) = self.by_key.get(&origin.key()).copied() {
+        if let Some(existing) = existing {
             // The file the user chose is open elsewhere, and it now holds the
             // bytes just written, so that document is brought up to date
             // from the exact save result rather than reopening a pathname that
             // may already name a different parent.
-            let mut reloaded = TextDocument::from_bytes(&bytes, self.bounds)
-                .expect("bytes from a bounded open document remain bounded text");
+            let mut reloaded = text;
             reloaded.mark_saved();
             if let Some(document) = self.documents.get_mut(&existing) {
                 document.syntax = DocumentSyntax::new(document.origin.file_name(), reloaded.text());
@@ -560,7 +642,9 @@ impl DocumentRegistry {
                 document.settled = None;
                 document.auto_save_blocked_at = None;
             }
-            self.retain(existing);
+            if existing != id {
+                self.retain(existing);
+            }
             return Some((SaveOutcome::Saved, Some(existing)));
         }
 
@@ -1080,8 +1164,9 @@ mod tests {
         let mut registry = DocumentRegistry::new();
         let id = registry.open_local(&path).unwrap();
         type_into(&mut registry, id, "beta\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
 
-        let (outcome, moved) = registry.save_as(id, &destination).unwrap();
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
 
         assert_eq!(outcome, SaveOutcome::Saved);
         let moved = moved.expect("the view has somewhere to follow");
@@ -1111,8 +1196,9 @@ mod tests {
         let id = registry.open_local(&source).unwrap();
         let existing = registry.open_local(&destination).unwrap();
         type_into(&mut registry, id, "beta\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
 
-        let (outcome, moved) = registry.save_as(id, &destination).unwrap();
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
 
         assert_eq!(outcome, SaveOutcome::Saved);
         assert_eq!(
@@ -1125,6 +1211,146 @@ mod tests {
             "alpha\nbeta\n",
             "and the document already open on it has to show what is now there"
         );
+        assert!(
+            registry.get(existing).unwrap().text().can_undo(),
+            "rebinding must preserve the source buffer's edit history"
+        );
+        assert!(registry.get_mut(existing).unwrap().text_mut().undo());
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "alpha\n",
+            "the source edit remains undoable after the view rebinds"
+        );
+    }
+
+    #[test]
+    fn save_as_refuses_a_dirty_open_destination_without_mutating_either_buffer_or_disk() {
+        let directory = TemporaryDirectory::new("save-as-dirty-open");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        type_into(&mut registry, existing, "destination edit\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        let source_before = registry.get(id).unwrap().text().text().to_owned();
+        let destination_before = registry.get(existing).unwrap().text().text().to_owned();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        let error = match outcome {
+            SaveOutcome::Failed(error) => error,
+            other => panic!("expected visible refusal, got {other:?}"),
+        };
+        assert_eq!(moved, None);
+        assert_eq!(error.headline(), "That destination has unsaved work");
+        assert!(error.detail().contains("Nothing was written"));
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "destination\n");
+        assert_eq!(registry.get(id).unwrap().text().text(), source_before);
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            destination_before
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+        assert!(registry.get(id).unwrap().text().can_undo());
+        assert!(registry.get(existing).unwrap().text().is_dirty());
+        assert!(registry.get(existing).unwrap().text().can_undo());
+        assert_eq!(registry.get(id).unwrap().status().detail(), error.detail());
+    }
+
+    #[test]
+    fn save_as_refuses_a_conflicted_open_destination_without_mutation() {
+        let directory = TemporaryDirectory::new("save-as-conflicted-open");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        type_into(&mut registry, existing, "destination edit\n");
+        fs::write(&destination, b"outside\n").unwrap();
+        assert!(matches!(
+            registry.refresh(existing),
+            Some(RefreshOutcome::Conflict)
+        ));
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        let source_before = registry.get(id).unwrap().text().text().to_owned();
+        let destination_before = registry.get(existing).unwrap().text().text().to_owned();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert!(matches!(outcome, SaveOutcome::Failed(_)));
+        assert_eq!(moved, None);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "outside\n");
+        assert_eq!(registry.get(id).unwrap().text().text(), source_before);
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            destination_before
+        );
+        assert!(registry.get(existing).unwrap().conflict().is_some());
+    }
+
+    #[test]
+    fn save_as_uses_the_clean_open_destinations_recorded_generation() {
+        let directory = TemporaryDirectory::new("save-as-clean-generation");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        fs::write(&destination, b"outside and newer\n").unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert!(matches!(outcome, SaveOutcome::Failed(_)));
+        assert_eq!(moved, None);
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "outside and newer\n"
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+        assert!(!registry.get(existing).unwrap().text().is_dirty());
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "destination\n"
+        );
+    }
+
+    #[test]
+    fn clean_save_as_to_the_same_document_does_not_retain_a_phantom_view() {
+        let directory = TemporaryDirectory::new("save-as-same-clean");
+        let path = directory.file("notes.md", "source\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        let expectation = document_store::observe_destination(&path).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &path, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(id));
+        assert_eq!(registry.get(id).unwrap().views(), 1);
+    }
+
+    #[test]
+    fn dirty_save_as_to_the_same_document_uses_source_authority_without_self_conflict() {
+        let directory = TemporaryDirectory::new("save-as-same-dirty");
+        let path = directory.file("notes.md", "source\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "edit\n");
+        let expectation = document_store::observe_destination(&path).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &path, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(id));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "source\nedit\n");
+        assert!(!registry.get(id).unwrap().text().is_dirty());
+        assert!(registry.get(id).unwrap().text().can_undo());
+        assert_eq!(registry.get(id).unwrap().views(), 1);
     }
 
     #[test]
@@ -1164,8 +1390,12 @@ mod tests {
             "Local Shell · terminal history snapshot",
             b"alpha\n",
         );
+        let confirmed =
+            document_store::observe_destination(&directory.path.join("snapshot.txt")).unwrap();
 
-        let (outcome, moved) = registry.save_as(id, directory.path.as_path()).unwrap();
+        let (outcome, moved) = registry
+            .save_as(id, directory.path.as_path(), &confirmed)
+            .unwrap();
         let error = match outcome {
             SaveOutcome::Failed(error) => error,
             other => panic!("expected save failure, got {other:?}"),

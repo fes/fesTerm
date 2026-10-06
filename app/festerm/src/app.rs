@@ -4234,10 +4234,10 @@ impl FesTermApp {
                 outcome = Some(picker.ui(ui));
             });
         match outcome {
-            Some(crate::save_as::SaveAsOutcome::Save { path }) => {
+            Some(crate::save_as::SaveAsOutcome::Save { path, destination }) => {
                 self.close_save_as_picker(ctx);
                 self.state
-                    .dispatch(AppCommand::SaveTextDocumentTo { path }, ctx);
+                    .dispatch(AppCommand::SaveTextDocumentTo { path, destination }, ctx);
                 if let Some(pending) = self.overlays.pending_document_close_after_save_as.take() {
                     if self.state.document_close_consequence(pending.tab).is_none() {
                         self.state.dispatch(AppCommand::CloseTab(pending.tab), ctx);
@@ -9622,9 +9622,11 @@ mod tests {
         type_into_editor(&mut harness, "beta");
 
         let destination = directory.join("COPY.md");
+        let confirmed = crate::document_store::observe_destination(&destination).unwrap();
         harness.state_mut().state.dispatch(
             AppCommand::SaveTextDocumentTo {
                 path: destination.clone(),
+                destination: confirmed,
             },
             &context,
         );

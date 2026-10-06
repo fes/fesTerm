@@ -110,7 +110,12 @@ The editor never resolves a divergence silently.
   sets. Linux rewrites user xattrs/POSIX ACLs while
   requiring kernel security labels to match in place. Windows applies and
   verifies the target owner/group/DACL/attributes on the prepared file before
-  publication; inability to do so refuses before mutation. A new destination remains owner-only. Prepared files remain
+  publication. Its private staging directory and every child are created
+  natively relative to exact retained handles; each returned handle must be
+  non-reparse, current-user-owned, protected current-user-only, and on the
+  expected volume before any document bytes are written or copied. ACL-less or
+  cross-volume redirection is refused. Inability to preserve target metadata
+  refuses before mutation. A new destination remains owner-only. Prepared files remain
   beneath a private same-filesystem staging directory, with an independently
   written private recovery copy before publication. Both platforms first move
   the no-follow current target into private staging without overwrite, verify
@@ -276,6 +281,14 @@ stated in words before the fact — "A file with this name already exists here.
 Saving will replace it." — and a single Save press is still all it takes. It is
 a statement, not a second confirmation. Choosing a **directory** is different:
 that is refused, because a directory cannot be replaced by a document.
+
+The Save press records whether the destination was absent or the exact
+generation then present. A later appearance, disappearance, or generation
+change refuses before displacement. If that destination is already open, a
+dirty or conflicted buffer blocks the operation with a visible recovery
+instruction; a clean buffer supplies its recorded generation. On success the
+saving view follows the existing destination document without discarding the
+source buffer's undo history.
 
 ## vi compatibility
 

@@ -2102,6 +2102,7 @@ pub enum AppCommand {
     /// confirmed, and moves this view onto it.
     SaveTextDocumentTo {
         path: PathBuf,
+        destination: crate::document_store::ConfirmedDestination,
     },
     /// Re-checks the active editor's document against its source.
     RefreshTextDocument,
@@ -3467,7 +3468,9 @@ impl AppState {
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
             AppCommand::SaveTextDocument => self.save_active_text_document(),
             AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
-            AppCommand::SaveTextDocumentTo { path } => self.save_active_text_document_to(&path),
+            AppCommand::SaveTextDocumentTo { path, destination } => {
+                self.save_active_text_document_to(&path, &destination)
+            }
             AppCommand::RefreshTextDocument => {
                 self.with_active_document(|registry, id| {
                     registry.refresh(id);
@@ -3928,11 +3931,18 @@ impl AppState {
     /// The original document is released by this view only; if another view
     /// still holds it, it stays open on its own file, which is the whole
     /// difference between Save As and a rename (ADR 0034 §3).
-    fn save_active_text_document_to(&mut self, path: &Path) {
+    fn save_active_text_document_to(
+        &mut self,
+        path: &Path,
+        destination: &crate::document_store::ConfirmedDestination,
+    ) {
         let Some(previous) = self.active_document() else {
             return;
         };
-        let saved = self.documents.borrow_mut().save_as(previous, path);
+        let saved = self
+            .documents
+            .borrow_mut()
+            .save_as(previous, path, destination);
         let Some((_, Some(document))) = saved else {
             return;
         };

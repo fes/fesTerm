@@ -128,11 +128,19 @@ terminal.
   name field — so one control covers both origins and neither is privileged. An
   existing target is stated in words before the fact ("A file with this name
   already exists here. Saving will replace it.") and still requires the explicit
-  Save press; publication is generation-validated and no-overwrite (§5).
+  Save press. That press records a typed destination expectation: either the
+  name was absent or it held one exact generation. Publication requires that
+  expectation before any target displacement, so a file that appears or
+  changes after confirmation is a conflict, never a newly adopted overwrite
+  target (§5).
   On success the view follows the new document identity, and the original
   document remains open only if another view still holds it. If the chosen
   destination is already open, the view binds to that **existing** document
-  rather than creating a second buffer for one file (§1). Save As stays
+  rather than creating a second buffer for one file (§1). A dirty or conflicted
+  open destination is refused before disk mutation, with guidance to save or
+  resolve that document first. A clean open destination contributes its
+  recorded exact generation to the conditional write; the saving view then
+  rebinds with its source buffer and undo history intact. Save As stays
   available when Save cannot run — conflict, an unavailable source, an offline
   origin, or lost permissions — because it is the escape hatch for all of them.
 - **Find/Replace** operate on the in-memory buffer including unsaved text.
@@ -205,13 +213,23 @@ any stronger attribute a server supplies. A save revalidates the generation
 first; if it changed, the write does not happen and the document enters Conflict
 — including when Auto-save is what triggered the save.
 
+Save As similarly revalidates the typed absent-or-exact-generation expectation
+captured by the picker. A target that appears, disappears, or changes after
+confirmation is refused before displacement rather than being adopted.
+
 Replacement is write-to-temporary-then-rename in the same directory. Before
 any document bytes are written, the Unix staging directory has inherited
 access/default ACLs cleared and is verified as mode `0700`; each Unix payload
 and recovery file likewise has inherited ACLs cleared and is verified as mode
-`0600`. Windows reapplies and verifies a protected one-ACE current-user DACL
-through the exact staging handle before creating any file, and re-privatizes a
-prepared payload before retaining it after failed publication. Unix writes and flushes
+`0600`. Windows creates both the staging directory and each child with
+`NtCreateFile` relative to the retained exact directory handle, not by
+reconstructing a pathname. Before any document bytes are written or copied,
+the exact returned handle is verified as a non-reparse object on the expected
+volume, owned by the current user, with a protected one-ACE current-user-only
+DACL; ACL-less and cross-volume results are refused. This removes the
+create/reopen substitution window while preserving random names and
+handle-based no-overwrite publication. Retained recovery payloads are
+re-privatized after failed publication. Unix writes and flushes
 while the temporary remains private, then copies the existing target's owner,
 group, mode and ACL from verified file handles and durably flushes that
 metadata before replacement without copying the old modification time. Linux

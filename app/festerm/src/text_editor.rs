@@ -3418,7 +3418,11 @@ mod tests {
         let mut editor = TextEditorTab::new(id, &documents);
         assert!(editor.local_preview_source.as_ref().unwrap().is_none());
         let first = original.path.join("readme.md");
-        let (_, moved) = documents.borrow_mut().save_as(id, &first).unwrap();
+        let first_destination = crate::document_store::observe_destination(&first).unwrap();
+        let (_, moved) = documents
+            .borrow_mut()
+            .save_as(id, &first, &first_destination)
+            .unwrap();
         editor.rebind(moved.unwrap_or(id), &documents);
         assert_eq!(
             editor
@@ -3437,9 +3441,10 @@ mod tests {
         output.textures_delta.clear();
         assert!(editor.preview.is_some());
         let second = destination.path.join("readme.md");
+        let second_destination = crate::document_store::observe_destination(&second).unwrap();
         let (_, moved) = documents
             .borrow_mut()
-            .save_as(editor.document(), &second)
+            .save_as(editor.document(), &second, &second_destination)
             .unwrap();
         editor.rebind(moved.unwrap_or(editor.document()), &documents);
         assert!(editor.preview.is_none());
