@@ -840,7 +840,7 @@ to a known prior surface, and closing the final viewer returns to Launcher.
 
 Product review accepts extending the viewer into a bounded native text editor
 for supported local and SFTP text and Markdown files. The architecture — shared
-mutable documents, identity, write atomicity, freshness, conflict, auto-save,
+mutable documents, identity, conditional publication, freshness, conflict, auto-save,
 per-view presentation, and the vi subset — is decided in
 [ADR 0034](adr/0034-shared-mutable-text-documents.md), and the product/UI
 specification is [`text-editor-design.md`](text-editor-design.md).
@@ -874,9 +874,10 @@ The accepted shape is:
   application commands shared by toolbar, menus, palette, keyboard bindings, and
   vi's `:` equivalents. A disabled command explains why. Refresh never discards
   a dirty buffer.
-- **Saving.** Saves revalidate the source first and replace the file atomically;
-  an interrupted write never reports success, and nothing is ever overwritten or
-  merged silently. Auto-save belongs to the document, sits beside Save, is
+- **Saving.** Saves revalidate the source first, privately capture the current
+  target, and publish without overwrite; the target name can be briefly absent.
+  An interrupted write never reports success, and nothing is ever overwritten
+  or merged silently. Auto-save belongs to the document, sits beside Save, is
   debounced rather than per keystroke, and pauses on conflict, offline, or
   error. Closing the final view of a dirty document still prompts.
 - **Freshness.** An externally changed clean document reloads every view and

@@ -562,6 +562,7 @@ impl DocumentRegistry {
                 matching.push(*candidate);
             }
         }
+        matching.sort_unstable();
         if matching
             .iter()
             .filter(|candidate| **candidate != id)
@@ -583,7 +584,16 @@ impl DocumentRegistry {
         let existing = keyed.or_else(|| matching.first().copied());
         if let Some(existing) = existing {
             let destination = self.documents.get(&existing)?;
-            let Some(generation) = destination.generation else {
+            let expectation_matches = match confirmed.expectation() {
+                DestinationExpectation::Existing(expected) => {
+                    destination.generation == Some(expected)
+                }
+                DestinationExpectation::Absent => matches!(
+                    destination.availability,
+                    Availability::Unavailable(UnavailableReason::Missing)
+                ),
+            };
+            if !expectation_matches && destination.generation.is_none() {
                 let error = SaveError::new(
                     "That destination cannot be verified",
                     "Refresh or reopen the already-open destination, then try Save As again. Nothing was written.",
@@ -592,8 +602,8 @@ impl DocumentRegistry {
                     source.last_error = Some(error.clone());
                 }
                 return Some((SaveOutcome::Failed(error), None));
-            };
-            if confirmed.expectation() != DestinationExpectation::Existing(generation) {
+            }
+            if !expectation_matches {
                 let error = SaveError::new(
                     "That destination changed after confirmation",
                     "Review the already-open destination and confirm Save As again. Nothing was written.",
@@ -1317,6 +1327,66 @@ mod tests {
             registry.get(existing).unwrap().text().text(),
             "destination\n"
         );
+    }
+
+    #[test]
+    fn save_as_can_recreate_a_clean_open_destination_confirmed_absent() {
+        let directory = TemporaryDirectory::new("save-as-clean-missing");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        fs::remove_file(&destination).unwrap();
+        assert!(matches!(
+            registry.refresh(existing),
+            Some(RefreshOutcome::Unavailable(UnavailableReason::Missing))
+        ));
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        assert_eq!(expectation.expectation(), DestinationExpectation::Absent);
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(existing));
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "source\nsource edit\n"
+        );
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "source\nsource edit\n"
+        );
+    }
+
+    #[test]
+    fn save_as_chooses_the_lowest_matching_document_id_deterministically() {
+        let directory = TemporaryDirectory::new("save-as-deterministic-match");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let first = registry.open_local(&destination).unwrap();
+        let (origin, text, generation, source_authority, read_only) = {
+            let document = registry.documents.get(&first).unwrap();
+            (
+                document.origin.clone(),
+                document.text.clone(),
+                document.generation,
+                document.source_authority.clone(),
+                document.read_only,
+            )
+        };
+        let second = registry.insert(origin, text, generation, source_authority, read_only);
+        registry.by_key.clear();
+        type_into(&mut registry, id, "source edit\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(first.min(second)));
     }
 
     #[test]

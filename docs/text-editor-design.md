@@ -136,6 +136,12 @@ The editor never resolves a divergence silently.
   never a best-effort success. Cleanup failure after verified publication may
   retain the private staging directory but does not turn a successful save
   into a false failure.
+- Save As refuses a final symbolic-link or reparse-point destination; choose
+  the regular file it points to instead.
+- A crash or power loss in the brief absent-name window can leave `original`
+  and `prepared` only in the private sibling staging directory. Automatic
+  startup discovery is not implemented yet, so native fault-injection must
+  verify manual recovery explicitly.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
 - A volume without private staging or no-overwrite publication support is

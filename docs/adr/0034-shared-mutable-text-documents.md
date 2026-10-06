@@ -271,7 +271,17 @@ directory, but does not misreport successfully published bytes as a failed
 save. Creation and publication stay tied to
 the retained directory capability, and any identity or security-metadata
 failure refuses the save rather than silently weakening access. Where a
-remote server cannot rename over an existing file, the fallback is named
+final destination component is a symbolic link or reparse point, Save As
+refuses it rather than following or moving it; the user must choose the regular
+file they intend to replace.
+
+A process crash or power loss in the brief absent-name window can leave
+`original` and `prepared` only in the private sibling staging directory without
+an in-process notice. Startup discovery is not implemented in this milestone;
+this accepted residual risk remains a required native fault-injection and
+manual-recovery check, not a claim of crash-atomic replacement.
+
+Where a remote server cannot rename over an existing file, the fallback is named
 explicitly in the design document
 and surfaced to the user; fesTerm never truncates the only known-good copy
 before a complete replacement exists unless the user has explicitly accepted

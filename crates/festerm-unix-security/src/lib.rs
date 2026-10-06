@@ -1,4 +1,4 @@
-//! Handle-bound Unix file-security metadata and atomic publication.
+//! Handle-bound Unix file-security metadata and conditional publication.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -58,15 +58,17 @@ mod imp {
 
         #[cfg(target_os = "linux")]
         if file
-            .list_xattr()?
+            .list_xattr()
+            .map_err(private_io_error)?
             .any(|name| name == "system.posix_acl_access")
         {
-            file.remove_xattr("system.posix_acl_access")?;
+            file.remove_xattr("system.posix_acl_access")
+                .map_err(private_io_error)?;
         }
         #[cfg(target_os = "macos")]
-        clear_macos_acl(file)?;
-        fchmod(file, Mode::from_bits_truncate(0o600)).map_err(io::Error::from)?;
-        let private = security_metadata(file)?;
+        clear_macos_acl(file).map_err(private_io_error)?;
+        fchmod(file, Mode::from_bits_truncate(0o600)).map_err(private_metadata_error)?;
+        let private = security_metadata(file).map_err(private_io_error)?;
         if private.mode != 0o600 || {
             #[cfg(target_os = "macos")]
             {
@@ -77,11 +79,12 @@ mod imp {
                 false
             }
         } {
-            return Err(io::Error::other(format!(
-                "could not make recovery file private: {private:?}"
-            )));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("could not make recovery file private: {private:?}"),
+            ));
         }
-        file.sync_all()
+        file.sync_all().map_err(private_io_error)
     }
 
     pub fn make_private_directory(directory: &File) -> io::Result<()> {
@@ -89,14 +92,20 @@ mod imp {
 
         #[cfg(target_os = "linux")]
         for attribute in ["system.posix_acl_access", "system.posix_acl_default"] {
-            if directory.list_xattr()?.any(|name| name == attribute) {
-                directory.remove_xattr(attribute)?;
+            if directory
+                .list_xattr()
+                .map_err(private_io_error)?
+                .any(|name| name == attribute)
+            {
+                directory
+                    .remove_xattr(attribute)
+                    .map_err(private_io_error)?;
             }
         }
         #[cfg(target_os = "macos")]
-        clear_macos_acl(directory)?;
-        fchmod(directory, Mode::from_bits_truncate(0o700)).map_err(io::Error::from)?;
-        let private = security_metadata(directory)?;
+        clear_macos_acl(directory).map_err(private_io_error)?;
+        fchmod(directory, Mode::from_bits_truncate(0o700)).map_err(private_metadata_error)?;
+        let private = security_metadata(directory).map_err(private_io_error)?;
         let inherited_acl = {
             #[cfg(target_os = "linux")]
             {
@@ -114,11 +123,68 @@ mod imp {
             }
         };
         if private.mode != 0o700 || inherited_acl {
-            return Err(io::Error::other(format!(
-                "could not make save staging directory private: {private:?}"
-            )));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("could not make save staging directory private: {private:?}"),
+            ));
         }
-        directory.sync_all()
+        directory.sync_all().map_err(private_io_error)
+    }
+
+    fn private_metadata_error(error: nix::errno::Errno) -> io::Error {
+        private_io_error(io::Error::from(error))
+    }
+
+    fn private_io_error(error: io::Error) -> io::Error {
+        match error.raw_os_error() {
+            Some(nix::libc::EPERM | nix::libc::EACCES | nix::libc::EINVAL | nix::libc::ENOTSUP) => {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "the filesystem cannot enforce private save staging",
+                )
+            }
+            _ => error,
+        }
+    }
+
+    /// Opens one file relative to an exact directory handle without following
+    /// the final component.
+    pub fn open_file_nofollow(directory: &File, name: &Path) -> io::Result<File> {
+        use nix::{
+            fcntl::{openat, OFlag},
+            sys::stat::Mode,
+        };
+        let mut components = name.components();
+        if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the file name must contain exactly one normal component",
+            ));
+        }
+        let descriptor = openat(
+            directory,
+            name,
+            OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            if error == nix::errno::Errno::ELOOP {
+                io::Error::new(io::ErrorKind::InvalidInput, "the file is a symbolic link")
+            } else {
+                io::Error::from(error)
+            }
+        })?;
+        let file = File::from(descriptor);
+        if file.metadata()?.is_file() {
+            Ok(file)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the path is not a regular file",
+            ))
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -401,8 +467,8 @@ mod imp {
 
 #[cfg(unix)]
 pub use imp::{
-    make_private, make_private_directory, preserve_security_metadata, rename_noreplace,
-    security_metadata, security_metadata_matches, SecurityMetadata,
+    make_private, make_private_directory, open_file_nofollow, preserve_security_metadata,
+    rename_noreplace, security_metadata, security_metadata_matches, SecurityMetadata,
 };
 
 #[cfg(test)]
