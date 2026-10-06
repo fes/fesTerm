@@ -155,6 +155,28 @@ fixed 4,096-slot plateau. Existing clear and both-platform rendering checks
 remain the correctness oracle. This adds bounded bookkeeping and deliberately
 keeps a saturated cache warm; it does not promise lower retained RAM, native
 CPU gains, GPU retirement or an explanation for #297.
+## Rejecting unsupported atlases before copying their pixels
+
+C5 in #320 found that the native capture path copied every non-cacheable
+atlas before the backend refused it. A compiled legacy-order control, with
+the new installation seam but unchanged finish logic, copied 262,144 bytes
+despite explicit metadata refusal. Larger real atlases repeat the same work.
+
+The backend now supplies metadata-only admission after tessellation and before
+texture/atlas copying. Its shared dimension predicate retains the existing
+8,192-side and 16,777,216-pixel limits; aggregate validation remains 96 MiB.
+Refusal leaves ordinary shapes intact, releases the current cached snapshot,
+and uses existing once-per-episode reporting and native-success recovery.
+Hook identity is checked again after admission, so a retired callback cannot
+capture or clear a replacement painter's state. Eligible zero-retention
+controls keep their intentional copies.
+
+Four UI regressions plus portable bounds and Windows status checks cover
+these routes alongside existing atlas/font-delta and framebuffer tests.
+Proposed ADR 0045 records the ordering amendment to accepted ADR 0043 and
+requires architectural review before merge. The saved work is atlas copying,
+not a promise about total heap/RSS, frame-time/native CPU, GPU retirement
+or #297's cause; CP-18 remains open.
 
 ## Bounding actual undo storage without discarding a refused change
 
