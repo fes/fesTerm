@@ -1332,6 +1332,11 @@ fn replay_warp_ui_surfaces() {
     let selected =
         warp_profile::SceneSet::parse(std::env::var_os("FESTERM_WARP_UI_SCENES").as_deref())
             .expect("valid WARP scene selection");
+    let attribute_backdrop = warp_profile::picker_backdrop_attribution(
+        std::env::var_os("FESTERM_WARP_UI_PICKER_BACKDROP").as_deref(),
+        selected,
+    )
+    .expect("valid bounded picker backdrop attribution");
     let output =
         PathBuf::from(std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"));
     assert!(
@@ -1608,6 +1613,25 @@ fn replay_warp_ui_surfaces() {
             draw_times.push(sample.total_ms);
             draw_buckets.push(sample);
         }
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if attribute_backdrop {
+            let mut attribution =
+                warp_profile::attribute_picker_backdrop(&state, &probe.context, &frame, &expected);
+            attribution["scene"] = serde_json::json!(scene.id);
+            attribution["scene_set"] = serde_json::json!(selected.name());
+            attribution["provenance"] = serde_json::json!(provenance);
+            attribution["adapter"] = serde_json::json!(format!("{info:?}"));
+            attribution["target_format"] = serde_json::json!(format!("{:?}", state.target_format));
+            attribution["physical_pixels"] = serde_json::json!([dimensions.0, dimensions.1]);
+            attribution["fixture_state_verified"] = serde_json::json!(true);
+            fs::write(
+                scene_output.join("backdrop-attribution.json"),
+                serde_json::to_string_pretty(&attribution).unwrap(),
+            )
+            .unwrap();
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        assert!(!attribute_backdrop);
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
             "scene_set": selected.name(),
