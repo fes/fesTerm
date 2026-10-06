@@ -187,6 +187,14 @@ This is not a multi-day reproducer, real persistent-shell reconnect, native
 presentation measurement or attribution of WARP worker threads; #297 and
 CP-18 remain open. See the performance validation guide.
 
+For `TERM-01`, presentation cell copies keep common text inline and reuse
+dirty-row/same-dimension viewport backing. Dimension changes retire old row
+capacity; long-to-short replacements release heap text. Unicode, style,
+hyperlinks, width-two continuations, selection, shaping runs and dirty-row
+revision semantics remain unchanged. A CPU-only system-allocator oracle
+measures this copy stage separately from painted-row reuse, native GPU work,
+process residency and frame time.
+
 ## How to use the graph
 
 ### Isolated iOS feasibility host

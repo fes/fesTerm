@@ -995,6 +995,7 @@
         "docs/gui-design.md#terminal-selection",
         "docs/gui-design.md#terminal-context-menu",
         "docs/gui-design.md#explicit-terminal-hyperlinks",
+        "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
         "validation/direct2d/README.md#native-quad-scratch-allocation-control"
       ],
       "decisions": [
@@ -1018,6 +1019,12 @@
         "retained_row_clear_releases_owned_meshes",
         "row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality",
         "row_revisions_share_one_token_per_nonempty_update",
+        "rendered_cache_dirty_rows_reuse_their_owned_cell_backing",
+        "rendered_cache_common_graphemes_and_blanks_have_no_heap_text_payload",
+        "rendered_cache_viewport_refresh_reuses_same_dimension_row_backing",
+        "rendered_cache_dimension_change_retires_exceptional_backing",
+        "rendered_cache_replacing_long_text_does_not_keep_its_heap_buffer",
+        "rendered_cache_preserves_unicode_width_style_color_and_hyperlink_values",
         "retained_rows_keep_shared_revision_batches_bound_to_row_positions",
         "retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear",
         "profile_retained_grid_row_stages",

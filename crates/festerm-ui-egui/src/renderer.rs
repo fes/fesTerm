@@ -735,7 +735,7 @@ pub(crate) fn glyph_runs(
             runs.push(GlyphRun {
                 position,
                 columns,
-                text: cell.text.clone(),
+                text: cell.text.to_string(),
                 foreground,
                 attributes: cell.attributes,
                 selected,
@@ -3223,7 +3223,7 @@ mod tests {
     #[test]
     fn p6_glyph_runs_preserve_terminal_cell_boundaries() {
         let single = |text: &str| RenderedCell {
-            text: text.to_owned(),
+            text: text.into(),
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
@@ -3231,7 +3231,7 @@ mod tests {
             hyperlink: None,
         };
         let wide = RenderedCell {
-            text: "界".to_owned(),
+            text: "界".into(),
             width: CellWidth::Double,
             ..single("")
         };
@@ -4216,7 +4216,7 @@ mod tests {
     #[test]
     fn default_cells_share_the_grid_background_without_individual_paints() {
         let default = RenderedCell {
-            text: String::new(),
+            text: "".into(),
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
