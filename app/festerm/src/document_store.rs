@@ -6,8 +6,8 @@
 //! only way to overwrite somebody else's change is to be shown it first and
 //! decide to.
 //!
-//! Replacement is write-to-temporary-then-rename inside the target's own
-//! directory, with the original's permissions carried over and the bytes
+//! Replacement is write-to-private-temporary-then-rename inside the target's
+//! own directory, with existing access metadata preserved and the bytes
 //! durably flushed before the rename. A write that is interrupted anywhere
 //! along that path leaves the previous file exactly as it was, and never
 //! reports success.
@@ -32,11 +32,22 @@ static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
 thread_local! {
     static AFTER_SAVE_DIRECTORY_CAPTURE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static BEFORE_SAVE_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 fn after_save_directory_capture() {
     #[cfg(test)]
     AFTER_SAVE_DIRECTORY_CAPTURE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+fn before_save_write() {
+    #[cfg(test)]
+    BEFORE_SAVE_WRITE.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -485,22 +496,32 @@ pub fn save(
     };
 
     let mut temporary = TemporaryFile::create(&save_directory.directory)?;
+    before_save_write();
     write_all_durably(temporary.file_mut(), bytes)?;
+    #[cfg(not(windows))]
     if let Some(original) = &original {
-        // Best effort: a filesystem that will not carry permissions over is
-        // not a reason to refuse an otherwise complete save.
-        let _ = save_directory
+        save_directory
             .directory
-            .set_permissions(temporary.name(), original.permissions());
+            .set_permissions(temporary.name(), original.permissions())
+            .map_err(classify_write_error)?;
+        temporary
+            .file_mut()
+            .sync_all()
+            .map_err(classify_write_error)?;
     }
-    let generation =
-        Generation::from_file(temporary.file_mut()).map_err(|_| SaveFailure::Interrupted)?;
+    #[cfg(not(windows))]
     let read_only = temporary
         .file_mut()
         .metadata()
         .map_err(|_| SaveFailure::Interrupted)?
         .permissions()
         .readonly();
+    #[cfg(windows)]
+    let read_only = original
+        .as_ref()
+        .is_some_and(|metadata| metadata.permissions().readonly());
+    let temporary_generation =
+        Generation::from_file(temporary.file_mut()).map_err(|_| SaveFailure::Interrupted)?;
     temporary.close_file();
 
     replace_file(
@@ -508,6 +529,11 @@ pub fn save(
         temporary.name(),
         &save_directory.target,
     )?;
+    let generation = generation_in_directory(&save_directory.directory, &save_directory.target)
+        .map_err(|_| SaveFailure::Interrupted)?;
+    if generation != temporary_generation {
+        return Err(SaveFailure::Interrupted);
+    }
     temporary.persist();
     sync_directory(&save_directory.directory);
 
@@ -516,6 +542,14 @@ pub fn save(
         source_authority: save_directory.source_authority,
         read_only,
     })
+}
+
+fn generation_in_directory(
+    directory: &cap_std::fs::Dir,
+    target: &Path,
+) -> Result<Generation, std::io::Error> {
+    let file = directory.open(target)?.into_std();
+    Generation::from_file(&file)
 }
 
 struct SaveDirectory {
@@ -642,14 +676,38 @@ impl<'a> TemporaryFile<'a> {
     fn create(directory: &'a cap_std::fs::Dir) -> Result<Self, SaveFailure> {
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
             let name = temporary_path();
-            let mut options = cap_std::fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            match directory.open_with(&name, &options) {
+            #[cfg(unix)]
+            let file = {
+                use cap_std::fs::OpenOptionsExt;
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.write(true).create_new(true).mode(0o600);
+                directory
+                    .open_with(&name, &options)
+                    .map(|file| file.into_std())
+            };
+            #[cfg(windows)]
+            let file = directory
+                .try_clone()
+                .map(cap_std::fs::Dir::into_std_file)
+                .and_then(|directory| {
+                    festerm_windows_security::create_current_user_only_file(&directory, &name)
+                });
+            #[cfg(not(any(unix, windows)))]
+            let file = {
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                directory
+                    .open_with(&name, &options)
+                    .map(|file| file.into_std())
+            };
+            match file {
                 Ok(file) => {
+                    #[cfg(windows)]
+                    verify_created_file(directory, &name, &file)?;
                     return Ok(Self {
                         directory,
                         name,
-                        file: Some(file.into_std()),
+                        file: Some(file),
                         persist: false,
                     });
                 }
@@ -676,6 +734,25 @@ impl<'a> TemporaryFile<'a> {
 
     fn persist(&mut self) {
         self.persist = true;
+    }
+}
+
+#[cfg(windows)]
+fn verify_created_file(
+    directory: &cap_std::fs::Dir,
+    name: &Path,
+    created: &std::fs::File,
+) -> Result<(), SaveFailure> {
+    let reopened = directory
+        .open(name)
+        .map_err(classify_write_error)?
+        .into_std();
+    let created = Generation::from_file(created).map_err(|_| SaveFailure::Interrupted)?;
+    let reopened = Generation::from_file(&reopened).map_err(|_| SaveFailure::Interrupted)?;
+    if created == reopened {
+        Ok(())
+    } else {
+        Err(SaveFailure::Interrupted)
     }
 }
 
@@ -709,47 +786,23 @@ fn replace_file(
     temporary: &Path,
     target: &Path,
 ) -> Result<(), SaveFailure> {
-    match directory.rename(temporary, directory, target) {
-        Ok(()) => Ok(()),
-        Err(error) if directory.metadata(target).is_ok() => {
-            let permission = error.kind() == std::io::ErrorKind::PermissionDenied;
-            replace_existing_windows_file(directory, temporary, target, permission)
+    match directory.metadata(target) {
+        Ok(metadata) if !metadata.is_file() => Err(SaveFailure::NotAFile),
+        Ok(_) => {
+            let directory = directory
+                .try_clone()
+                .map(cap_std::fs::Dir::into_std_file)
+                .map_err(classify_write_error)?;
+            festerm_windows_security::replace_file_preserving_security(
+                &directory, temporary, target,
+            )
+            .map_err(classify_write_error)
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => directory
+            .rename(temporary, directory, target)
+            .map_err(classify_write_error),
         Err(error) => Err(classify_write_error(error)),
     }
-}
-
-/// Windows will not rename over an existing file, so the target is moved aside
-/// first and moved back if the replacement fails. The user's file is never the
-/// thing that goes missing.
-#[cfg(windows)]
-fn replace_existing_windows_file(
-    directory: &cap_std::fs::Dir,
-    temporary: &Path,
-    target: &Path,
-    permission: bool,
-) -> Result<(), SaveFailure> {
-    if !directory
-        .metadata(target)
-        .map_err(classify_write_error)?
-        .is_file()
-    {
-        return Err(SaveFailure::NotAFile);
-    }
-    let previous = temporary_path().with_extension("previous");
-    if directory.rename(target, directory, &previous).is_err() {
-        return Err(if permission {
-            SaveFailure::PermissionDenied
-        } else {
-            SaveFailure::Interrupted
-        });
-    }
-    if let Err(error) = directory.rename(temporary, directory, target) {
-        let _ = directory.rename(&previous, directory, target);
-        return Err(classify_write_error(error));
-    }
-    let _ = directory.remove_file(previous);
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -1173,6 +1226,71 @@ mod tests {
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o750);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_temporary_file_is_private_before_content_is_written() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("private-temporary");
+        let path = directory.file("secret.md", "before\n");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let loaded = load(&path, bounds()).unwrap();
+        let observed_directory = directory.path.clone();
+        BEFORE_SAVE_WRITE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let temporary = fs::read_dir(&observed_directory)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                name.starts_with(".festerm-save-") && name.ends_with(".tmp")
+                            })
+                    })
+                    .expect("save temporary file");
+                let metadata = fs::metadata(&temporary).unwrap();
+                assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+                assert_eq!(metadata.len(), 0);
+                assert_eq!(
+                    fs::read_to_string(observed_directory.join("secret.md")).unwrap(),
+                    "before\n"
+                );
+            }));
+        });
+
+        save(
+            &path,
+            b"after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_creates_a_private_new_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("private-save-as");
+        let path = directory.path.join("new.md");
+
+        save(&path, b"private\n", None, None).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "private\n");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[cfg(unix)]

@@ -205,10 +205,17 @@ any stronger attribute a server supplies. A save revalidates the generation
 first; if it changed, the write does not happen and the document enters Conflict
 — including when Auto-save is what triggered the save.
 
-Replacement is write-to-temporary-then-rename in the same directory, with the
-original's permissions and ownership carried over where the platform allows, and
-the data durably flushed before the rename. Where a remote server cannot rename
-over an existing file, the fallback is named explicitly in the design document
+Replacement is write-to-temporary-then-rename in the same directory. The
+temporary is private before it receives bytes: mode `0600` on Unix and a
+protected current-user-only DACL on Windows. Unix writes and flushes while the
+temporary remains private, then applies the existing target's permissions and
+durably flushes that metadata before replacement. Windows uses `ReplaceFileW`
+for an existing target so its attributes and DACL survive; a new Save As target
+keeps the private DACL. Creation and replacement are verified against the
+retained directory capability and exact temporary-file generation, and any
+permission/ACL-preservation failure refuses the save rather than silently
+weakening access. Where a remote server cannot rename over an existing file,
+the fallback is named explicitly in the design document
 and surfaced to the user; fesTerm never truncates the only known-good copy
 before a complete replacement exists unless the user has explicitly accepted
 that server's limitation. An interrupted write never reports `Saved`.
@@ -554,8 +561,11 @@ implementation rather than left contradicting it.
 **Security and privacy.** Writes travel back through the same authenticated SFTP
 origin and trust boundary that opened the file; no new credential path, no new
 network surface, and no document content in logs, diagnostics, or workspace
-metadata. Temporary files inherit the target's directory and permissions so a
-save never briefly exposes private content in a world-readable location.
+metadata. Temporary files are created private before receiving content. Unix permissions
+are restored only after the durable content write; Windows replacement retains
+the destination DACL rather than replacing it with directory-inherited access.
+This prevents an intermediate name from briefly broadening access to private
+content.
 
 **Platform.** Watcher behaviour, atomic replacement, permission and ownership
 preservation, and file-identity reporting differ across macOS, Windows, and

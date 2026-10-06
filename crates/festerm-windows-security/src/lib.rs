@@ -8,20 +8,32 @@ pub mod named_pipe;
 #[cfg(windows)]
 mod imp {
     use std::{
+        ffi::OsString,
+        fs::File,
         io, mem,
-        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        os::windows::{
+            ffi::{OsStrExt, OsStringExt},
+            io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        },
+        path::{Path, PathBuf},
         ptr,
     };
 
     use windows_sys::Win32::{
         Foundation::{
-            CloseHandle, GetLastError, SetHandleInformation, GENERIC_ALL, HANDLE,
-            HANDLE_FLAG_INHERIT,
+            CloseHandle, GetLastError, SetHandleInformation, GENERIC_ALL, GENERIC_READ,
+            GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
         },
         Security::{
             AddAccessAllowedAceEx, EqualSid, GetLengthSid, GetTokenInformation, InitializeAcl,
+            InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
             SetTokenInformation, TokenDefaultDacl, TokenUser, ACL, ACL_REVISION,
-            TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
+            SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT,
+            TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
+        },
+        Storage::FileSystem::{
+            CreateFileW, GetFinalPathNameByHandleW, ReplaceFileW, CREATE_NEW, FILE_ALL_ACCESS,
+            FILE_ATTRIBUTE_NORMAL, FILE_NAME_NORMALIZED, VOLUME_NAME_DOS,
         },
         System::{
             Console::{
@@ -121,6 +133,155 @@ mod imp {
             let _ = unsafe { CloseHandle(token) };
         }
         result
+    }
+
+    /// Creates a new file beneath `directory` with a protected current-user-only
+    /// DACL, before any caller bytes can be written. Because Win32 does not
+    /// accept a directory handle as `CreateFileW`'s root, the caller must
+    /// re-open `name` through its retained directory capability and compare
+    /// file identity before writing.
+    pub fn create_current_user_only_file(directory: &File, name: &Path) -> io::Result<File> {
+        if name.components().count() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the private file name must be one path component",
+            ));
+        }
+        let mut token = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let user = token_information(token.as_raw_handle(), TokenUser)?;
+        let token_user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+        let sid_length = unsafe { GetLengthSid(token_user.User.Sid) };
+        if sid_length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let acl_bytes = mem::size_of::<ACL>()
+            + mem::size_of::<windows_sys::Win32::Security::ACCESS_ALLOWED_ACE>()
+            - mem::size_of::<u32>()
+            + sid_length as usize;
+        let mut acl_storage = vec![0usize; acl_bytes.div_ceil(mem::size_of::<usize>())];
+        let acl = acl_storage.as_mut_ptr().cast::<ACL>();
+        if unsafe { InitializeAcl(acl, acl_bytes as u32, ACL_REVISION) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            AddAccessAllowedAceEx(acl, ACL_REVISION, 0, FILE_ALL_ACCESS, token_user.User.Sid)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut descriptor = SECURITY_DESCRIPTOR::default();
+        if unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe { SetSecurityDescriptorDacl((&raw mut descriptor).cast(), 1, acl, 0) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            SetSecurityDescriptorControl(
+                (&raw mut descriptor).cast(),
+                SE_DACL_PROTECTED,
+                SE_DACL_PROTECTED,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: (&raw mut descriptor).cast(),
+            bInheritHandle: 0,
+        };
+        let path = directory_child_path(directory, name)?;
+        let wide = wide_path(&path);
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                &raw const attributes,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(unsafe { File::from_raw_handle(handle) })
+        }
+    }
+
+    /// Atomically replaces `target` with `replacement`, preserving the target
+    /// file's Windows attributes and ACL. The caller must verify the resulting
+    /// target's identity through its retained directory capability before
+    /// reporting success.
+    pub fn replace_file_preserving_security(
+        directory: &File,
+        replacement: &Path,
+        target: &Path,
+    ) -> io::Result<()> {
+        let replacement = wide_path(&directory_child_path(directory, replacement)?);
+        let target = wide_path(&directory_child_path(directory, target)?);
+        let replaced = unsafe {
+            ReplaceFileW(
+                target.as_ptr(),
+                replacement.as_ptr(),
+                ptr::null(),
+                0,
+                ptr::null(),
+                ptr::null(),
+            )
+        };
+        if replaced == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn directory_child_path(directory: &File, name: &Path) -> io::Result<PathBuf> {
+        if name.components().count() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the file name must be one path component",
+            ));
+        }
+        let handle = directory.as_raw_handle();
+        let required = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                ptr::null_mut(),
+                0,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+            )
+        };
+        if required == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buffer = vec![0u16; required as usize + 1];
+        let written = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+            )
+        };
+        if written == 0 || written as usize >= buffer.len() {
+            return Err(io::Error::last_os_error());
+        }
+        buffer.truncate(written as usize);
+        Ok(PathBuf::from(OsString::from_wide(&buffer)).join(name))
+    }
+
+    fn wide_path(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
     }
 
     fn token_information(token: HANDLE, information_class: i32) -> io::Result<Vec<usize>> {
@@ -233,9 +394,146 @@ mod imp {
             let _ = unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::{
+            fs::{self, OpenOptions},
+            io::Write,
+            os::windows::fs::OpenOptionsExt,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+        use windows_sys::Win32::{
+            Foundation::{LocalFree, ERROR_SUCCESS},
+            Security::{
+                AclSizeInformation,
+                Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+                GetAce, GetAclInformation, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE,
+                ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+            },
+            Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS,
+        };
+
+        struct TemporaryDirectory(PathBuf);
+
+        impl TemporaryDirectory {
+            fn new() -> Self {
+                let nonce = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let path = std::env::temp_dir().join(format!(
+                    "festerm-windows-security-{}-{nonce}",
+                    std::process::id()
+                ));
+                fs::create_dir(&path).unwrap();
+                Self(path)
+            }
+
+            fn handle(&self) -> File {
+                OpenOptions::new()
+                    .read(true)
+                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                    .open(&self.0)
+                    .unwrap()
+            }
+        }
+
+        impl Drop for TemporaryDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        #[test]
+        fn private_creation_and_replacement_keep_the_current_user_only_dacl() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let mut target =
+                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+            target.write_all(b"before").unwrap();
+            target.sync_all().unwrap();
+            assert_current_user_only_dacl(&target);
+            drop(target);
+
+            fs::write(directory.0.join("replacement.tmp"), b"after").unwrap();
+            replace_file_preserving_security(
+                &directory_handle,
+                Path::new("replacement.tmp"),
+                Path::new("target.md"),
+            )
+            .unwrap();
+
+            let target = File::open(directory.0.join("target.md")).unwrap();
+            assert_current_user_only_dacl(&target);
+            assert_eq!(fs::read(directory.0.join("target.md")).unwrap(), b"after");
+        }
+
+        fn assert_current_user_only_dacl(file: &File) {
+            let mut dacl = ptr::null_mut();
+            let mut descriptor = ptr::null_mut();
+            let status = unsafe {
+                GetSecurityInfo(
+                    file.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &raw mut dacl,
+                    ptr::null_mut(),
+                    &raw mut descriptor,
+                )
+            };
+            assert_eq!(status, ERROR_SUCCESS);
+
+            let mut control = 0;
+            let mut revision = 0;
+            assert_ne!(
+                unsafe {
+                    GetSecurityDescriptorControl(descriptor, &raw mut control, &raw mut revision)
+                },
+                0
+            );
+            assert_ne!(control & SE_DACL_PROTECTED, 0);
+
+            let mut information = ACL_SIZE_INFORMATION::default();
+            assert_ne!(
+                unsafe {
+                    GetAclInformation(
+                        dacl,
+                        (&raw mut information).cast(),
+                        mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                        AclSizeInformation,
+                    )
+                },
+                0
+            );
+            assert_eq!(information.AceCount, 1);
+
+            let mut ace = ptr::null_mut();
+            assert_ne!(unsafe { GetAce(dacl, 0, &raw mut ace) }, 0);
+            let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            assert_ne!(
+                unsafe { EqualSid((&raw const ace.SidStart).cast_mut().cast(), user.User.Sid) },
+                0
+            );
+            let _ = unsafe { LocalFree(descriptor) };
+        }
+    }
 }
 
 #[cfg(windows)]
 pub use imp::{
-    disable_std_handle_inheritance, restrict_default_dacl_to_current_user, DefaultDaclGuard,
+    create_current_user_only_file, disable_std_handle_inheritance,
+    replace_file_preserving_security, restrict_default_dacl_to_current_user, DefaultDaclGuard,
 };

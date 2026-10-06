@@ -54,6 +54,17 @@ alias's lexical parent. Component, hard-link parent, root-name and
 reparse-point rebinding cannot retarget a read. Nonblocking Unix opens still
 keep FIFOs from pinning a worker waiting for a writer.
 
+The same review found that save temporaries received bytes before their access
+metadata was secured. Save now creates the intermediate file as Unix `0600` or
+with a protected current-user-only Windows DACL before writing. Unix restores
+the destination mode explicitly after the durable content write; Windows uses
+`ReplaceFileW` so an existing target's DACL and attributes survive, while a new
+target remains private. Both temporary creation and replacement are checked
+back against the retained directory capability and exact file generation.
+Deterministic Unix coverage observes the empty private temporary before the
+write, and native Windows coverage inspects the protected one-ACE DACL before
+and after replacement.
+
 Reservations follow actual worker, decoded-result, texture and CPU-upload
 owners through close/reparse/rebinding; a rotating 128-entry retirement scan
 avoids an unbounded reclamation walk. Permanent failures need an explicit
