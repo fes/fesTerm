@@ -180,6 +180,8 @@ class NativeDebugger:
         self.process_times = bind(
             self.k, "GetProcessTimes", W.BOOL, HANDLE, HANDLE, HANDLE, HANDLE, HANDLE,
         )
+        self.get_environment = bind(self.k, "GetEnvironmentStringsW", HANDLE)
+        self.free_environment = bind(self.k, "FreeEnvironmentStringsW", W.BOOL, HANDLE)
         self.sym_init = bind(self.d, "SymInitializeW", W.BOOL, HANDLE, W.LPCWSTR, W.BOOL)
         self.sym_cleanup = bind(self.d, "SymCleanup", W.BOOL, HANDLE)
         self.stack_walk = bind(
@@ -213,6 +215,31 @@ class NativeDebugger:
         times = [QWORD() for _ in range(4)]
         self.check(self.process_times(handle, *(C.byref(t) for t in times)), "process_times")
         return times[0].value
+
+    def normal_heap_environment(self):
+        # DEBUG_ONLY_THIS_PROCESS otherwise enables Windows' extra heap
+        # validation at startup. Its allocation cost can expire the target's
+        # own wall-clock budgets even with no debugger events during the work.
+        # Preserve the native block (including hidden drive variables), changing
+        # only this debuggee's debugger-default heap policy.
+        original = self.get_environment()
+        self.check(original, "process_environment")
+        entries = []
+        try:
+            offset = 0
+            while True:
+                entry = C.wstring_at(original + offset)
+                if not entry:
+                    break
+                offset += len(entry.encode("utf-16-le", errors="surrogatepass")) + 2
+                if not entry.upper().startswith("_NO_DEBUG_HEAP="):
+                    entries.append(entry)
+        finally:
+            self.free_environment(original)
+        entries.append("_NO_DEBUG_HEAP=1")
+        text = "\0".join(sorted(entries, key=str.upper)) + "\0"
+        units = len(text.encode("utf-16-le", errors="surrogatepass")) // 2
+        return C.create_unicode_buffer(text, units + 1)
 
     def memory(self, address, size):
         buffer = C.create_string_buffer(size)
@@ -465,15 +492,17 @@ class NativeDebugger:
         info.stdin, info.stdout, info.stderr = stdin, stdout, stderr
         process = PROCESS_INFORMATION()
         command = C.create_unicode_buffer(subprocess.list2cmdline([executable, *arguments]))
+        environment = self.normal_heap_environment()
         # DEBUG_ONLY_THIS_PROCESS excludes shells, SSH, daemons and all children
         # from metadata capture. Suspension closes the startup/exit race.
         self.check(
-            self.create(executable, command, None, None, True, 2 | 4, None, cwd,
+            self.create(executable, command, None, None, True, 2 | 4 | 0x400, environment, cwd,
                         C.byref(info), C.byref(process)),
             "debug_process_create",
         )
         self.process, self.pid = process.process, process.pid
         self.record["pid"] = self.pid
+        self.record["debug_heap_policy"] = "disable_debugger_defaults_to_match_bare_execution"
         deadline = time.monotonic() + timeout
         timed_out = False
         initial_breakpoint = True
