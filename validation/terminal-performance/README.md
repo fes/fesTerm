@@ -33,6 +33,36 @@ This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
 
+## Indexed resize-anchor work
+
+C3 in #320 reuses the existing bounded physical-row index to capture logical
+anchors and a transient identity-checked index hint to resolve them before
+resize splits or evicts history. Wrapped offsets use equivalent binary
+row-boundary lookup. The hint is not serialized or retained as a cache;
+stale hints retain the former ID-based fallback, without assuming numeric
+line IDs remain sorted across rollover.
+
+| Deterministic capture/resolution case | Compiled legacy steps | Candidate steps |
+| --- | --- | --- |
+| Tail anchor in 16,384 retained logical lines | 32,769 | 16 |
+| Tail anchor in one 8,192-row wrapped line | 8,194 | 16 |
+
+Test-only counters observe actual visited line/index/boundary checks, not
+elapsed-time proxies. Independent old linear oracles compare empty-row
+affinity, width reflow, splitting, eviction, clear and stale-ID outcomes.
+Forty public height-only resizes with over 8,000 retained lines preserve
+cursor and two selection endpoints within 128 anchor steps each.
+
+```sh
+cargo test --locked -p festerm-core --lib anchor -- --nocapture
+```
+
+These are anchor-stage work reductions. Width reflow and deliberate debug
+history-invariant audits remain linear, and mutation-invalidated hints can
+take the legacy fallback outside the normal resize capture/resolution window.
+No native CPU/input/resize latency, total-memory/fragmentation or #297-cause
+claim follows; TI-04/TI-05 native near-budget behavior remains open.
+
 ## Bounded six-session aging
 
 `scripts/check-windows-session-aging.ps1` runs a separately opt-in, repository-owned

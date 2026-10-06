@@ -575,6 +575,17 @@ workloads.
 
 ### M9 scrollback and reflow verification
 
+`HIST-04` anchor-work regressions count actual lookup steps: capture/resolution
+for 16,384 logical lines and for 8,192 rows of one wrapped line each take
+16 steps, versus compiled legacy controls of 32,769 and 8,194. An independent
+linear oracle cross-checks empty rows, boundary affinity, reflow, tail splitting,
+eviction and clear; identity checks preserve stale-hint and ID-rollover behavior.
+Forty public height-only resizes with over 8,000 history lines preserve cursor
+and selection endpoints within a 128-step per-resize bound. Existing generated
+core models and UI selection/snapshots remain required. Width reflow, deliberate
+debug invariant audits and stale-hint fallback are not claimed constant-time;
+native near-budget resize/input feel remains TI-04/TI-05 evidence.
+
 ADR 0017 is the model oracle. Deterministic core tests must cover hard versus
 soft breaks, full-screen versus margin scrolling, exact byte accounting,
 whole-line eviction, oversize logical lines, clear/reset semantics,
