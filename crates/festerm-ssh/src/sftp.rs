@@ -4,8 +4,10 @@ use std::{
     time::SystemTime,
 };
 
+use crate::sftp_planning::{Budgeted, PlanningQueue, SharedPlanningBudget};
 use crate::sftp_transfer::{
-    SftpDirectoryItem, SftpDirectorySnapshot, SftpLocation, SftpPath, SftpPathMetadata,
+    path_memory_proxy_bytes, SftpDirectoryItem, SftpDirectorySnapshot, SftpLocation, SftpPath,
+    SftpPathMetadata, TransferWorkError,
 };
 use russh_sftp::{
     client::SftpSession as RusshSftpSession,
@@ -376,6 +378,39 @@ struct PartialFile {
     path: SftpPath,
     owned: bool,
     commit_destination: Option<SftpPath>,
+}
+
+struct RemotePlanningDirectory {
+    session: std::sync::Arc<russh_sftp::client::RawSftpSession>,
+    handle: Option<String>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl RemotePlanningDirectory {
+    async fn close(&mut self) -> russh_sftp::client::rawsession::SftpResult<()> {
+        let handle = self
+            .handle
+            .take()
+            .expect("remote planning directory is open");
+        self.session.close(handle).await.map(|_| ())
+    }
+}
+
+impl Drop for RemotePlanningDirectory {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let session = std::sync::Arc::clone(&self.session);
+            self.runtime.spawn(async move {
+                if let Err(error) = session.close(handle).await {
+                    tracing::warn!(
+                        target: "festerm::sftp",
+                        "Cancelled SFTP directory enumeration could not close its handle"
+                    );
+                    eprintln!("fesTerm: SFTP directory close failed: {error}");
+                }
+            });
+        }
+    }
 }
 
 /// Drop guard that keeps a dedicated background thread's `tokio` runtime
@@ -1142,6 +1177,87 @@ impl SftpSession {
         })
     }
 
+    pub(crate) async fn remote_directory_for_planning(
+        &mut self,
+        path: &str,
+        budget: &SharedPlanningBudget,
+    ) -> Result<PlanningQueue<SftpDirectoryItem>, TransferWorkError> {
+        self.ensure_open()?;
+        let session = self.client.raw_session();
+        let handle = session
+            .opendir(path)
+            .await
+            .map_err(|error| remote_error("open directory", path, error))?
+            .handle;
+        let mut directory = RemotePlanningDirectory {
+            session,
+            handle: Some(handle),
+            runtime: tokio::runtime::Handle::current(),
+        };
+        let result = async {
+            let mut entries = PlanningQueue::new(budget);
+            loop {
+                let page = match directory
+                    .session
+                    .readdir(directory.handle.as_deref().expect("directory is open"))
+                    .await
+                {
+                    Ok(page) => page,
+                    Err(russh_sftp::client::error::Error::Status(status))
+                        if status.status_code == russh_sftp::protocol::StatusCode::Eof =>
+                    {
+                        break;
+                    }
+                    Err(error) => return Err(remote_error("read directory", path, error).into()),
+                };
+                let page_bytes = page.files.iter().fold(
+                    page.files
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<russh_sftp::protocol::File>()),
+                    |bytes, file| {
+                        bytes
+                            .saturating_add(file.filename.capacity())
+                            .saturating_add(file.longname.capacity())
+                            .saturating_add(file.attrs.user.as_ref().map_or(0, String::capacity))
+                            .saturating_add(file.attrs.group.as_ref().map_or(0, String::capacity))
+                    },
+                );
+                let _page_reservation = budget.reserve(0, page_bytes)?;
+                for file in page.files {
+                    if matches!(file.filename.as_str(), "." | "..") {
+                        continue;
+                    }
+                    let path_bytes = path
+                        .len()
+                        .saturating_add(file.filename.len())
+                        .saturating_add(1)
+                        .saturating_mul(2);
+                    let mut reservation = budget.entry(file.filename.capacity(), path_bytes)?;
+                    let item_path = join_remote_path(path, &file.filename);
+                    let item = remote_directory_item(file.filename, item_path, file.attrs);
+                    let actual_path_bytes = path_memory_proxy_bytes(&item.path);
+                    if actual_path_bytes > path_bytes {
+                        reservation.grow(0, actual_path_bytes - path_bytes)?;
+                    }
+                    entries.push_back(Budgeted {
+                        value: item,
+                        reservation,
+                    })?;
+                }
+            }
+            entries.sort_by_name();
+            Ok(entries)
+        }
+        .await;
+        match directory.close().await {
+            Ok(()) => result,
+            Err(close_error) => Err(TransferWorkError::DirectoryCloseFailed {
+                operation_error: result.err().map(Box::new),
+                close_error: remote_error("close directory", path, close_error),
+            }),
+        }
+    }
+
     pub(crate) async fn create_remote_directory_exact(
         &mut self,
         path: &str,
@@ -1759,9 +1875,7 @@ pub(crate) async fn read_local_path_metadata(
     }
 }
 
-pub(crate) async fn read_local_directory_snapshot(
-    path: &Path,
-) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+async fn open_local_directory(path: &Path) -> Result<(PathBuf, fs::ReadDir), SftpSessionError> {
     let canonical = fs::canonicalize(path).await.map_err(|error| {
         SftpSessionError::LocalDirectoryUnavailable {
             path: display_path(path),
@@ -1780,9 +1894,16 @@ pub(crate) async fn read_local_directory_snapshot(
         });
     }
 
-    let mut directory = fs::read_dir(&canonical)
+    let directory = fs::read_dir(&canonical)
         .await
         .map_err(|error| local_error("list directory", &canonical, error))?;
+    Ok((canonical, directory))
+}
+
+pub(crate) async fn read_local_directory_snapshot(
+    path: &Path,
+) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+    let (canonical, mut directory) = open_local_directory(path).await?;
     let mut entries = Vec::new();
     while let Some(entry) = directory
         .next_entry()
@@ -1802,6 +1923,32 @@ pub(crate) async fn read_local_directory_snapshot(
     }
 
     Ok(finish_local_snapshot(canonical, entries))
+}
+
+pub(crate) async fn read_local_directory_for_planning(
+    path: &Path,
+    budget: &SharedPlanningBudget,
+) -> Result<PlanningQueue<SftpDirectoryItem>, TransferWorkError> {
+    let (_canonical, mut directory) = open_local_directory(path).await?;
+    let mut entries = PlanningQueue::new(budget);
+    while let Some(entry) = directory
+        .next_entry()
+        .await
+        .map_err(|error| local_error("list directory", path, error))?
+    {
+        let entry_path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let reservation = budget.entry(name.capacity(), entry_path.capacity())?;
+        let metadata = fs::symlink_metadata(&entry_path)
+            .await
+            .map_err(|error| local_error("inspect path", &entry_path, error))?;
+        entries.push_back(Budgeted {
+            value: local_directory_item(name, &entry_path, &metadata, LocalSizePolicy::AllEntries),
+            reservation,
+        })?;
+    }
+    entries.sort_by_name();
+    Ok(entries)
 }
 
 /// Synchronous counterpart to [`read_local_directory_snapshot`] for callers
@@ -1944,10 +2091,277 @@ mod tests {
     use super::*;
     use std::{
         fs as stdfs,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            Arc,
+        },
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct PagedDirectoryServer {
+        pages: usize,
+        entries_per_page: usize,
+        reads: Arc<AtomicUsize>,
+        closes: Arc<AtomicUsize>,
+        fail_close: bool,
+        blocked_read: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+        close_notification: Arc<tokio::sync::Notify>,
+    }
+
+    impl russh_sftp::server::Handler for PagedDirectoryServer {
+        type Error = russh_sftp::protocol::StatusCode;
+
+        fn unimplemented(&self) -> Self::Error {
+            Self::Error::OpUnsupported
+        }
+
+        async fn opendir(
+            &mut self,
+            id: u32,
+            _path: String,
+        ) -> Result<russh_sftp::protocol::Handle, Self::Error> {
+            Ok(russh_sftp::protocol::Handle {
+                id,
+                handle: "owned-directory".to_owned(),
+            })
+        }
+
+        async fn readdir(
+            &mut self,
+            id: u32,
+            _handle: String,
+        ) -> Result<russh_sftp::protocol::Name, Self::Error> {
+            let page = self.reads.fetch_add(1, Ordering::AcqRel);
+            if let Some((started, release)) = self.blocked_read.take() {
+                started.notify_one();
+                release.notified().await;
+            }
+            if page >= self.pages {
+                return Err(Self::Error::Eof);
+            }
+            Ok(russh_sftp::protocol::Name {
+                id,
+                files: (0..self.entries_per_page)
+                    .rev()
+                    .map(|index| {
+                        russh_sftp::protocol::File::dummy(format!("page-{page}-{index}.txt"))
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn close(
+            &mut self,
+            id: u32,
+            _handle: String,
+        ) -> Result<russh_sftp::protocol::Status, Self::Error> {
+            self.closes.fetch_add(1, Ordering::AcqRel);
+            self.close_notification.notify_one();
+            if self.fail_close {
+                return Err(Self::Error::Failure);
+            }
+            Ok(russh_sftp::protocol::Status {
+                id,
+                status_code: Self::Error::Ok,
+                error_message: String::new(),
+                language_tag: String::new(),
+            })
+        }
+    }
+
+    async fn directory_session(
+        handler: PagedDirectoryServer,
+    ) -> (SftpSession, tokio::task::JoinHandle<()>) {
+        let (client, server) = tokio::io::duplex(16_384);
+        let server = tokio::spawn(russh_sftp::server::run(server, handler));
+        let client = RusshSftpSession::new(client).await.unwrap();
+        (
+            SftpSession {
+                client,
+                remote_working_directory: "/".to_owned(),
+                local_working_directory: PathBuf::from("."),
+                closed: false,
+                partial_file: None,
+                runtime_keepalive: None,
+            },
+            server,
+        )
+    }
+
+    fn planning_budget(items: usize, bytes: usize) -> SharedPlanningBudget {
+        SharedPlanningBudget::new(crate::sftp_transfer::TransferPlanningLimits {
+            max_items: items,
+            max_memory_proxy_bytes: bytes,
+        })
+    }
+
+    fn paged_server(
+        pages: usize,
+        entries_per_page: usize,
+    ) -> (PagedDirectoryServer, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let closes = Arc::new(AtomicUsize::new(0));
+        (
+            PagedDirectoryServer {
+                pages,
+                entries_per_page,
+                reads: Arc::clone(&reads),
+                closes: Arc::clone(&closes),
+                fail_close: false,
+                blocked_read: None,
+                close_notification: Arc::new(tokio::sync::Notify::new()),
+            },
+            reads,
+            closes,
+        )
+    }
+
+    #[test]
+    fn remote_planning_refuses_before_another_page_and_closes_the_directory() {
+        test_runtime().block_on(async {
+            for (items, bytes) in [(2, 1024 * 1024), (100, 1)] {
+                let budget = planning_budget(items, bytes);
+                let (handler, reads, closes) = paged_server(10, 3);
+                let (mut session, server) = directory_session(handler).await;
+                assert!(matches!(
+                    session
+                        .remote_directory_for_planning("/source", &budget)
+                        .await,
+                    Err(TransferWorkError::PlanningLimitExceeded { .. })
+                ));
+                assert_eq!(reads.load(Ordering::Acquire), 1);
+                assert_eq!(closes.load(Ordering::Acquire), 1);
+                assert_eq!(budget.usage(), (0, 0));
+                session.close().await.unwrap();
+                server.abort();
+            }
+        });
+    }
+
+    #[test]
+    fn remote_planning_returns_sorted_budgeted_rows_without_recollecting_pages() {
+        test_runtime().block_on(async {
+            let budget = planning_budget(6, 1024 * 1024);
+            let (handler, reads, closes) = paged_server(3, 2);
+            let (mut session, server) = directory_session(handler).await;
+            let mut entries = session
+                .remote_directory_for_planning("/source", &budget)
+                .await
+                .unwrap();
+            assert_eq!(reads.load(Ordering::Acquire), 4);
+            assert_eq!(closes.load(Ordering::Acquire), 1);
+            assert_eq!(budget.usage().0, 6);
+            for page in 0..3 {
+                for index in 0..2 {
+                    let entry = entries.pop_front().unwrap();
+                    assert_eq!(entry.value.name, format!("page-{page}-{index}.txt"));
+                    assert_eq!(
+                        entry.value.path,
+                        SftpPath::remote(format!("/source/page-{page}-{index}.txt"))
+                    );
+                    drop(entry);
+                }
+            }
+            drop(entries);
+            assert_eq!(budget.usage(), (0, 0));
+            session.close().await.unwrap();
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn remote_planning_reports_close_failure_without_losing_the_planning_error() {
+        test_runtime().block_on(async {
+            let budget = planning_budget(1, 1024 * 1024);
+            let (mut handler, _reads, closes) = paged_server(2, 3);
+            handler.fail_close = true;
+            let (mut session, server) = directory_session(handler).await;
+            let error = match session
+                .remote_directory_for_planning("/source", &budget)
+                .await
+            {
+                Ok(_) => panic!("planning and directory close must fail"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("items limit"));
+            assert!(error.to_string().contains("remote directory close failed"));
+            assert_eq!(closes.load(Ordering::Acquire), 1);
+            assert_eq!(budget.usage(), (0, 0));
+            session.close().await.unwrap();
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn canceled_remote_planning_closes_its_open_handle_without_closing_the_session() {
+        test_runtime().block_on(async {
+            let budget = planning_budget(10, 1024 * 1024);
+            let (mut handler, _reads, closes) = paged_server(1, 1);
+            let started = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            handler.blocked_read = Some((Arc::clone(&started), Arc::clone(&release)));
+            let closed = Arc::clone(&handler.close_notification);
+            let (mut session, server) = directory_session(handler).await;
+            let mut enumeration =
+                Box::pin(session.remote_directory_for_planning("/source", &budget));
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                tokio::select! {
+                    _ = started.notified() => {}
+                    _ = &mut enumeration => panic!("enumeration must wait for the controlled read"),
+                }
+            })
+            .await
+            .unwrap();
+            drop(enumeration);
+            release.notify_one();
+            tokio::time::timeout(std::time::Duration::from_secs(2), closed.notified())
+                .await
+                .unwrap();
+            assert_eq!(closes.load(Ordering::Acquire), 1);
+            assert_eq!(budget.usage(), (0, 0));
+            let entries = session
+                .remote_directory_for_planning("/another-directory", &budget)
+                .await
+                .unwrap();
+            drop(entries);
+            assert_eq!(closes.load(Ordering::Acquire), 2);
+            session.close().await.unwrap();
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn local_planning_refuses_oversized_enumeration_and_returns_sorted_rows() {
+        let root = unique_test_directory("bounded-planning-enumeration");
+        create_directory(&root);
+        for index in (0..5).rev() {
+            stdfs::write(root.join(format!("row-{index}.txt")), b"row").unwrap();
+        }
+        test_runtime().block_on(async {
+            for (items, bytes) in [(2, 1024 * 1024), (100, 1)] {
+                let budget = planning_budget(items, bytes);
+                assert!(matches!(
+                    read_local_directory_for_planning(&root, &budget).await,
+                    Err(TransferWorkError::PlanningLimitExceeded { .. })
+                ));
+                assert_eq!(budget.usage(), (0, 0));
+            }
+            let budget = planning_budget(5, 1024 * 1024);
+            let mut entries = read_local_directory_for_planning(&root, &budget)
+                .await
+                .unwrap();
+            for index in 0..5 {
+                assert_eq!(
+                    entries.pop_front().unwrap().value.name,
+                    format!("row-{index}.txt")
+                );
+            }
+            drop(entries);
+            assert_eq!(budget.usage(), (0, 0));
+        });
+        stdfs::remove_dir_all(root).unwrap();
+    }
 
     struct EmptySftpServer;
 
