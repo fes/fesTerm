@@ -170,6 +170,11 @@ production and controlled-test seam while remaining the single logical
 terminal writer. The first M9 slice now retains bounded logical primary-screen
 history with content-free accounting and explicit alternate-screen isolation,
 following [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md).
+Resize anchors reuse history's existing physical-row index and carry a
+transient, identity-checked line-index hint through capture and resolution.
+Wrapped cell offsets use binary row-boundary lookup. There is no new
+persistent cache or recovery field; stale hints retain ID-based fallback,
+and width reflow still processes logical content.
 The UI now projects retained physical rows through a borrowed snapshot and
 stores follow/anchor state in each session-owned `TerminalView`, without
 changing PTY grid dimensions or workspace persistence. Selection across

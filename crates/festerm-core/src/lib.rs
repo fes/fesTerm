@@ -2567,6 +2567,52 @@ mod tests {
     }
 
     #[test]
+    fn height_only_resize_preserves_large_history_cursor_and_selection_with_bounded_anchor_work() {
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(&b"abcd\r\n".repeat(8_192));
+        let stats = terminal.scrollback_stats();
+        assert!(stats.logical_lines() > 8_000);
+        let positions = [
+            ContentPosition {
+                column: 2,
+                absolute_row: stats.content_row_origin(),
+            },
+            ContentPosition {
+                column: 4,
+                absolute_row: stats.screen_row_origin() - 1,
+            },
+        ];
+        let cursor_row = stats.screen_row_origin() + terminal.cursor().row() as u64;
+        let cursor_column = terminal.cursor().column();
+        for rows in [2, 7, 3, 6, 4].into_iter().cycle().take(40) {
+            crate::history::ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(0));
+            let mapped = terminal
+                .resize_with_content_positions(Dimensions::new(8, rows).unwrap(), &positions)
+                .unwrap();
+            let work = crate::history::ANCHOR_LOOKUP_STEPS.with(std::cell::Cell::get);
+            assert_eq!(mapped, positions.map(Some));
+            assert_eq!(terminal.cursor().column(), cursor_column);
+            assert_eq!(
+                terminal.scrollback_stats().screen_row_origin() + terminal.cursor().row() as u64,
+                cursor_row
+            );
+            assert!(
+                work <= 128,
+                "height-only resize used {work} anchor lookup steps"
+            );
+            assert_eq!(
+                terminal
+                    .scrollback_physical_row(0)
+                    .unwrap()
+                    .iter()
+                    .map(|cell| cell.character())
+                    .collect::<String>(),
+                "abcd"
+            );
+        }
+    }
+
+    #[test]
     fn resize_does_not_alias_blank_trailing_rows_to_real_content() {
         let mut terminal = terminal(4, 4);
         terminal.ingest(b"abc");

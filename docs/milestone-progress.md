@@ -385,6 +385,28 @@ Accepted ADR 0045 records the ordering amendment to accepted ADR 0043. The
 saved work is atlas copying, not a promise about total heap/RSS,
 frame-time/native CPU, GPU retirement or #297's cause; CP-18 remains open.
 
+## Reusing the history index for resize anchors
+
+C3 in #320 found that height-only resize avoided cloning and reflowing
+history but still walked every logical line to capture and resolve each
+cursor or selection anchor. Wrapped offsets separately searched all row ends.
+Compiled old-algorithm controls recorded 32,769 steps for a tail anchor in
+16,384 lines and 8,194 for one line with 8,192 wrapped rows.
+
+Anchor capture now reuses the existing row-origin binary index. A temporary
+line-index hint is checked against stable identity during resolution before
+resize splits or evicts content; invalid hints keep the former ID-based
+fallback. Binary row-boundary lookup retains end affinity, including repeated
+boundaries from empty rows. Both controls now take 16 steps. Independent linear
+oracles check layout mutations and ID rollover, while forty public height-only
+resizes preserve cursor/selection positions against more than 8,000 lines.
+
+No persistent map, history budget or recovery field was added. Width reflow
+still walks logical content, debug invariant auditing remains intentional,
+and stale-hint fallback can still be linear outside the resize fast path.
+These are lookup-work results, not whole-process memory, fragmentation,
+native latency or #297-causality evidence; native TI-04/TI-05 remain open.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged
