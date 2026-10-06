@@ -934,6 +934,14 @@ idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
 mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
 unchanged; no new latency budgets are implied.
 
+The #350 picker diagnostic separates CPU preparation/submission, completion
+waiting and readback on the same actual renderer, with submitted geometry and
+temporary payload counts. Exact settled-frame comparison against the original
+renderer and two small scale/readback-layout regressions are automated.
+An explicit eight-scene picker subset leaves omitted variants unmeasured.
+These diagnostics do not automate CP-16/CP-17 input, presentation, mixed-DPI,
+native responsiveness or accessibility acceptance.
+
 `TYPE-01`/`TERM-01` glyph-layout retirement has automated survivor, hot-set
 churn, bounded slot, forced-collision, owner-drop and reset checks, alongside
 existing both-platform rendering baselines. The 4,096-entry limit is unchanged;

@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Separating picker rendering from readback
+
+The full WARP replay found sub-millisecond picker construction alongside a
+roughly 0.4-1.6-second combined draw/wait/readback bucket. #350 deliberately
+did not blame shadows, fills or blending from that combined measurement.
+The replay now keeps CPU tessellation, callback preparation/encoding,
+submission, draw wait, readback setup/wait and image-copy samples separate,
+with submitted geometry and temporary payload counts. Exact pixels are
+checked against the original renderer on the same settled frame.
+
+A strict small/error picker subset makes bounded follow-up runs possible
+without dropping the complete default matrix. Reports state the selected
+set; the narrower run cannot qualify omitted variants or native presentation.
+The addition is diagnostic, not a production rendering optimization or a
+claimed cause of multi-day growth.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory

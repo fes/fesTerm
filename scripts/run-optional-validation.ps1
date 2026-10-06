@@ -300,7 +300,8 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test --release -p festerm --bin festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'WARP UI surface replay failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=pass"
+            $sceneSet = if ($env:FESTERM_WARP_UI_SCENES) { $env:FESTERM_WARP_UI_SCENES } else { 'all' }
+            Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=pass scene_set=$sceneSet"
         } catch {
             Write-Warning $_
             Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=fail"

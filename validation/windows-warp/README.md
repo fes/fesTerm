@@ -195,6 +195,41 @@ exact percentile rule. That draw bucket includes renderer tessellation,
 submission, synchronization and CPU image readback. **It is not native
 input-to-display, OS presentation latency or actual idle scheduling.**
 
+Expanded scenes additionally retain five ordered `steady_draw_buckets`
+samples: CPU tessellation, callback preparation/encoding/target creation,
+submission, draw completion wait, readback preparation/submission, readback
+wait and CPU image copying. Each sample records submitted mesh/vertex/index/
+callback counts and the temporary framebuffer, padded readback and image byte
+payloads. Actual textureless-panel paint calls are counted when that production
+pipeline is installed; `null` means no eligible installed panel pipeline,
+not zero-cost rendering. These are not total allocator traffic, actual rasterized pixels,
+driver allocations or GPU timestamps. Completion waits can include driver
+work; they do not isolate GPU execution from scheduling.
+
+The instrumented rendering path uses the same renderer, texture format,
+transparent clear, callback order and readback layout as the original probe.
+Every expanded scene compares all pixels with an original-renderer draw of
+the identical settled frame before measuring, and preserves equality on each
+sample. Two small normal-CI scale cases also cover translucent geometry,
+glyphs and non-aligned readback rows, without new stored snapshot baselines.
+This instrumentation attributes the combined #350 bucket; it changes no
+production picker rendering and makes no efficiency claim by itself.
+
+`FESTERM_WARP_UI_SCENES=picker-controls` selects only the small-ready/error
+Open File and Save As fixtures at both widths (eight scenes). Unset or `all`
+retains all four original controls and 52 expanded variants. Empty, unknown,
+composite and non-UTF-8 selections fail before creating output. Reports and
+the Windows optional-suite receipt name the selected scene set; omitted
+variants remain unmeasured. For a bounded diagnostic:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_WARP_UI_SCENES = 'picker-controls'
+$env:FESTERM_WARP_UI_OUT = 'C:\evidence\picker-buckets-attempt-01'
+$env:WGPU_BACKEND = 'dx12'
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+```
+
 Cold-process start is explicitly `null/not measured`: a fresh context in an
 already-running test process is not a cold application. Package/revision,
 dirty-source state, test-binary SHA256, OS/architecture, process ID, fixture

@@ -33,6 +33,8 @@
 //! A changed UI here simply produces a changed PNG; the test never fails
 //! because of it.
 
+mod warp_profile;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -1327,6 +1329,9 @@ fn replay_warp_ui_surfaces() {
         Ok("1"),
         "set FESTERM_RUN_OPTIONAL_VALIDATION=1",
     );
+    let selected =
+        warp_profile::SceneSet::parse(std::env::var_os("FESTERM_WARP_UI_SCENES").as_deref())
+            .expect("valid WARP scene selection");
     let output =
         PathBuf::from(std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"));
     assert!(
@@ -1335,7 +1340,10 @@ fn replay_warp_ui_surfaces() {
     );
     fs::create_dir_all(&output).expect("create replay output directory");
     let provenance = surface_probe_provenance();
-    for surface in ["launcher", "settings", "profiles", "terminal"] {
+    for surface in ["launcher", "settings", "profiles", "terminal"]
+        .into_iter()
+        .filter(|_| selected == warp_profile::SceneSet::All)
+    {
         let scene_output = output.join(surface);
         fs::create_dir(&scene_output).unwrap();
         fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
@@ -1467,6 +1475,7 @@ fn replay_warp_ui_surfaces() {
         }
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
+            "scene_set": selected.name(),
             "scene": surface, "viewport_points": [1774, 1075],
             "physical_pixels": [3548, 2150], "pixels_per_point": 2,
             "adapter": format!("{info:?}"), "provenance": provenance,
@@ -1493,7 +1502,10 @@ fn replay_warp_ui_surfaces() {
         fs::write(scene_output.join("status.json"), r#"{"status":"complete"}"#).unwrap();
         eprintln!("{report}");
     }
-    for scene in bounded_surface_scenes() {
+    for scene in bounded_surface_scenes()
+        .into_iter()
+        .filter(|scene| selected.includes(scene.kind))
+    {
         let scene_output = output.join(scene.id);
         fs::create_dir(&scene_output).unwrap();
         fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
@@ -1582,19 +1594,26 @@ fn replay_warp_ui_surfaces() {
             );
             tessellation_times.push(started.elapsed().as_secs_f64() * 1000.0);
         }
+        let expected = renderer
+            .render(&probe.context, &frame)
+            .expect("unchanged-frame profiled-render pixel reference");
+        let (profiled, _) = warp_profile::render(&state, &probe.context, &frame);
+        assert_eq!(profiled, expected, "{} profiled renderer pixels", scene.id);
         let mut draw_times = Vec::new();
+        let mut draw_buckets = Vec::new();
         for _ in 0..5 {
-            let started = Instant::now();
-            renderer
-                .render(&probe.context, &frame)
-                .expect("completed drawing, synchronization and readback");
-            draw_times.push(started.elapsed().as_secs_f64() * 1000.0);
+            let (image, sample) = warp_profile::render(&state, &probe.context, &frame);
+            assert_eq!(image, expected, "{} measured render pixels", scene.id);
+            draw_times.push(sample.total_ms);
+            draw_buckets.push(sample);
         }
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
+            "scene_set": selected.name(),
             "scene": scene.id, "viewport_points": [scene.size().x, scene.size().y],
             "physical_pixels": [dimensions.0, dimensions.1], "pixels_per_point": 2,
             "adapter": format!("{info:?}"), "provenance": provenance,
+            "target_format": format!("{:?}", state.target_format),
             "renderer_initialization_ms": renderer_initialization_ms,
             "fixture_state_verified": true,
             "preparation_ms": probe.preparation_ms, "readiness_ms": probe.readiness_ms,
@@ -1605,6 +1624,9 @@ fn replay_warp_ui_surfaces() {
             "steady_ui": crate::surface_performance::timing_distribution(&ui_times),
             "steady_tessellation": crate::surface_performance::timing_distribution(&tessellation_times),
             "steady_completed_draw_readback": crate::surface_performance::timing_distribution(&draw_times),
+            "steady_draw_buckets": draw_buckets,
+            "profiled_renderer_pixels_equal": true,
+            "draw_bucket_scope": "CPU tessellation; callback preparation/encoding/target creation; queue submit; device completion wait; readback preparation/submit; readback wait; CPU image copy. Wait is not a GPU timestamp. Work counts describe submitted geometry and temporary target/readback/image payloads, not total GPU allocations or actual rasterized pixels. Panel paints count actual calls only for the installed production pipeline; null means no eligible installed pipeline.",
             "ui_scope": "raw production Dark Context::run_ui, AccessKit enabled; excludes query-tree updates and texture uploads",
             "preparation_scope": "owned synthetic fixture creation and actual model construction; readiness separately includes interaction frames and actual picker worker completion",
             "draw_scope": "completed drawing, tessellation, submission, synchronization and CPU readback; NOT native input-to-display or presentation latency",
