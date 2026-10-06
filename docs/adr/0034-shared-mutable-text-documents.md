@@ -78,7 +78,7 @@ ADR 0032 already threads through every window, keyed by a canonical
   against the local filesystem, preserving ADR 0030's rule that a remote path
   never becomes a local one.
 
-A file atomically replaced at the same path keeps its `DocumentId` — identity
+A file replaced at the same path keeps its `DocumentId` — identity
 follows the path the user opened, and the replacement is a *content* event
 handled by §6, not a new document.
 
@@ -128,7 +128,7 @@ terminal.
   name field — so one control covers both origins and neither is privileged. An
   existing target is stated in words before the fact ("A file with this name
   already exists here. Saving will replace it.") and still requires the explicit
-  Save press; the replacement itself is generation-validated and atomic (§5).
+  Save press; publication is generation-validated and no-overwrite (§5).
   On success the view follows the new document identity, and the original
   document remains open only if another view still holds it. If the chosen
   destination is already open, the view binds to that **existing** document
@@ -197,7 +197,7 @@ already has well-defined per-view state. This keeps "view" as the single unit of
 presentation state rather than introducing a half-view that sometimes owns two
 of everything.
 
-### 5. Writes are generation-validated and replace atomically
+### 5. Writes are generation-validated and publish without overwrite
 
 Every load and successful save records a **generation**: the strongest reliable
 combination of identity, modification time, and size the origin reports, plus
@@ -250,6 +250,11 @@ explicitly in the design document
 and surfaced to the user; fesTerm never truncates the only known-good copy
 before a complete replacement exists unless the user has explicitly accepted
 that server's limitation. An interrupted write never reports `Saved`.
+
+Volumes that cannot enforce private staging or capability-relative
+no-overwrite moves are refused with a dedicated, non-retryable filesystem
+explanation. fesTerm does not silently weaken confidentiality or publication
+semantics for FAT/exFAT and unsupported network/FUSE filesystems.
 
 fesTerm tags its own completed save generation so the watcher event it causes is
 recognized and ignored: no reload, no duplicate undo entry, no caret jump, no

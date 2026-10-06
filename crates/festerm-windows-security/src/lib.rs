@@ -83,6 +83,12 @@ mod imp {
         attributes: u32,
     }
 
+    const FILE_ATTRIBUTE_VALID_SET_FLAGS: u32 = 0x0000_31A7;
+
+    fn settable_file_attributes(attributes: u32) -> u32 {
+        attributes & FILE_ATTRIBUTE_VALID_SET_FLAGS
+    }
+
     /// Snapshots owner, group, DACL, and file attributes through an open handle.
     pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
         const INFORMATION: u32 =
@@ -122,7 +128,7 @@ mod imp {
         }
         Ok(SecurityMetadata {
             descriptor,
-            attributes: information.dwFileAttributes,
+            attributes: settable_file_attributes(information.dwFileAttributes),
         })
     }
 
@@ -846,6 +852,15 @@ mod imp {
             fn drop(&mut self) {
                 let _ = fs::remove_dir_all(&self.0);
             }
+        }
+
+        #[test]
+        fn security_snapshot_keeps_only_settable_file_attributes() {
+            assert_eq!(
+                settable_file_attributes(u32::MAX),
+                FILE_ATTRIBUTE_VALID_SET_FLAGS
+            );
+            assert_eq!(settable_file_attributes(0x0000_0E10), 0);
         }
 
         #[test]

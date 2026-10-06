@@ -106,7 +106,8 @@ The editor never resolves a divergence silently.
   replaced only after access metadata is secured. Unix clears inherited ACLs
   and verifies `0700` staging/`0600` files before writing, then restores target
   owner/group/mode/ACL metadata through verified handles without copying the
-  previous modification time. Linux rewrites user xattrs/POSIX ACLs while
+  previous modification time. macOS copies the target's full ACL and xattr
+  sets. Linux rewrites user xattrs/POSIX ACLs while
   requiring kernel security labels to match in place. Windows applies and
   verifies the target owner/group/DACL/attributes on the prepared file before
   publication; inability to do so refuses before mutation. A new destination remains owner-only. Prepared files remain
@@ -127,6 +128,9 @@ The editor never resolves a divergence silently.
   into a false failure.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
+- A volume without private staging or no-overwrite publication support is
+  **unsupported for safe saving**. The error directs Save As to a different
+  local disk rather than suggesting a retry that cannot succeed.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit
   is refused whole, not applied without undo or retained as an oversized
   exception. Text, revision, saved/dirty state, undo and redo are unchanged.
@@ -366,9 +370,9 @@ the ordinary Save As sheet on the first write. No new shortcut is claimed:
 `Cmd`+`N` remains Start Local Shell and `Cmd`+`Shift`+`N` remains New Window.
 
 **Open File…** in More actions, or `Cmd`/`Ctrl`+`O`, browses the local
-filesystem. A Markdown file opens in the Markdown viewer, whose **Edit**
-action is one press away; every other text file opens straight in the editor,
-because the viewer would only show it back as its own source. The picker lists
+filesystem. A saved local Markdown file opens in the editor with **Preview**
+selected; every other text file opens straight in the editor's source view. The
+picker lists
 every file. An extension cannot tell a `Makefile`, a `.service` or a `.hpp`
 from a `.png`, and hiding a file because of its name makes it unopenable
 rather than merely unrecognised. What keeps that honest is the bounds check:

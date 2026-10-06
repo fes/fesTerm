@@ -312,6 +312,7 @@ pub enum SaveFailure {
     Interrupted,
     RecoveryRequired,
     MetadataPreservation,
+    UnsupportedFilesystem,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -332,6 +333,7 @@ impl SaveFailure {
             Self::Interrupted => "Saving did not complete",
             Self::RecoveryRequired => "Saving needs manual recovery",
             Self::MetadataPreservation => "This file's access cannot be preserved",
+            Self::UnsupportedFilesystem => "This disk cannot support safe saving",
         }
     }
 
@@ -354,6 +356,9 @@ impl SaveFailure {
             }
             Self::MetadataPreservation => {
                 "The file's owner, group, ACL, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a file you own."
+            }
+            Self::UnsupportedFilesystem => {
+                "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk."
             }
         }
     }
@@ -547,6 +552,8 @@ pub fn save(
     }
 
     let original = open_original_file(&save_directory.directory, &save_directory.target)?;
+    #[cfg(windows)]
+    let mut original = original;
     if let (Some(expected), Some(original)) = (expected, original.as_ref()) {
         if original.generation != expected {
             return Err(SaveFailure::Conflict(original.generation));
@@ -594,15 +601,19 @@ pub fn save(
         security_metadata.as_ref(),
     )?;
     #[cfg(windows)]
-    let generation = publish_temporary(
-        &save_directory.directory,
-        &mut temporary,
-        &save_directory.target,
-        original.as_ref().map(|original| original.generation),
-        temporary_generation,
-        original.as_ref().map(|original| &original.file),
-        security_metadata.as_ref(),
-    )?;
+    let generation = {
+        let original_generation = original.as_ref().map(|original| original.generation);
+        let original_file = original.take().map(|original| original.file);
+        publish_temporary(
+            &save_directory.directory,
+            &mut temporary,
+            &save_directory.target,
+            original_generation,
+            temporary_generation,
+            original_file,
+            security_metadata.as_ref(),
+        )?
+    };
     sync_directory(&save_directory.directory);
 
     Ok(SavedDocument {
@@ -759,6 +770,7 @@ fn classify_read_error(error: std::io::Error) -> LoadFailure {
 fn classify_write_error(error: std::io::Error) -> SaveFailure {
     match error.kind() {
         std::io::ErrorKind::PermissionDenied => SaveFailure::PermissionDenied,
+        std::io::ErrorKind::Unsupported => SaveFailure::UnsupportedFilesystem,
         _ => SaveFailure::Interrupted,
     }
 }
@@ -766,6 +778,13 @@ fn classify_write_error(error: std::io::Error) -> SaveFailure {
 fn classify_metadata_error(error: std::io::Error) -> SaveFailure {
     if error.kind() == std::io::ErrorKind::PermissionDenied {
         SaveFailure::MetadataPreservation
+    } else if matches!(
+        error.kind(),
+        std::io::ErrorKind::Unsupported
+            | std::io::ErrorKind::InvalidInput
+            | std::io::ErrorKind::InvalidData
+    ) {
+        SaveFailure::UnsupportedFilesystem
     } else {
         classify_write_error(error)
     }
@@ -1197,6 +1216,9 @@ fn publish_temporary(
     if let Err(error) =
         rename_noreplace(&temporary.staging, Path::new("payload"), directory, target)
     {
+        if rename_noreplace(&temporary.staging, Path::new("original"), directory, target).is_ok() {
+            return Err(classify_write_error(error));
+        }
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
@@ -1228,7 +1250,7 @@ fn publish_temporary(
     target: &Path,
     original_generation: Option<Generation>,
     temporary_generation: Generation,
-    original_file: Option<&File>,
+    original_file: Option<File>,
     security_metadata: Option<&festerm_windows_security::SecurityMetadata>,
 ) -> Result<Generation, SaveFailure> {
     temporary.retain_recovery_copy()?;
@@ -1261,9 +1283,9 @@ fn publish_temporary(
 
     let original_file = original_file.ok_or(SaveFailure::Interrupted)?;
     let security_metadata = security_metadata.ok_or(SaveFailure::Interrupted)?;
-    if Generation::from_file(original_file).map_err(|_| SaveFailure::Interrupted)?
+    if Generation::from_file(&original_file).map_err(|_| SaveFailure::Interrupted)?
         != original_generation
-        || !festerm_windows_security::security_metadata_matches(original_file, security_metadata)
+        || !festerm_windows_security::security_metadata_matches(&original_file, security_metadata)
             .map_err(classify_write_error)?
     {
         return Err(SaveFailure::Conflict(original_generation));
@@ -1316,6 +1338,11 @@ fn publish_temporary(
     }
     after_target_capture();
     if let Err(error) = temporary.publish_new(target) {
+        if festerm_windows_security::rename_file_noreplace(&current, &directory_handle, target)
+            .is_ok()
+        {
+            return Err(classify_write_error(error));
+        }
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
@@ -1335,7 +1362,7 @@ fn publish_temporary(
             return Err(temporary.recovery_required());
         }
     };
-    let retained_original = match Generation::from_file(original_file) {
+    let retained_original = match Generation::from_file(&original_file) {
         Ok(generation) => generation,
         Err(error) => {
             tracing::error!(%error, "the retained Windows original could not be identified");
@@ -1358,6 +1385,8 @@ fn publish_temporary(
     {
         return Err(temporary.recovery_required());
     }
+    drop(current);
+    drop(original_file);
     temporary.finish();
     Ok(published)
 }
@@ -1486,6 +1515,11 @@ mod tests {
         assert_eq!(failure, SaveFailure::MetadataPreservation);
         assert!(failure.headline().contains("access"));
         assert!(failure.detail().contains("Save As"));
+
+        let unsupported =
+            classify_metadata_error(std::io::Error::from(std::io::ErrorKind::Unsupported));
+        assert_eq!(unsupported, SaveFailure::UnsupportedFilesystem);
+        assert!(unsupported.detail().contains("different local disk"));
     }
 
     #[test]
