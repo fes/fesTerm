@@ -1,6 +1,11 @@
 //! SSH local and remote TCP/IP port-forward configuration and runtime.
 
-use std::{fmt, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    hash::{Hash, Hasher},
+    sync::{Arc, Mutex},
+};
 
 use tokio::io::AsyncWriteExt;
 
@@ -26,6 +31,9 @@ pub trait SshPortForwardSpec {
     fn destination_host(&self) -> &str;
     fn destination_port(&self) -> u16;
 }
+
+/// Combined profile, pending, active, and failed mappings per connected SSH session.
+pub const MAX_SSH_PORT_FORWARD_ENTRIES: usize = 128;
 
 impl<T: SshPortForwardSpec + ?Sized> SshPortForwardSpec for &T {
     fn direction(&self) -> SshPortForwardDirection {
@@ -55,6 +63,7 @@ pub enum SshPortForwardConfigurationError {
     ControlCharacter,
     ZeroPort,
     DuplicateBinding,
+    InventoryLimit,
 }
 
 impl fmt::Display for SshPortForwardConfigurationError {
@@ -68,6 +77,10 @@ impl fmt::Display for SshPortForwardConfigurationError {
             Self::DuplicateBinding => formatter.write_str(
                 "SSH port-forward bindings must not repeat the same direction and bind address",
             ),
+            Self::InventoryLimit => write!(
+                formatter,
+                "SSH session supports at most {MAX_SSH_PORT_FORWARD_ENTRIES} port-forward mappings"
+            ),
         }
     }
 }
@@ -79,6 +92,7 @@ pub enum SshPortForwardRequestError {
     NotRunning,
     QueueFull,
     Closed,
+    InventoryFull,
     InvalidConfiguration(SshPortForwardConfigurationError),
 }
 
@@ -92,6 +106,10 @@ impl fmt::Display for SshPortForwardRequestError {
             Self::Closed => {
                 formatter.write_str("SSH port-forward request was rejected: session closed")
             }
+            Self::InventoryFull => write!(
+                formatter,
+                "SSH port-forward inventory is full ({MAX_SSH_PORT_FORWARD_ENTRIES} mappings); remove an active or failed mapping before adding another"
+            ),
             Self::InvalidConfiguration(error) => error.fmt(formatter),
         }
     }
@@ -110,6 +128,14 @@ pub(crate) struct RequestedSshPortForward {
 }
 
 impl RequestedSshPortForward {
+    fn binding_key(&self) -> PortForwardBindingKey {
+        PortForwardBindingKey {
+            direction: self.direction,
+            bind_host: self.bind_host.clone(),
+            bind_port: self.bind_port,
+        }
+    }
+
     pub(crate) fn runtime(
         &self,
         state: SshPortForwardState,
@@ -137,9 +163,13 @@ where
     I::Item: SshPortForwardSpec,
 {
     let mut collected = Vec::new();
+    let mut bindings = HashSet::new();
     for forward in port_forwards {
+        if collected.len() == MAX_SSH_PORT_FORWARD_ENTRIES {
+            return Err(SshPortForwardConfigurationError::InventoryLimit);
+        }
         let requested = requested_port_forward(forward, source)?;
-        if port_forward_bindings_collide(&collected, &requested) {
+        if !bindings.insert(requested.binding_key()) {
             return Err(SshPortForwardConfigurationError::DuplicateBinding);
         }
         collected.push(requested);
@@ -172,17 +202,6 @@ pub(crate) fn requested_port_forward(
     })
 }
 
-fn port_forward_bindings_collide(
-    existing: &[RequestedSshPortForward],
-    candidate: &RequestedSshPortForward,
-) -> bool {
-    existing.iter().any(|forward| {
-        forward.direction == candidate.direction
-            && forward.bind_host == candidate.bind_host
-            && forward.bind_port == candidate.bind_port
-    })
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PortForwardBindingKey {
     pub(crate) direction: SshPortForwardDirection,
@@ -190,8 +209,147 @@ pub(crate) struct PortForwardBindingKey {
     pub(crate) bind_port: u16,
 }
 
+impl Hash for PortForwardBindingKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(&self.direction).hash(state);
+        self.bind_host.hash(state);
+        self.bind_port.hash(state);
+    }
+}
+
+#[derive(Default)]
+struct PortForwardAdmissionState {
+    generation: u64,
+    bindings: HashMap<PortForwardBindingKey, PortForwardIncarnation>,
+}
+
+#[derive(Clone)]
+// Retained queue tokens prevent identity reuse when the same binding is re-added.
+pub(crate) struct PortForwardIncarnation(Arc<()>);
+
+impl PortForwardIncarnation {
+    fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PortForwardAdmissions {
+    state: Arc<Mutex<PortForwardAdmissionState>>,
+}
+
+impl PortForwardAdmissions {
+    pub(crate) fn reset(&self, generation: u64) {
+        *self
+            .state
+            .lock()
+            .expect("forward admission lock is not poisoned") = PortForwardAdmissionState {
+            generation,
+            bindings: HashMap::new(),
+        };
+    }
+
+    pub(crate) fn reserve(
+        &self,
+        requested: RequestedSshPortForward,
+        generation: u64,
+    ) -> Result<AdmittedPortForward, SshPortForwardRequestError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("forward admission lock is not poisoned");
+        if generation != state.generation {
+            return Err(SshPortForwardRequestError::NotRunning);
+        }
+        let key = requested.binding_key();
+        if state.bindings.contains_key(&key) {
+            return Err(SshPortForwardRequestError::InvalidConfiguration(
+                SshPortForwardConfigurationError::DuplicateBinding,
+            ));
+        }
+        if state.bindings.len() == MAX_SSH_PORT_FORWARD_ENTRIES {
+            return Err(SshPortForwardRequestError::InventoryFull);
+        }
+        let incarnation = PortForwardIncarnation(Arc::new(()));
+        state.bindings.insert(key.clone(), incarnation.clone());
+        Ok(AdmittedPortForward {
+            requested,
+            reservation: PortForwardReservation {
+                state: Arc::clone(&self.state),
+                key,
+                generation,
+                incarnation,
+            },
+        })
+    }
+
+    pub(crate) fn incarnation(
+        &self,
+        key: &PortForwardBindingKey,
+    ) -> Option<PortForwardIncarnation> {
+        self.state
+            .lock()
+            .expect("forward admission lock is not poisoned")
+            .bindings
+            .get(key)
+            .cloned()
+    }
+}
+
+pub(crate) struct AdmittedPortForward {
+    requested: RequestedSshPortForward,
+    reservation: PortForwardReservation,
+}
+
+struct PortForwardReservation {
+    state: Arc<Mutex<PortForwardAdmissionState>>,
+    key: PortForwardBindingKey,
+    generation: u64,
+    incarnation: PortForwardIncarnation,
+}
+
+impl PortForwardReservation {
+    fn is_current(&self) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("forward admission lock is not poisoned");
+        state.generation == self.generation
+            && state
+                .bindings
+                .get(&self.key)
+                .is_some_and(|incarnation| incarnation.matches(&self.incarnation))
+    }
+}
+
+impl Drop for PortForwardReservation {
+    fn drop(&mut self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("forward admission lock is not poisoned");
+        if state.generation == self.generation
+            && state
+                .bindings
+                .get(&self.key)
+                .is_some_and(|incarnation| incarnation.matches(&self.incarnation))
+        {
+            state.bindings.remove(&self.key);
+            if state.bindings.is_empty() {
+                state.bindings = HashMap::new();
+            } else if state.bindings.capacity() > 32
+                && state.bindings.len() <= state.bindings.capacity() / 4
+            {
+                let minimum = state.bindings.len().max(16);
+                state.bindings.shrink_to(minimum);
+            }
+        }
+    }
+}
+
 pub(crate) struct AcceptedLocalForwardConnection {
     key: PortForwardBindingKey,
+    incarnation: PortForwardIncarnation,
     stream: tokio::net::TcpStream,
     originator_address: String,
     originator_port: u16,
@@ -199,6 +357,7 @@ pub(crate) struct AcceptedLocalForwardConnection {
 
 pub(crate) struct ForwardedTcpIpConnection {
     pub(crate) key: PortForwardBindingKey,
+    pub(crate) incarnation: PortForwardIncarnation,
     pub(crate) channel: russh::Channel<russh::client::Msg>,
 }
 
@@ -249,34 +408,117 @@ impl ActivePortForwardHandle {
     }
 }
 
-pub(crate) struct ActivePortForward {
+struct ActivePortForward {
     requested: RequestedSshPortForward,
     runtime: SshPortForwardRuntime,
     handle: ActivePortForwardHandle,
+    reservation: PortForwardReservation,
 }
 
 impl ActivePortForward {
-    fn key(&self) -> PortForwardBindingKey {
-        PortForwardBindingKey {
-            direction: self.requested.direction,
-            bind_host: self.requested.bind_host.clone(),
-            bind_port: self.requested.bind_port,
+    fn key(&self) -> &PortForwardBindingKey {
+        &self.reservation.key
+    }
+}
+
+pub(crate) struct PortForwardInventory {
+    entries: Vec<ActivePortForward>,
+    bindings: HashMap<PortForwardBindingKey, usize>,
+    dirty: bool,
+    pending_snapshot: Option<SessionEvent>,
+    #[cfg(test)]
+    snapshot_preparations: usize,
+}
+
+impl Default for PortForwardInventory {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            bindings: HashMap::new(),
+            dirty: true,
+            pending_snapshot: None,
+            #[cfg(test)]
+            snapshot_preparations: 0,
         }
+    }
+}
+
+impl PortForwardInventory {
+    fn insert(&mut self, forward: ActivePortForward) {
+        assert!(self.entries.len() < MAX_SSH_PORT_FORWARD_ENTRIES);
+        assert!(!self.bindings.contains_key(forward.key()));
+        self.bindings
+            .insert(forward.key().clone(), self.entries.len());
+        self.entries.push(forward);
+        self.dirty = true;
+    }
+
+    fn get(&self, key: &PortForwardBindingKey) -> Option<&ActivePortForward> {
+        self.bindings.get(key).map(|index| &self.entries[*index])
+    }
+
+    fn get_current(
+        &self,
+        key: &PortForwardBindingKey,
+        incarnation: &PortForwardIncarnation,
+    ) -> Option<&ActivePortForward> {
+        self.get(key).filter(|forward| {
+            forward.runtime.state() == SshPortForwardState::Active
+                && forward.reservation.incarnation.matches(incarnation)
+        })
+    }
+
+    fn remove(&mut self, key: &PortForwardBindingKey) -> Option<ActivePortForward> {
+        let index = self.bindings.remove(key)?;
+        let forward = self.entries.remove(index);
+        for (index, entry) in self.entries.iter().enumerate().skip(index) {
+            *self
+                .bindings
+                .get_mut(entry.key())
+                .expect("indexed forward exists") = index;
+        }
+        self.dirty = true;
+        if self.entries.is_empty() {
+            self.entries = Vec::new();
+            self.bindings = HashMap::new();
+        } else if self.entries.capacity() > 32 && self.entries.len() <= self.entries.capacity() / 4
+        {
+            let minimum = self.entries.len().max(16);
+            self.entries.shrink_to(minimum);
+        }
+        if self.bindings.capacity() > 32 && self.bindings.len() <= self.bindings.capacity() / 4 {
+            self.bindings.shrink_to(self.entries.len().max(16));
+        }
+        Some(forward)
     }
 }
 
 pub(crate) fn emit_port_forward_snapshot(
     shared: &WorkerShared,
-    active_port_forwards: &[ActivePortForward],
+    inventory: &mut PortForwardInventory,
 ) {
-    let snapshot = active_port_forwards
-        .iter()
-        .map(|forward| forward.runtime.clone())
-        .collect();
-    let _ = shared.try_emit(SessionEvent::PortForwardsUpdated(snapshot));
+    if inventory.dirty {
+        inventory.pending_snapshot = Some(SessionEvent::PortForwardsUpdated(
+            inventory
+                .entries
+                .iter()
+                .map(|forward| forward.runtime.clone())
+                .collect(),
+        ));
+        inventory.dirty = false;
+        #[cfg(test)]
+        {
+            inventory.snapshot_preparations += 1;
+        }
+    }
+    if let Some(event) = inventory.pending_snapshot.take() {
+        inventory.pending_snapshot = shared.try_emit_retaining(event).err();
+    }
 }
 
 pub(crate) fn report_port_forward_error(shared: &WorkerShared, message: impl Into<String>) {
+    let message = message.into();
+    tracing::warn!(target: "festerm::ssh", %message, "SSH port-forward operation failed");
     let _ = shared.try_emit(SessionEvent::Error(SessionError::new(
         SessionErrorKind::Internal,
         message,
@@ -285,36 +527,32 @@ pub(crate) fn report_port_forward_error(shared: &WorkerShared, message: impl Int
 
 pub(crate) async fn apply_port_forward(
     handle: &russh::client::Handle<SshClientHandler>,
-    requested: RequestedSshPortForward,
-    active_port_forwards: &mut Vec<ActivePortForward>,
+    admitted: AdmittedPortForward,
+    active_port_forwards: &mut PortForwardInventory,
     local_forward_sender: &tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
     shared: &Arc<WorkerShared>,
 ) {
-    if active_port_forwards.iter().any(|forward| {
-        forward.key()
-            == PortForwardBindingKey {
-                direction: requested.direction,
-                bind_host: requested.bind_host.clone(),
-                bind_port: requested.bind_port,
-            }
-    }) {
+    if !admitted.reservation.is_current() {
         report_port_forward_error(
             shared,
-            format!(
-                "SSH {} port forward on {}:{} already exists",
-                port_forward_direction_label(requested.direction),
-                requested.bind_host,
-                requested.bind_port,
-            ),
+            "SSH port-forward request was canceled because its connection ended",
         );
-        emit_port_forward_snapshot(shared, active_port_forwards);
         return;
     }
+    let AdmittedPortForward {
+        requested,
+        reservation,
+    } = admitted;
 
     let runtime_result = match requested.direction {
         SshPortForwardDirection::Local => {
-            start_local_port_forward(&requested, local_forward_sender.clone(), Arc::clone(shared))
-                .await
+            start_local_port_forward(
+                &requested,
+                reservation.incarnation.clone(),
+                local_forward_sender.clone(),
+                Arc::clone(shared),
+            )
+            .await
         }
         SshPortForwardDirection::Remote => start_remote_port_forward(handle, &requested).await,
     };
@@ -324,19 +562,21 @@ pub(crate) async fn apply_port_forward(
             runtime: requested.runtime(SshPortForwardState::Active, None),
             requested,
             handle,
+            reservation,
         },
         Err(reason) => ActivePortForward {
             runtime: requested.runtime(SshPortForwardState::Failed, Some(reason)),
             requested,
             handle: ActivePortForwardHandle::Inactive,
+            reservation,
         },
     };
-    active_port_forwards.push(entry);
-    emit_port_forward_snapshot(shared, active_port_forwards);
+    active_port_forwards.insert(entry);
 }
 
 async fn start_local_port_forward(
     requested: &RequestedSshPortForward,
+    incarnation: PortForwardIncarnation,
     local_forward_sender: tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
     shared: Arc<WorkerShared>,
 ) -> Result<ActivePortForwardHandle, String> {
@@ -362,6 +602,7 @@ async fn start_local_port_forward(
                     Ok((stream, address)) => {
                         match local_forward_sender.try_send(AcceptedLocalForwardConnection {
                             key: key.clone(),
+                            incarnation: incarnation.clone(),
                             stream,
                             originator_address: address.ip().to_string(),
                             originator_port: address.port(),
@@ -418,13 +659,10 @@ async fn start_remote_port_forward(
 pub(crate) async fn remove_port_forward(
     handle: &russh::client::Handle<SshClientHandler>,
     key: &PortForwardBindingKey,
-    active_port_forwards: &mut Vec<ActivePortForward>,
+    active_port_forwards: &mut PortForwardInventory,
     shared: &WorkerShared,
 ) {
-    let Some(index) = active_port_forwards
-        .iter()
-        .position(|forward| forward.key() == *key)
-    else {
+    let Some(forward) = active_port_forwards.remove(key) else {
         report_port_forward_error(
             shared,
             format!(
@@ -434,21 +672,25 @@ pub(crate) async fn remove_port_forward(
                 key.bind_port,
             ),
         );
-        emit_port_forward_snapshot(shared, active_port_forwards);
         return;
     };
-    let forward = active_port_forwards.remove(index);
     stop_active_port_forward(Some(handle), forward).await;
-    emit_port_forward_snapshot(shared, active_port_forwards);
 }
 
 pub(crate) async fn teardown_port_forwards(
     handle: Option<&russh::client::Handle<SshClientHandler>>,
-    active_port_forwards: &mut Vec<ActivePortForward>,
+    active_port_forwards: &mut PortForwardInventory,
     port_forward_attempts: &mut tokio::task::JoinSet<()>,
     shared: &WorkerShared,
 ) {
-    while let Some(forward) = active_port_forwards.pop() {
+    while let Some(key) = active_port_forwards
+        .entries
+        .last()
+        .map(|forward| forward.key().clone())
+    {
+        let forward = active_port_forwards
+            .remove(&key)
+            .expect("last forward exists");
         stop_active_port_forward(handle, forward).await;
     }
     port_forward_attempts.abort_all();
@@ -485,14 +727,13 @@ async fn stop_active_port_forward(
 pub(crate) fn handle_local_forward_connection(
     handle: &Arc<russh::client::Handle<SshClientHandler>>,
     accepted: AcceptedLocalForwardConnection,
-    active_port_forwards: &mut [ActivePortForward],
+    active_port_forwards: &PortForwardInventory,
     shared: &Arc<WorkerShared>,
     attempt_limiter: &PortForwardAttemptLimiter,
     port_forward_attempts: &mut tokio::task::JoinSet<()>,
 ) {
-    let Some(forward) = active_port_forwards.iter_mut().find(|forward| {
-        forward.runtime.state() == SshPortForwardState::Active && forward.key() == accepted.key
-    }) else {
+    let Some(forward) = active_port_forwards.get_current(&accepted.key, &accepted.incarnation)
+    else {
         return;
     };
     let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
@@ -584,14 +825,13 @@ async fn run_local_forward_connection(
 
 pub(crate) fn handle_forwarded_tcpip_connection(
     forwarded: ForwardedTcpIpConnection,
-    active_port_forwards: &mut [ActivePortForward],
+    active_port_forwards: &PortForwardInventory,
     shared: &Arc<WorkerShared>,
     attempt_limiter: &PortForwardAttemptLimiter,
     port_forward_attempts: &mut tokio::task::JoinSet<()>,
 ) {
-    let Some(forward) = active_port_forwards.iter_mut().find(|forward| {
-        forward.runtime.state() == SshPortForwardState::Active && forward.key() == forwarded.key
-    }) else {
+    let Some(forward) = active_port_forwards.get_current(&forwarded.key, &forwarded.incarnation)
+    else {
         port_forward_attempts.spawn(async move {
             let _ = forwarded.channel.close().await;
         });
@@ -705,5 +945,425 @@ fn port_forward_direction_label(direction: SshPortForwardDirection) -> &'static 
     match direction {
         SshPortForwardDirection::Local => "local",
         SshPortForwardDirection::Remote => "remote",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        noop_session_event_notifier, HostIdentity, SshConnectionProfile, SshWorkerFoundation,
+        TerminalSize, WorkerCommandReceiver, DEFAULT_COMMAND_QUEUE_CAPACITY,
+    };
+
+    fn worker(event_capacity: usize) -> (SshWorkerFoundation, WorkerCommandReceiver) {
+        let profile = SshConnectionProfile::new(
+            HostIdentity::new("fixture.invalid", 22).unwrap(),
+            "fixture",
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            TerminalSize::new(80, 24).unwrap(),
+        )
+        .unwrap();
+        let (worker, receiver, _host_key, _password) = SshWorkerFoundation::new_with_capacities(
+            profile,
+            DEFAULT_COMMAND_QUEUE_CAPACITY,
+            event_capacity,
+            noop_session_event_notifier(),
+        );
+        (worker, receiver)
+    }
+
+    fn requested(bind_port: u16) -> RequestedSshPortForward {
+        RequestedSshPortForward {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port,
+            destination_host: "127.0.0.1".to_owned(),
+            destination_port: 9000,
+            source: SshPortForwardSource::Ephemeral,
+        }
+    }
+
+    fn insert_failed(
+        inventory: &mut PortForwardInventory,
+        shared: &WorkerShared,
+        bind_port: u16,
+    ) -> Result<(), SshPortForwardRequestError> {
+        let AdmittedPortForward {
+            requested,
+            reservation,
+        } = shared.port_forward_admissions.reserve(
+            requested(bind_port),
+            shared
+                .transport_generation
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
+        inventory.insert(ActivePortForward {
+            runtime: requested.runtime(
+                SshPortForwardState::Failed,
+                Some("fixture bind denied".into()),
+            ),
+            requested,
+            handle: ActivePortForwardHandle::Inactive,
+            reservation,
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn failed_port_forward_inventory_churn_plateaus_and_reclaims_capacity() {
+        let (worker, _receiver) = worker(1);
+        let mut inventory = PortForwardInventory::default();
+        for port in 1..=128 {
+            insert_failed(&mut inventory, &worker.shared, port).unwrap();
+        }
+        assert_eq!(
+            insert_failed(&mut inventory, &worker.shared, 129),
+            Err(SshPortForwardRequestError::InventoryFull)
+        );
+        assert!(inventory
+            .entries
+            .iter()
+            .all(|entry| entry.runtime.state() == SshPortForwardState::Failed));
+        for port in 129..=640 {
+            let first = inventory.entries[0].key().clone();
+            drop(inventory.remove(&first).unwrap());
+            insert_failed(&mut inventory, &worker.shared, port).unwrap();
+            assert_eq!(inventory.entries.len(), 128);
+            assert_eq!(inventory.bindings.len(), 128);
+        }
+        while inventory.entries.len() > 1 {
+            let key = inventory.entries[0].key().clone();
+            drop(inventory.remove(&key).unwrap());
+        }
+        assert!(inventory.entries.capacity() <= 32);
+        assert!(inventory.bindings.capacity() <= 32);
+        assert!(
+            worker
+                .shared
+                .port_forward_admissions
+                .state
+                .lock()
+                .unwrap()
+                .bindings
+                .capacity()
+                <= 32
+        );
+        while let Some(key) = inventory.entries.last().map(|entry| entry.key().clone()) {
+            drop(inventory.remove(&key).unwrap());
+        }
+        assert_eq!(inventory.entries.capacity(), 0);
+        assert_eq!(inventory.bindings.capacity(), 0);
+        assert_eq!(
+            worker
+                .shared
+                .port_forward_admissions
+                .state
+                .lock()
+                .unwrap()
+                .bindings
+                .capacity(),
+            0
+        );
+        insert_failed(&mut inventory, &worker.shared, 1).unwrap();
+        assert!(inventory.entries.capacity() <= 16);
+    }
+
+    #[test]
+    fn indexed_port_forward_removal_preserves_order_and_other_bindings() {
+        let (worker, _receiver) = worker(1);
+        let mut inventory = PortForwardInventory::default();
+        for port in 1..=4 {
+            insert_failed(&mut inventory, &worker.shared, port).unwrap();
+        }
+        drop(inventory.remove(&requested(2).binding_key()).unwrap());
+        assert_eq!(
+            inventory
+                .entries
+                .iter()
+                .map(|entry| entry.requested.bind_port)
+                .collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
+        for port in [1, 3, 4] {
+            assert_eq!(
+                inventory
+                    .get(&requested(port).binding_key())
+                    .unwrap()
+                    .requested
+                    .bind_port,
+                port
+            );
+        }
+        assert!(inventory.get(&requested(2).binding_key()).is_none());
+    }
+
+    #[test]
+    fn queued_forward_connections_cannot_use_a_readded_binding() {
+        for direction in [
+            SshPortForwardDirection::Local,
+            SshPortForwardDirection::Remote,
+        ] {
+            let admissions = PortForwardAdmissions::default();
+            let mut inventory = PortForwardInventory::default();
+            let mut original = requested(12345);
+            original.direction = direction;
+            let key = original.binding_key();
+            let AdmittedPortForward {
+                requested,
+                reservation,
+            } = admissions.reserve(original.clone(), 0).unwrap();
+            let queued_incarnation = admissions.incarnation(&key).unwrap();
+            let (shutdown, _) = tokio::sync::watch::channel(false);
+            inventory.insert(ActivePortForward {
+                runtime: requested.runtime(SshPortForwardState::Active, None),
+                requested,
+                handle: ActivePortForwardHandle::Remote { shutdown },
+                reservation,
+            });
+            assert!(inventory.get_current(&key, &queued_incarnation).is_some());
+            drop(inventory.remove(&key).unwrap());
+            assert!(admissions.incarnation(&key).is_none());
+            let mut replacement = original;
+            replacement.destination_port = 9001;
+            let AdmittedPortForward {
+                requested,
+                reservation,
+            } = admissions.reserve(replacement, 0).unwrap();
+            let replacement_incarnation = admissions.incarnation(&key).unwrap();
+            assert!(!queued_incarnation.matches(&replacement_incarnation));
+            let (shutdown, _) = tokio::sync::watch::channel(false);
+            inventory.insert(ActivePortForward {
+                runtime: requested.runtime(SshPortForwardState::Active, None),
+                requested,
+                handle: ActivePortForwardHandle::Remote { shutdown },
+                reservation,
+            });
+            assert!(
+                inventory.get_current(&key, &queued_incarnation).is_none(),
+                "an old queued connection must not use the replacement destination"
+            );
+            assert_eq!(
+                inventory
+                    .get_current(&key, &replacement_incarnation)
+                    .unwrap()
+                    .requested
+                    .destination_port,
+                9001
+            );
+        }
+    }
+
+    #[test]
+    fn local_forward_queue_retains_the_accepting_mapping_incarnation() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (worker, _events) = worker(8);
+                let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                let port = probe.local_addr().unwrap().port();
+                drop(probe);
+                let AdmittedPortForward {
+                    requested,
+                    reservation,
+                } = worker
+                    .shared
+                    .port_forward_admissions
+                    .reserve(requested(port), 0)
+                    .unwrap();
+                let original_incarnation = reservation.incarnation.clone();
+                let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+                let handle = start_local_port_forward(
+                    &requested,
+                    original_incarnation.clone(),
+                    sender,
+                    Arc::clone(&worker.shared),
+                )
+                .await
+                .unwrap();
+                let _client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                    .await
+                    .unwrap();
+                let queued =
+                    tokio::time::timeout(std::time::Duration::from_secs(3), receiver.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                assert!(queued.incarnation.matches(&original_incarnation));
+                let key = requested.binding_key();
+                let forward = ActivePortForward {
+                    runtime: requested.runtime(SshPortForwardState::Active, None),
+                    requested: requested.clone(),
+                    handle,
+                    reservation,
+                };
+                stop_active_port_forward(None, forward).await;
+                let replacement = worker
+                    .shared
+                    .port_forward_admissions
+                    .reserve(requested, 0)
+                    .unwrap();
+                assert_eq!(queued.key, key);
+                assert!(!queued
+                    .incarnation
+                    .matches(&replacement.reservation.incarnation));
+                let old_identity = Arc::downgrade(&queued.incarnation.0);
+                drop(original_incarnation);
+                assert!(old_identity.upgrade().is_some());
+                drop(queued);
+                assert!(old_identity.upgrade().is_none());
+            });
+    }
+
+    #[test]
+    fn stale_forward_reservation_cannot_release_a_readded_same_generation_binding() {
+        let admissions = PortForwardAdmissions::default();
+        let old = admissions.reserve(requested(1), 0).unwrap();
+        admissions.reset(0);
+        let current = admissions.reserve(requested(1), 0).unwrap();
+        assert!(!old.reservation.is_current());
+        drop(old);
+        assert!(current.reservation.is_current());
+        assert!(matches!(
+            admissions.reserve(requested(1), 0),
+            Err(SshPortForwardRequestError::InvalidConfiguration(
+                SshPortForwardConfigurationError::DuplicateBinding
+            ))
+        ));
+    }
+
+    #[test]
+    fn stale_forward_reservation_cannot_release_a_new_generation_binding() {
+        let admissions = PortForwardAdmissions::default();
+        let old = admissions.reserve(requested(1), 0).unwrap();
+        admissions.reset(1);
+        assert!(!old.reservation.is_current());
+        let current = admissions.reserve(requested(1), 1).unwrap();
+        drop(old);
+        assert!(current.reservation.is_current());
+        assert!(matches!(
+            admissions.reserve(requested(1), 1),
+            Err(SshPortForwardRequestError::InvalidConfiguration(
+                SshPortForwardConfigurationError::DuplicateBinding
+            ))
+        ));
+        assert!(matches!(
+            admissions.reserve(requested(2), 0),
+            Err(SshPortForwardRequestError::NotRunning)
+        ));
+        drop(current);
+        assert!(admissions.reserve(requested(1), 1).is_ok());
+    }
+
+    #[test]
+    fn forward_reservation_is_released_only_after_local_owner_stops() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let admissions = PortForwardAdmissions::default();
+                let AdmittedPortForward {
+                    requested: request,
+                    reservation,
+                } = admissions.reserve(requested(1), 0).unwrap();
+                let (shutdown, mut shutdown_receiver) = tokio::sync::watch::channel(false);
+                let (observed, observation) = tokio::sync::oneshot::channel();
+                let finish = Arc::new(tokio::sync::Notify::new());
+                let listener_finish = Arc::clone(&finish);
+                let listener = tokio::spawn(async move {
+                    shutdown_receiver.changed().await.unwrap();
+                    observed.send(()).unwrap();
+                    listener_finish.notified().await;
+                });
+                let forward = ActivePortForward {
+                    runtime: request.runtime(SshPortForwardState::Active, None),
+                    requested: request,
+                    handle: ActivePortForwardHandle::Local { shutdown, listener },
+                    reservation,
+                };
+                let stop = tokio::spawn(stop_active_port_forward(None, forward));
+                tokio::time::timeout(std::time::Duration::from_secs(3), observation)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(matches!(
+                    admissions.reserve(requested(1), 0),
+                    Err(SshPortForwardRequestError::InvalidConfiguration(
+                        SshPortForwardConfigurationError::DuplicateBinding
+                    ))
+                ));
+                assert!(!stop.is_finished());
+                finish.notify_one();
+                tokio::time::timeout(std::time::Duration::from_secs(3), stop)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(admissions.reserve(requested(1), 0).is_ok());
+            });
+    }
+
+    #[test]
+    fn forward_snapshot_retries_without_recloning_and_coalesces_latest_state() {
+        let (worker, _receiver) = worker(1);
+        let mut inventory = PortForwardInventory::default();
+        insert_failed(&mut inventory, &worker.shared, 1).unwrap();
+        for _ in 0..1000 {
+            emit_port_forward_snapshot(&worker.shared, &mut inventory);
+        }
+        assert_eq!(inventory.snapshot_preparations, 1);
+        assert!(inventory.pending_snapshot.is_some());
+        drop(inventory.remove(&requested(1).binding_key()).unwrap());
+        insert_failed(&mut inventory, &worker.shared, 2).unwrap();
+        emit_port_forward_snapshot(&worker.shared, &mut inventory);
+        assert_eq!(inventory.snapshot_preparations, 2);
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(_))
+        ));
+        emit_port_forward_snapshot(&worker.shared, &mut inventory);
+        let Ok(SessionEvent::PortForwardsUpdated(snapshot)) = worker.try_recv_event() else {
+            panic!("the retained latest inventory must reach the frontend");
+        };
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].bind_port(), 2);
+        assert!(inventory.pending_snapshot.is_none());
+        for _ in 0..1000 {
+            emit_port_forward_snapshot(&worker.shared, &mut inventory);
+        }
+        assert_eq!(inventory.snapshot_preparations, 2);
+        assert_eq!(
+            worker.try_recv_event(),
+            Err(crate::SessionTryReceiveError::Empty)
+        );
+        drop(inventory.remove(&requested(2).binding_key()).unwrap());
+        emit_port_forward_snapshot(&worker.shared, &mut inventory);
+        assert!(
+            matches!(worker.try_recv_event(), Ok(SessionEvent::PortForwardsUpdated(snapshot)) if snapshot.is_empty())
+        );
+    }
+
+    #[test]
+    fn forward_snapshot_closed_receiver_does_not_rebuild_or_survive_owner_retirement() {
+        let (worker, _receiver) = worker(1);
+        let shared = Arc::clone(&worker.shared);
+        let mut inventory = PortForwardInventory::default();
+        insert_failed(&mut inventory, &shared, 1).unwrap();
+        drop(worker);
+        for _ in 0..1000 {
+            emit_port_forward_snapshot(&shared, &mut inventory);
+        }
+        assert_eq!(inventory.snapshot_preparations, 1);
+        assert!(inventory.pending_snapshot.is_some());
+        drop(inventory);
+        assert!(shared
+            .port_forward_admissions
+            .state
+            .lock()
+            .unwrap()
+            .bindings
+            .is_empty());
     }
 }

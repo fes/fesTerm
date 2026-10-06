@@ -1440,6 +1440,18 @@ active/failed state. Adding a forward here always targets only the current live
 session; it never rewrites the saved profile. Disconnecting clears the live
 runtime list, and reconnect does not silently restore prior ephemeral state.
 
+Each live SSH session admits at most 128 combined saved-profile and ephemeral
+mappings. Pending additions reserve a slot; active and failed rows keep theirs
+until explicitly removed. A full inventory refuses the new addition with a
+visible explanation and preserves the draft, rather than retiring failures or
+evicting a working tunnel. Removing a row makes room after its forwarding owner
+stops. A profile requesting more than 128 mappings is rejected before launch;
+this does not change the configuration schema or truncate saved metadata. The
+The same factual refusal appears for stored-credential and credential-free
+saved-profile launches. Removing and re-adding a bind does not reroute already
+queued connections to its replacement destination. The
+independent 32-in-flight forwarded-connection limit is unchanged.
+
 ### Serial session creation
 
 ![Serial connection form target](images/gui-mockups/serial-connection.png)

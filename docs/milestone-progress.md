@@ -36,6 +36,48 @@ the model and widget/vi/Find/substitution routes. Native input, focus/caret,
 narrow-pane and accessibility evidence remains CP-15. This bounds retained
 history, not candidate/staged/undo scratch, view allocation, allocator
 fragmentation or RSS, and does not establish #297's multi-day growth cause.
+## Bounding live forwarding inventory without evicting tunnels
+
+The #320 allocation/lifecycle audit found that each requested SSH mapping
+retained an active or failed row indefinitely until explicit removal, with no
+inventory ceiling. Snapshot queries cloned every row, and the manager cloned
+the list again on every frame. The existing 32-connection bound did not limit
+listeners or failed mappings.
+
+The approved policy is 128 combined profile, pending, active and failed
+mappings per live SSH session, with visible refusal until a row is removed.
+Reservations begin before command admission and remain with the forwarding
+owner; failed/closed delivery, canceled work and completed removal release
+them. Startup reserves profile slots before exposing Running, while generation
+checks prevent stale work from affecting a replacement transport. Failed rows
+and working tunnels are never automatically evicted.
+
+Binding indexes replace repeated scans and host-string copies. Ordered removal
+reclaims exceptional row/index storage; change-only publication batches initial
+profiles and retains one latest blocked snapshot without repeated cloning.
+The manager borrows its retained list, preserves refused drafts and uses
+explicit stable row widget IDs. Oversized saved-profile launches report the
+ceiling, including the stored-password shortcut, without discarding settings.
+The launch form checks draft count before constructing row configurations, so
+an oversized draft does not allocate or validate its entire mapping prefix.
+
+The original 128/129 profile and pending-admission controls both failed.
+Review exposed a narrower same-transport race: an old queued connection was
+identified only by its reusable bind and could inherit a replacement
+destination. Mapping-incarnation tokens now cross both connection queues
+and reject that stale work. Review also found that credential-free saved
+launch discarded a boolean refusal; it now propagates a typed, visible error.
+Compiled controls reproduced both gaps, and an owned TCP listener regression
+checks production token capture and release after removal/re-add.
+
+Deterministic churn now plateaus at 128 and releases empty storage, and 1,000
+blocked retries prepare one snapshot. Owned loopback SSH coverage preserves
+active tunnel bytes at capacity, proves unchanged queries do not republish,
+and removes a failed mapping to admit a retry. Native overlay readability,
+accessibility and OpenSSH interoperability remain `TI-11`; the count ceiling
+is not a total-payload/RSS bound, allocator-fragmentation diagnosis, or evidence
+for the multi-day CPU-growth cause in #297.
+
 ## Bounding Windows daemon attachment backlog without evicting its owner
 
 The allocation/lifecycle audit in #320 found an unbounded channel of accepted
