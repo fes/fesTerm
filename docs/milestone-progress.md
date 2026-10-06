@@ -45,10 +45,12 @@ real parent without following changed aliases, verifies both parent identity
 and Markdown generation, then resolves the image beneath the same handle.
 Canonical final-name checks reject source name surrogates while ordinary
 Windows Cloud Files can still hydrate. Reload/save authority changes retire old
-image state before reparse. Save and Save As capture the destination parent
-before mutation, retain its capability through replacement and sync, and refuse
-if they cannot establish that authority rather than later adopting a
-replacement parent. Component, hard-link parent, root-name and
+image state before reparse. Ordinary Save reuses the canonical parent captured
+at load, while Save As captures the newly selected destination parent; both
+retain that capability through replacement and sync and refuse if they cannot
+establish authority rather than later adopting a replacement parent. A
+symlinked open therefore updates its canonical target without granting the
+alias's lexical parent. Component, hard-link parent, root-name and
 reparse-point rebinding cannot retarget a read. Nonblocking Unix opens still
 keep FIFOs from pinning a worker waiting for a writer.
 

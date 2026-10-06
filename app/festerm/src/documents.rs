@@ -454,7 +454,12 @@ impl DocumentRegistry {
         let path = origin.path().to_path_buf();
         let bytes = document.text.to_bytes();
 
-        let outcome = match document_store::save(&path, &bytes, document.generation) {
+        let outcome = match document_store::save(
+            &path,
+            &bytes,
+            document.generation,
+            document.source_authority.as_ref(),
+        ) {
             Ok(saved) => {
                 document.generation = Some(saved.generation);
                 document.source_authority = Some(saved.source_authority);
@@ -521,7 +526,7 @@ impl DocumentRegistry {
         let bytes = document.text.to_bytes();
         let text = document.text.clone();
 
-        let saved = match document_store::save(path, &bytes, None) {
+        let saved = match document_store::save(path, &bytes, None, None) {
             Ok(saved) => saved,
             Err(failure) => {
                 let error = SaveError::new(failure.headline(), failure.detail());

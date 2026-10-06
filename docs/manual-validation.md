@@ -486,9 +486,11 @@ reparse points, final source name surrogates, and parent replacement containing 
 link to the same source. A source that cannot be resolved must keep its text
 Preview and explain image refusal. Save and Save As must capture the destination
 parent identity before writing and perform temporary creation/replacement
-through that retained directory capability; inability to establish that
-authority refuses before mutation rather than recovering against a later
-replacement parent.
+through that retained directory capability. Ordinary Save of a file opened
+through a symlink must update the loaded canonical target without replacing the
+alias or granting its lexical parent; Save As intentionally captures the newly
+selected destination. Inability to establish authority refuses before mutation
+rather than recovering against a later replacement parent.
 Review keyboard retry after repairing a failed file and screen-reader/refusal
 wording. Shared allowances/workers, actual
 read/header limits, real editor/button routing, stale results, reparse/close,

@@ -455,9 +455,16 @@ pub fn save(
     path: &Path,
     bytes: &[u8],
     expected: Option<Generation>,
+    loaded_authority: Option<&LocalSourceAuthority>,
 ) -> Result<SavedDocument, SaveFailure> {
-    let parent = parent_directory(path)?;
-    let save_directory = source_authority_for_save(path, parent)?;
+    let save_directory = match (expected, loaded_authority) {
+        (Some(_), Some(authority)) => save_directory_from_loaded_authority(authority)?,
+        (None, None) => {
+            let parent = parent_directory(path)?;
+            source_authority_for_save(path, parent)?
+        }
+        _ => return Err(SaveFailure::Interrupted),
+    };
     after_save_directory_capture();
     if let Some(expected) = expected {
         match freshness_in_directory(&save_directory.directory, &save_directory.target, expected) {
@@ -515,6 +522,29 @@ struct SaveDirectory {
     directory: cap_std::fs::Dir,
     target: PathBuf,
     source_authority: LocalSourceAuthority,
+}
+
+fn save_directory_from_loaded_authority(
+    authority: &LocalSourceAuthority,
+) -> Result<SaveDirectory, SaveFailure> {
+    let parent = authority
+        .canonical_path
+        .parent()
+        .ok_or(SaveFailure::NoDirectory)?;
+    let target = authority
+        .canonical_path
+        .file_name()
+        .map(PathBuf::from)
+        .ok_or(SaveFailure::NoDirectory)?;
+    let directory = open_canonical_directory(parent).map_err(classify_write_error)?;
+    if !authority.parent_identity.matches_directory(&directory) {
+        return Err(SaveFailure::Gone);
+    }
+    Ok(SaveDirectory {
+        directory,
+        target,
+        source_authority: authority.clone(),
+    })
 }
 
 fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory, SaveFailure> {
@@ -826,7 +856,13 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
 
-        let saved = save(&path, b"after\n", Some(loaded.generation)).unwrap();
+        let saved = save(
+            &path,
+            b"after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
         assert_eq!(freshness(&path, saved.generation), Freshness::Unchanged);
@@ -843,13 +879,48 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
 
-        save(&path, b"after\n", Some(loaded.generation)).unwrap();
+        save(
+            &path,
+            b"after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
 
         let entries: Vec<_> = fs::read_dir(&directory.path)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(entries, vec![std::ffi::OsString::from("notes.md")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_a_symlinked_source_updates_its_canonical_target() {
+        let real = TemporaryDirectory::new("save-symlink-real");
+        let links = TemporaryDirectory::new("save-symlink-links");
+        let target = real.file("notes.md", "before\n");
+        let alias = links.path.join("linked.md");
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+        let loaded = load(&alias, bounds()).unwrap();
+
+        save(
+            &alias,
+            b"after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "after\n");
+        assert!(
+            fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "ordinary Save must not replace the selected alias in its lexical parent"
+        );
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "after\n");
     }
 
     #[test]
@@ -859,7 +930,13 @@ mod tests {
         let loaded = load(&path, bounds()).unwrap();
 
         fs::write(&path, "theirs, which is longer\n").unwrap();
-        let failure = save(&path, b"mine, edited\n", Some(loaded.generation)).unwrap_err();
+        let failure = save(
+            &path,
+            b"mine, edited\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap_err();
 
         assert!(matches!(failure, SaveFailure::Conflict(_)));
         assert_eq!(
@@ -918,7 +995,12 @@ mod tests {
         fs::rename(&elsewhere, &path).unwrap();
 
         assert!(matches!(
-            save(&path, b"my edits\n", Some(loaded.generation)),
+            save(
+                &path,
+                b"my edits\n",
+                Some(loaded.generation),
+                Some(&loaded.source_authority),
+            ),
             Err(SaveFailure::Conflict(_))
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), "bbbbb\n");
@@ -954,7 +1036,13 @@ mod tests {
         fs::remove_file(&path).unwrap();
 
         assert_eq!(
-            save(&path, b"mine\n", Some(loaded.generation)).unwrap_err(),
+            save(
+                &path,
+                b"mine\n",
+                Some(loaded.generation),
+                Some(&loaded.source_authority),
+            )
+            .unwrap_err(),
             SaveFailure::Gone
         );
         assert!(!path.exists());
@@ -965,7 +1053,7 @@ mod tests {
         let directory = TemporaryDirectory::new("saveas");
         let path = directory.path.join("fresh.md");
 
-        let saved = save(&path, b"new\n", None).unwrap();
+        let saved = save(&path, b"new\n", None, None).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
         assert_eq!(saved.generation.size(), 4);
@@ -978,7 +1066,13 @@ mod tests {
         fs::remove_dir(&retained.path).unwrap();
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
-        let saved = save(&path, b"after\n", Some(loaded.generation)).unwrap();
+        let saved = save(
+            &path,
+            b"after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
 
         fs::rename(&directory.path, &retained.path).unwrap();
         fs::create_dir(&directory.path).unwrap();
@@ -1012,7 +1106,13 @@ mod tests {
             }));
         });
 
-        save(&path, b"after\n", Some(loaded.generation)).unwrap();
+        save(
+            &path,
+            b"after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
 
         assert_eq!(
             fs::read_to_string(retained.path.join("notes.md")).unwrap(),
@@ -1033,7 +1133,10 @@ mod tests {
         fs::create_dir(&folder).unwrap();
         fs::write(folder.join("sentinel.txt"), b"unchanged").unwrap();
 
-        assert_eq!(save(&folder, b"snapshot", None), Err(SaveFailure::NotAFile));
+        assert_eq!(
+            save(&folder, b"snapshot", None, None),
+            Err(SaveFailure::NotAFile)
+        );
         assert!(folder.is_dir());
         assert_eq!(fs::read(folder.join("sentinel.txt")).unwrap(), b"unchanged");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
@@ -1045,7 +1148,7 @@ mod tests {
         let path = directory.path.join("absent").join("fresh.md");
 
         assert_eq!(
-            save(&path, b"new\n", None).unwrap_err(),
+            save(&path, b"new\n", None, None).unwrap_err(),
             SaveFailure::NoDirectory
         );
     }
@@ -1060,7 +1163,13 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
         let loaded = load(&path, bounds()).unwrap();
 
-        save(&path, b"echo after\n", Some(loaded.generation)).unwrap();
+        save(
+            &path,
+            b"echo after\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o750);
@@ -1082,7 +1191,13 @@ mod tests {
             fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
             return;
         }
-        let failure = save(&path, b"edited\n", Some(loaded.generation)).unwrap_err();
+        let failure = save(
+            &path,
+            b"edited\n",
+            Some(loaded.generation),
+            Some(&loaded.source_authority),
+        )
+        .unwrap_err();
 
         fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(failure, SaveFailure::PermissionDenied);
