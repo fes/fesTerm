@@ -3,6 +3,25 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Qualifying the default picker backdrop after the Source successor
+
+The narrowly owned Open File/Save As route now has actual cumulative application
+evidence at clean `675a007`, after the bounded Source successor. All eight
+default ready/error normal/narrow controls preserve the earlier reference PNGs
+and forty measured guards, with exactly one additional executed backdrop
+callback in every draw. Completed draw/readback medians are 21.7-46.8% lower;
+UI construction medians increase by 0.067-0.313 ms, a retained callback-preparation
+tradeoff rather than an all-metrics improvement claim.
+
+The existing ordinary-backdrop attribution also passes on the same binary:
+eight controls, forty ordinary and ninety-six balanced paired guards. Its
+test-only context selector preserves the diagnostic oracle after default
+conversion. Dimming, live Modal responses, shaders and other-modal fallback
+remain unchanged. The
+[complete default-path record](../validation/windows-warp/README.md#2026-10-06-default-picker-backdrop-observations)
+keeps source/binary, both executions and the shared-host/native limits; #350
+and physical presentation/resource evidence remain open.
+
 ## Measuring bounded Source geometry on the cumulative application
 
 Clean `a295d65` ran all four actual 400-section Markdown WARP controls after
@@ -132,7 +151,7 @@ new renderer owner, production switch or retained geometry cache is introduced.
 The optional attribution explicitly selects the ordinary backdrop through a
 test-only per-context control, so its original-pixel and balanced-pair oracle
 remains usable after the default picker path changes. Actual cumulative
-rendering and native evidence remain distinct from the earlier diagnostic.
+rendering is recorded above; native evidence remains separately unqualified.
 
 ## Measuring the real large Markdown drawing path
 

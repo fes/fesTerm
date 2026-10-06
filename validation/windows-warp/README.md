@@ -246,8 +246,58 @@ untextured/unrounded/unstroked/unblurred geometry. Other shapes, modals,
 opaque-frame guards, renderer ownership and unsupported fallback stay intact.
 The two-scale regression compares full pixels and modal/content/backdrop
 responses plus no-renderer, nonzero-origin, transform and colored fallbacks.
-This route needs its own cumulative measured qualification; the `90c0ed5`
-table remains the earlier diagnostic source, not default-path acceptance.
+The cumulative default-path record follows; the `90c0ed5` table remains the
+earlier diagnostic source, not a relabeled default-path measurement.
+
+#### 2026-10-06 default picker backdrop observations
+
+Clean cumulative `675a007f7e0b21b7c470e7cd77fdb22d16f2d02c` follows the bounded
+Source successor and completed all eight actual default picker controls in
+30.19 seconds. Comparison controls are the preserved ordinary default replay
+at `90c0ed5df4920cbf40e3ea96e609ce6f19df1417`. Both use the same physical
+fixture paths, Windows x64 DX12 CPU `Microsoft Basic Render Driver`,
+driver `10.0.26100.9278`, `Rgba8Unorm`, scale 2.
+The archived measured release test executable SHA256 is
+`4ffe027ebfb16bbd0e63690c651cae8f86c8e9904b8aee06b7e845c98f15437c`.
+
+All eight reference PNGs are identical and all forty measured original-renderer
+guards pass. Every completed default draw executes exactly one additional
+panel callback: normal Open File 4 to 5, narrow Open File 2 to 3, Save As 3 to 4.
+The independent verifier requires these counts as well as source/adapter/format,
+actual readiness, viewport/scale, ordered finite samples, percentiles,
+completion buckets and dimension-derived payload equations. Its negative
+ordinary control fails the callback requirement despite unchanged pixels.
+
+| Actual picker | Previous UI median (ms) | Default-route UI median (ms) | Previous completed draw/readback median (ms) | Current median (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Open File ready normal | 0.649 | 0.722 | 1032.611 | 550.592 |
+| Open File ready narrow | 0.523 | 0.836 | 404.382 | 284.395 |
+| Open File error normal | 0.474 | 0.553 | 1010.600 | 537.367 |
+| Open File error narrow | 0.375 | 0.442 | 393.196 | 307.779 |
+| Save As ready normal | 0.588 | 0.689 | 1104.993 | 650.405 |
+| Save As ready narrow | 0.565 | 0.632 | 386.072 | 278.477 |
+| Save As error normal | 0.428 | 0.726 | 1083.305 | 623.611 |
+| Save As error narrow | 0.436 | 0.511 | 364.908 | 263.923 |
+
+Completed draw/readback medians are 21.7-46.8% lower, while UI medians increase
+0.067-0.313 ms. UI construction includes the extra callback's original-geometry
+tessellation/preparation; that tradeoff is not removed from the record.
+These noncontemporaneous shared-host observations agree with the earlier
+same-frame route attribution, but are not quiet-host precision, isolated
+shader instructions, physical input/presentation or hardware-platform evidence.
+No other owned build/probe was active at runtime-slot acquisition; shared-host
+quietness is not established. Substantial drawing cost remains.
+
+The opted-in legacy attribution then passed on the same source/binary in
+110.28 seconds, preserving eight PNGs, forty ordinary and ninety-six measured
+balanced paired guards, original alpha/geometry and the one additional callback.
+It explicitly uses the per-context test-only ordinary selector before converting
+the frozen frame; production has no environment switch. The two-scale complete
+pixel/response/fallback regression also passed, explicitly selecting DX12
+without relying on a shell backend setting. Other modals, original dimming,
+opaque-frame guards, shaders and renderer ownership remain unchanged.
+Native interaction, screen-reader, mixed-DPI/hardware, physical latency,
+device/driver retirement, resource caps and multi-day qualification stay open.
 
 ### Gallery capture and shared fixture identity
 
