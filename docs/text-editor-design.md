@@ -143,6 +143,24 @@ the selected code row forwards its vertical target after the horizontal child
 closes. This keeps offscreen code reachable without changing per-view scroll,
 selection, source positions, or the original horizontal wrapping/targeting.
 
+Saved-local Preview and Split also use the viewer's bounded relative-image
+loader. The source is the real `DocumentOrigin::Local` path, never the origin
+label or a fallback filename. Remote, untitled and terminal-history documents
+cannot read local images, even when their labels resemble local paths. First
+Save and Save As/rebinding discard old image state and use the new real parent;
+reparses discard snapshot-specific caches and receivers, with running work
+remaining charged until it actually ends. Failed parsing releases hidden images
+and starts no loads for the retained old snapshot.
+
+The Settings **Image memory budget** is shared by all panes/windows (512 MiB
+default), with four actual manual/automatic workers globally and 64 automatic
+references per snapshot. Saturation preserves admitted images and visibly
+refuses new growth; temporary refusals recover after sufficient capacity
+returns or the budget increases. Failed images can be explicitly retried.
+Canonical directory confinement, byte/header limits and managed-allowance
+exclusions follow [ADR 0030](adr/0030-native-markdown-viewer.md); this is not
+a total-process memory claim.
+
 **Syntax highlighting** is on by default and colours source by what it means —
 keyword, string, comment, type — from the same engine and the same palette the
 Markdown preview's fenced code uses (ADR 0035). Colour is presentation only: it

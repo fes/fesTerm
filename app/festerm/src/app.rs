@@ -412,6 +412,7 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    image_budget: crate::markdown_images::ImageMemoryBudget,
     local_persistence_provider: PersistenceProviderKind,
     /// The deterministic local tab created only for native-window smoke. The
     /// ordinary no-workspace product path starts at Launcher instead.
@@ -823,6 +824,10 @@ impl FesTermApp {
         // commands. Letting egui also process them at end-of-frame would scale
         // application chrome and violate the documented zoom boundary.
         context.options_mut(|options| options.zoom_with_keyboard = false);
+        let image_budget = crate::markdown_images::ImageMemoryBudget::for_context(
+            context,
+            configuration.interface_settings().image_memory_budget(),
+        );
         let about_icon = load_application_icon(context);
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
@@ -867,6 +872,7 @@ impl FesTermApp {
         };
         Self {
             state,
+            image_budget,
             local_persistence_provider: detect_default_local_persistence_provider(),
             primary_tab,
             window_was_focused: true,
@@ -1421,6 +1427,16 @@ impl FesTermApp {
     /// touches no tab, focus, scroll offset, selection, or in-progress text
     /// entry (ADR 0032).
     pub(crate) fn adopt_broadcast_configuration(&mut self, configuration: Configuration) {
+        if configuration.interface_settings().image_memory_budget()
+            != self
+                .state
+                .configuration()
+                .interface_settings()
+                .image_memory_budget()
+        {
+            self.image_budget
+                .set_preference(configuration.interface_settings().image_memory_budget());
+        }
         self.state.adopt_configuration(configuration);
     }
 
@@ -1762,10 +1778,28 @@ impl FesTermApp {
         self.apply_configuration_save(
             self.state
                 .configuration()
-                .with_interface_settings(self.state.interface_settings()),
+                .with_interface_settings(self.current_interface_settings()),
             ConfigurationStartupStatus::InterfaceSettingsSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_interface_settings,
         );
+    }
+
+    fn current_interface_settings(&self) -> InterfaceSettings {
+        self.state
+            .interface_settings()
+            .with_image_memory_budget(self.image_budget.preference())
+    }
+
+    fn set_image_memory_budget(
+        &mut self,
+        budget: festerm_config::ImageMemoryBudgetPreference,
+        context: &egui::Context,
+    ) {
+        self.state
+            .dispatch(AppCommand::SetImageMemoryBudget(budget), context);
+        self.image_budget.set_preference(budget);
+        self.persist_interface_settings();
+        crate::markdown_images::wake_image_viewports(context);
     }
 
     /// Persists the host key currently displayed for `tab` as trusted (ADR
@@ -1841,9 +1875,11 @@ impl FesTermApp {
     /// already equal defaults, otherwise a destructive-adjacent confirmation
     /// (`docs/gui-action-graph.md` SET-02).
     fn request_reset_interface_settings(&mut self, context: &egui::Context) {
-        if self.state.interface_settings() == InterfaceSettings::DEFAULT {
+        if self.current_interface_settings() == InterfaceSettings::DEFAULT {
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.image_budget
+                .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
             return;
         }
         self.palette.close();
@@ -5483,6 +5519,10 @@ impl FesTermApp {
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
     pub(crate) fn ui_content(&mut self, ui: &mut egui::Ui) {
+        self.image_budget = crate::markdown_images::ImageMemoryBudget::for_context(
+            ui.ctx(),
+            self.state.image_memory_budget(),
+        );
         if !self.terminal_fonts_installed {
             self.terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
                 ui.ctx(),
@@ -5723,6 +5763,8 @@ impl FesTermApp {
                             emoji_presentation: self.state.emoji_presentation(),
                             scroll_speed: self.state.scroll_speed(),
                             scrollback_limit: self.state.scrollback_limit(),
+                            image_memory_budget: self.image_budget.preference(),
+                            image_memory_over_budget: self.image_budget.is_over_budget(),
                             quick_switch_overlay: self.state.quick_switch_overlay(),
                             compact_launcher_grid: self.state.compact_launcher_grid(),
                             show_resumable_sessions: self.state.show_resumable_sessions(),
@@ -6030,6 +6072,10 @@ impl FesTermApp {
                     // asked.
                     let context = ui.ctx().clone();
                     self.state.dispatch(AppCommand::CloseTab(id), &context);
+                }
+                AppCommand::SetImageMemoryBudget(budget) => {
+                    let context = ui.ctx().clone();
+                    self.set_image_memory_budget(budget, &context);
                 }
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
@@ -6562,9 +6608,14 @@ impl FesTermApp {
     }
 
     pub(crate) fn for_test_with_configuration(configuration: Configuration) -> Self {
+        let image_budget = crate::markdown_images::ImageMemoryBudget::for_context(
+            &egui::Context::default(),
+            configuration.interface_settings().image_memory_budget(),
+        );
         let state = AppState::for_test_with_configuration(configuration);
         Self {
             state,
+            image_budget,
             local_persistence_provider: PersistenceProviderKind::FestermSessiond,
             primary_tab: None,
             window_title: APPLICATION_TITLE.to_owned(),
@@ -8128,6 +8179,130 @@ mod tests {
             .keyboard_bindings()
             .is_empty());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_settings_ui_save_and_restart_preserve_unrelated_configuration() {
+        use festerm_config::ImageMemoryBudgetPreference as Budget;
+        let configuration = Configuration::parse("schema_version = 1\n[[profiles]]\nkind = 'local'\nid = 'controlled'\nexecutable = 'controlled-unused'\n[settings]\nstatus_bar_visible = false\n").unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-image-budget-settings-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        app.state
+            .dispatch(AppCommand::OpenSettings, &egui::Context::default());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 5200.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::ComboBox, "Image memory budget")
+            .click();
+        harness.run();
+        harness.get_by_label("128 MiB").click();
+        harness.run();
+        let loaded = Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            loaded.interface_settings().image_memory_budget(),
+            Budget::MiB128
+        );
+        assert_eq!(loaded.profiles(), configuration.profiles());
+        assert!(!loaded.interface_settings().status_bar_visible());
+        assert_eq!(harness.state().image_budget.preference(), Budget::MiB128);
+        assert_eq!(harness.state().state.image_memory_budget(), Budget::MiB128);
+        assert!(harness.state().configuration_status.was_saved());
+        assert_eq!(
+            harness.state_mut().take_configuration_broadcast(),
+            Some(loaded.clone())
+        );
+        let restarted = FesTermApp::for_test_with_configuration(loaded);
+        assert_eq!(restarted.image_budget.preference(), Budget::MiB128);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_live_failed_save_is_not_overwritten_by_stale_sibling_settings() {
+        use festerm_config::ImageMemoryBudgetPreference as Budget;
+        let context = egui::Context::default();
+        let mut first = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let mut sibling = FesTermApp::for_test_with_configuration(Configuration::empty());
+        first.image_budget =
+            crate::markdown_images::ImageMemoryBudget::for_context(&context, Budget::MiB512);
+        sibling.image_budget =
+            crate::markdown_images::ImageMemoryBudget::for_context(&context, Budget::MiB512);
+        first.set_image_memory_budget(Budget::MiB64, &context);
+        assert!(!first.configuration_status.was_saved());
+        assert!(first.take_configuration_broadcast().is_none());
+        assert_eq!(
+            first
+                .state
+                .configuration()
+                .interface_settings()
+                .image_memory_budget(),
+            Budget::MiB512
+        );
+        assert_eq!(sibling.state.image_memory_budget(), Budget::MiB512);
+        assert_eq!(
+            sibling.current_interface_settings().image_memory_budget(),
+            Budget::MiB64
+        );
+        sibling.adopt_broadcast_configuration(Configuration::empty());
+        assert_eq!(sibling.image_budget.preference(), Budget::MiB64);
+        sibling
+            .state
+            .dispatch(AppCommand::ToggleStatusBar, &context);
+        sibling.persist_interface_settings();
+        assert_eq!(first.image_budget.preference(), Budget::MiB64);
+        let committed = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_image_memory_budget(Budget::MiB256),
+            )
+            .unwrap();
+        let active = sibling.state.active();
+        sibling.adopt_broadcast_configuration(committed);
+        assert_eq!(sibling.state.active(), active);
+        assert_eq!(sibling.state.image_memory_budget(), Budget::MiB256);
+        assert_eq!(first.image_budget.preference(), Budget::MiB256);
+    }
+
+    #[test]
+    fn image_budget_reset_confirmation_restores_the_live_default_and_preserves_admitted_storage() {
+        use festerm_config::ImageMemoryBudgetPreference as Budget;
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT.with_image_memory_budget(Budget::MiB2048),
+            )
+            .unwrap();
+        let app = FesTermApp::for_test_with_configuration(configuration);
+        let retained = app.image_budget.reserve(600 * 1024 * 1024, None).unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 600.0))
+            .build_ui_state(
+                |ui, app: &mut FesTermApp| app.show_settings_reset_confirmation(ui.ctx(), false),
+                app,
+            );
+        harness
+            .state_mut()
+            .request_reset_interface_settings(&egui::Context::default());
+        harness.run();
+        harness.get_by_label("Reset").click();
+        harness.run();
+        assert_eq!(harness.state().image_budget.preference(), Budget::MiB512);
+        assert_eq!(harness.state().state.image_memory_budget(), Budget::MiB512);
+        assert!(harness.state().image_budget.is_over_budget());
+        assert!(harness.state().image_budget.reserve(1, None).is_err());
+        assert_eq!(
+            harness.state().image_budget.usage_for_test(),
+            (600 * 1024 * 1024, 0)
+        );
+        drop(retained);
+        assert!(!harness.state().image_budget.is_over_budget());
+        assert!(harness.state().image_budget.reserve(1, None).is_ok());
     }
 
     #[test]

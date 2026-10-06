@@ -3,6 +3,40 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding image ownership and connecting saved-local Preview
+
+The allocation/lifecycle audit in #320 found that per-image limits left
+combined images unbounded, manual loads bypassed the four-worker cap, and
+decoder expansion began before raster dimensions were rejected. The review
+also uncovered a routing gap: ordinary local Markdown opens in the shared
+editor, whose Preview never invoked the standalone loader. Connecting only
+saved-local Preview was explicitly approved; displayed labels and fallback
+paths must not grant filesystem access.
+
+Both surfaces now borrow one admission/poll/retry implementation and share a
+512 MiB managed allowance plus four actual running workers. A bounded Settings
+choice applies live and survives save failures without an unsaved broadcast.
+Whole-load reservation happens atomically before owned expansion, and actual
+reading probes at most one byte beyond 8 MiB. Canonical directory confinement
+rejects rooted/traversal/symlink escapes, and nonblocking Unix opens keep FIFOs
+from pinning a worker waiting for a writer.
+
+Reservations follow actual worker, decoded-result, texture and CPU-upload
+owners through close/reparse/rebinding; a rotating 128-entry retirement scan
+avoids an unbounded reclamation walk. Permanent failures need an explicit
+retry; sparse ledgers release exceptional backing capacity with at most
+128 retained entries copied. Temporary refusals wait for their whole required
+allowance rather than
+retrying one another's released scratch storage. Existing admissions survive
+saturation or lowering.
+
+Deterministic regressions exercise real editor Preview and its image button,
+shared bytes/workers, first Save/Save As and nonlocal origins, stale results,
+failed parsing, retirement and Settings persistence/reset. CP-06/CP-15 retain
+native visual/accessibility evidence. Decoder-private memory, native renderer
+and GPU retirement, allocator fragmentation and total RSS are outside this
+allowance; the repair does not establish #297's multi-day growth cause.
+
 ## Keeping vi repeat bounded without discarding edits
 
 The allocation/lifecycle audit in #320 found that Insert/Backspace and Visual

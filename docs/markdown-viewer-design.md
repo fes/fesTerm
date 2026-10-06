@@ -156,14 +156,30 @@ activation:
   does not become a generic file launcher.
 - Dangerous or unsupported schemes are inert and explained.
 
-No secondary resource loads implicitly. Images render as compact placeholders
-showing alt text and source class. For a local document, **Load local image**
-may read an explicitly requested bounded raster file after canonical path and
-size checks. For a remote document, **Load remote image** performs an explicit
-bounded fetch through the same verified SFTP origin/generation. Network images,
-data URLs, SVG, fonts, scripts, stylesheets, iframes, and includes never load in
-the viewer. Resource approval is per item for the current viewer lifetime, not
-a persisted trust grant.
+Only bounded relative raster images of saved local documents load automatically,
+up to 64 distinct references per snapshot; later references keep **Load local
+image**. Both standalone viewers and editor Preview share four actual running
+loads and the Settings **Image memory budget** (512 MiB default). Existing
+admissions survive lowering/saturation; additional growth is visibly refused,
+and temporary refusals recover when their required space or slot is available.
+Permanent failures do not retry every frame; explicit retry remains available.
+
+The real typed local origin grants reads, never a presentation label or fallback
+path. Actual encoded input is bounded to 8 MiB, dimensions to 16 Mi-pixels and
+the live texture-axis limit, before owned expansion. Canonical image destinations
+must stay inside the opened file's canonical parent directory; filesystem-rooted
+paths and traversal/symlink escapes are blocked. Unix nonblocking opens reject
+special files without waiting for a FIFO writer. Reservations track actual
+worker/result/texture/CPU-upload owners through close and snapshot replacement.
+See ADR 0030 for the conservative envelope and bounded retirement traversal.
+
+Remote, untitled and terminal-history Preview never read local images. Remote
+resource fetch remains unimplemented and may only be added through the same
+verified SFTP origin/generation. Network images, data URLs, SVG, fonts, scripts,
+stylesheets, iframes, and includes never load. Approval is per snapshot/view,
+not a persisted trust grant. The shared allowance is not a process-RAM/VRAM
+cap: decoder-private allocation, native renderer/GPU retirement and allocator
+fragmentation are outside it.
 
 ## Find, selection, Copy, and keyboard behavior
 

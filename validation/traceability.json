@@ -1477,7 +1477,8 @@
         "EDIT-13",
         "EDIT-14",
         "EDIT-15",
-        "EDIT-17"
+        "EDIT-17",
+        "EDIT-18"
       ],
       "requirements": [
         "docs/gui-design.md#approved-native-text-editing",
@@ -1488,6 +1489,12 @@
         "ADR-0034"
       ],
       "automated_tests": [
+        "image_budget_real_editor_preview_and_manual_image_command_load_saved_local_images",
+        "image_budget_nonlocal_editor_origins_never_authorize_path_looking_preview_labels",
+        "image_budget_first_save_and_save_as_rebind_preview_to_the_real_new_parent",
+        "image_budget_preview_reparse_cannot_adopt_an_old_workers_result",
+        "image_budget_failed_preview_parse_releases_images_without_reloading_the_hidden_snapshot",
+        "image_budget_preview_failed_image_can_be_explicitly_retried_without_automatic_retry",
         "opening_one_path_twice_shares_a_single_buffer",
         "typing_into_the_body_reaches_the_shared_document_and_dirties_it",
         "undoing_in_one_view_undoes_the_document_for_every_view",
@@ -1628,16 +1635,25 @@
       "edges": [
         "SET-0[1-8]",
         "SET-11",
-        "SET-12"
+        "SET-12",
+        "SET-13"
       ],
       "requirements": [
         "docs/gui-design.md#settings"
       ],
       "decisions": [
         "ADR-0015",
-        "ADR-0022"
+        "ADR-0022",
+        "ADR-0030"
       ],
       "automated_tests": [
+        "image_memory_budget_default_is_512_mib_and_is_omitted_from_saved_settings",
+        "image_memory_budget_values_round_trip_without_an_unbounded_escape",
+        "image_budget_settings_dropdown_dispatches_the_typed_bounded_preference",
+        "image_budget_settings_ui_save_and_restart_preserve_unrelated_configuration",
+        "image_budget_live_failed_save_is_not_overwritten_by_stale_sibling_settings",
+        "image_budget_reset_confirmation_restores_the_live_default_and_preserves_admitted_storage",
+        "image_budget_lowering_preserves_existing_admissions_and_refuses_additional_growth",
         "toggle_chip_layout_flips_between_wrap_and_single_row_scroll",
         "safety_dialogs_fit_the_full_root_and_keep_cancel_safe_with_long_targets",
         "textureless_bordered_panels_match_pixels_across_dpi",
@@ -1681,7 +1697,9 @@
         "AS-02",
         "AS-09",
         "CP-01",
-        "CP-16"
+        "CP-16",
+        "CP-06",
+        "CP-15"
       ],
       "status": "partial",
       "prerequisites": [
@@ -2392,6 +2410,26 @@
         "markdown_file_picker_path_focus_shortcut_and_cancel_own_pending_results",
         "markdown_file_picker_path_paste_and_enter_do_not_activate_the_selected_row",
         "local_relative_images_load_without_the_reader_asking",
+        "image_budget_reservation_is_atomic_and_released_by_its_actual_owner",
+        "image_budget_workers_release_slots_without_waiting_for_a_hidden_viewer_to_poll",
+        "image_budget_context_storage_does_not_hold_a_context_or_self_reference_cycle",
+        "image_budget_is_shared_without_stale_window_initialization_overwriting_it",
+        "image_budget_texture_retirement_waits_for_the_real_cpu_upload_owner",
+        "image_budget_one_live_upload_does_not_pin_later_completed_retirements",
+        "image_budget_retirement_ledger_releases_exceptional_capacity_when_sparse",
+        "image_budget_manual_admission_obeys_the_same_pending_limit_as_automatic_loads",
+        "image_budget_rejects_oversized_raster_header_before_trying_to_expand_its_pixels",
+        "image_budget_actual_read_is_bounded_even_without_relying_on_metadata",
+        "image_budget_two_viewers_share_storage_and_retry_only_after_external_capacity_changes",
+        "image_budget_decoded_result_outlives_its_viewer_without_releasing_its_storage_early",
+        "image_budget_closed_viewer_keeps_a_running_worker_charged_until_that_worker_finishes",
+        "image_budget_failed_spawn_releases_both_the_worker_and_its_reservation",
+        "image_budget_manual_and_automatic_admission_share_one_running_worker_limit",
+        "image_budget_refused_images_do_not_retry_each_others_released_scratch_storage",
+        "image_budget_saved_local_preview_shares_viewer_bytes_and_recovers_after_a_limit_increase",
+        "image_budget_preview_and_viewer_share_worker_slots",
+        "image_budget_local_paths_cannot_escape_the_opened_markdown_directory",
+        "image_budget_local_fifo_is_rejected_without_waiting_for_a_writer",
         "absolute_url_images_are_never_loaded_automatically",
         "a_local_image_that_cannot_be_read_is_only_attempted_once",
         "automatic_image_loading_is_bounded_by_the_concurrency_cap",
@@ -2413,7 +2451,8 @@
       ],
       "manual_scenarios": [
         "CP-06",
-        "CP-19"
+        "CP-19",
+        "CP-15"
       ],
       "status": "partial",
       "prerequisites": [

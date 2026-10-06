@@ -23,10 +23,11 @@ use std::thread::JoinHandle;
 use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, DurableSessionIdentity,
-    EmojiPresentationPreference, InterfaceSettings, PersistenceConfiguration,
-    PersistenceProviderKind, ScrollSpeedPreference, ScrollbackLimitPreference, SessionAlias,
-    SftpPaneOrderPreference, SshPortForwardDirection as ConfigSshPortForwardDirection,
-    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    EmojiPresentationPreference, ImageMemoryBudgetPreference, InterfaceSettings,
+    PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
+    ScrollbackLimitPreference, SessionAlias, SftpPaneOrderPreference,
+    SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
+    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{
     Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
@@ -2215,6 +2216,7 @@ pub enum AppCommand {
     /// Selects the retained primary-history budget for sessions created
     /// after this preference changes.
     SetScrollbackLimit(ScrollbackLimitPreference),
+    SetImageMemoryBudget(ImageMemoryBudgetPreference),
     /// Toggles whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) overlays each eligible chip's quick-switch number in
     /// place of its usual status presentation (feature request #69).
@@ -2500,6 +2502,7 @@ pub struct AppState {
     emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
     scrollback_limit: ScrollbackLimitPreference,
+    image_memory_budget: ImageMemoryBudgetPreference,
     /// How the next text editor view starts out. Options stay per-view once a
     /// view is open; this is only where a new one begins.
     editor: festerm_config::EditorSettings,
@@ -2614,6 +2617,7 @@ impl AppState {
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
             scrollback_limit: settings.scrollback_limit(),
+            image_memory_budget: settings.image_memory_budget(),
             editor: settings.editor(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
@@ -2888,6 +2892,7 @@ impl AppState {
         self.emoji_presentation = settings.emoji_presentation();
         self.scroll_speed = settings.scroll_speed();
         self.scrollback_limit = settings.scrollback_limit();
+        self.image_memory_budget = settings.image_memory_budget();
         self.editor = settings.editor();
         self.quick_switch_overlay = settings.quick_switch_overlay();
         self.compact_launcher_grid = settings.compact_launcher_grid();
@@ -3080,6 +3085,10 @@ impl AppState {
         self.scrollback_limit
     }
 
+    pub const fn image_memory_budget(&self) -> ImageMemoryBudgetPreference {
+        self.image_memory_budget
+    }
+
     pub const fn quick_switch_overlay(&self) -> bool {
         self.quick_switch_overlay
     }
@@ -3142,6 +3151,7 @@ impl AppState {
         .with_scroll_speed(self.scroll_speed)
         .with_editor(self.editor)
         .with_scrollback_limit(self.scrollback_limit)
+        .with_image_memory_budget(self.image_memory_budget)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_show_resumable_sessions(self.show_resumable_sessions)
@@ -3448,10 +3458,17 @@ impl AppState {
             AppCommand::NavigateMarkdownFind { reverse } => {
                 self.with_active_markdown_viewer(|viewer| viewer.advance_find(reverse))
             }
-            AppCommand::LoadMarkdownLocalImage { reference_index } => self
-                .with_active_markdown_viewer(|viewer| {
-                    viewer.load_local_image(reference_index, context)
-                }),
+            AppCommand::LoadMarkdownLocalImage { reference_index } => {
+                match &mut self.active_tab_mut().content {
+                    TabContent::MarkdownViewer(viewer) => {
+                        viewer.load_local_image(reference_index, context)
+                    }
+                    TabContent::TextEditor(editor) => {
+                        editor.load_local_image(reference_index, context)
+                    }
+                    _ => {}
+                }
+            }
             AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id } => {
                 self.open_configured_sftp_file_manager_profile(&profile_id)
             }
@@ -3569,6 +3586,9 @@ impl AppState {
             AppCommand::SetScrollbackLimit(limit) => {
                 self.scrollback_limit = limit;
             }
+            AppCommand::SetImageMemoryBudget(budget) => {
+                self.image_memory_budget = budget;
+            }
             AppCommand::ToggleQuickSwitchOverlay => {
                 self.quick_switch_overlay = !self.quick_switch_overlay;
             }
@@ -3672,6 +3692,7 @@ impl AppState {
                 self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
                 self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
+                self.image_memory_budget = InterfaceSettings::DEFAULT.image_memory_budget();
                 self.editor = InterfaceSettings::DEFAULT.editor();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
