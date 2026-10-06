@@ -38,7 +38,16 @@ missing, ambiguous, clipped, textured or nonexact candidates fail rather than
 silently substituting another operation. Callback construction is outside render
 timing. These are targeted whole-frame/batching diagnostics, not isolated GPU
 timestamps, a shipping optimization, native presentation or physical latency.
-The actual eight-picker execution must still establish any measured contribution.
+The actual eight-picker release execution at clean `90c0ed5` now preserves all
+eight reference PNGs, forty ordinary and ninety-six paired measured pixel guards,
+including the original alpha 100, eight vertices and thirty indices. All six
+balanced pairs per scene execute the additional callback exactly once.
+Completed draw/readback medians are 22.8-62.7% lower on the converted path.
+That establishes a material shared-host backdrop-route/batching contribution
+without removing dimming; it does not isolate shader instructions, qualify
+native latency or implement a production fix. The
+[exact scene record](../validation/windows-warp/README.md#2026-10-06-completed-same-frame-picker-attribution)
+retains the source, binary, sample convention and limitations.
 
 ## Measuring the real large Markdown drawing path
 
