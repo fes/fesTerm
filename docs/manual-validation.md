@@ -970,6 +970,14 @@ an established gain or regression. See the
 [source-bound scene record](../validation/windows-warp/README.md#2026-10-06-source-bound-picker-and-markdown-observations);
 no native row or latency budget changes.
 
+A separate `textureless-black` opt-in adds same-frame picker backdrop attribution
+to that eight-scene selector on Windows x64. It requires an exact unique black
+translucent full-root untextured rectangle, retains every pixel across six
+balanced ordered pairs and observes the one additional executed callback.
+Invalid or ambiguous candidates fail; the production shader/guards and native
+classifications are unchanged. Actual runtime contribution remains unqualified
+until the selected diagnostic executes; this adds no native/manual acceptance.
+
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external
 resources. CPU readiness proves the rendered heading or raw Source marker and

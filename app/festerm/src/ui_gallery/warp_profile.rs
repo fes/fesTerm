@@ -52,6 +52,60 @@ impl SceneSet {
     }
 }
 
+pub(super) fn picker_backdrop_attribution(
+    value: Option<&OsStr>,
+    selected: SceneSet,
+) -> Result<bool, &'static str> {
+    match value {
+        None => Ok(false),
+        Some(value)
+            if value == OsStr::new("textureless-black")
+                && selected == SceneSet::PickerControls
+                && cfg!(all(windows, target_arch = "x86_64")) =>
+        {
+            Ok(true)
+        }
+        Some(_) => Err(
+            "FESTERM_WARP_UI_PICKER_BACKDROP requires textureless-black, picker-controls and Windows x64",
+        ),
+    }
+}
+
+fn black_backdrop_index(
+    shapes: &[egui::epaint::ClippedShape],
+    viewport: egui::Rect,
+) -> Result<usize, &'static str> {
+    if !viewport.is_finite() || viewport.min != egui::Pos2::ZERO || !viewport.is_positive() {
+        return Err("backdrop attribution requires a finite positive root viewport");
+    }
+    let mut matched = None;
+    for (index, shape) in shapes.iter().enumerate() {
+        let egui::Shape::Rect(rect) = &shape.shape else {
+            continue;
+        };
+        if rect.rect != viewport
+            || !shape.clip_rect.contains_rect(viewport)
+            || rect.fill.r() != 0
+            || rect.fill.g() != 0
+            || rect.fill.b() != 0
+            || rect.fill.a() == 0
+            || rect.fill.is_opaque()
+            || rect.brush.is_some()
+            || rect.corner_radius != egui::CornerRadius::ZERO
+            || rect.stroke != egui::Stroke::NONE
+            || rect.blur_width != 0.0
+        {
+            continue;
+        }
+        if matched.replace(index).is_some() {
+            return Err(
+                "backdrop attribution found multiple full-root translucent black rectangles",
+            );
+        }
+    }
+    matched.ok_or("backdrop attribution requires exactly one full-root translucent black rectangle")
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct DrawSample {
     tessellation_ms: f64,
@@ -266,6 +320,184 @@ pub(super) fn render(
     (image, sample)
 }
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub(super) fn attribute_picker_backdrop(
+    state: &egui_wgpu::RenderState,
+    context: &egui::Context,
+    output: &egui::FullOutput,
+    expected: &image::RgbaImage,
+) -> serde_json::Value {
+    let viewport = context.viewport_rect();
+    let index = black_backdrop_index(&output.shapes, viewport)
+        .expect("actual picker frame has one attributable black backdrop");
+    let source = &output.shapes[index];
+    let egui::Shape::Rect(backdrop) = &source.shape else {
+        unreachable!("matched a rectangle");
+    };
+    let primitives = context.tessellate(vec![source.clone()], context.pixels_per_point());
+    let [egui::ClippedPrimitive {
+        primitive: egui::epaint::Primitive::Mesh(mesh),
+        ..
+    }] = primitives.as_slice()
+    else {
+        panic!("actual picker backdrop must tessellate to exactly one mesh");
+    };
+    let mut converted = output.clone();
+    converted.shapes[index].shape = crate::software_background::PanelTestProbe::existing(context)
+        .white_mesh_shape(viewport, mesh)
+        .expect("attributed backdrop has valid white-UV geometry and eligible installed pipeline");
+    for frame in [output, &converted] {
+        let (image, _) = render(state, context, frame);
+        assert_eq!(&image, expected, "backdrop attribution warmup pixels");
+    }
+    let mut pairs = Vec::new();
+    let mut ordinary_times = Vec::new();
+    let mut converted_times = Vec::new();
+    for pair in 0..6 {
+        let converted_first = pair % 2 != 0;
+        let (first, second) = if converted_first {
+            (&converted, output)
+        } else {
+            (output, &converted)
+        };
+        let (first_image, first_sample) = render(state, context, first);
+        let (second_image, second_sample) = render(state, context, second);
+        assert_eq!(&first_image, expected, "first measured backdrop pixels");
+        assert_eq!(&second_image, expected, "second measured backdrop pixels");
+        let (ordinary, textureless) = if converted_first {
+            (second_sample, first_sample)
+        } else {
+            (first_sample, second_sample)
+        };
+        assert_eq!(
+            textureless.work.executed_panel_paints,
+            ordinary
+                .work
+                .executed_panel_paints
+                .map(|count| count.checked_add(1).expect("bounded panel paint count")),
+            "the attributed backdrop callback must execute exactly once",
+        );
+        assert!(ordinary.work.executed_panel_paints.is_some());
+        ordinary_times.push(ordinary.total_ms);
+        converted_times.push(textureless.total_ms);
+        pairs.push(serde_json::json!({
+            "order": if converted_first { ["textureless-black", "ordinary"] } else { ["ordinary", "textureless-black"] },
+            "ordinary": ordinary,
+            "textureless_black": textureless,
+            "pixels_equal": true,
+        }));
+    }
+    serde_json::json!({
+        "schema": "festerm-picker-backdrop-attribution-v1",
+        "shape_index": index,
+        "backdrop_color_rgba": backdrop.fill.to_array(),
+        "viewport_points": [viewport.width(), viewport.height()],
+        "pixels_per_point": context.pixels_per_point(),
+        "backdrop_vertices": mesh.vertices.len(),
+        "backdrop_indices": mesh.indices.len(),
+        "paired_samples": pairs,
+        "ordinary_completed_draw_readback": crate::surface_performance::timing_distribution(&ordinary_times),
+        "textureless_black_completed_draw_readback": crate::surface_performance::timing_distribution(&converted_times),
+        "pixels_equal": true,
+        "scope": "Same unchanged actual frame and white-UV geometry; only its unique full-root translucent black backdrop uses the existing installed panel shader. Six balanced ordered pairs and every exact pixel retained. Callback construction is outside render timing. Not a shipping optimization, isolated GPU timestamp, native presentation, physical latency or total-resource claim.",
+    })
+}
+
+#[test]
+fn picker_backdrop_attribution_requires_explicit_bounded_supported_selection() {
+    for selected in [
+        SceneSet::All,
+        SceneSet::PickerControls,
+        SceneSet::MarkdownControls,
+    ] {
+        assert_eq!(picker_backdrop_attribution(None, selected), Ok(false));
+        assert!(picker_backdrop_attribution(Some(OsStr::new("1")), selected).is_err());
+        assert!(
+            picker_backdrop_attribution(Some(OsStr::new("textureless-black ")), selected).is_err()
+        );
+    }
+    assert!(
+        picker_backdrop_attribution(Some(OsStr::new("textureless-black")), SceneSet::All).is_err()
+    );
+    assert!(picker_backdrop_attribution(
+        Some(OsStr::new("textureless-black")),
+        SceneSet::MarkdownControls
+    )
+    .is_err());
+    assert_eq!(
+        picker_backdrop_attribution(
+            Some(OsStr::new("textureless-black")),
+            SceneSet::PickerControls
+        )
+        .is_ok(),
+        cfg!(all(windows, target_arch = "x86_64")),
+    );
+}
+
+#[test]
+fn picker_backdrop_attribution_rejects_missing_ambiguous_or_nonexact_geometry() {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
+    let backdrop = egui::epaint::ClippedShape {
+        clip_rect: viewport,
+        shape: egui::Shape::rect_filled(viewport, 0.0, egui::Color32::from_black_alpha(128)),
+    };
+    assert_eq!(
+        black_backdrop_index(std::slice::from_ref(&backdrop), viewport),
+        Ok(0)
+    );
+    assert!(black_backdrop_index(&[], viewport).is_err());
+    assert!(black_backdrop_index(&[backdrop.clone(), backdrop.clone()], viewport).is_err());
+    for shape in [
+        egui::Shape::rect_filled(viewport, 0.0, egui::Color32::BLACK),
+        egui::Shape::rect_filled(viewport, 0.0, egui::Color32::TRANSPARENT),
+        egui::Shape::rect_filled(
+            viewport,
+            0.0,
+            egui::Color32::from_rgba_premultiplied(1, 0, 0, 128),
+        ),
+        egui::Shape::rect_filled(viewport, 2.0, egui::Color32::from_black_alpha(128)),
+        egui::Shape::rect_filled(
+            viewport.shrink(1.0),
+            0.0,
+            egui::Color32::from_black_alpha(128),
+        ),
+    ] {
+        assert!(black_backdrop_index(
+            &[egui::epaint::ClippedShape {
+                clip_rect: viewport,
+                shape
+            }],
+            viewport
+        )
+        .is_err());
+    }
+    let mut clipped = backdrop.clone();
+    clipped.clip_rect = viewport.shrink(1.0);
+    assert!(black_backdrop_index(&[clipped], viewport).is_err());
+    let mut blurred = backdrop.clone();
+    let egui::Shape::Rect(rect) = &mut blurred.shape else {
+        unreachable!()
+    };
+    rect.blur_width = 1.0;
+    assert!(black_backdrop_index(&[blurred], viewport).is_err());
+    let mut stroked = backdrop.clone();
+    let egui::Shape::Rect(rect) = &mut stroked.shape else {
+        unreachable!()
+    };
+    rect.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    assert!(black_backdrop_index(&[stroked], viewport).is_err());
+    let mut textured = backdrop.clone();
+    let egui::Shape::Rect(rect) = &mut textured.shape else {
+        unreachable!()
+    };
+    rect.brush = Some(std::sync::Arc::new(egui::epaint::Brush {
+        fill_texture_id: egui::TextureId::Managed(1),
+        uv: viewport,
+    }));
+    assert!(black_backdrop_index(&[textured], viewport).is_err());
+    assert!(black_backdrop_index(&[backdrop], viewport.translate(egui::vec2(1.0, 0.0))).is_err());
+}
+
 #[test]
 fn warp_scene_selection_preserves_full_default_and_bounds_picker_controls() {
     assert_eq!(SceneSet::parse(None), Ok(SceneSet::All));
@@ -321,6 +553,7 @@ fn warp_scene_selection_preserves_full_default_and_bounds_picker_controls() {
     ] {
         assert!(SceneSet::parse(Some(OsStr::new(invalid))).is_err());
     }
+
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt;
@@ -332,6 +565,71 @@ fn warp_scene_selection_preserves_full_default_and_bounds_picker_controls() {
         use std::os::unix::ffi::OsStringExt;
         let invalid = std::ffi::OsString::from_vec(vec![0xff]);
         assert!(SceneSet::parse(Some(&invalid)).is_err());
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn picker_backdrop_attribution_preserves_full_frame_pixels_and_balanced_order() {
+    use egui_kittest::{wgpu::WgpuTestRenderer, TestRenderer};
+    for scale in [1.0, 1.25] {
+        let state = egui_kittest::wgpu::create_render_state(
+            egui_kittest::wgpu::default_wgpu_setup(),
+            egui_wgpu::RendererOptions::default(),
+        );
+        let context = egui::Context::default();
+        let _probe = crate::software_background::PanelTestProbe::install(&context, &state);
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(128.0, 96.0));
+        let mut input = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(scale);
+        let mut frame = egui::FullOutput::default();
+        for _ in 0..3 {
+            frame = context.run_ui(input.clone(), |ui| {
+                ui.painter()
+                    .rect_filled(viewport, 0.0, egui::Color32::from_rgb(31, 43, 61));
+                ui.label("Underlying content");
+                let painter = context.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("attribution-backdrop"),
+                ));
+                painter.rect_filled(viewport, 0.0, egui::Color32::from_black_alpha(128));
+                painter.text(
+                    egui::pos2(15.0, 45.0),
+                    egui::Align2::LEFT_TOP,
+                    "Picker stays live",
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::WHITE,
+                );
+            });
+            renderer.handle_delta(&mut frame.textures_delta);
+        }
+        let expected = renderer.render(&context, &frame).unwrap();
+        let report = attribute_picker_backdrop(&state, &context, &frame, &expected);
+        let pairs = report["paired_samples"].as_array().unwrap();
+        assert_eq!(pairs.len(), 6);
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|pair| pair["order"][0] == "ordinary")
+                .count(),
+            3,
+        );
+        for pair in pairs {
+            assert_eq!(pair["pixels_equal"], true);
+            assert_eq!(pair["ordinary"]["work"]["executed_panel_paints"], 0);
+            assert_eq!(
+                pair["textureless_black"]["work"]["executed_panel_paints"],
+                1
+            );
+        }
     }
 }
 

@@ -507,6 +507,11 @@ pub(crate) struct PanelTestProbe(Option<Arc<PanelRenderer>>);
 
 #[cfg(test)]
 impl PanelTestProbe {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub(crate) fn existing(context: &egui::Context) -> Self {
+        Self(context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())))
+    }
+
     pub(crate) fn existing_paints(context: &egui::Context) -> Option<usize> {
         context.data(|data| {
             data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())

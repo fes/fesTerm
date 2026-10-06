@@ -21,6 +21,25 @@ case, not a loader, budget, worker or product-behavior change. It neither
 explains the original #330 exit 2173 nor claims that an ancestor's failed
 CI run was repaired by a later green run.
 
+## Attributing the picker backdrop without removing dimming
+
+After the editor-frame route reduced Save As drawing, #350 still had substantial
+completed render cost without an individual-operation attribution. A separately
+opted-in diagnostic now takes the same unchanged actual picker frame, requires
+one exact full-root translucent black untextured rectangle and replaces only
+that rectangle's original white-UV mesh with the existing installed panel shader.
+It neither removes dimming nor changes the production shader, frame eligibility,
+ordinary fallback or UI interaction.
+
+Six balanced ordinary/textureless ordered pairs preserve every framebuffer
+pixel and require exactly one additional executed callback. Seven timing
+buckets, source/adapter/format, geometry, alpha and sample order remain explicit;
+missing, ambiguous, clipped, textured or nonexact candidates fail rather than
+silently substituting another operation. Callback construction is outside render
+timing. These are targeted whole-frame/batching diagnostics, not isolated GPU
+timestamps, a shipping optimization, native presentation or physical latency.
+The actual eight-picker execution must still establish any measured contribution.
+
 ## Measuring the real large Markdown drawing path
 
 The #348 investigation had preparation counters and small gallery captures,

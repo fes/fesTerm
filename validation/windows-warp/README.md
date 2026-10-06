@@ -121,6 +121,31 @@ peaks. This comparison does not isolate each cumulative optimization, qualify a
 quiet host, native presentation, input-to-display, real scrolling, Find or omitted
 variants. No syntax-colour normalization or reference-pixel exception was used.
 
+### Optional same-frame black-backdrop attribution
+
+After reserving the exclusive runtime slot, set
+`FESTERM_WARP_UI_SCENES=picker-controls` and
+`FESTERM_WARP_UI_PICKER_BACKDROP=textureless-black`, then use the same release
+replay command and a fresh output directory. Unset the backdrop variable for
+the unchanged default replay; other values, selectors and non-Windows-x64
+requests fail explicitly before fixture execution.
+
+Each actual picker must have exactly one full-root translucent black,
+untextured, unrounded, unblurred and unstroked backdrop with full viewport
+clipping coverage. Only that original white-UV mesh uses the existing installed
+panel shader; production guards/shaders and all other frozen shapes remain
+unchanged. Missing or ambiguous geometry is not a successful observation.
+`backdrop-attribution.json` preserves six balanced ordered ordinary/textureless
+pairs, exact pixels, the observed additional callback, original geometry/alpha,
+source/adapter/format and the same seven completed-render buckets.
+
+This is an opt-in targeted whole-frame/batching attribution, not a production
+optimization or permission to accept changed pixels. Callback construction is
+outside timed drawing. No shadow, font, native presentation, physical-latency,
+resource-cap or multi-day cause is inferred. Small normal-CI controls check
+selection/matcher refusal and full-frame pixel/order fidelity at two scales;
+actual eight-picker execution remains separately required.
+
 ### Gallery capture and shared fixture identity
 
 Gallery generation uses
