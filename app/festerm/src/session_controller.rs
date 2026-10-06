@@ -708,7 +708,7 @@ impl<S: Session> SessionController<S> {
             SessionEvent::Lifecycle(lifecycle) => {
                 tracing::info!(target: "festerm::session", ?lifecycle, "session lifecycle");
                 if !matches!(lifecycle, SessionLifecycle::Running) {
-                    self.port_forwards.clear();
+                    self.port_forwards = Vec::new();
                 }
                 self.last_lifecycle = Some(lifecycle);
             }
@@ -1670,6 +1670,7 @@ pub(crate) mod fake {
         lifecycle: Mutex<SessionLifecycle>,
         events: Mutex<VecDeque<SessionEvent>>,
         operations: Mutex<Vec<FakeSshOperation>>,
+        add_port_forward_error: Mutex<Option<SshPortForwardRequestError>>,
         #[cfg(all(windows, target_arch = "x86_64"))]
         notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
     }
@@ -1688,6 +1689,7 @@ pub(crate) mod fake {
                     lifecycle: Mutex::new(SessionLifecycle::Running),
                     events: Mutex::new(events.into_iter().collect()),
                     operations: Mutex::new(Vec::new()),
+                    add_port_forward_error: Mutex::new(None),
                     #[cfg(all(windows, target_arch = "x86_64"))]
                     notifier: Mutex::new(None),
                 }),
@@ -1700,6 +1702,14 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh operations lock")
                 .clone()
+        }
+
+        pub fn set_add_port_forward_error(&self, error: SshPortForwardRequestError) {
+            *self
+                .inner
+                .add_port_forward_error
+                .lock()
+                .expect("fake ssh error lock") = Some(error);
         }
 
         pub fn sent(&self) -> Vec<Vec<u8>> {
@@ -1768,6 +1778,14 @@ pub(crate) mod fake {
             &self,
             forward: impl SshPortForwardSpec,
         ) -> Result<(), SshPortForwardRequestError> {
+            if let Some(error) = *self
+                .inner
+                .add_port_forward_error
+                .lock()
+                .expect("fake ssh error lock")
+            {
+                return Err(error);
+            }
             self.inner
                 .operations
                 .lock()
@@ -2632,6 +2650,7 @@ mod tests {
         controller.pump_events(&mut terminal);
 
         assert!(controller.port_forwards().is_empty());
+        assert_eq!(controller.port_forwards.capacity(), 0);
     }
 
     #[test]
