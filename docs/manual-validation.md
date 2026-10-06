@@ -941,6 +941,14 @@ tracking adds bounded metadata and avoids wholesale invalidation, not a
 lower-retained-RAM guarantee. No new GUI/native workflow is introduced. NP-05
 appearance/usability and CP-18 native resource/latency obligations remain open.
 
+The CPU semantic fixture test now includes both widths for all 52 bounded
+variants. Chip targets are settled and revealed through the real scrolling
+controls, with unchanged active identity and zero terminal input; first,
+inactive-middle and read-only-last menus retain their required actions.
+This automates fixture reachability, not native chip interaction or completed
+WARP rendering. AS-03, native narrow-window/animation usability and the
+matrix's remaining platform prerequisites stay pending.
+
 ### Experimental Direct2D qualification
 
 `TERM-01` atlas preflight has automated copy-refusal, font-delta, replacement,

@@ -660,6 +660,7 @@
         "frame_keyboard_reads_do_not_snapshot_settings_for_one_or_six_sessions",
         "frame_keyboard_reads_preserve_hidden_session_bounded_output_and_lifecycle",
         "chip_context_menu_targets_inactive_chip_without_activating_it",
+        "chip_surface_fixtures_reveal_real_targets_without_activating_them",
         "dragging_one_chip_onto_another_emits_a_reorder_action",
         "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape",
         "session_alias_rename_is_instance_only_and_terminal_titles_never_become_aliases",

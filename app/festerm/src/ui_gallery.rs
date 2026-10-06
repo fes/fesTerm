@@ -698,6 +698,9 @@ impl SurfaceDriver for SurfaceProbe {
             self.node().get_by_label(label).click();
         }
     }
+    fn rect(&self, label: &str) -> egui::Rect {
+        self.node().get_by_label(label).rect()
+    }
     fn event(&self, event: egui::Event) {
         self.events.lock().push(event);
     }
@@ -3304,6 +3307,7 @@ trait SurfaceDriver {
     fn has_label_containing(&self, label: &str) -> bool;
     fn focused(&self, label: &str) -> bool;
     fn click(&self, label: &str, secondary: bool);
+    fn rect(&self, label: &str) -> egui::Rect;
     fn event(&self, event: egui::Event);
 }
 
@@ -3330,6 +3334,9 @@ impl SurfaceDriver for Harness<'_, SurfaceFixture> {
             self.get_by_label(label).click();
         }
     }
+    fn rect(&self, label: &str) -> egui::Rect {
+        self.get_by_label(label).rect()
+    }
     fn event(&self, event: egui::Event) {
         Harness::event(self, event);
     }
@@ -3349,6 +3356,57 @@ fn surface_cell(driver: &impl SurfaceDriver, column: usize) -> egui::Pos2 {
         )
 }
 
+fn settled_chip_rect(driver: &mut impl SurfaceDriver) -> egui::Rect {
+    let mut previous = driver.rect("Synthetic SSH chip");
+    for _ in 0..32 {
+        driver.step();
+        let current = driver.rect("Synthetic SSH chip");
+        if current == previous {
+            return current;
+        }
+        previous = current;
+    }
+    panic!("chip fixture bounds did not settle within 32 frames");
+}
+
+fn chip_scroll_viewport(driver: &impl SurfaceDriver) -> Option<egui::Rect> {
+    if !driver.has_label("Scroll chips left") {
+        return None;
+    }
+    let left = driver.rect("Scroll chips left");
+    let right = driver.rect("Scroll chips right");
+    Some(
+        egui::Rect::from_min_max(
+            egui::pos2(left.right(), left.top()),
+            egui::pos2(right.left(), right.bottom()),
+        )
+        .shrink(1.0),
+    )
+}
+
+fn reveal_chip_target(driver: &mut impl SurfaceDriver) {
+    for clicks in 0..=8 {
+        let target = settled_chip_rect(driver);
+        let Some(viewport) = chip_scroll_viewport(driver) else {
+            return;
+        };
+        if viewport.contains(target.center()) {
+            return;
+        }
+        if clicks == 8 {
+            break;
+        }
+        let direction = if target.center().x < viewport.left() {
+            "Scroll chips left"
+        } else {
+            "Scroll chips right"
+        };
+        driver.click(direction, false);
+        driver.step();
+    }
+    panic!("chip fixture target was not revealed by 8 real scroll-control clicks");
+}
+
 fn prepare_surface(kind: SurfaceKind, driver: &mut impl SurfaceDriver) {
     use SurfaceKind as K;
     // Fixed settling is bounded even for a widget that requests animation.
@@ -3361,6 +3419,7 @@ fn prepare_surface(kind: SurfaceKind, driver: &mut impl SurfaceDriver) {
             driver.step();
         }
         K::ChipFirst | K::ChipMiddle | K::ChipLastReadOnly => {
+            reveal_chip_target(driver);
             driver.click("Synthetic SSH chip", true);
             driver.step();
         }
@@ -3673,6 +3732,9 @@ impl SurfaceProbe {
                 } else {
                     self.probe.node().get_by_label(label).click();
                 }
+            }
+            fn rect(&self, label: &str) -> egui::Rect {
+                self.probe.node().get_by_label(label).rect()
             }
             fn event(&self, event: egui::Event) {
                 self.probe.events.lock().push(event);
@@ -5360,11 +5422,32 @@ pub(crate) fn capture_surface_gallery(kind: SurfaceKind, narrow: bool) -> image:
 }
 
 #[test]
+fn chip_surface_fixtures_reveal_real_targets_without_activating_them() {
+    for scene in bounded_surface_scenes().into_iter().filter(|scene| {
+        matches!(
+            scene.kind,
+            SurfaceKind::ChipFirst | SurfaceKind::ChipMiddle | SurfaceKind::ChipLastReadOnly
+        )
+    }) {
+        let directory = unique_surface_fixture_directory();
+        let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
+        probe.prepare(scene.kind, |delta| delta.clear());
+        if let Some(viewport) = chip_scroll_viewport(&probe) {
+            assert!(
+                viewport.contains(probe.rect("Synthetic SSH chip").center()),
+                "{}: secondary-click target must remain inside the real chip viewport",
+                scene.id
+            );
+        }
+        probe.fixture.assert_no_transport_input();
+        drop(probe);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
 fn bounded_surface_fixtures_preserve_ready_state_focus_selection_and_targets() {
-    for scene in bounded_surface_scenes()
-        .into_iter()
-        .filter(|scene| !scene.narrow)
-    {
+    for scene in bounded_surface_scenes() {
         let directory = unique_surface_fixture_directory();
         let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
         probe.prepare(scene.kind, |delta| delta.clear());

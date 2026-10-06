@@ -262,6 +262,23 @@ the default still attempts the full matrix, and invalid selections fail before
 claiming inputs. This diagnostic seam neither fixes nor qualifies the omitted
 chip fixture, measures completed WARP rendering, or establishes a cause of
 native or multi-day CPU growth.
+## Revealing a real inactive chip instead of clicking its old coordinates
+
+The optional expanded profile failed its narrow inactive-middle chip menu
+guard (#346). The chip was initially visible, but the active chip's scroll
+reveal continued after the fixture's fixed three settling frames. A compiled
+CPU reproduction showed the target move from a visible pre-click rectangle
+to a different position while the secondary-click events were delivered.
+The menu never opened; extra fixed frames would merely move the race.
+
+Fixture preparation now waits for observed bounds to stop moving within a
+bounded frame budget, then uses the real scrolling controls to place the
+intended target's center inside the actual viewport. It does not activate
+the target, disable production animations, substitute another chip or weaken
+the required Close/Move assertions. First/middle/read-only-last regressions
+cover both widths, and the existing semantic batch now exercises all 52
+variants rather than normal width only. Completed drawing and native
+interaction/usability remain separate evidence.
 
 ## Bounding actual undo storage without discarding a refused change
 
