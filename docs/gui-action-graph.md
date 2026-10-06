@@ -585,6 +585,14 @@ still belong to a mouse-aware TUI. The full press/release pair has one owner.
 | `WORK-03` | `K10 → same` | Inspect missing/failed entries and successful siblings. | Failure never blocks siblings; missing definition remains visible, not dropped; stable order/names/focus preserved; terminal titles not promoted. | Retry valid definition or leave failed. | P,H,N |
 | `WORK-04` | `K10 → K1` | Close restored surfaces and delete workspace. | Runtime closure does not delete definitions/profiles; workspace deletion does not delete referenced profiles. | Already `K1`. | P,H,N |
 
+For `PROF-06`, native recovery preserves schema 2 and the 768-MiB payload
+limit. Encoding sizes before wire allocation and owns one fixed
+header-prefixed buffer; decoding retires the received payload before
+validating/restoring owned terminal state. Invalid, trailing, truncated or
+over-limit payloads never reach adoption. The managed wire observations do
+not establish a total attach/process-memory budget or signed-package/native
+visual acceptance; acknowledgement and old-client rollback remain unchanged.
+
 ## N. Terminal typography, scheme, zoom, cursor, and focus mode
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |

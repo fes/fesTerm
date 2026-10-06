@@ -3,6 +3,31 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Removing redundant recovery wire-buffer overlap
+
+The #320 lifecycle audit found that persistent-session recovery serialized a
+sanitized terminal into a complete payload vector, then copied it into a
+second header-prefixed vector. The receiver also kept its complete payload
+while rebuilding validated terminal capacities. Compiled legacy controls
+observed 6,460,376 encoder-owned wire bytes for a 3,230,194-byte snapshot and
+3,230,182 received payload bytes still live at capacity restoration.
+
+Encoding now sizes under the unchanged 768-MiB payload limit and writes into
+one fixed header-prefixed destination, eliminating the second full buffer.
+The receiver retires its payload as soon as deserialization returns owned
+state, before structural validation and capacity restoration. Allocation
+failures are explicit. Six portable regressions preserve exact legacy bytes,
+parser/mode/history state, exact-limit admission, and invalid/trailing/
+truncated/oversized refusal. Existing acknowledgement, output ordering and
+failed-candidate rollback remain unchanged; schema 2 needs no migration.
+
+These observations cover known managed wire capacities before encoder
+handoff and incoming payload retirement, not global heap or RSS peaks.
+The mirror, sanitized clone, decoded state and allocator/private transport
+costs remain. Pre-sizing initializes the destination, so this is no CPU
+improvement claim. Native signed-package/visual recovery remains CP-11, and
+this does not identify #297's multi-day growth cause.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged
