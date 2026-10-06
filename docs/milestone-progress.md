@@ -26,9 +26,8 @@ owners through close/reparse/rebinding; a rotating 128-entry retirement scan
 avoids an unbounded reclamation walk. Permanent failures need an explicit
 retry; sparse ledgers release exceptional backing capacity with at most
 128 retained entries copied. Temporary refusals wait for their whole required
-allowance rather than
-retrying one another's released scratch storage. Existing admissions survive
-saturation or lowering.
+allowance rather than retrying one another's released scratch storage.
+Existing admissions survive saturation or lowering.
 
 Deterministic regressions exercise real editor Preview and its image button,
 shared bytes/workers, first Save/Save As and nonlocal origins, stale results,
@@ -36,6 +35,147 @@ failed parsing, retirement and Settings persistence/reset. CP-06/CP-15 retain
 native visual/accessibility evidence. Decoder-private memory, native renderer
 and GPU retirement, allocator fragmentation and total RSS are outside this
 allowance; the repair does not establish #297's multi-day growth cause.
+
+## Bounding live forwarding inventory without evicting tunnels
+
+The #320 allocation/lifecycle audit found that each requested SSH mapping
+retained an active or failed row indefinitely until explicit removal, with no
+inventory ceiling. Snapshot queries cloned every row, and the manager cloned
+the list again on every frame. The existing 32-connection bound did not limit
+listeners or failed mappings.
+
+The approved policy is 128 combined profile, pending, active and failed
+mappings per live SSH session, with visible refusal until a row is removed.
+Reservations begin before command admission and remain with the forwarding
+owner; failed/closed delivery, canceled work and completed removal release
+them. Startup reserves profile slots before exposing Running, while generation
+checks prevent stale work from affecting a replacement transport. Failed rows
+and working tunnels are never automatically evicted.
+
+Binding indexes replace repeated scans and host-string copies. Ordered removal
+reclaims exceptional row/index storage; change-only publication batches initial
+profiles and retains one latest blocked snapshot without repeated cloning.
+The manager borrows its retained list, preserves refused drafts and uses
+explicit stable row widget IDs. Oversized saved-profile launches report the
+ceiling, including the stored-password shortcut, without discarding settings.
+The launch form checks draft count before constructing row configurations, so
+an oversized draft does not allocate or validate its entire mapping prefix.
+
+The original 128/129 profile and pending-admission controls both failed.
+Review exposed a narrower same-transport race: an old queued connection was
+identified only by its reusable bind and could inherit a replacement
+destination. Mapping-incarnation tokens now cross both connection queues
+and reject that stale work. Review also found that credential-free saved
+launch discarded a boolean refusal; it now propagates a typed, visible error.
+Compiled controls reproduced both gaps, and an owned TCP listener regression
+checks production token capture and release after removal/re-add.
+
+Deterministic churn now plateaus at 128 and releases empty storage, and 1,000
+blocked retries prepare one snapshot. Owned loopback SSH coverage preserves
+active tunnel bytes at capacity, proves unchanged queries do not republish,
+and removes a failed mapping to admit a retry. Native overlay readability,
+accessibility and OpenSSH interoperability remain `TI-11`; the count ceiling
+is not a total-payload/RSS bound, allocator-fragmentation diagnosis, or evidence
+for the multi-day CPU-growth cause in #297.
+
+## Bounding Windows daemon attachment backlog without evicting its owner
+
+The allocation/lifecycle audit in #320 found an unbounded channel of accepted
+Windows pipe handles. Recovery adoption consumed that queue serially and
+could wait 15 seconds per candidate; continuous arrivals could also keep the
+drain loop from returning to terminal/control work.
+
+The approved policy is 16 waiting connections per persistent-shell daemon,
+with immediate refusal/closure of excess new handles. It is not a cap on open
+terminals and overflow does not steal the active connection. Listener failure
+uses an independent one-slot channel, each daemon turn processes only one
+candidate, and shutdown releases queued handles before draining output or
+joining workers. Early recovery EOF gives factual busy/shutdown and
+Reconnect/Resume guidance without adding a wire protocol or blocking refusal
+write.
+
+Review caught that the lifecycle reason was initially hidden behind
+Diagnostics. The known content-free guidance is now shown directly beside
+Reconnect in the viewport and above Resume in the Inspector. A compiled
+production-GUI control failed with no visible guidance before the repair;
+regressions cover both retry routes, same-tab history preservation, stale
+message removal and keeping arbitrary backend details out of primary UI.
+
+Three compiled legacy controls demonstrated admission of the 17th handle,
+17 adoptions in one refilled turn, and 16 adoptions before a queued listener
+failure. Deterministic ownership/churn tests and a production-broker Windows
+pipe fixture cover refusal, retry, active bytes and teardown. The existing
+15-second synchronous recovery deadline, snapshot peak costs and CP-11
+signed-package/usability gates remain separate; this is not a diagnosis of
+#297 aging or allocator fragmentation.
+
+## Bounding GUI SFTP backlog and retiring finished history
+
+Review of #331 found two missing lifecycle paths: a collision could occur
+before the drawer had a row, and the header's per-row Cancel fan-out could fill
+the new 64-command bridge after canceling only part of a larger queue. A
+compiled pre-start history control retained zero admitted rows instead of 96.
+The worker now publishes successful admission metadata before engine events;
+Skip and pre-copy failure enter the same indexed, bounded finished history
+without waiting for `ItemStarted`. Refused admission creates no phantom rows.
+Header Cancel now uses one ordered command through both bridges. Full admission
+refuses the whole action; one free slot can cancel all existing work, including
+96 real collision-paused transfers. The backend rebuilds/sorts its ready queue
+once rather than repeatedly filtering it, with a 1,024-item regression covering
+all batches and a separate check that later queued work remains unaffected.
+Collision presentation rechecks the indexed row's active state, so a delayed
+prompt cannot remain open after its transfer is canceled or otherwise finishes.
+
+The allocation/lifecycle audit in #320 found unbounded GUI SFTP command/event
+bridges, unrestricted frontend event draining, and a transfer drawer whose
+completed and failed rows grew for the lifetime of the tab. Each progress event
+also searched that growing row array. A controlled failure-history regression
+retained 512 records before the fix rather than the approved 128.
+
+The GUI now uses 64-command and 128-event bridges, a 64-event poll/batch budget,
+and repaint continuation instead of draining an arbitrary backlog in one call.
+Async producers await event capacity; the dedicated local loader may block
+until capacity or receiver retirement. Adjacent progress for one batch/transfer
+is coalesced without crossing critical barriers. Owner cancellation still
+bypasses those queues. Full/closed commands and batches above the existing
+256-item backend ceiling are visibly refused before bridge retention, without
+false drop success, lost pending Markdown requests, dismissed collision
+decisions or premature reconnect/navigation-state mutations.
+
+The owner approved retaining the 128 most recently finished rows, including
+failures, and reporting retirement. Completion order preserves a long-running
+item that finishes late; active/collision-paused work is not evicted. Indexed
+lookup avoids per-progress history searches, and exceptional row/index
+capacity retires after a peak. Transfer-scoped row controls preserve identity
+when earlier rows retire, rather than reusing another transfer's action ID.
+History has a 240-logical-pixel scroll area,
+not row virtualization, and the existing Clear action still preserves retained
+failures. Deterministic churn, boundaries, ordering, admission recovery and
+full-queue teardown cover the repaired contracts.
+Observed cleanup notices reach the separate bounded reporter before a
+GUI-capacity wait, rather than being discarded with an interrupted event batch.
+Aggregate directory/plan
+bytes and native drawer/refusal accessibility remain separate work and
+`SFTP-03` evidence. This does not prove a cause of #297 or allocator
+fragmentation.
+
+## Retiring imported Direct2D targets before teardown
+
+The intermittent Windows crash investigation in #330 exposed a concrete
+D3D11-on-12 lifetime violation. After drawing an imported DX12 target, the
+native renderer submitted its release transition and flushed while the D2D
+target bitmap, D3D11 texture view and wrapped resource were still retained.
+Those references were dropped only after the flush, so D3D11's deferred
+destruction could survive until the next frame or final device teardown.
+
+Target retirement now detaches the D2D context, releases every view and the
+wrapped reference, then flushes the immediate context in Microsoft's required
+cleanup order. Partial target setup and final renderer destruction use the same
+path. A parallel regression repeatedly creates, draws and drops native
+renderers, then verifies that every DX12 device and queue still render correct
+pixels. The separate unexplained `festerm-ui-egui` exit 2173 remains
+open under #330; this repair addresses the Direct2D access-violation path and
+does not relabel that other failure.
 
 ## Keeping vi repeat bounded without discarding edits
 
@@ -3966,3 +4106,103 @@ regressions reproduce the original retention and preserve sibling unsaved
 text/undo, moved tabs and primary/application teardown. Dirty-close decisions
 remain in the existing command policy; native close and multi-window usability
 evidence remain CP-13/CP-15 rather than being claimed by headless ownership tests.
+
+## Reducing presentation work instead of slowing terminal output
+
+The owner's macOS CPU report led to native sampling of the existing application
+without restarting it. PTY workers mostly slept; the active stacks were in grid
+painting, tessellation and Metal uploads. Dirty rows already avoided copying
+unchanged core cells, but did not avoid preparing their paint instructions.
+
+An isolated worktree and synthetic local profiles now exercise a bounded monochrome
+row-graphics prototype. Opaque presentation revisions and complete geometry/
+font/selection keys reuse unchanged instructions while the cursor stays live.
+Exact meshes are compared with the original renderer rather than assuming
+rectangle merging preserves antialiased pixels. The first foreground result
+improved, but background results varied adversely; the prototype remains a
+draft, not an accepted fix. Per-frame mechanism timings and stable native-window
+identity are being separated from startup/teardown activity before qualification.
+Monochrome Unicode can reuse the managed font atlas safely; color-emoji and
+foreign textures remain excluded. Geometry, selection, cursor, budget/teardown,
+history/resize, transforms, opacity and native fallback now have deterministic
+regressions, with the full renderer suite passing. The CPU-stage control covers
+static, localized and full-mutation scenes with shaping on/off: shaped static
+and localized work improves strongly, while full-mutation unshaped preparation
+has a small adverse result that remains visible.
+
+Native qualification uncovered an environmental boundary: the owner's display
+is locked. Earlier raw executable runs also lacked explicit high-resolution
+bundle metadata. A matched pair of uniquely identified high-resolution bundles
+reduces background CPU, but is explicitly labeled locked-display evidence, not
+foreground/native-presentation acceptance. No output throttling, queue-policy
+change, live-app restart, screen unlock or release is involved.
+
+Independent reliability review found an inherited font-atlas lifetime defect:
+rejecting an old row key was insufficient if the glyph cache then supplied
+galleys from the old atlas. A persistent before/after-paint image checkpoint now
+invalidates both caches conservatively. The regression checks atlas contents
+and actual GPU pixels after font/text-option reset without manual clearing,
+and fails when the repair is removed. Current-paint destructive atlas overflow
+remains an existing rendering limitation rather than being claimed as solved.
+
+Shaping-off controls exposed a second performance boundary: retaining glyph
+instructions alone left background tessellation hot, and full mutation paid
+capture overhead without reuse. Blank, undecorated background groups can retain
+the exact individual rectangles without crossing any glyph instruction.
+Previous-row identities then bypass retention when all unshaped rows change,
+and recover normally after output stabilizes. The measured full-mutation
+CPU-stage regression disappears with that bounded policy; native evidence must
+still be re-collected rather than inferred from the mechanism timing.
+
+Authorized unlocked testing finally separated genuine foreground evidence
+from the earlier locked-display controls. Four matched runs in each of fourteen
+isolated cases showed consistent localized and monochrome-Unicode savings,
+near-identical unshaped full-mutation cost, and low quiet-idle CPU. Shaped
+foreground full mutation, however, cost about 8% more. Native samples caught
+eager background tessellation and row recapture on frames with no reuse.
+The same bounded previous-row identity policy now bypasses retention regardless
+of shaping. Both policies share exact-mesh, zero-capture, stabilization-recovery
+and explicit-redraw coverage; the shaped regression fails before the repair.
+Independent security, reliability and scope review passed the incremental
+repair. After integrating reviewed main normally, all eleven GitHub checks and
+the full local gates passed. A new 56-run unlocked matrix on the exact
+`58c5cd6` binary confirmed 14-30% localized/Unicode process-CPU savings and
+removed the shaped full-foreground regression (7.863% to 7.698%, -2.1%).
+Unshaped full foreground still varied: +7.6% aggregate with opposite
++19.1%/-2.1% paired changes. Eight longer preselected ABBA/BAAB controls also
+remain adverse: 5.763% baseline versus 6.466% candidate (+12.2%), with paired
+changes of +57.2%, +3.1%, +0.8% and +3.2%. The unusually low first baseline
+has no established cause; it is preserved along with every other run, not
+discarded or used to excuse the smaller adverse differences. Performance
+acceptance was blocked at that source head, and the owner's installed app and
+profiles remain untouched.
+
+The owner authorized a bounded follow-up in #334 before choosing whether to
+accept the heavy-redraw tradeoff. Dirty rows rebuilt together now share one
+fresh revision token, compared only at the same row position. Non-retaining
+rows no longer acquire a capture bookmark/graphics-list lock. Shared-batch,
+independent-cache/clone and swapped-row mesh tests preserve identity and paint
+ownership; the full-mutation tests now also prove zero bookmarks. Restoring
+the old bookkeeping fails four focused regressions.
+
+The cleanup source `86e4274` completed 52 isolated unlocked native comparisons:
+the predeclared 36-run before/after/original-baseline/focused plan, eight current
+quiet controls and eight longer shaped-full controls. Exact hashes, matched
+geometry, foreground/input/lock guards and producer delivery passed throughout.
+Against the original baseline, tested localized/Unicode cases retain 13-23%
+CPU savings, unshaped full foreground is approximately neutral (6.433% to
+6.404%) and quiet controls stay 0.133% in both modes. Longer shaped full
+foreground remains 7.850% to 8.051% (+2.56%), adverse in all four pairs.
+The low-first-run phenomenon recurred with the cleanup candidate first
+(4.216%), so the direct previous-candidate aggregate is not claimed as a
+causal 10% speedup; its cause remains unknown and all older receipts remain.
+
+The owner explicitly accepted the remaining shaped-heavy tradeoff for #328 on
+2026-10-05 while keeping #334 open. Full local source gates, independent
+security/reliability/scope reviews and all eleven measured-source GitHub checks
+passed; only unstarted hosted-runner acquisition failures were retried once,
+with both attempts preserved. Evidence-only follow-ups do not change that
+measured source/binary and need their own CI. External PR review remains
+required, and native input, mixed-DPI and physical presentation/latency gates
+are unchanged. No merge, deployment, live-app restart or personal-state change
+is implied by this owner-approved performance decision.

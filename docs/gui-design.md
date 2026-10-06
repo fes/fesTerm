@@ -1440,6 +1440,18 @@ active/failed state. Adding a forward here always targets only the current live
 session; it never rewrites the saved profile. Disconnecting clears the live
 runtime list, and reconnect does not silently restore prior ephemeral state.
 
+Each live SSH session admits at most 128 combined saved-profile and ephemeral
+mappings. Pending additions reserve a slot; active and failed rows keep theirs
+until explicitly removed. A full inventory refuses the new addition with a
+visible explanation and preserves the draft, rather than retiring failures or
+evicting a working tunnel. Removing a row makes room after its forwarding owner
+stops. A profile requesting more than 128 mappings is rejected before launch;
+this does not change the configuration schema or truncate saved metadata. The
+The same factual refusal appears for stored-credential and credential-free
+saved-profile launches. Removing and re-adding a bind does not reroute already
+queued connections to its replacement destination. The
+independent 32-in-flight forwarded-connection limit is unchanged.
+
 ### Serial session creation
 
 ![Serial connection form target](images/gui-mockups/serial-connection.png)
@@ -1587,7 +1599,13 @@ initially-off durable local-session option. Enabling it selects the local
 name; it affects only future launches of that saved profile. The built-in
 **Local Shell** has no persistence control and always starts a fresh plain
 shell unless the user later resumes an already-running `festerm-sessiond`
-session from the Launcher. Local executable and initial-directory fields share
+session from the Launcher. On Windows, each native persistent-session daemon
+allows at most 16 waiting attachment connections. Excess new connections
+close and report a retryable recovery disconnect without displacing the active
+client. This is not a limit on open terminals; command input/resize
+backpressure remains separate.
+
+Local executable and initial-directory fields share
 bounded filesystem-backed completion. That completion is asynchronous: it
 caches exact prior queries, performs slow filesystem scans off the UI thread,
 admits at most one running scan plus the latest pending query, rejects stale
@@ -2118,6 +2136,11 @@ gone; failure remains visible and retryable. The Inspector exposes the same
 application command as **Resume** for a durable session. Input waiting from
 the previous connection is discarded rather than replayed into the resumed
 shell, and accepted recovery returns keyboard focus to the terminal.
+An early recovery disconnect explains that the daemon may be busy or shutting
+down and directs the user to retry Reconnect/Resume. It does not assert a
+particular refusal cause or change the recovery protocol. This content-free
+guidance is visible in the viewport overlay and the Inspector's state message
+without expanding Diagnostics. Other raw backend details remain in Diagnostics.
 
 Reconnection must not imply that remote process state survived. Unless
 continuity is guaranteed, the UI describes reconnecting to the host rather

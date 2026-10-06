@@ -238,6 +238,39 @@ impl std::fmt::Display for SessionReconnectError {
     }
 }
 
+pub(crate) const SAVED_SSH_PROFILE_FORWARD_LIMIT_MESSAGE: &str =
+    "This saved SSH profile has more than 128 port-forward mappings; reduce them before launching.";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfiguredSshProfileLaunchError {
+    MissingProfile,
+    InvalidConnectionProfile,
+    PortForwards(festerm_ssh::SshPortForwardConfigurationError),
+}
+
+impl ConfiguredSshProfileLaunchError {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::MissingProfile => "This saved SSH profile is no longer available.",
+            Self::InvalidConnectionProfile => {
+                "This saved SSH profile has invalid connection settings."
+            }
+            Self::PortForwards(festerm_ssh::SshPortForwardConfigurationError::InventoryLimit) => {
+                SAVED_SSH_PROFILE_FORWARD_LIMIT_MESSAGE
+            }
+            Self::PortForwards(_) => "This saved SSH profile has invalid port-forward settings.",
+        }
+    }
+}
+
+impl std::fmt::Display for ConfiguredSshProfileLaunchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl std::error::Error for ConfiguredSshProfileLaunchError {}
+
 impl ApplicationSession {
     pub fn take_recovered_terminal(&self) -> Option<Terminal> {
         match self {
@@ -1553,6 +1586,19 @@ impl SessionTab {
                 | ChipStatus::DocumentConflict,
             ) => "",
         }
+    }
+
+    pub fn recovery_retry_message(&self) -> Option<&'static str> {
+        let Some(SessionLifecycle::Disconnected(error)) = self.controller.lifecycle() else {
+            return None;
+        };
+        (matches!(
+            self.inspector_transport,
+            InspectorTransport::Local {
+                persistence: Some(_)
+            }
+        ) && error.message() == festerm_sessiond::RECOVERY_RETRY_MESSAGE)
+            .then_some(festerm_sessiond::RECOVERY_RETRY_MESSAGE)
     }
 
     /// The active SSH host-key request, if the transport is waiting for one.
@@ -4566,32 +4612,26 @@ impl AppState {
         &mut self,
         profile_id: &str,
         context: &egui::Context,
-    ) -> bool {
-        let Some(profile) = self
+    ) -> Result<(), ConfiguredSshProfileLaunchError> {
+        let profile = self
             .configuration
             .profile(profile_id)
             .and_then(festerm_config::Profile::as_ssh)
-        else {
-            return false;
-        };
+            .ok_or(ConfiguredSshProfileLaunchError::MissingProfile)?;
         let size = self
             .current_session_dimensions()
             .and_then(|dimensions| terminal_size(dimensions).ok());
         let connection_profile =
             size.and_then(|size| profile.to_connection_profile_with_size(size).ok());
-        let Some(connection_profile) =
-            connection_profile.or_else(|| profile.to_connection_profile().ok())
-        else {
-            return false;
-        };
+        let connection_profile = connection_profile
+            .or_else(|| profile.to_connection_profile().ok())
+            .ok_or(ConfiguredSshProfileLaunchError::InvalidConnectionProfile)?;
         let strategy = profile
             .session_strategy()
             .unwrap_or(festerm_ssh::SessionStrategy::PlainShell);
-        let Ok(options) =
+        let options =
             Self::with_profile_port_forwards(SshSessionOptions::manual_recovery(strategy), profile)
-        else {
-            return false;
-        };
+                .map_err(ConfiguredSshProfileLaunchError::PortForwards)?;
         self.execute_ssh_session(
             connection_profile,
             SshAuthentication::interactive(),
@@ -4599,7 +4639,7 @@ impl AppState {
             Some(profile_id),
             context,
         );
-        true
+        Ok(())
     }
 
     /// Starts a saved SSH profile as a text-mode SFTP session, using the
@@ -6484,7 +6524,9 @@ mod tests {
         .expect("test configuration is valid");
         let mut state = AppState::for_test_with_configuration(configuration);
 
-        assert!(state.start_configured_ssh_profile_interactive("production", &context));
+        assert!(state
+            .start_configured_ssh_profile_interactive("production", &context)
+            .is_ok());
 
         let TabContent::Session(session) = &state.active_tab().content else {
             panic!("configured SSH profile must place a session tab");

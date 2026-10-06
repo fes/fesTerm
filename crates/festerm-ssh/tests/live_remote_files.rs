@@ -1,16 +1,20 @@
 use std::{
+    io::{Read, Write},
     sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
 use festerm_session::{
-    Session, SessionEvent, SessionLifecycle, SessionTryReceiveError, ShutdownResult, TerminalSize,
+    Session, SessionEvent, SessionLifecycle, SessionTryReceiveError, ShutdownResult,
+    SshPortForwardDirection, SshPortForwardRuntime, SshPortForwardSource, SshPortForwardState,
+    TerminalSize,
 };
 use festerm_ssh::{
     connect_gui_sftp_session, GuiSftpSessionConnectOutcome, HostIdentity, HostTrustDecision,
     RemoteFileReadError, SftpPath, SftpSessionError, SftpTerminalSession, SftpTransferEvent,
-    SftpTransferManager, SftpTransferRequest, SshAuthentication, SshConnectionProfile, SshSession,
+    SftpTransferManager, SftpTransferRequest, SshAuthentication, SshConnectionProfile,
+    SshPortForwardRequestError, SshPortForwardSpec, SshSession, SshSessionOptions,
 };
 use russh_sftp::protocol::{
     Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode,
@@ -166,6 +170,7 @@ struct TestServer {
     read_resume: Arc<tokio::sync::Notify>,
     subsystems: tokio::task::JoinSet<()>,
     directories_created: Arc<Mutex<Vec<String>>>,
+    remote_forward_requests: Arc<Mutex<Vec<u32>>>,
 }
 
 impl russh::server::Handler for TestServer {
@@ -192,6 +197,33 @@ impl russh::server::Handler for TestServer {
         self.channels.push(channel);
         reply.accept().await;
         Ok(())
+    }
+
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::server::Msg>,
+        host: &str,
+        port: u32,
+        _originator: &str,
+        _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
+        _session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(port, 9000);
+        self.channels.push(channel);
+        reply.accept().await;
+        Ok(())
+    }
+
+    async fn tcpip_forward(
+        &mut self,
+        _address: &str,
+        port: &mut u32,
+        _session: &mut russh::server::Session,
+    ) -> Result<bool, Self::Error> {
+        self.remote_forward_requests.lock().unwrap().push(*port);
+        Ok(false)
     }
 
     async fn pty_request(
@@ -281,7 +313,7 @@ impl russh::server::Handler for TestServer {
         data: &[u8],
         session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
-        // Binary SFTP requests stay unanswered; only the shell challenge echoes.
+        // Binary SFTP requests stay unanswered; shell/forward challenges echo.
         if data == b"shell-remains-responsive" {
             session.data(channel, data.to_vec())?;
         }
@@ -295,6 +327,7 @@ struct OwnedServer {
     connection_closed: mpsc::Receiver<()>,
     read_resume: Arc<tokio::sync::Notify>,
     directories_created: Arc<Mutex<Vec<String>>>,
+    remote_forward_requests: Arc<Mutex<Vec<u32>>>,
 }
 
 impl Drop for OwnedServer {
@@ -319,6 +352,8 @@ fn start_server(
     let server_read_resume = Arc::clone(&read_resume);
     let directories_created = Arc::new(Mutex::new(Vec::new()));
     let server_directories_created = Arc::clone(&directories_created);
+    let remote_forward_requests = Arc::new(Mutex::new(Vec::new()));
+    let server_forward_requests = Arc::clone(&remote_forward_requests);
     let (stop, stop_receiver) = tokio::sync::oneshot::channel();
     let join = thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -345,6 +380,7 @@ fn start_server(
                     read_resume: server_read_resume,
                     subsystems: tokio::task::JoinSet::new(),
                     directories_created: server_directories_created,
+                    remote_forward_requests: server_forward_requests,
                 }).await.unwrap();
                 let _ = session.await;
                 let _ = connection_closed.send(());
@@ -364,6 +400,7 @@ fn start_server(
             connection_closed: closed_receiver,
             read_resume,
             directories_created,
+            remote_forward_requests,
         },
         port,
         subsystem_receiver,
@@ -770,6 +807,10 @@ fn live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_qu
 }
 
 fn connect_session(port: u16) -> SshSession {
+    connect_session_with_options(port, SshSessionOptions::new())
+}
+
+fn connect_session_with_options(port: u16, options: SshSessionOptions) -> SshSession {
     let profile = SshConnectionProfile::new(
         HostIdentity::new("127.0.0.1", port).unwrap(),
         "fixture",
@@ -777,8 +818,12 @@ fn connect_session(port: u16) -> SshSession {
         TerminalSize::new(80, 24).unwrap(),
     )
     .unwrap();
-    let session =
-        SshSession::start(profile, SshAuthentication::password("fixture-password")).unwrap();
+    let session = SshSession::start_with_options(
+        profile,
+        SshAuthentication::password("fixture-password"),
+        options,
+    )
+    .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match session.try_recv_event() {
@@ -798,6 +843,159 @@ fn connect_session(port: u16) -> SshSession {
         }
     }
     session
+}
+
+#[derive(Clone, Copy)]
+struct FixtureForward {
+    direction: SshPortForwardDirection,
+    bind_port: u16,
+}
+
+impl SshPortForwardSpec for FixtureForward {
+    fn direction(&self) -> SshPortForwardDirection {
+        self.direction
+    }
+    fn bind_host(&self) -> &str {
+        "127.0.0.1"
+    }
+    fn bind_port(&self) -> u16 {
+        self.bind_port
+    }
+    fn destination_host(&self) -> &str {
+        "127.0.0.1"
+    }
+    fn destination_port(&self) -> u16 {
+        9000
+    }
+}
+
+fn wait_for_forward_snapshot(session: &SshSession, count: usize) -> Vec<SshPortForwardRuntime> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::PortForwardsUpdated(snapshot)) if snapshot.len() == count => {
+                return snapshot
+            }
+            Ok(SessionEvent::Error(error)) => panic!("forward fixture failed: {error}"),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {}
+            Err(SessionTryReceiveError::Closed) => panic!("forward fixture closed"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "forward inventory never reached {count} entries"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn live_forward_inventory_limit_preserves_active_bytes_and_admits_retry_after_failed_removal() {
+    let (server, port, _subsystems) = start_server(SubsystemBehavior::Reject, ShellBehavior::Quiet);
+    let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let bind_port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let active = FixtureForward {
+        direction: SshPortForwardDirection::Local,
+        bind_port,
+    };
+    let failed = |bind_port| FixtureForward {
+        direction: SshPortForwardDirection::Remote,
+        bind_port,
+    };
+    let options = SshSessionOptions::new()
+        .with_profile_port_forwards(std::iter::once(active).chain((1..=127).map(failed)))
+        .unwrap();
+    let session = connect_session_with_options(port, options);
+    let snapshot = wait_for_forward_snapshot(&session, 128);
+    assert_eq!(
+        snapshot
+            .iter()
+            .filter(|entry| entry.state() == SshPortForwardState::Active)
+            .count(),
+        1
+    );
+    assert_eq!(
+        snapshot
+            .iter()
+            .filter(|entry| entry.state() == SshPortForwardState::Failed)
+            .count(),
+        127
+    );
+    assert!(snapshot
+        .iter()
+        .all(|entry| entry.source() == SshPortForwardSource::Profile));
+    assert_eq!(
+        session.try_add_port_forward(failed(128)),
+        Err(SshPortForwardRequestError::InventoryFull)
+    );
+    assert_eq!(server.remote_forward_requests.lock().unwrap().len(), 127);
+
+    let challenge = b"shell-remains-responsive";
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", bind_port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut echoed = vec![0; challenge.len()];
+    stream.write_all(challenge).unwrap();
+    stream.read_exact(&mut echoed).unwrap();
+    assert_eq!(echoed, challenge);
+
+    for _ in 0..32 {
+        session.try_query_port_forwards().unwrap();
+    }
+    session.try_send_input(challenge).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut shell_output = Vec::new();
+    while shell_output.len() < challenge.len() {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Output(bytes)) => shell_output.extend(bytes),
+            Ok(SessionEvent::PortForwardsUpdated(_)) => {
+                panic!("unchanged queries must not republish the inventory")
+            }
+            Ok(SessionEvent::Error(error)) => panic!("live shell failed: {error}"),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {}
+            Err(SessionTryReceiveError::Closed) => panic!("live shell closed"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "shell command fence did not complete"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(shell_output, challenge);
+    session
+        .try_remove_port_forward(SshPortForwardDirection::Remote, "127.0.0.1", 1)
+        .unwrap();
+    let snapshot = wait_for_forward_snapshot(&session, 127);
+    assert!(snapshot
+        .iter()
+        .any(|entry| entry.direction() == SshPortForwardDirection::Local
+            && entry.bind_port() == bind_port
+            && entry.state() == SshPortForwardState::Active));
+    session.try_add_port_forward(failed(128)).unwrap();
+    let snapshot = wait_for_forward_snapshot(&session, 128);
+    assert!(
+        snapshot
+            .iter()
+            .any(|entry| entry.bind_port() == 128
+                && entry.source() == SshPortForwardSource::Ephemeral)
+    );
+    assert_eq!(server.remote_forward_requests.lock().unwrap().len(), 128);
+    stream.write_all(challenge).unwrap();
+    stream.read_exact(&mut echoed).unwrap();
+    assert_eq!(echoed, challenge);
+    session
+        .try_remove_port_forward(SshPortForwardDirection::Local, "127.0.0.1", bind_port)
+        .unwrap();
+    wait_for_forward_snapshot(&session, 127);
+    assert_eq!(stream.read(&mut [0; 1]).unwrap(), 0);
+    assert_eq!(
+        session.shutdown(Duration::from_secs(3)).unwrap(),
+        ShutdownResult::Stopped
+    );
 }
 
 #[test]

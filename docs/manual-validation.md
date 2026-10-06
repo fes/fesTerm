@@ -229,7 +229,7 @@ hardware and usability scenarios above remain pending.
 | TI-08 | From Quick Connect, Advanced Connect, and a saved SSH profile, leave persistence off and then enable tmux/screen with valid and invalid names. Plain mode opens a fresh shell; durable mode attaches or creates the exact named session; when persisted host trust plus a non-interactive credential allow a background probe, a newly enabled untouched draft defaults to tmux if detected or GNU Screen otherwise without overwriting an explicit provider choice; automatic recovery is separately opt-in; Inspector language says Resume only for durable state. | Native functional + usability | Partly: headless form/command coverage; real-provider create/detach/reattach and capability-failure evidence remain under #49 |
 | TI-09 | On macOS, launch the built-in Local Shell from an app started inside Apple Terminal, then launch saved Local profiles with persistence off and with named `festerm-sessiond`/tmux/screen persistence on. Built-in/plain/native-persistent children identify `TERM_PROGRAM=fesTerm`, clear an inherited `TERM_SESSION_ID`, and show no inherited “Restored session” transcript; multiplexer-owned children retain their provider identity, and only explicitly persistent saved profiles attach or create durable state. | Native functional + usability | Mostly: plain and native-persistent child environments plus profile command selection are automated; native Apple zsh startup plus real-provider behavior remains manual |
 | TI-10 | Emit an explicit HTTP/HTTPS OSC 8 link whose visible text differs from its target. Verify ordinary click retains terminal behavior; Ctrl/Cmd-click and context **Open link** launch the normalized target through the native browser; **Copy link** copies that target; malformed, non-web, and spoofable targets expose no activation. Repeat with long hosts, paths, query strings and fragments at narrow widths and multiple DPI scales: the preview is one normally spaced line with explicit elision, the full target remains available on hover/accessibility, and copied/launched values are not abbreviated. | Native functional + security + visual/accessibility | Mostly: parser, UI intent, exact action values, bounded un-justified layout and application policy are automated; native OS-handler/clipboard delivery, edge placement, screen-reader delivery and human readability remain manual |
-| TI-11 | In a live SSH session with saved and ephemeral local/remote forwards, open Port Forward Manager from both its shortcut and palette entry; verify the list distinguishes saved-profile vs ephemeral state, add/remove loopback forwards, surface per-mapping failures without losing the shell, disconnect to clear the live list, and reconnect to confirm nothing is silently restored. | Native functional + usability | Mostly: repository-owned SSH-fixture backend automation plus headless overlay/shortcut/status coverage now exercise the routed UI path; native end-to-end SSH usability evidence still remains manual |
+| TI-11 | In a live SSH session with saved and ephemeral local/remote forwards, open Port Forward Manager from both its shortcut and palette entry; verify the list distinguishes saved-profile vs ephemeral state, add/remove loopback forwards, surface per-mapping failures without losing the shell, disconnect to clear the live list, and reconnect to confirm nothing is silently restored. Exercise the shared 128-entry profile/pending/active/failed ceiling: excess additions visibly refuse without evicting a tunnel or losing the draft; remove a failed row and retry. Check message readability/accessibility in a narrow overlay and retained row identity after earlier removals. | Native functional + usability | Mostly: deterministic exact-limit, rollback, generation, same-binding remove/re-add incarnation, production local-listener token lifetime, capacity, snapshot-backpressure and headless stored/direct profile refusal/identity tests plus the owned loopback SSH fixture automate backend boundaries and active-byte preservation. Native end-to-end SSH usability, accessibility and OpenSSH-specific behavior remain manual/opt-in; no acceptance promotion |
 | TI-12 | In the scoped, searchable keyboard editor, assign typed and captured chords, unbind/reset application shortcuts, restart an isolated configuration, verify native menu/palette/chrome hints and recovery Ctrl+Shift+F12; select a fake authentication URL and Copy repeatedly, then enter a fake token. Test actual Ctrl+C, Ctrl+A/B prefixes through Screen/tmux, AltGr/Option and IME with terminal/search/forms/menus focused. | Native functional + usability | Synthesized production paths automated by `python3 scripts/check_keyboard_routing.py`; `FESTERM_ISOLATED_TEST_DESKTOP=1 ... --native` adds the existing OS-input drivers and controlled byte/capture sample on a clipboard-isolated test desktop, not the entire matrix |
 | TI-13 | In Session Inspector Diagnostics start/stop/clear input recording and explicitly copy its report. Exercise local selection, terminal-owned/unreported mouse motion, reported mouse events, local context/history gestures and subsequent Copy. Inspect a report for absence of fake token/URL/clipboard contents. | Native functional + privacy/usability | Core/queue/selection classification, bounded storage and redaction automated; physical-event attribution and remote-program interpretation remain unknown, not invented |
 | TI-14 | In local, SSH, and text-mode SFTP sessions, right-click visible absolute paths, `~/` paths, relative paths, wrapped/Unicode names, and an OSC 8 link near path-like text. Verify **Open in viewer** appears only for the frozen clicked target, opens local files locally, opens remote files only through the same live verified SSH/SFTP transport, keeps OSC 8 actions intact, and explains unknown cwd / disconnected transport / missing subsystem / host-trust limits honestly instead of guessing or invoking a shell. Include long Windows/UNC/remote paths, real repeated filename spaces, combining/emoji names, display controls, and a wide character wrapping with one spare column, both live and in retained history. Preview spacing stays natural and single-line, elision keeps useful filename/root context, the complete escaped target is available on hover/accessibility, and Copy/Open preserve real filename bytes without synthetic wrap padding. | Native functional + security + usability/accessibility | Partly: parser, bounded display/grapheme layout, exact menu-action values, core-owned wrap extents, live/history detection, remote-text-tab routing, live-transport/fingerprint pinning, and unavailable-state coverage are automated. A real loopback SSH/SFTP server covers typed-password/session-only trust, exact file bytes, size limits, missing/non-file targets, stalled/refused subsystems, shell responsiveness, and shutdown. Native GUI end-to-end remote open, edge/DPI placement, screen-reader delivery and refusal-overlay/readability usability remain manual |
@@ -371,6 +371,12 @@ used by the keyboard-routing entrypoint. See the
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-02 | In an owned text SFTP session, paste a command above 256 KiB, including one whose trimmed prefix would be valid. Finish with CRLF or Ctrl+C, then run a small valid command. No prefix or fragment may execute; refusal must be visible without disconnecting. Exercise a chunk-split CRLF and UTF-8 scalar, Backspace/Delete, cancel after a large paste, and briefly blocked frontend delivery. Confirm SSH-shell input is unchanged. | Automated byte/state, metrics/notifier and owned real-loopback; native keyboard/refusal visibility and usability pending | Exact 262144-byte acceptance, overflow/refusal across 64 KiB chunks, allocation release, UTF-8 byte accounting, bounded scalar lookback, backspace reclamation, retained/coalesced notice identity under a full event queue and retry during awaited I/O are automated. The real loopback records remote mkdir requests and proves only the next valid command executes. Native paste/keyboard gestures, transcript clarity and accessible refusal feedback remain manual on Windows/macOS/Linux. |
+
+### SFTP GUI backlog and transfer history
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| SFTP-03 | With owned files, finish more than 128 GUI transfers, including failures, while another item remains running or collision-paused. Retain the latest 128 finished records by finish order, preserve ongoing decisions, and show the retired-record count. Verify pre-start collision/Skip/failure rows remain visible. Scroll to recent failures and use Retry/Cancel/Clear in wide, narrow and short windows. Saturate the command bridge: navigation must preserve path/history/scroll/loading, a rejected reconnect must preserve connection/spinner state, a rejected drop must not claim success, a rejected Markdown read must preserve its previous request, and a refused collision decision must remain available. With more than 64 pending or paused rows, header Cancel must refuse the whole action when full and retry using one free slot. Close with the event bridge full; owner cancellation and the documented cleanup policy still apply. | Automated storage/admission/order/lifetime; native functional + accessibility/usability pending | Exact 64-command/128-event bounds, 64-event polling with repaint continuation, 256/257 batch admission, failed-history retirement, late completion, active-row preservation, duplicate finish/index consistency, exceptional capacity release, progress identity/barriers, refused navigation/reconnect/drop/Markdown state, queue-recovery navigation, full-event-queue owner cancellation and local-producer receiver retirement are automated. Compositional admission/history and real engine collision-before-start/Skip regressions cover missing-row paths; backend refusal creates no phantom history. A production header click covers whole-action refusal/one-slot retry for 96 rows, real engine cancellation covers 96 paused collisions, and manager-state admission covers 1,024 items across batches plus later-work ordering. Native long-history drawer reachability, collision-decision interaction under saturation, OS drop gestures, short-window/high-contrast notice readability, keyboard and screen-reader delivery remain manual on Windows/macOS/Linux. Rows are bounded and scrollable, not virtualized; queue counts do not prove total payload-byte bounds. |
 
 ### Interactive-surface performance
 
@@ -682,7 +688,129 @@ visual recovery during rapid resizing remain native evidence, not implied by
 these tests. A replacement handshake can pause daemon processing for up to
 15 seconds; CLI attach is a text projection rather than full styled rendering.
 
+Windows attachment-backlog checks are now automated with the production
+broker and owned local pipes: 16 waiting connections, EOF/refusal on the 17th,
+unchanged active bidirectional bytes, admission after consuming a slot, and
+queued-handle closure with normal broker exit. Portable regressions cover
+1,024 refusal/consume/retry cycles, immediate ownership release, one adoption
+per turn under refill, independent bounded listener-failure delivery, and
+early-recovery disconnect guidance without adopting a snapshot. A production
+GUI regression now proves the guidance is visible in the viewport overlay and
+Inspector state message with Diagnostics closed, both Reconnect and Resume
+dispatch the same-tab recovery command, and accepting recovery removes stale
+guidance while preserving history. Only the known content-free recovery
+message is promoted; arbitrary backend details remain in Diagnostics.
+CP-11 still requires signed-package reconnect/focus, cross-user isolation and
+native usability evidence, including narrow-window readability of the retry
+guidance. These checks neither remove the existing 15-second adoption wait
+nor prove a global daemon RSS or recovery-snapshot peak budget.
+
 ### Rendering performance
+
+Issue #327 and proposed ADR 0044 track the macOS ordinary-row-cache repair.
+Its isolated synthetic profiles use no personal shells, remote accounts,
+clipboard or secrets. Native qualification requires matched binaries, actual
+grid/window identity and geometry, output delivery, foreground/background/idle
+and high-mutation CPU samples. Preliminary results are mixed and are not accepted
+performance evidence on their own; the completed cleanup disposition follows
+below. Matched high-resolution-bundle comparisons while the
+owner's macOS display is locked are recorded separately, never as foreground
+qualification; this repair does not unlock the screen or restart the live app.
+An authorized unlocked 14-case ABBA comparison at source `6f3667a` found
+consistent localized/Unicode savings but about 8% higher shaped foreground
+full-mutation CPU. Extending the full-mutation bypass to shaping required fresh
+native qualification; the adverse receipts remain preserved, not superseded
+by a passing source regression.
+
+The exact integrated source `58c5cd684885a9d30d44a9b384d26ff6bd8814dd`
+(release-binary SHA256
+`0ed4e813b0c2aab915a1f63211307de68ee47c6cff85ed0a021d229299309521`)
+has now completed all 56 unlocked runs. Each receipt passed copied-binary,
+on-console/foreground/unlocked, stable 1280x860 logical bounds, 2x scale,
+150x42 foreground grid and complete 10 Hz producer-delivery checks. Runs used
+15 seconds of warmup and fifteen 2-second CPU intervals. Localized/Unicode
+cases improved 14-30%; shaped full foreground was 7.863% baseline versus
+7.698% candidate (-2.1%), improving in both pairs. Visible-cursor quiet
+controls remained about 0.1-0.2% CPU; their relative percentages are not useful
+at the process-clock resolution.
+
+Unshaped full foreground was 5.875% versus 6.320% (+7.6%), with paired changes
+of +19.1% and -2.1%. These contradictory samples are retained, not averaged
+into a claimed gain or accepted as a tradeoff. Eight longer ABBA/BAAB controls
+on that exact binary used 30 seconds of warmup, thirty 2-second CPU intervals
+and a bounded 1,200-frame producer. All eight receipts passed the same native
+and geometry guards, with at least 975 producer frames and p99 intervals below
+110 ms. Baseline CPU averaged 5.763% versus 6.466% candidate (+12.2%);
+paired changes were +57.2%, +3.1%, +0.8% and +3.2%. The first baseline's
+4.124% CPU was lower than later baselines (6.239-6.352%), despite consistent
+producer delivery; its CPU intervals oscillated between about 2.5-3% and
+5-7.5%. Neither the low first baseline nor the remaining smaller differences
+has an established cause. Those controls did not clear native acceptance,
+and none of their intervals or runs is discarded.
+
+Local workspace/portable/vendor gates, independent security/reliability/scope
+reviews and all 11 integrated-head GitHub checks passed. CI success does not
+resolve the remaining native CPU uncertainty.
+Issue #334's owner-authorized cleanup removes per-rebuilt-row revision
+allocations and unconditional capture bookmarks without changing retention
+eligibility or atlas invalidation. Batch/independent-cache/clone identity and
+row-position mesh regressions pass; restoring both old policies fails four
+focused regressions.
+
+Cleanup source `86e4274bb5ebbbe5cb8423cbb24d0db34688c62c` (release-binary
+SHA256 `2e4b5f8bc88d0945cab2c3f685d254c7405e4bc46ee37d0725a0231e068f6a6b`)
+completed 52 isolated unlocked runs. Original baseline remains `d67aee3`
+with binary SHA256
+`60c9adf5b10519409a9f1994ca138094fdcb2bf00832b3c5851fd9797cdfca35`.
+The predeclared 36-run plan comprised eight longer unshaped full-foreground
+controls against the previous candidate, eight against the original baseline,
+and five focused four-run cases. Eight current-source quiet controls and,
+after the mixed short shaped-full result, eight longer shaped-full controls
+were each predeclared before launch. Candidate-first BAAB/ABBA order reversed
+the earlier first-baseline ordering; no result was removed or replaced.
+Longer runs used 30-second warmup, thirty 2-second CPU intervals and bounded
+1,200-frame producers; focused/quiet runs used 15-second warmup, fifteen
+2-second intervals and bounded 600-frame producers.
+
+All 52 receipts passed exact copied-binary, foreground/unlocked/on-console,
+input and stable 1280x860 logical bounds/2x scale/150x42 foreground-grid guards.
+Both 10 Hz producers spanned measurements, with at least 979 frames in longer
+controls and 516 in standard controls; worst per-run p99 interval was 109.93 ms.
+No app error/panic/device-loss matches were found. Background output means an
+inactive synthetic tab in the foreground owned application, not an inactive app.
+
+| Comparison / workload | Baseline CPU | Cleanup CPU | Relative change / paired changes |
+| --- | ---: | ---: | --- |
+| Previous candidate, unshaped full foreground (eight longer) | 6.475% | 5.807% | -10.31%; -33.14%, -2.81%, +0.24%, -6.15%; first-run confounded, not a causal speedup |
+| Original baseline, unshaped full foreground (eight longer) | 6.433% | 6.404% | -0.46%; +4.26%, -0.02%, -1.31%, -4.46%; approximately neutral, not parity on every run |
+| Original baseline, unshaped localized foreground | 5.524% | 4.811% | -12.90%; -20.52%, -3.94% |
+| Original baseline, unshaped localized background tab | 5.506% | 4.645% | -15.65%; -16.15%, -15.14% |
+| Original baseline, shaped localized foreground | 5.390% | 4.164% | -22.74%; -23.33%, -22.16% |
+| Original baseline, shaped full foreground (four standard) | 7.899% | 8.114% | +2.72%; -2.08%, +7.60%; retained mixed result |
+| Original baseline, unshaped Unicode foreground | 6.369% | 5.110% | -19.76%; -23.66%, -15.94% |
+| Original baseline, unshaped quiet visible cursor | 0.133% | 0.133% | unchanged low absolute CPU; relative percentages not meaningful |
+| Original baseline, shaped quiet visible cursor | 0.133% | 0.133% | unchanged low absolute CPU; relative percentages not meaningful |
+| Original baseline, shaped full foreground (eight longer) | 7.850% | 8.051% | +2.56%; +2.82%, +1.75%, +2.04%, +3.65%; all pairs adverse |
+
+The direct previous-candidate comparison includes a low first cleanup run
+(4.216%); that reproduces low-first-run behavior with the candidate first,
+but does not establish its cause. Its aggregate is not a causal 10% cleanup
+speedup. Current original-baseline controls show 13-23% savings in the tested
+localized/Unicode cases, approximately neutral unshaped heavy redraw, and a
+remaining 2.56% shaped-heavy cost (about 0.20 CPU percentage points).
+
+On 2026-10-05 the owner explicitly accepted this documented shaped-heavy
+tradeoff for PR #328 and retained #334 for residual cost and first-run variance.
+This clears that owner's native-performance decision, not a no-regression
+claim, external PR approval, deployment or general platform/latency acceptance.
+All 11 checks on measured source `86e4274` completed/SUCCESS after one bounded
+retry of jobs that never acquired hosted runners; original infrastructure
+failures remain preserved. Subsequent evidence-only heads require their own CI
+conclusions and do not change the measured source/executable identity.
+The shaped/unshaped static/localized/full-mutation CPU-stage diagnostic is in
+both optional runners under `FESTERM_RUN_ROW_CACHE_PROFILE=1`.
+Existing CP-16/17/18 and mixed-DPI/native-input/physical
+latency gates remain unchanged.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |

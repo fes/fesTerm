@@ -33,6 +33,7 @@ use crate::{
 };
 
 mod clip_batching;
+mod row_cache;
 
 use clip_batching::{GridGlyphClipPolicy, GridTextClipOverride, GridTextClipPainter};
 
@@ -152,13 +153,41 @@ pub(crate) struct GlyphCache {
     layouts: hashbrown::HashMap<GlyphKey, Arc<egui::Galley>, RandomState>,
     style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
+    rows: row_cache::Rows,
+    font_revision: Option<egui::epaint::FontImageRevision>,
 }
 
 impl GlyphCache {
+    pub(crate) fn row_cache_diagnostics(&self) -> (usize, usize, usize) {
+        self.rows.diagnostics()
+    }
+
     pub(crate) fn clear(&mut self) {
         self.layouts.clear();
         self.style_hasher = None;
         self.color_emoji.clear();
+        self.rows.clear();
+        self.font_revision = None;
+    }
+
+    fn begin_paint(&mut self, painter: &egui::Painter) {
+        let revision = painter.ctx().fonts_mut(|fonts| fonts.image_revision());
+        if self.font_revision.as_ref() != Some(&revision) {
+            self.layouts.clear();
+            self.style_hasher = None;
+            self.rows.clear();
+        }
+        self.font_revision = Some(revision);
+    }
+
+    fn finish_paint(&mut self, painter: &egui::Painter) {
+        let revision = painter.ctx().fonts_mut(|fonts| fonts.image_revision());
+        if self.font_revision.as_ref() != Some(&revision) {
+            self.layouts.clear();
+            self.style_hasher = None;
+            self.rows.clear();
+        }
+        self.font_revision = Some(revision);
     }
 
     fn query_hash(&mut self, query: &GlyphQuery<'_>) -> u64 {
@@ -533,7 +562,7 @@ fn stable_text_hash(text: &str) -> u64 {
     })
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct GridLayout {
     pub(crate) rect: Rect,
     pub(crate) dimensions: Dimensions,
@@ -735,89 +764,164 @@ fn paint_grid_with_clip_override(
     let Some(dimensions) = paint.cache.dimensions() else {
         return GridPaintStats::default();
     };
+    glyphs.begin_paint(&painter);
     let mut stats = GridPaintStats::default();
     let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
     let clip_policy = GridGlyphClipPolicy::new(&painter, clip_override);
     crate::background::paint_background(&painter, paint.layout.rect);
     let native =
         crate::native_painter::Batch::begin(&painter, painter.clip_rect(), paint.full_redraw);
+    glyphs.rows.begin(dimensions.rows(), paint.full_redraw);
+    glyphs.rows.observe(paint.cache);
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {
             continue;
         };
-        for (column, cell) in cells.iter().enumerate() {
-            if cell.width == festerm_core::CellWidth::Continuation {
-                continue;
+        let key = if native.is_none()
+            && clip_override == GridTextClipOverride::Auto
+            && glyphs.rows.enabled()
+            && (!paint.fonts.font_set().color_emoji()
+                || cells
+                    .iter()
+                    .all(|cell| cell.text.is_ascii() || !is_color_emoji(&cell.text)))
+        {
+            paint.cache.row_revision(row).and_then(|revision| {
+                row_cache::Key::new(
+                    &painter,
+                    revision,
+                    paint.layout,
+                    paint.fonts,
+                    selection_range,
+                    paint.shape_cell_runs,
+                )
+            })
+        } else {
+            None
+        };
+        if key
+            .as_ref()
+            .is_some_and(|key| glyphs.rows.replay(&painter, row, key))
+        {
+            continue;
+        }
+        glyphs.rows.remove(row);
+        let start = key.as_ref().map(|_| {
+            #[cfg(test)]
+            {
+                glyphs.rows.capture_bookmarks += 1;
             }
-            let position = CellPosition { column, row };
-            let columns = rendered_cell_columns(cell, dimensions, column);
-            let rect = grid_cell_rect(paint.layout, position, columns);
-            let (foreground, background) = cell_colors(cell);
-            let selected = rendered_cell_is_selected(selection_range, position, columns);
-            if cell_needs_background_paint(cell, selected) {
-                painter.rect_filled(
-                    rect,
-                    0.0,
-                    if selected {
-                        SELECTION_BACKGROUND
-                    } else {
-                        background
-                    },
-                );
-            }
-            if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
-                // Clip to this cell's rect. Some glyphs (notably box-drawing
-                // corners/dots in certain bundled faces) can measure taller
-                // than the "M"-derived cell height, so an unclipped paint can
-                // bleed into an adjacent row; that row's later background
-                // fill then overwrites part of the bled glyph, leaving only
-                // a flat sliver visible. The run-shaping path below already
-                // clips for the same reason.
-                let clipped_painter = painter.with_clip_rect(rect);
-                let outcome = glyphs.paint_color_emoji(
-                    &clipped_painter,
-                    &cell.text,
-                    rect,
-                    cell.attributes,
-                    paint.fonts.font_set().color_emoji(),
-                );
-                stats.record_color_emoji(outcome);
-                if !outcome.painted() {
-                    let galley = glyphs.layout(
-                        &painter,
+            painter
+                .ctx()
+                .graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx())
+        });
+        // The shaped path already paints every background before its glyph runs.
+        let cached_backgrounds = key.is_some()
+            && paint.shape_cell_runs
+            && cells.len() <= 1024
+            && cells.iter().all(|cell| {
+                !cell.attributes.contains(Attributes::UNDERLINE)
+                    && !cell.attributes.contains(Attributes::DOUBLE_UNDERLINE)
+                    && !cell.attributes.contains(Attributes::STRIKETHROUGH)
+            });
+        if cached_backgrounds {
+            row_cache::backgrounds(
+                &painter,
+                cells,
+                0..cells.len(),
+                row,
+                paint.layout,
+                selection_range,
+            );
+        }
+        if !cached_backgrounds {
+            let mut blank_background_end = 0;
+            for (column, cell) in cells.iter().enumerate() {
+                if cell.width == festerm_core::CellWidth::Continuation {
+                    continue;
+                }
+                let position = CellPosition { column, row };
+                let columns = rendered_cell_columns(cell, dimensions, column);
+                let rect = grid_cell_rect(paint.layout, position, columns);
+                let (foreground, background) = cell_colors(cell);
+                let selected = rendered_cell_is_selected(selection_range, position, columns);
+                if key.is_some()
+                    && !paint.shape_cell_runs
+                    && cells.len() <= 1024
+                    && column >= blank_background_end
+                    && blank_undecorated_cell(cell)
+                {
+                    let end = column
+                        + cells[column..]
+                            .iter()
+                            .take_while(|cell| blank_undecorated_cell(cell))
+                            .count();
+                    if end - column >= 4 {
+                        row_cache::backgrounds(
+                            &painter,
+                            cells,
+                            column..end,
+                            row,
+                            paint.layout,
+                            selection_range,
+                        );
+                        blank_background_end = end;
+                    }
+                }
+                if column >= blank_background_end && cell_needs_background_paint(cell, selected) {
+                    painter.rect_filled(
+                        rect,
+                        0.0,
+                        if selected {
+                            SELECTION_BACKGROUND
+                        } else {
+                            background
+                        },
+                    );
+                }
+                if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
+                    // Clip to this cell's rect. Some glyphs (notably box-drawing
+                    // corners/dots in certain bundled faces) can measure taller
+                    // than the "M"-derived cell height, so an unclipped paint can
+                    // bleed into an adjacent row; that row's later background
+                    // fill then overwrites part of the bled glyph, leaving only
+                    // a flat sliver visible. The run-shaping path below already
+                    // clips for the same reason.
+                    let clipped_painter = painter.with_clip_rect(rect);
+                    let outcome = glyphs.paint_color_emoji(
+                        &clipped_painter,
                         &cell.text,
+                        rect,
                         cell.attributes,
-                        foreground,
-                        paint.fonts,
-                        rect.width(),
+                        paint.fonts.font_set().color_emoji(),
                     );
-                    let text_position = Pos2::new(
-                        rect.left(),
-                        rect.top()
-                            + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
-                    );
-                    match clip_policy.galley_painter(rect, text_position, galley.as_ref()) {
-                        GridTextClipPainter::SharedParent => {
-                            painter.galley(text_position, galley, foreground);
-                        }
-                        GridTextClipPainter::ClippedCell => {
-                            clipped_painter.galley(text_position, galley, foreground);
+                    stats.record_color_emoji(outcome);
+                    if !outcome.painted() {
+                        let galley = glyphs.layout(
+                            &painter,
+                            &cell.text,
+                            cell.attributes,
+                            foreground,
+                            paint.fonts,
+                            rect.width(),
+                        );
+                        let text_position = Pos2::new(
+                            rect.left(),
+                            rect.top()
+                                + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                        );
+                        match clip_policy.galley_painter(rect, text_position, galley.as_ref()) {
+                            GridTextClipPainter::SharedParent => {
+                                painter.galley(text_position, galley, foreground);
+                            }
+                            GridTextClipPainter::ClippedCell => {
+                                clipped_painter.galley(text_position, galley, foreground);
+                            }
                         }
                     }
                 }
-            }
-            let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
-            if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
-                let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
-                painter.line_segment(
-                    [
-                        Pos2::new(rect.left(), underline_y),
-                        Pos2::new(rect.right(), underline_y),
-                    ],
-                    Stroke::new(1.0_f32, foreground),
-                );
-                if double_underline {
-                    let underline_y = rect.bottom() - 1.0;
+                let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
+                if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
+                    let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
                     painter.line_segment(
                         [
                             Pos2::new(rect.left(), underline_y),
@@ -825,17 +929,27 @@ fn paint_grid_with_clip_override(
                         ],
                         Stroke::new(1.0_f32, foreground),
                     );
+                    if double_underline {
+                        let underline_y = rect.bottom() - 1.0;
+                        painter.line_segment(
+                            [
+                                Pos2::new(rect.left(), underline_y),
+                                Pos2::new(rect.right(), underline_y),
+                            ],
+                            Stroke::new(1.0_f32, foreground),
+                        );
+                    }
                 }
-            }
-            if cell.attributes.contains(Attributes::STRIKETHROUGH) {
-                let strikethrough_y = rect.center().y;
-                painter.line_segment(
-                    [
-                        Pos2::new(rect.left(), strikethrough_y),
-                        Pos2::new(rect.right(), strikethrough_y),
-                    ],
-                    Stroke::new(1.0_f32, foreground),
-                );
+                if cell.attributes.contains(Attributes::STRIKETHROUGH) {
+                    let strikethrough_y = rect.center().y;
+                    painter.line_segment(
+                        [
+                            Pos2::new(rect.left(), strikethrough_y),
+                            Pos2::new(rect.right(), strikethrough_y),
+                        ],
+                        Stroke::new(1.0_f32, foreground),
+                    );
+                }
             }
         }
         if paint.shape_cell_runs {
@@ -877,6 +991,9 @@ fn paint_grid_with_clip_override(
                     }
                 }
             }
+        }
+        if let Some((key, start)) = key.zip(start) {
+            glyphs.rows.capture(&painter, row, key, start);
         }
     }
 
@@ -943,6 +1060,7 @@ fn paint_grid_with_clip_override(
     if let Some(native) = native {
         native.finish(&painter);
     }
+    glyphs.finish_paint(&painter);
     stats
 }
 
@@ -950,6 +1068,13 @@ fn has_glyph_ink(text: &str) -> bool {
     // ASCII spaces have no ink in the bundled faces. Their backgrounds and
     // decorations still paint above; other Unicode whitespace is not assumed.
     text.bytes().any(|byte| byte != b' ')
+}
+
+fn blank_undecorated_cell(cell: &RenderedCell) -> bool {
+    !has_glyph_ink(&cell.text)
+        && !cell.attributes.contains(Attributes::UNDERLINE)
+        && !cell.attributes.contains(Attributes::DOUBLE_UNDERLINE)
+        && !cell.attributes.contains(Attributes::STRIKETHROUGH)
 }
 
 fn paint_cursor(
@@ -1808,7 +1933,7 @@ mod tests {
             .expect("test terminal allocation")
     }
 
-    fn grid_layout(columns: usize, rows: usize) -> GridLayout {
+    pub(super) fn grid_layout(columns: usize, rows: usize) -> GridLayout {
         GridLayout {
             rect: Rect::from_min_size(
                 Pos2::new(5.0, 7.0),
@@ -1816,6 +1941,926 @@ mod tests {
             ),
             dimensions: Dimensions::new(columns, rows).expect("valid test size"),
             metrics: CellMetrics::new(10.0, 20.0).expect("valid test cell metrics"),
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct RowFrameOptions {
+        shaped: bool,
+        full_redraw: bool,
+        screen_size: Vec2,
+        origin: Pos2,
+        clip: Option<Rect>,
+        opacity: f32,
+        invisible: bool,
+        transform: egui::emath::TSTransform,
+        focused: bool,
+        clip_override: GridTextClipOverride,
+        history_rows: usize,
+    }
+
+    impl Default for RowFrameOptions {
+        fn default() -> Self {
+            Self {
+                shaped: true,
+                full_redraw: false,
+                screen_size: Vec2::new(520.0, 280.0),
+                origin: Pos2::new(5.0, 7.0),
+                clip: None,
+                opacity: 1.0,
+                invisible: false,
+                transform: egui::emath::TSTransform::IDENTITY,
+                focused: true,
+                clip_override: GridTextClipOverride::Auto,
+                history_rows: 0,
+            }
+        }
+    }
+
+    fn row_cache_output(
+        context: &egui::Context,
+        terminal: &Terminal,
+        cache: &TerminalRenderCache,
+        glyphs: &mut GlyphCache,
+        selection: &Selection,
+        fonts: &FontSettings,
+        options: RowFrameOptions,
+    ) -> egui::FullOutput {
+        let dimensions = terminal.dimensions();
+        context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, options.screen_size)),
+                ..Default::default()
+            },
+            |ui| {
+                let mut painter = ui.painter().clone();
+                if let Some(clip) = options.clip {
+                    painter = painter.with_clip_rect(clip);
+                }
+                painter.set_opacity(options.opacity);
+                if options.invisible {
+                    painter.set_invisible();
+                }
+                context.set_transform_layer(painter.layer_id(), options.transform);
+                let mut layout = grid_layout(dimensions.columns(), dimensions.rows());
+                layout.rect = Rect::from_min_size(options.origin, layout.rect.size());
+                paint_grid_with_clip_override(
+                    painter,
+                    GridPaint {
+                        cache,
+                        snapshot: TerminalSnapshot::from_terminal_viewport(
+                            terminal,
+                            options.history_rows,
+                        ),
+                        layout,
+                        selection,
+                        fonts,
+                        focused: options.focused,
+                        full_redraw: options.full_redraw,
+                        shape_cell_runs: options.shaped,
+                    },
+                    glyphs,
+                    options.clip_override,
+                );
+            },
+        )
+    }
+
+    fn row_cache_frame(
+        context: &egui::Context,
+        terminal: &Terminal,
+        cache: &TerminalRenderCache,
+        glyphs: &mut GlyphCache,
+        selection: &Selection,
+        fonts: &FontSettings,
+        options: RowFrameOptions,
+    ) -> Vec<egui::epaint::ClippedPrimitive> {
+        let mut output =
+            row_cache_output(context, terminal, cache, glyphs, selection, fonts, options);
+        output.textures_delta.clear();
+        context.tessellate(output.shapes, output.pixels_per_point)
+    }
+
+    fn warm_row_context(context: &egui::Context) {
+        for _ in 0..2 {
+            context
+                .run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(520.0, 280.0))),
+                        ..Default::default()
+                    },
+                    |_| {},
+                )
+                .textures_delta
+                .clear();
+        }
+    }
+
+    #[test]
+    fn retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear() {
+        let context = egui::Context::default();
+        context.set_theme(egui::Theme::Dark);
+        crate::install_terminal_fonts(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(
+            "\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[HAtlas validity != geometry 界 αé".as_bytes(),
+        );
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        let options = RowFrameOptions {
+            shaped: false,
+            ..Default::default()
+        };
+        let mut glyphs = GlyphCache::default();
+        let mut renderer = egui_kittest::wgpu::WgpuTestRenderer::new();
+        for step in 0..3 {
+            match step {
+                1 => {
+                    crate::install_terminal_font_family(
+                        &context,
+                        crate::TerminalFontFamily::JuliaMono,
+                    );
+                }
+                2 => context.style_mut_of(egui::Theme::Dark, |style| {
+                    style.visuals.text_options.color_transfer_function =
+                        egui::epaint::FontColorTransferFunction::Gamma(0.8);
+                }),
+                _ => {}
+            }
+            let mut actual = row_cache_output(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                options,
+            );
+            renderer.handle_delta(&mut actual.textures_delta);
+            let actual_pixels = renderer.render(&context, &actual).expect("actual pixels");
+            let actual_atlas = context.fonts(|fonts| fonts.image());
+            let mut ordinary = GlyphCache::default();
+            ordinary.rows.disable();
+            let mut reference = row_cache_output(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                options,
+            );
+            renderer.handle_delta(&mut reference.textures_delta);
+            let reference_pixels = renderer.render(&context, &reference).expect("fresh pixels");
+            let reference_atlas = context.fonts(|fonts| fonts.image());
+            assert!(
+                actual_atlas == reference_atlas,
+                "atlas at reset step {step}"
+            );
+            assert!(
+                actual_pixels == reference_pixels,
+                "pixels at reset step {step}"
+            );
+            for _ in 0..2 {
+                let mut output = row_cache_output(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut glyphs,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                renderer.handle_delta(&mut output.textures_delta);
+            }
+            assert_eq!(glyphs.rows.reused, 12);
+        }
+    }
+
+    fn assert_same_row_primitives(
+        actual: &[egui::epaint::ClippedPrimitive],
+        reference: &[egui::epaint::ClippedPrimitive],
+    ) {
+        assert_eq!(actual.len(), reference.len());
+        for (actual, reference) in actual.iter().zip(reference) {
+            assert_eq!(actual.clip_rect, reference.clip_rect);
+            match (&actual.primitive, &reference.primitive) {
+                (
+                    egui::epaint::Primitive::Mesh(actual),
+                    egui::epaint::Primitive::Mesh(reference),
+                ) => {
+                    assert_eq!(actual, reference);
+                }
+                _ => panic!("row fixture unexpectedly produced a graphics callback"),
+            }
+        }
+    }
+
+    #[test]
+    fn retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work() {
+        for pixels_per_point in [1.0, 1.25, 1.5, 2.0] {
+            for shaped in [false, true] {
+                let context = egui::Context::default();
+                context.set_pixels_per_point(pixels_per_point);
+                crate::install_terminal_fonts(&context);
+                for _ in 0..2 {
+                    context
+                        .run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::new(520.0, 280.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |_| {},
+                        )
+                        .textures_delta
+                        .clear();
+                }
+                let mut terminal = terminal(48, 12);
+                terminal.ingest(
+                    b"\x1b[?25l\x1b[48;2;24;24;24m\x1b[2J\x1b[H\
+                      ASCII text != -> ==\x1b[2;1H\x1b[1;3;38;5;81mStyled row\x1b[0m\
+                      \x1b[3;1H\x1b[4;9;48;5;24mdecorated\x1b[0m",
+                );
+                let mut cache = TerminalRenderCache::default();
+                let dirty = terminal.take_dirty_rows();
+                cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+                let mut optimized = GlyphCache::default();
+                let mut ordinary = GlyphCache::default();
+                ordinary.rows.disable();
+                let selection = Selection::default();
+                let fonts = FontSettings::default();
+                for _ in 0..3 {
+                    let reference = row_cache_frame(
+                        &context,
+                        &terminal,
+                        &cache,
+                        &mut ordinary,
+                        &selection,
+                        &fonts,
+                        RowFrameOptions {
+                            shaped,
+                            ..Default::default()
+                        },
+                    );
+                    let actual = row_cache_frame(
+                        &context,
+                        &terminal,
+                        &cache,
+                        &mut optimized,
+                        &selection,
+                        &fonts,
+                        RowFrameOptions {
+                            shaped,
+                            ..Default::default()
+                        },
+                    );
+                    assert_same_row_primitives(&actual, &reference);
+                }
+                assert_eq!(optimized.rows.reused, 12);
+                assert_eq!(optimized.rows.rebuilt, 0);
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    RowFrameOptions {
+                        shaped,
+                        ..Default::default()
+                    },
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    RowFrameOptions {
+                        shaped,
+                        full_redraw: true,
+                        ..Default::default()
+                    },
+                );
+                assert_same_row_primitives(&actual, &reference);
+                assert_eq!(optimized.rows.reused, 0);
+                assert_eq!(optimized.rows.rebuilt, 12);
+            }
+        }
+    }
+
+    #[test]
+    fn retained_grid_rows_invalidate_dirty_content_selection_fonts_and_unicode() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(b"\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[Hinitial ASCII");
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let mut optimized = GlyphCache::default();
+        let mut ordinary = GlyphCache::default();
+        ordinary.rows.disable();
+        let mut selection = Selection::default();
+        let mut fonts = FontSettings::default();
+        fonts.set_font_set(fonts.font_set().with_color_emoji(false));
+        for step in 0..8 {
+            match step {
+                1 => terminal.ingest(b"\x1b[5;1Hupdated ASCII"),
+                2 => terminal.ingest("\x1b[6;1Hwide \u{754c} emoji \u{1f916}".as_bytes()),
+                3 => fonts.size_points = 18.0,
+                4 => {
+                    context.set_pixels_per_point(1.5);
+                    for _ in 0..2 {
+                        context
+                            .run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(Rect::from_min_size(
+                                        Pos2::ZERO,
+                                        Vec2::new(520.0, 280.0),
+                                    )),
+                                    ..Default::default()
+                                },
+                                |_| {},
+                            )
+                            .textures_delta
+                            .clear();
+                    }
+                }
+                5 => {
+                    selection.begin(CellPosition { column: 2, row: 1 });
+                    selection.extend(CellPosition { column: 9, row: 4 });
+                }
+                6 => selection.clear(),
+                _ => {}
+            }
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let reference = row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                RowFrameOptions::default(),
+            );
+            let actual = row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut optimized,
+                &selection,
+                &fonts,
+                RowFrameOptions::default(),
+            );
+            assert_same_row_primitives(&actual, &reference);
+            if step == 7 {
+                assert_eq!(optimized.rows.reused, 12);
+            }
+        }
+        selection.clear();
+    }
+
+    #[test]
+    #[ignore = "opt-in diagnostic timings, not a portable performance threshold"]
+    fn profile_retained_grid_row_stages() {
+        for shaped in [false, true] {
+            for workload in ["static", "localized", "full"] {
+                for cached in [false, true] {
+                    let context = egui::Context::default();
+                    context.set_pixels_per_point(2.0);
+                    let generation = crate::install_terminal_fonts(&context);
+                    let mut terminal = terminal(150, 42);
+                    terminal.ingest(b"\x1b[?25l\x1b[48;2;24;24;24m\x1b[2J");
+                    for row in 1..=40 {
+                        terminal.ingest(
+                            format!("\x1b[{row};1HOwned synthetic row {row:02}: ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789")
+                                .as_bytes(),
+                        );
+                    }
+                    let mut cache = TerminalRenderCache::default();
+                    let dirty = terminal.take_dirty_rows();
+                    cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+                    let selection = Selection::default();
+                    let mut fonts = FontSettings::default();
+                    fonts.set_font_set(crate::TerminalFontSet::new(
+                        crate::TerminalFontFamily::default(),
+                        shaped,
+                        generation,
+                    ));
+                    let options = RowFrameOptions {
+                        shaped,
+                        screen_size: Vec2::new(1580.0, 980.0),
+                        ..Default::default()
+                    };
+                    let mut glyphs = GlyphCache::default();
+                    if !cached {
+                        glyphs.rows.disable();
+                    }
+                    for _ in 0..3 {
+                        row_cache_frame(
+                            &context,
+                            &terminal,
+                            &cache,
+                            &mut glyphs,
+                            &selection,
+                            &fonts,
+                            options,
+                        );
+                    }
+                    let started = std::time::Instant::now();
+                    for frame in 0..200 {
+                        match workload {
+                            "localized" => terminal.ingest(
+                                format!("\x1b[38;1HWorking frame {frame:06}\x1b[K").as_bytes(),
+                            ),
+                            "full" => {
+                                terminal.ingest(b"\x1b[2J");
+                                for row in 1..=40 {
+                                    terminal.ingest(
+                                        format!("\x1b[{row};1HOwned synthetic row {row:02}: ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 frame {frame:06}")
+                                            .as_bytes(),
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                        let dirty = terminal.take_dirty_rows();
+                        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+                        std::hint::black_box(row_cache_frame(
+                            &context,
+                            &terminal,
+                            &cache,
+                            &mut glyphs,
+                            &selection,
+                            &fonts,
+                            options,
+                        ));
+                    }
+                    eprintln!(
+                        "shaped={shaped} workload={workload} cached={cached}: {:.3} ms/frame",
+                        started.elapsed().as_secs_f64() * 1000.0 / 200.0
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_grid_rows_preserve_geometry_clip_opacity_transform_and_cursor() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        warm_row_context(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(b"\x1b[48;2;24;24;24m\x1b[2J\x1b[Hvisible cursor and text");
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let mut optimized = GlyphCache::default();
+        let mut ordinary = GlyphCache::default();
+        ordinary.rows.disable();
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        for options in [
+            RowFrameOptions::default(),
+            RowFrameOptions {
+                origin: Pos2::new(13.25, 10.5),
+                ..Default::default()
+            },
+            RowFrameOptions {
+                clip: Some(Rect::from_min_max(
+                    Pos2::new(19.25, 30.5),
+                    Pos2::new(410.75, 217.25),
+                )),
+                ..Default::default()
+            },
+            RowFrameOptions {
+                opacity: 0.5,
+                ..Default::default()
+            },
+            RowFrameOptions {
+                invisible: true,
+                ..Default::default()
+            },
+            RowFrameOptions {
+                transform: egui::emath::TSTransform::new(Vec2::new(3.5, 4.25), 1.25),
+                ..Default::default()
+            },
+            RowFrameOptions {
+                focused: false,
+                ..Default::default()
+            },
+            RowFrameOptions {
+                clip_override: GridTextClipOverride::AlwaysCell,
+                ..Default::default()
+            },
+            RowFrameOptions::default(),
+        ] {
+            for _ in 0..3 {
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_same_row_primitives(&actual, &reference);
+            }
+            if options.opacity != 1.0
+                || options.invisible
+                || options.transform != egui::emath::TSTransform::IDENTITY
+                || options.clip_override != GridTextClipOverride::Auto
+            {
+                assert_eq!(optimized.rows.diagnostics(), (0, 0, 0));
+            } else {
+                assert_eq!(optimized.rows.reused, 12);
+            }
+        }
+        let old_bytes = optimized.rows.diagnostics().2;
+        assert!(old_bytes > 0);
+        optimized.clear();
+        assert_eq!(optimized.rows.diagnostics().2, 0);
+    }
+
+    #[test]
+    fn retained_grid_rows_refresh_history_resize_fonts_debug_and_native_fallback() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        warm_row_context(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(b"\x1b[?25l\x1b[48;5;24m");
+        for row in 0..30 {
+            terminal.ingest(format!("history line {row:02}\r\n").as_bytes());
+        }
+        let mut cache = TerminalRenderCache::default();
+        let mut optimized = GlyphCache::default();
+        let mut ordinary = GlyphCache::default();
+        ordinary.rows.disable();
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        let native_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        for step in 0..8 {
+            let mut options = RowFrameOptions::default();
+            match step {
+                1 => options.history_rows = 3,
+                2 => terminal
+                    .resize(Dimensions::new(40, 10).expect("valid dimensions"))
+                    .expect("resize succeeds"),
+                3 => {
+                    crate::install_terminal_font_family(
+                        &context,
+                        crate::TerminalFontFamily::JuliaMono,
+                    );
+                    optimized.clear();
+                    ordinary.clear();
+                }
+                4 => context.tessellation_options_mut(|options| {
+                    options.debug_paint_clip_rects = true;
+                }),
+                5 => context.tessellation_options_mut(|options| {
+                    options.debug_paint_clip_rects = false;
+                    options.round_text_to_pixels = !options.round_text_to_pixels;
+                }),
+                6 => {
+                    let native_calls = native_calls.clone();
+                    crate::native_painter::install_root_terminal_painter(&context, move |_, _| {
+                        native_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        None
+                    });
+                }
+                7 => crate::native_painter::remove_root_terminal_painter(&context),
+                _ => {}
+            }
+            let dirty = terminal.take_dirty_rows();
+            cache.update(
+                TerminalSnapshot::from_terminal_viewport(&terminal, options.history_rows),
+                &dirty,
+            );
+            for _ in 0..3 {
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_same_row_primitives(&actual, &reference);
+            }
+            if step == 4 || step == 6 {
+                assert_eq!(optimized.rows.diagnostics(), (0, 0, 0));
+            } else {
+                assert_eq!(optimized.rows.reused, terminal.dimensions().rows());
+            }
+        }
+        assert_eq!(native_calls.load(std::sync::atomic::Ordering::Relaxed), 6);
+    }
+
+    #[test]
+    fn retained_grid_rows_exclude_color_emoji_but_reuse_monochrome_unicode() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        warm_row_context(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest("\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[H界─αé\x1b[2;1H🤖".as_bytes());
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let mut glyphs = GlyphCache::default();
+        let selection = Selection::default();
+        let mut fonts = FontSettings::default();
+        for _ in 0..3 {
+            row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                RowFrameOptions::default(),
+            );
+        }
+        assert_eq!(glyphs.rows.reused, 11);
+        assert_eq!(glyphs.rows.rebuilt, 0);
+        fonts.set_font_set(fonts.font_set().with_color_emoji(false));
+        for _ in 0..3 {
+            row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                RowFrameOptions::default(),
+            );
+        }
+        assert_eq!(glyphs.rows.reused, 12);
+    }
+
+    #[test]
+    fn retained_grid_row_budget_fallback_preserves_exact_meshes() {
+        let context = egui::Context::default();
+        context.set_pixels_per_point(1.5);
+        crate::install_terminal_fonts(&context);
+        warm_row_context(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest("\x1b[?25l\x1b[48;2;24;24;24m\x1b[2J\x1b[Hbounded ASCII 界".as_bytes());
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        let mut ordinary = GlyphCache::default();
+        ordinary.rows.disable();
+        for budget in [0, 1, 4096, 16_384, 8 * 1024 * 1024] {
+            let mut optimized = GlyphCache::default();
+            optimized.rows.set_budget(budget);
+            for _ in 0..3 {
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    RowFrameOptions::default(),
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    RowFrameOptions::default(),
+                );
+                assert_same_row_primitives(&actual, &reference);
+                assert!(optimized.rows.diagnostics().2 <= budget);
+            }
+        }
+    }
+
+    #[test]
+    fn retained_unshaped_rows_bypass_full_mutation_and_recover_exact_meshes() {
+        retained_rows_bypass_full_mutation_and_recover_exact_meshes(false);
+    }
+
+    #[test]
+    fn retained_shaped_rows_bypass_full_mutation_and_recover_exact_meshes() {
+        retained_rows_bypass_full_mutation_and_recover_exact_meshes(true);
+    }
+
+    fn retained_rows_bypass_full_mutation_and_recover_exact_meshes(shaped: bool) {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        warm_row_context(&context);
+        let mut terminal = terminal(48, 12);
+        terminal.ingest(b"\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[Hframe 0123456789");
+        let mut cache = TerminalRenderCache::default();
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        let mut glyphs = GlyphCache::default();
+        let mut ordinary = GlyphCache::default();
+        ordinary.rows.disable();
+        let selection = Selection::default();
+        let fonts = FontSettings::default();
+        let options = RowFrameOptions {
+            shaped,
+            ..Default::default()
+        };
+        for frame in 0..4 {
+            terminal.ingest(format!("\x1b[2J\x1b[Hframe {frame:06}").as_bytes());
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                options,
+            );
+        }
+        terminal.ingest(b"\x1b[2J\x1b[Hframe 0123456789");
+        let dirty = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+        for _ in 0..3 {
+            row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                options,
+            );
+        }
+        assert_eq!(glyphs.rows.reused, 12);
+        for frame in 0..4 {
+            terminal.ingest(format!("\x1b[2J\x1b[Hframe {frame:06}").as_bytes());
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let reference = row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut ordinary,
+                &selection,
+                &fonts,
+                options,
+            );
+            assert_eq!(
+                glyphs.font_revision,
+                Some(context.fonts_mut(|fonts| fonts.image_revision())),
+                "full-mutation oracle must use a warmed atlas"
+            );
+            let actual = row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                options,
+            );
+            assert_same_row_primitives(&actual, &reference);
+            assert_eq!(glyphs.rows.diagnostics(), (0, 0, 0), "frame {frame}");
+            assert_eq!(glyphs.rows.capture_bookmarks, 0, "frame {frame}");
+            assert_eq!(ordinary.rows.capture_bookmarks, 0);
+        }
+        for _ in 0..3 {
+            row_cache_frame(
+                &context,
+                &terminal,
+                &cache,
+                &mut glyphs,
+                &selection,
+                &fonts,
+                options,
+            );
+        }
+        assert_eq!(glyphs.rows.reused, 12);
+        assert_eq!(glyphs.rows.capture_bookmarks, 0);
+        row_cache_frame(
+            &context,
+            &terminal,
+            &cache,
+            &mut glyphs,
+            &selection,
+            &fonts,
+            RowFrameOptions {
+                full_redraw: true,
+                ..options
+            },
+        );
+        assert_eq!(glyphs.rows.rebuilt, 12);
+        assert_eq!(glyphs.rows.capture_bookmarks, 12);
+    }
+
+    #[test]
+    fn retained_rows_keep_shared_revision_batches_bound_to_row_positions() {
+        for shaped in [false, true] {
+            let context = egui::Context::default();
+            crate::install_terminal_fonts(&context);
+            warm_row_context(&context);
+            let mut terminal = terminal(48, 3);
+            terminal.ingest(
+                b"\x1b[?25l\x1b[48;5;24m\x1b[2J\x1b[1;1Halpha\x1b[2;1Hmiddle\x1b[3;1Homega",
+            );
+            let mut cache = TerminalRenderCache::default();
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let selection = Selection::default();
+            let fonts = FontSettings::default();
+            let options = RowFrameOptions {
+                shaped,
+                ..Default::default()
+            };
+            let mut ordinary = GlyphCache::default();
+            ordinary.rows.disable();
+            let mut optimized = GlyphCache::default();
+            for _ in 0..3 {
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+            }
+            assert_eq!(optimized.rows.reused, 3);
+
+            terminal.ingest(b"\x1b[1;1H\x1b[2Komega\x1b[3;1H\x1b[2Kalpha");
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            assert_eq!(cache.row_revision(0), cache.row_revision(2));
+            assert_ne!(cache.row_revision(0), cache.row_revision(1));
+            for frame in 0..2 {
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_same_row_primitives(&actual, &reference);
+                assert_eq!(ordinary.rows.capture_bookmarks, 0);
+                assert_eq!(optimized.rows.reused, if frame == 0 { 1 } else { 3 });
+                assert_eq!(optimized.rows.rebuilt, if frame == 0 { 2 } else { 0 });
+                assert_eq!(optimized.rows.capture_bookmarks, optimized.rows.rebuilt);
+            }
         }
     }
 

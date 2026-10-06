@@ -103,6 +103,94 @@ const MAX_CLIENT_FRAME_BYTES: usize = 64 * 1024;
 const ATTACH_RECOVERY_DEADLINE: Duration = Duration::from_secs(15);
 const PTY_EVENT_CHANNEL_CAPACITY: usize = 64;
 
+#[cfg(any(windows, test))]
+const WINDOWS_ATTACHMENT_QUEUE_CAPACITY: usize = 16;
+
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum WindowsAttachmentAdmissionError {
+    Full,
+    Stopped,
+}
+
+#[cfg(any(windows, test))]
+struct WindowsAttachmentSender<S> {
+    attachments: mpsc::SyncSender<S>,
+    failure: mpsc::SyncSender<io::Error>,
+}
+
+#[cfg(any(windows, test))]
+struct WindowsAttachmentInbox<S> {
+    attachments: mpsc::Receiver<S>,
+    failure: mpsc::Receiver<io::Error>,
+}
+
+#[cfg(any(windows, test))]
+fn windows_attachment_queue<S>() -> (WindowsAttachmentSender<S>, WindowsAttachmentInbox<S>) {
+    let (attachments, receiver) = mpsc::sync_channel(WINDOWS_ATTACHMENT_QUEUE_CAPACITY);
+    // The broker reports one terminal failure; a full backlog must not hide it.
+    let (failure, failure_receiver) = mpsc::sync_channel(1);
+    (
+        WindowsAttachmentSender {
+            attachments,
+            failure,
+        },
+        WindowsAttachmentInbox {
+            attachments: receiver,
+            failure: failure_receiver,
+        },
+    )
+}
+
+#[cfg(any(windows, test))]
+impl<S> WindowsAttachmentSender<S> {
+    fn enqueue(&self, stream: S) -> Result<(), WindowsAttachmentAdmissionError> {
+        self.attachments
+            .try_send(stream)
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(stream) => {
+                    drop(stream);
+                    WindowsAttachmentAdmissionError::Full
+                }
+                mpsc::TrySendError::Disconnected(stream) => {
+                    drop(stream);
+                    WindowsAttachmentAdmissionError::Stopped
+                }
+            })
+    }
+
+    fn report_failure(&self, error: io::Error) -> Result<(), mpsc::TrySendError<io::Error>> {
+        self.failure.try_send(error)
+    }
+}
+
+#[cfg(any(windows, test))]
+impl<S> WindowsAttachmentInbox<S> {
+    fn process_one(&self, adopt: impl FnOnce(S)) -> io::Result<()> {
+        match self.failure.try_recv() {
+            Ok(error) => return Err(error),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "named pipe listener stopped",
+                ));
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        match self.attachments.try_recv() {
+            Ok(stream) => adopt(stream),
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "named pipe attachment queue closed",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionRecord {
     name: String,
@@ -1209,50 +1297,12 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     name: &str,
     terminal: &mut Terminal,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (accept_tx, accept_rx) = mpsc::channel::<io::Result<Pipe>>();
-    let pipe_name = pipe_name.to_owned();
     let accept_cancelled = Arc::new(AtomicBool::new(false));
-    let accept_stopped = Arc::clone(&accept_cancelled);
-    let accept_pipe_name = pipe_name.clone();
-    let accept_thread = thread::spawn(move || -> io::Result<()> {
-        let mut initial_listener = Some(initial_listener);
-        while !accept_stopped.load(Ordering::Acquire) {
-            let server = match initial_listener.take() {
-                Some(listener) => listener.accept(&accept_stopped),
-                None => match create_secure_pipe_listener(&accept_pipe_name, false) {
-                    Ok(listener) => listener.accept(&accept_stopped),
-                    Err(error) => {
-                        // Without this the main loop never learns that the
-                        // listener is gone, and the daemon lingers with a
-                        // registry record but no way to reach it.
-                        let forwarded = io::Error::new(
-                            error.kind(),
-                            format!("named pipe listener could not be created: {error}"),
-                        );
-                        let _ = accept_tx.send(Err(forwarded));
-                        return Err(error);
-                    }
-                },
-            };
-            let server = match server {
-                Ok(server) => server,
-                Err(_) if accept_stopped.load(Ordering::Acquire) => break,
-                Err(error) => {
-                    let forwarded =
-                        io::Error::new(error.kind(), format!("named pipe accept failed: {error}"));
-                    let _ = accept_tx.send(Err(forwarded));
-                    return Err(error);
-                }
-            };
-            if accept_stopped.load(Ordering::Acquire) {
-                break;
-            }
-            accept_tx
-                .send(Ok(server))
-                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "accept loop closed"))?;
-        }
-        Ok(())
-    });
+    let (accept_rx, accept_thread) = spawn_windows_attachment_listener(
+        pipe_name,
+        initial_listener,
+        Arc::clone(&accept_cancelled),
+    );
 
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
     let (client_input_tx, client_input_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
@@ -1385,6 +1435,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     };
 
     accept_cancelled.store(true, Ordering::Release);
+    drop(accept_rx);
     sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
@@ -1416,16 +1467,95 @@ fn create_secure_pipe_listener(pipe_name: &str, first: bool) -> io::Result<PipeL
 }
 
 #[cfg(windows)]
+fn spawn_windows_attachment_listener(
+    pipe_name: &str,
+    initial_listener: PipeListener,
+    accept_stopped: Arc<AtomicBool>,
+) -> (
+    WindowsAttachmentInbox<Pipe>,
+    thread::JoinHandle<io::Result<()>>,
+) {
+    let (accept_tx, accept_rx) = windows_attachment_queue();
+    let pipe_name = pipe_name.to_owned();
+    let accept_thread = thread::spawn(move || -> io::Result<()> {
+        let mut initial_listener = Some(initial_listener);
+        while !accept_stopped.load(Ordering::Acquire) {
+            let server = match initial_listener.take() {
+                Some(listener) => listener.accept(&accept_stopped),
+                None => {
+                    match create_secure_pipe_listener(&pipe_name, false) {
+                        Ok(listener) => listener.accept(&accept_stopped),
+                        Err(_) if accept_stopped.load(Ordering::Acquire) => break,
+                        Err(error) => {
+                            let forwarded = io::Error::new(
+                                error.kind(),
+                                format!("named pipe listener could not be created: {error}"),
+                            );
+                            if let Err(error) = accept_tx.report_failure(forwarded) {
+                                sessiond_trace(format_args!(
+                                    "listener failure reporting failed: {error}"
+                                ));
+                                eprintln!("fesTerm could not report its session listener failure: {error}");
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+            };
+            let server = match server {
+                Ok(server) => server,
+                Err(_) if accept_stopped.load(Ordering::Acquire) => break,
+                Err(error) => {
+                    let forwarded =
+                        io::Error::new(error.kind(), format!("named pipe accept failed: {error}"));
+                    if let Err(error) = accept_tx.report_failure(forwarded) {
+                        sessiond_trace(format_args!("listener failure reporting failed: {error}"));
+                        eprintln!("fesTerm could not report its session listener failure: {error}");
+                    }
+                    return Err(error);
+                }
+            };
+            if accept_stopped.load(Ordering::Acquire) {
+                break;
+            }
+            match accept_tx.enqueue(server) {
+                Ok(()) => {}
+                Err(WindowsAttachmentAdmissionError::Full) => {
+                    sessiond_trace(format_args!(
+                        "rejected replacement client: attachment queue full ({WINDOWS_ATTACHMENT_QUEUE_CAPACITY})"
+                    ));
+                    eprintln!(
+                        "fesTerm rejected a replacement session connection: all {WINDOWS_ATTACHMENT_QUEUE_CAPACITY} waiting slots are full; retry attachment"
+                    );
+                }
+                Err(WindowsAttachmentAdmissionError::Stopped)
+                    if accept_stopped.load(Ordering::Acquire) =>
+                {
+                    break;
+                }
+                Err(WindowsAttachmentAdmissionError::Stopped) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "accept loop closed",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    });
+    (accept_rx, accept_thread)
+}
+
+#[cfg(windows)]
 fn accept_windows_clients(
-    accept_rx: &mpsc::Receiver<io::Result<Pipe>>,
+    accept_rx: &WindowsAttachmentInbox<Pipe>,
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     terminal: &Terminal,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
 ) -> io::Result<()> {
-    for stream in accept_rx.try_iter() {
-        let mut stream = stream?;
+    accept_rx.process_one(|mut stream| {
         sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
@@ -1439,8 +1569,7 @@ fn accept_windows_clients(
         ) {
             eprintln!("fesTerm rejected a replacement session client: {error}");
         }
-    }
-    Ok(())
+    })
 }
 
 fn spawn_pty_reader<R: Read + Send + 'static>(
@@ -3186,6 +3315,282 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
+    struct AttachmentDropProbe(Rc<Cell<usize>>);
+
+    impl Drop for AttachmentDropProbe {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn windows_attachment_queue_refuses_and_drops_the_seventeenth_handle() {
+        let dropped = Rc::new(Cell::new(0));
+        let (sender, inbox) = windows_attachment_queue();
+        for _ in 0..WINDOWS_ATTACHMENT_QUEUE_CAPACITY {
+            sender
+                .enqueue(AttachmentDropProbe(Rc::clone(&dropped)))
+                .unwrap();
+        }
+        assert_eq!(
+            sender.enqueue(AttachmentDropProbe(Rc::clone(&dropped))),
+            Err(WindowsAttachmentAdmissionError::Full)
+        );
+        assert_eq!(dropped.get(), 1, "refused ownership ends before return");
+        drop(inbox);
+        assert_eq!(dropped.get(), WINDOWS_ATTACHMENT_QUEUE_CAPACITY + 1);
+    }
+
+    #[test]
+    fn windows_attachment_queue_yields_when_a_producer_refills_it() {
+        let (sender, inbox) = windows_attachment_queue();
+        for index in 0..WINDOWS_ATTACHMENT_QUEUE_CAPACITY {
+            sender.enqueue(index).unwrap();
+        }
+        let mut adopted = Vec::new();
+        inbox
+            .process_one(|stream| {
+                adopted.push(stream);
+                if adopted.len() == 1 {
+                    sender.enqueue(WINDOWS_ATTACHMENT_QUEUE_CAPACITY).unwrap();
+                }
+            })
+            .unwrap();
+        assert_eq!(adopted, [0], "one adoption per daemon turn");
+        inbox.process_one(|stream| assert_eq!(stream, 1)).unwrap();
+    }
+
+    #[test]
+    fn windows_attachment_queue_reports_listener_failure_before_queued_adoptions() {
+        let (sender, inbox) = windows_attachment_queue();
+        for index in 0..WINDOWS_ATTACHMENT_QUEUE_CAPACITY {
+            sender.enqueue(index).unwrap();
+        }
+        sender
+            .report_failure(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "fixture listener",
+            ))
+            .unwrap();
+        let mut adopted = 0;
+        let error = inbox.process_one(|_| adopted += 1).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(adopted, 0, "fatal listener failure bypasses the backlog");
+    }
+
+    #[test]
+    fn windows_attachment_queue_churn_keeps_sixteen_waiters_and_reclaims_each_refusal() {
+        let dropped = Rc::new(Cell::new(0));
+        let (sender, inbox) = windows_attachment_queue();
+        for _ in 0..WINDOWS_ATTACHMENT_QUEUE_CAPACITY {
+            sender
+                .enqueue(AttachmentDropProbe(Rc::clone(&dropped)))
+                .unwrap();
+        }
+        for cycle in 0..1024 {
+            assert_eq!(
+                sender.enqueue(AttachmentDropProbe(Rc::clone(&dropped))),
+                Err(WindowsAttachmentAdmissionError::Full)
+            );
+            assert_eq!(dropped.get(), cycle * 2 + 1);
+            inbox.process_one(drop).unwrap();
+            assert_eq!(dropped.get(), cycle * 2 + 2);
+            sender
+                .enqueue(AttachmentDropProbe(Rc::clone(&dropped)))
+                .unwrap();
+        }
+        drop(inbox);
+        assert_eq!(dropped.get(), 2048 + WINDOWS_ATTACHMENT_QUEUE_CAPACITY);
+    }
+
+    #[test]
+    fn windows_attachment_queue_shutdown_drops_waiters_and_refuses_late_ownership() {
+        let dropped = Rc::new(Cell::new(0));
+        let (sender, inbox) = windows_attachment_queue();
+        for _ in 0..WINDOWS_ATTACHMENT_QUEUE_CAPACITY {
+            sender
+                .enqueue(AttachmentDropProbe(Rc::clone(&dropped)))
+                .unwrap();
+        }
+        drop(inbox);
+        assert_eq!(dropped.get(), WINDOWS_ATTACHMENT_QUEUE_CAPACITY);
+        assert_eq!(
+            sender.enqueue(AttachmentDropProbe(Rc::clone(&dropped))),
+            Err(WindowsAttachmentAdmissionError::Stopped)
+        );
+        assert_eq!(dropped.get(), WINDOWS_ATTACHMENT_QUEUE_CAPACITY + 1);
+        assert!(matches!(
+            sender.report_failure(io::Error::other("late fixture failure")),
+            Err(mpsc::TrySendError::Disconnected(_))
+        ));
+    }
+
+    #[test]
+    fn windows_attachment_queue_detects_a_stopped_listener_even_with_waiters() {
+        for waiting in [0, WINDOWS_ATTACHMENT_QUEUE_CAPACITY] {
+            let (sender, inbox) = windows_attachment_queue();
+            for index in 0..waiting {
+                sender.enqueue(index).unwrap();
+            }
+            drop(sender);
+            let error = inbox
+                .process_one(|_| panic!("a stopped listener must not adopt another client"))
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+            assert_eq!(error.to_string(), "named pipe listener stopped");
+        }
+    }
+
+    #[test]
+    fn windows_attachment_queue_listener_failure_storage_is_bounded() {
+        let (sender, inbox) = windows_attachment_queue::<usize>();
+        sender
+            .report_failure(io::Error::new(io::ErrorKind::PermissionDenied, "first"))
+            .unwrap();
+        assert!(matches!(
+            sender.report_failure(io::Error::other("second")),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        let error = inbox.process_one(|_| panic!("no attachment")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "first");
+    }
+
+    #[test]
+    fn windows_attachment_queue_empty_turn_does_not_invoke_adoption() {
+        let (_sender, inbox) = windows_attachment_queue::<usize>();
+        inbox.process_one(|_| panic!("empty queue")).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_attachment_queue_native_overflow_keeps_active_bytes_and_allows_retry() {
+        fn round_trip(
+            client: &mut Pipe,
+            active: &ActiveClient,
+            commands: &mpsc::Receiver<ClientInput>,
+            challenge: &[u8],
+        ) {
+            write_client_frame(client, CLIENT_FRAME_INPUT, challenge).unwrap();
+            let input = commands.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(input.generation, active.generation);
+            assert!(matches!(input.command, ClientCommand::Input(data) if data == challenge));
+            active
+                .output
+                .send(ClientOutput::Data(challenge.to_vec()))
+                .unwrap();
+            assert_eq!(read_server_output(client, challenge.len()), challenge);
+        }
+
+        struct StopOnDrop(Arc<AtomicBool>);
+        impl Drop for StopOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let name = format!(
+            r"\\.\pipe\festerm-attachment-budget-{}-{}",
+            process::id(),
+            now_ms()
+        );
+        let initial = create_secure_pipe_listener(&name, true).unwrap();
+        let mut client =
+            Pipe::connect(&name, Duration::from_secs(5), &AtomicBool::new(false)).unwrap();
+        let mut server = initial.accept(&AtomicBool::new(false)).unwrap();
+        client.set_read_timeout(Duration::from_secs(5));
+        client.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+        server.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
+        server.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+        let adoption = thread::spawn(move || {
+            read_recovery_terminal(&mut client);
+            acknowledge_recovery(&mut client);
+            client
+        });
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let mut active = None;
+        let mut retired = Vec::new();
+        let terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        let mut generation = 1;
+        replace_active(
+            &mut active,
+            &mut retired,
+            server,
+            &terminal,
+            input,
+            &mut generation,
+        )
+        .unwrap();
+        let mut client = adoption.join().unwrap();
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _stop_on_drop = StopOnDrop(Arc::clone(&cancelled));
+        let listener = create_secure_pipe_listener(&name, false).unwrap();
+        let (inbox, worker) =
+            spawn_windows_attachment_listener(&name, listener, Arc::clone(&cancelled));
+        let mut waiting = Vec::new();
+        for _ in 0..WINDOWS_ATTACHMENT_QUEUE_CAPACITY {
+            let mut pipe = Pipe::connect(&name, Duration::from_secs(5), &cancelled).unwrap();
+            pipe.set_read_timeout(Duration::from_secs(5));
+            waiting.push(pipe);
+        }
+        let mut refused = Pipe::connect(&name, Duration::from_secs(5), &cancelled).unwrap();
+        refused.set_read_timeout(Duration::from_secs(5));
+        let error = festerm_sessiond::read_attach_recovery_terminal(
+            &mut refused,
+            festerm_sessiond::PROTOCOL_VERSION,
+            festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(error.to_string().contains("retry attachment"));
+        round_trip(
+            &mut client,
+            active.as_ref().unwrap(),
+            &commands,
+            b"full queue",
+        );
+
+        inbox.process_one(drop).unwrap();
+        assert_eq!(waiting[0].read(&mut [0]).unwrap(), 0);
+        let mut retry = Pipe::connect(&name, Duration::from_secs(5), &cancelled).unwrap();
+        retry.set_read_timeout(CLIENT_POLL_INTERVAL);
+        // Connecting the next instance fences enqueue of the retry.
+        let mut still_full = Pipe::connect(&name, Duration::from_secs(5), &cancelled).unwrap();
+        still_full.set_read_timeout(Duration::from_secs(5));
+        assert_eq!(still_full.read(&mut [0]).unwrap(), 0);
+        assert_eq!(
+            retry.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        round_trip(
+            &mut client,
+            active.as_ref().unwrap(),
+            &commands,
+            b"after retry",
+        );
+        assert_eq!(active.as_ref().unwrap().generation, 1);
+        assert_eq!(generation, 2, "overflow does not perform takeover");
+
+        cancelled.store(true, Ordering::Release);
+        drop(inbox);
+        assert!(wait_for_thread(&worker, WORKER_JOIN_TIMEOUT));
+        join_io_thread(worker).unwrap();
+        for mut pipe in waiting.into_iter().skip(1).chain([retry]) {
+            assert_eq!(
+                pipe.read(&mut [0]).unwrap(),
+                0,
+                "queued server handle was closed"
+            );
+        }
+        retire_active(&mut active, &mut retired, false);
+        for worker in retired {
+            assert!(wait_for_thread(&worker, WORKER_JOIN_TIMEOUT));
+            join_io_thread(worker).unwrap();
+        }
+    }
+
     fn client_io_loop_test<S: Read + Write>(
         stream: S,
         generation: u64,
@@ -3211,7 +3616,6 @@ mod tests {
         write_client_frame(writer, CLIENT_FRAME_RECOVERY_ADOPTED, &[]).unwrap();
     }
 
-    #[cfg(unix)]
     fn read_server_output(reader: &mut impl Read, expected_len: usize) -> Vec<u8> {
         let mut header = [0u8; 9];
         reader.read_exact(&mut header).unwrap();
