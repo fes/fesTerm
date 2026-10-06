@@ -47,11 +47,13 @@ impl Default for NativePainterOptions {
 }
 
 type Factory = dyn Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync;
+type AtlasAdmission = dyn Fn(&Context, [usize; 2]) -> bool + Send + Sync;
 
 #[derive(Clone)]
 struct Hook {
     factory: Arc<Factory>,
     options: NativePainterOptions,
+    atlas_admission: Option<Arc<AtlasAdmission>>,
 }
 
 #[derive(Clone)]
@@ -92,6 +94,12 @@ fn font_atlas_snapshot_with_budget(
         context.data_mut(|data| {
             data.remove::<FontAtlasSnapshot>(font_atlas_id());
             let bytes = snapshot.image.pixels.len() * std::mem::size_of::<egui::Color32>();
+            #[cfg(test)]
+            {
+                let id = Id::new("festerm::test-atlas-copied-bytes");
+                let copied = data.get_temp::<usize>(id).unwrap_or_default();
+                data.insert_temp(id, copied + bytes);
+            }
             if bytes <= budget_bytes.min(MAX_CACHED_FONT_BYTES) {
                 data.insert_temp(font_atlas_id(), snapshot.clone());
             }
@@ -130,6 +138,28 @@ pub fn install_root_terminal_painter_with_options(
     options: NativePainterOptions,
     factory: impl Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync + 'static,
 ) {
+    install_root_terminal_painter_hook(context, options, None, factory);
+}
+
+/// Installs backend-owned atlas admission before copying pixels.
+///
+/// The callback receives post-tessellation dimensions, owns refusal reporting,
+/// and returns false to preserve ordinary shapes without capturing the atlas.
+pub fn install_root_terminal_painter_with_admission(
+    context: &Context,
+    options: NativePainterOptions,
+    admission: impl Fn(&Context, [usize; 2]) -> bool + Send + Sync + 'static,
+    factory: impl Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync + 'static,
+) {
+    install_root_terminal_painter_hook(context, options, Some(Arc::new(admission)), factory);
+}
+
+fn install_root_terminal_painter_hook(
+    context: &Context,
+    options: NativePainterOptions,
+    atlas_admission: Option<Arc<AtlasAdmission>>,
+    factory: impl Fn(&Context, TerminalPaintFrame) -> Option<PaintCallback> + Send + Sync + 'static,
+) {
     context.data_mut(|data| {
         data.remove::<FontAtlasSnapshot>(font_atlas_id());
         data.insert_temp(
@@ -137,6 +167,7 @@ pub fn install_root_terminal_painter_with_options(
             Hook {
                 factory: Arc::new(factory),
                 options,
+                atlas_admission,
             },
         );
     });
@@ -174,6 +205,13 @@ pub(crate) struct Batch {
 }
 
 impl Batch {
+    fn is_current(&self) -> bool {
+        self.context.data(|data| {
+            data.get_temp::<Hook>(hook_id())
+                .is_some_and(|hook| Arc::ptr_eq(&hook.factory, &self.hook.factory))
+        })
+    }
+
     pub(crate) fn begin(painter: &Painter, rect: Rect, full_redraw: bool) -> Option<Self> {
         let context = painter.ctx();
         if context.viewport_id() != ViewportId::ROOT
@@ -203,11 +241,7 @@ impl Batch {
     pub(crate) fn finish(self, painter: &Painter) {
         self.context
             .data_mut(|data| data.remove::<Images>(images_id()));
-        let current = self.context.data(|data| {
-            data.get_temp::<Hook>(hook_id())
-                .is_some_and(|hook| Arc::ptr_eq(&hook.factory, &self.hook.factory))
-        });
-        if !current {
+        if !self.is_current() {
             return;
         }
         let shapes = self.context.graphics(|graphics| {
@@ -227,6 +261,18 @@ impl Batch {
         let primitives = self.context.tessellate(shapes, pixels_per_point);
         if primitives.is_empty() && !self.full_redraw {
             return;
+        }
+        if let Some(admission) = &self.hook.atlas_admission {
+            let dimensions = self.context.fonts(|fonts| fonts.font_image_size());
+            let admitted = admission(&self.context, dimensions);
+            if !self.is_current() {
+                return;
+            }
+            if !admitted {
+                self.context
+                    .data_mut(|data| data.remove::<FontAtlasSnapshot>(font_atlas_id()));
+                return;
+            }
         }
         let mut textures = self
             .images
@@ -288,6 +334,227 @@ mod tests {
 
     fn font_atlas_snapshot(context: &Context) -> (Arc<ColorImage>, bool) {
         font_atlas_snapshot_with_budget(context, MAX_CACHED_FONT_BYTES)
+    }
+
+    #[test]
+    fn native_atlas_admission_refuses_before_any_pixel_snapshot_or_factory_capture() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let context = Context::default();
+        let admission_calls = Arc::new(AtomicUsize::new(0));
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let cloned_bytes = Arc::new(AtomicUsize::new(0));
+        let admitted = admission_calls.clone();
+        let captured = factory_calls.clone();
+        let copied = cloned_bytes.clone();
+        install_root_terminal_painter_with_admission(
+            &context,
+            NativePainterOptions::default(),
+            move |_, _| {
+                admitted.fetch_add(1, Ordering::Relaxed);
+                false
+            },
+            move |_, frame| {
+                captured.fetch_add(1, Ordering::Relaxed);
+                copied.fetch_add(frame.font_atlas_capture.cloned_bytes, Ordering::Relaxed);
+                None
+            },
+        );
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
+            painter.rect_filled(ui.max_rect(), 0.0, Color32::RED);
+            batch.finish(painter);
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            context.data(|data| data
+                .get_temp::<usize>(Id::new("festerm::test-atlas-copied-bytes"))
+                .unwrap_or_default()),
+            0,
+            "refused atlas must not make even a discarded pixel copy"
+        );
+        assert_eq!(
+            factory_calls.load(Ordering::Relaxed),
+            0,
+            "refused atlas copied {} bytes before factory rejection",
+            cloned_bytes.load(Ordering::Relaxed)
+        );
+        assert_eq!(admission_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(cloned_bytes.load(Ordering::Relaxed), 0);
+        assert!(context.data(|data| data
+            .get_temp::<FontAtlasSnapshot>(font_atlas_id())
+            .is_none()));
+        assert!(output
+            .shapes
+            .iter()
+            .any(|shape| matches!(&shape.shape, Shape::Rect(rect) if rect.fill == Color32::RED)));
+    }
+
+    #[test]
+    fn native_atlas_admission_uses_post_tessellation_dimensions_and_preserves_font_deltas() {
+        let context = Context::default();
+        let dimensions = Arc::new(Mutex::new(None));
+        let observed = dimensions.clone();
+        install_root_terminal_painter_with_admission(
+            &context,
+            NativePainterOptions {
+                font_atlas_cache_budget_bytes: 0,
+                ..Default::default()
+            },
+            move |context, size| {
+                assert_eq!(size, context.fonts(|fonts| fonts.font_image_size()));
+                *observed.lock().unwrap() = Some(size);
+                true
+            },
+            |context, frame| {
+                let image = frame
+                    .textures
+                    .iter()
+                    .find(|(id, _)| *id == TextureId::Managed(0))
+                    .unwrap()
+                    .1
+                    .as_ref();
+                assert_eq!(image, &context.fonts(|fonts| fonts.image()));
+                assert!(!frame.font_atlas_capture.reused);
+                assert_eq!(
+                    frame.font_atlas_capture.cloned_bytes,
+                    image.pixels.len() * 4
+                );
+                assert_eq!(
+                    context.data(|data| data
+                        .get_temp::<usize>(Id::new("festerm::test-atlas-copied-bytes"))
+                        .unwrap()),
+                    frame.font_atlas_capture.cloned_bytes
+                );
+                None
+            },
+        );
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
+            painter.text(
+                egui::Pos2::ZERO,
+                egui::Align2::LEFT_TOP,
+                "same-frame glyph growth",
+                egui::FontId::monospace(37.0),
+                Color32::WHITE,
+            );
+            batch.finish(painter);
+            assert_eq!(
+                *dimensions.lock().unwrap(),
+                Some(ui.ctx().fonts(|fonts| fonts.font_image_size()))
+            );
+            assert!(ui.ctx().data(|data| data
+                .get_temp::<FontAtlasSnapshot>(font_atlas_id())
+                .is_none()));
+        });
+        assert!(output
+            .textures_delta
+            .set
+            .iter()
+            .any(|(id, _)| *id == TextureId::Managed(0)));
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn retired_admission_cannot_capture_or_clear_a_replacement_painter_snapshot() {
+        for replace in [false, true] {
+            for admit in [false, true] {
+                let context = Context::default();
+                let replacement = Arc::new(Mutex::new(None));
+                let observed = replacement.clone();
+                install_root_terminal_painter_with_admission(
+                    &context,
+                    NativePainterOptions::default(),
+                    move |context, _| {
+                        remove_root_terminal_painter(context);
+                        if replace {
+                            install_root_terminal_painter(context, |_, _| {
+                                panic!("replacement factory must start with its own batch")
+                            });
+                            let (image, _) = font_atlas_snapshot(context);
+                            *observed.lock().unwrap() = Some(Arc::downgrade(&image));
+                        }
+                        admit
+                    },
+                    |_, _| panic!("retired capture factory called"),
+                );
+                let mut output = context.run_ui(Default::default(), |ui| {
+                    let painter = ui.painter();
+                    let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
+                    painter.rect_filled(ui.max_rect(), 0.0, Color32::RED);
+                    batch.finish(painter);
+                });
+                output.textures_delta.clear();
+                let snapshot =
+                    context.data(|data| data.get_temp::<FontAtlasSnapshot>(font_atlas_id()));
+                assert_eq!(snapshot.is_some(), replace);
+                if replace {
+                    let replacement = replacement.lock().unwrap();
+                    let image = replacement.as_ref().unwrap().upgrade().unwrap();
+                    assert!(Arc::ptr_eq(&snapshot.unwrap().image, &image));
+                }
+                assert!(output.shapes.iter().any(
+                    |shape| matches!(&shape.shape, Shape::Rect(rect) if rect.fill == Color32::RED)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn native_atlas_admission_recovers_after_refusal_and_releases_old_snapshot() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let context = Context::default();
+        let permitted = Arc::new(AtomicBool::new(true));
+        let admission = permitted.clone();
+        let captures = Arc::new(Mutex::new(Vec::new()));
+        let observed = captures.clone();
+        install_root_terminal_painter_with_admission(
+            &context,
+            NativePainterOptions::default(),
+            move |_, _| admission.load(Ordering::Relaxed),
+            move |_, frame| {
+                let image = &frame
+                    .textures
+                    .iter()
+                    .find(|(id, _)| *id == TextureId::Managed(0))
+                    .unwrap()
+                    .1;
+                observed
+                    .lock()
+                    .unwrap()
+                    .push((Arc::downgrade(image), frame.font_atlas_capture));
+                None
+            },
+        );
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            for accepted in [true, false, false, true, true] {
+                permitted.store(accepted, Ordering::Relaxed);
+                let batch = Batch::begin(painter, ui.max_rect(), false).unwrap();
+                painter.rect_filled(ui.max_rect(), 0.0, Color32::RED);
+                batch.finish(painter);
+                let captures = captures.lock().unwrap();
+                if !accepted {
+                    assert_eq!(captures.len(), 1);
+                    assert!(captures[0].0.upgrade().is_none());
+                }
+            }
+        });
+        output.textures_delta.clear();
+        let captures = captures.lock().unwrap();
+        assert_eq!(captures.len(), 3);
+        assert!(!captures[0].1.reused);
+        assert!(!captures[1].1.reused);
+        assert!(captures[2].1.reused);
+        assert_eq!(captures[2].1.cloned_bytes, 0);
+        assert!(captures[0].0.upgrade().is_none());
+        assert!(Arc::ptr_eq(
+            &captures[1].0.upgrade().unwrap(),
+            &captures[2].0.upgrade().unwrap()
+        ));
     }
 
     #[test]

@@ -115,6 +115,15 @@ without opening a window:
 - color and attribute mapping; and
 - bounded glyph-cache behavior.
 
+Native atlas-admission checks prove refusal before pixel copying/factory
+capture, post-tessellation metadata and unchanged font deltas, current-owner
+snapshot retirement, repeated refusal/recovery and replacement-hook isolation.
+The backend's shared pure dimension predicate checks exact existing limits
+and overflow on every platform. Windows additionally exercises native
+unsupported-state recovery and existing framebuffer/fallback tests. Proposed
+ADR 0045 requires owner review; these are capture-stage correctness/work
+checks, not native CPU, total-memory or CP-18 acceptance.
+
 ### Interaction replay cases
 
 Add a small test-only replay helper that applies ordered `InputEvent`,
