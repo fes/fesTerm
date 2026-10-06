@@ -299,6 +299,7 @@ impl MarkdownViewerErrorState {
 pub struct ResourceApprovalState {
     approved: HashSet<usize>,
     local_image_reads_blocked: bool,
+    local_image_block_reason: Option<String>,
 }
 
 impl ResourceApprovalState {
@@ -2574,6 +2575,61 @@ fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorIma
     .map_err(|error| error.message().to_owned())
 }
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_LOCAL_IMAGE_OPEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[inline]
+fn before_local_image_open() {
+    #[cfg(test)]
+    BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[inline]
+fn before_local_image_directory_open() {
+    #[cfg(test)]
+    BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+fn open_canonical_image_directory(parent: &Path) -> std::io::Result<cap_std::fs::Dir> {
+    use cap_fs_ext::DirExt;
+    use std::io;
+
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The Markdown resource directory must be a canonical absolute path.",
+        )
+    };
+    if !parent.is_absolute() {
+        return Err(invalid());
+    }
+    let root = parent.ancestors().last().ok_or_else(invalid)?;
+    let relative = parent.strip_prefix(root).map_err(|_| invalid())?;
+    let mut directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // The source's canonical parent is the grant. Following a newly inserted
+    // alias while acquiring it would silently grant a different directory.
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(invalid());
+        };
+        directory = directory.open_dir_nofollow(name)?;
+    }
+    Ok(directory)
+}
+
 fn read_local_image_with_budget(
     markdown_path: &Path,
     target: &str,
@@ -2592,26 +2648,29 @@ fn read_local_image_with_budget(
             "Only relative local image paths can be loaded here.",
         ));
     }
-    let parent = fs::canonicalize(parent)
-        .map_err(|_| permanent("The Markdown image directory could not be read."))?;
+    before_local_image_directory_open();
+    let directory = open_canonical_image_directory(parent)
+        .map_err(|_| permanent("The Markdown image directory could not be opened safely."))?;
     let candidate = parent.join(target);
     let canonical = fs::canonicalize(&candidate)
         .map_err(|_| permanent("The requested local image could not be found."))?;
-    if !canonical.starts_with(&parent) {
-        return Err(permanent(
-            "Local images must remain inside the Markdown file's directory.",
-        ));
-    }
-    let mut options = fs::OpenOptions::new();
+    let relative = canonical
+        .strip_prefix(parent)
+        .map_err(|_| permanent("Local images must remain inside the Markdown file's directory."))?;
+    before_local_image_open();
+    let mut options = cap_std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use cap_std::fs::OpenOptionsExt;
         options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK);
     }
-    let file = options
-        .open(&canonical)
+    // Pathname admission is not an authority: resolve again beneath the
+    // captured directory handle, including intermediate symlinks/reparse points.
+    let file = directory
+        .open_with(relative, &options)
         .map_err(|_| permanent("The requested local image could not be read."))?;
+    drop(directory);
     let metadata = file
         .metadata()
         .map_err(|_| permanent("The requested local image could not be read."))?;
@@ -3155,7 +3214,9 @@ fn render_image(
                                 && approvals.local_image_reads_blocked;
                             ui.label(
                                 RichText::new(if blocked_local {
-                                    "Local images require a saved local Markdown document."
+                                    approvals.local_image_block_reason.as_deref().unwrap_or(
+                                        "Local images require a saved local Markdown document.",
+                                    )
                                 } else {
                                     resource_placeholder_action(reference.class())
                                 })
@@ -3756,6 +3817,16 @@ impl MarkdownPreviewPane {
     pub(crate) fn for_saved_local_source(source: LocalMarkdownSource, text: &str) -> Self {
         let mut pane = Self::new(MarkdownSource::from(source), text);
         pane.resource_approvals.local_image_reads_blocked = false;
+        pane
+    }
+
+    pub(crate) fn with_unavailable_local_images(
+        source: MarkdownSource,
+        text: &str,
+        reason: &str,
+    ) -> Self {
+        let mut pane = Self::new(source, text);
+        pane.resource_approvals.local_image_block_reason = Some(reason.to_owned());
         pane
     }
 
@@ -5703,6 +5774,24 @@ mod tests {
             .expect("test PNG should be writable");
     }
 
+    #[cfg(windows)]
+    fn image_test_junction(link: &Path, target: &Path) {
+        let command = format!(
+            "New-Item -ItemType Junction -Path '{}' -Target '{}' -ErrorAction Stop | Out-Null",
+            link.display().to_string().replace('\'', "''"),
+            target.display().to_string().replace('\'', "''"),
+        );
+        let created = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+    }
+
     fn pump_preview_images(
         pane: &mut MarkdownPreviewPane,
         context: &egui::Context,
@@ -5892,6 +5981,175 @@ mod tests {
                 .contains("Only relative")
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_final_symlink_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("final-image-rebinding");
+        let outside = image_test_directory("final-image-outside");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("image.png");
+        let escaped = outside.join("image.png");
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::remove_file(&replaced).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "image.png");
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "an opened image must remain beneath its authorized directory after final-name rebinding"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_intermediate_symlink_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("intermediate-image-rebinding");
+        let outside = image_test_directory("intermediate-image-outside");
+        fs::create_dir(directory.join("images")).unwrap();
+        write_test_png(&directory.join("images").join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("images");
+        let retained = directory.join("retained-images");
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, retained).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "images/image.png");
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "an opened image must remain beneath its authorized directory after component rebinding"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn image_budget_intermediate_junction_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("junction-image-rebinding");
+        let outside = image_test_directory("junction-image-outside");
+        fs::create_dir(directory.join("images")).unwrap();
+        write_test_png(&directory.join("images").join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("images");
+        let retained = directory.join("retained-images");
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, retained).unwrap();
+                image_test_junction(&replaced, &escaped);
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "images\\image.png");
+        fs::remove_dir(directory.join("images")).unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "a Windows reparse point must not redirect an admitted image outside its captured root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_captured_root_survives_directory_name_rebinding() {
+        let directory = image_test_directory("captured-image-root");
+        let outside = image_test_directory("captured-image-outside");
+        let retained = image_test_directory("captured-image-retained");
+        fs::remove_dir(&retained).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.clone();
+        let moved = retained.clone();
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, moved).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let image = read_local_image(&directory.join("readme.md"), "image.png").unwrap();
+        fs::remove_file(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert_eq!(
+            image.size,
+            [2, 2],
+            "only the captured authorized root may supply bytes"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_in_root_relative_and_absolute_symlink_aliases_remain_readable() {
+        let directory = image_test_directory("allowed-image-symlinks");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        std::os::unix::fs::symlink("image.png", directory.join("relative.png")).unwrap();
+        std::os::unix::fs::symlink(directory.join("image.png"), directory.join("absolute.png"))
+            .unwrap();
+        for alias in ["relative.png", "absolute.png"] {
+            let image = read_local_image(&directory.join("readme.md"), alias).unwrap();
+            assert_eq!(image.size, [2, 2]);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_image_reads_release_directory_handles_on_success_and_refusal() {
+        let directory = image_test_directory("image-directory-handle-lifetime");
+        let moved = image_test_directory("image-directory-handle-moved");
+        fs::remove_dir(&moved).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        fs::write(directory.join("image.svg"), "<svg/>").unwrap();
+        assert!(read_local_image(&directory.join("readme.md"), "image.png").is_ok());
+        for target in ["missing.png", "image.svg", "../outside.png"] {
+            assert!(read_local_image(&directory.join("readme.md"), target).is_err());
+        }
+        fs::rename(&directory, &moved).expect("no finished image read may retain a directory lock");
+        fs::remove_dir_all(moved).unwrap();
+    }
+
+    #[test]
+    fn image_budget_root_acquisition_refuses_a_rebound_canonical_source_parent() {
+        let directory = image_test_directory("image-root-acquisition");
+        let outside = image_test_directory("image-root-acquisition-outside");
+        let retained = image_test_directory("image-root-acquisition-retained");
+        fs::remove_dir(&retained).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.clone();
+        let moved = retained.clone();
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, moved).unwrap();
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&escaped, &replaced).unwrap();
+                #[cfg(windows)]
+                image_test_junction(&replaced, &escaped);
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "image.png");
+        #[cfg(unix)]
+        fs::remove_file(directory).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "root acquisition must not reinterpret the granted canonical parent through a new alias"
+        );
     }
 
     #[test]

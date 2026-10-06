@@ -299,6 +299,25 @@ destinations outside the opened Markdown file's canonical parent directory
 are refused before content is read, including parent traversal and symlink
 escapes.
 
+The complete saved Markdown filename is canonicalized before establishing
+editor Preview's resource root. If that fails, text Preview remains available
+with a visible image-refusal explanation; a display fallback never grants
+filesystem access.
+
+Image-root acquisition uses `cap-std` and `cap-fs-ext` 4.0.3. Starting at the
+filesystem root, each component of the already-authorized canonical parent is
+opened with `DirExt::open_dir_nofollow`; the parent is not recanonicalized into
+a different grant after the source identity is bound. Image-path
+canonicalization preserves supported in-root aliases and checks containment,
+but is not sufficient authority: `Dir::open_with` resolves the admitted
+relative destination beneath the captured directory handle, enforcing the
+library's sandboxed traversal contract. Regular-file and length checks, and
+bounded reading, use the resulting file handle without reopening its name.
+No directory capability is retained by a tab, decoded image or texture; the
+root handle is dropped immediately after file acquisition and on every
+refusal. This closes final/intermediate symlink and Windows reparse races
+without adding hand-written native filesystem primitives.
+
 ### Amendment: shared managed-image allowance and editor Preview
 
 The allocation/lifecycle audit in #320 found that per-image limits did not
@@ -454,8 +473,9 @@ previously valid snapshot.
 - **Invariants introduced or changed:** combined managed-image ownership and
   actual running work are bounded across both presentation surfaces;
   saved-local Preview alone gains the existing relative-image policy.
-  Canonical directory confinement and nonblocking Unix special-file refusal
-  enforce that policy before content reading.
+  Complete canonical source identity, no-follow root acquisition,
+  directory-handle-contained final resolution and nonblocking Unix special-file
+  refusal enforce that policy before content reading.
 - **GUI/action edges affected:** `MD-05`, `SET-13`, `EDIT-18` and the
   origin-rebinding part of `EDIT-04`.
 - **Automated evidence:** `image_budget_*` lifecycle/admission/retirement
@@ -463,8 +483,13 @@ previously valid snapshot.
   nonlocal path-looking origins, first Save/Save As rebinding, stale-worker
   results, failed parses, explicit retry, shared bytes/worker slots, bounded
   read/header controls and Settings/save/restart/reset/failed-save coverage
-  are registered in `validation/traceability.json`. The FIFO regression is
-  Unix-only.
+  are registered in `validation/traceability.json`. Symlink-file source
+  identity, final/intermediate symlink rebinding, captured-root name rebinding
+  and supported relative/absolute in-root aliases are covered on Unix.
+  Windows uses unprivileged junction fixtures for intermediate and
+  root-acquisition rebinding. Portable tests cover visible unresolvable-source
+  refusal and directory-handle release after success/failure. The FIFO
+  regression remains Unix-only.
 - **Native/manual evidence required:** `CP-06` and `CP-15` retain cross-platform
   visual, focus, accessibility, path/symlink and refusal/recovery review.
   Deterministic headless tests do not count as native acceptance or RSS evidence.

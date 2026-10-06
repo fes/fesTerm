@@ -396,7 +396,7 @@ pub(crate) struct TextEditorTab {
     document: DocumentId,
     title: String,
     origin_label: String,
-    local_preview_source: Option<LocalMarkdownSource>,
+    local_preview_source: Result<Option<LocalMarkdownSource>, String>,
     remote: bool,
     untitled: bool,
     /// The widget's copy of the text. egui's `TextEdit` needs a `String` it
@@ -2095,17 +2095,9 @@ impl TextEditorTab {
     /// editor is looking at the same headings. Clicking one puts the caret at
     /// the start of that section and takes the viewport with it.
     fn show_outline_rail(&mut self, ui: &mut egui::Ui, height: f32) {
-        let pane = self
-            .preview
-            .get_or_insert_with(|| match &self.local_preview_source {
-                Some(source) => {
-                    MarkdownPreviewPane::for_saved_local_source(source.clone(), &self.buffer)
-                }
-                None => MarkdownPreviewPane::new(
-                    preview_presentation_source(&self.origin_label),
-                    &self.buffer,
-                ),
-            });
+        let pane = self.preview.get_or_insert_with(|| {
+            editor_markdown_preview(&self.local_preview_source, &self.origin_label, &self.buffer)
+        });
         pane.sync(ui.ctx(), &self.buffer);
         let headings = pane.headings();
         let selected = self
@@ -2191,17 +2183,9 @@ impl TextEditorTab {
     /// split — the same block renderer the Markdown tab uses, fed from this
     /// view's buffer instead of from a file.
     fn show_preview_pane(&mut self, ui: &mut egui::Ui, height: f32) {
-        let pane = self
-            .preview
-            .get_or_insert_with(|| match &self.local_preview_source {
-                Some(source) => {
-                    MarkdownPreviewPane::for_saved_local_source(source.clone(), &self.buffer)
-                }
-                None => MarkdownPreviewPane::new(
-                    preview_presentation_source(&self.origin_label),
-                    &self.buffer,
-                ),
-            });
+        let pane = self.preview.get_or_insert_with(|| {
+            editor_markdown_preview(&self.local_preview_source, &self.origin_label, &self.buffer)
+        });
         pane.sync(ui.ctx(), &self.buffer);
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
             ui.set_height(height);
@@ -2772,19 +2756,38 @@ fn match_count_message(count: usize) -> String {
     }
 }
 
-/// The identity the preview parses under. It only ever affects how relative
-/// links and images are resolved, so a path the loader will not accept
-/// degrades to a bare name rather than costing the user their preview.
 fn saved_local_preview_source(
     origin: &festerm_document::DocumentOrigin,
-) -> Option<LocalMarkdownSource> {
+) -> Result<Option<LocalMarkdownSource>, String> {
     match origin {
-        festerm_document::DocumentOrigin::Local(local) => Some(
-            LocalMarkdownSource::new(local.path().to_path_buf())
-                .expect("an open local document has a valid Markdown source path"),
-        ),
+        festerm_document::DocumentOrigin::Local(local) => {
+            let path = std::fs::canonicalize(local.path()).map_err(|_| {
+                "Local images are unavailable because the saved Markdown file could not be resolved."
+                    .to_owned()
+            })?;
+            LocalMarkdownSource::new(path).map(Some).map_err(|_| {
+                "Local images are unavailable because the saved Markdown file has an invalid source identity."
+                    .to_owned()
+            })
+        }
         festerm_document::DocumentOrigin::Remote(_)
-        | festerm_document::DocumentOrigin::Untitled(_) => None,
+        | festerm_document::DocumentOrigin::Untitled(_) => Ok(None),
+    }
+}
+
+fn editor_markdown_preview(
+    source: &Result<Option<LocalMarkdownSource>, String>,
+    origin_label: &str,
+    text: &str,
+) -> MarkdownPreviewPane {
+    match source {
+        Ok(Some(source)) => MarkdownPreviewPane::for_saved_local_source(source.clone(), text),
+        Ok(None) => MarkdownPreviewPane::new(preview_presentation_source(origin_label), text),
+        Err(reason) => MarkdownPreviewPane::with_unavailable_local_images(
+            preview_presentation_source(origin_label),
+            text,
+            reason,
+        ),
     }
 }
 
@@ -3360,7 +3363,7 @@ mod tests {
         drop(registry);
         for id in ids {
             let mut editor = TextEditorTab::new(id, &documents);
-            assert!(editor.local_preview_source.is_none());
+            assert!(editor.local_preview_source.as_ref().unwrap().is_none());
             editor.origin_label = label.clone();
             let context = egui::Context::default();
             let budget = crate::markdown_images::ImageMemoryBudget::for_context(
@@ -3390,13 +3393,19 @@ mod tests {
             b"![Image](image.png)\n",
         );
         let mut editor = TextEditorTab::new(id, &documents);
-        assert!(editor.local_preview_source.is_none());
+        assert!(editor.local_preview_source.as_ref().unwrap().is_none());
         let first = original.path.join("readme.md");
         let (_, moved) = documents.borrow_mut().save_as(id, &first).unwrap();
         editor.rebind(moved.unwrap_or(id), &documents);
         assert_eq!(
-            fs::canonicalize(editor.local_preview_source.as_ref().unwrap().path()).unwrap(),
-            fs::canonicalize(&first).unwrap()
+            editor
+                .local_preview_source
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .path(),
+            &fs::canonicalize(&first).unwrap()
         );
         let context = egui::Context::default();
         let mut output =
@@ -3411,8 +3420,14 @@ mod tests {
         editor.rebind(moved.unwrap_or(editor.document()), &documents);
         assert!(editor.preview.is_none());
         assert_eq!(
-            fs::canonicalize(editor.local_preview_source.as_ref().unwrap().path()).unwrap(),
-            fs::canonicalize(second).unwrap()
+            editor
+                .local_preview_source
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .path(),
+            &fs::canonicalize(second).unwrap()
         );
         let history = documents.borrow_mut().create_untitled(
             "terminal-history",
@@ -3420,8 +3435,84 @@ mod tests {
             b"![Image](image.png)\n",
         );
         editor.rebind(history, &documents);
-        assert!(editor.local_preview_source.is_none());
+        assert!(editor.local_preview_source.as_ref().unwrap().is_none());
         assert!(editor.preview.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_symlinked_editor_markdown_uses_the_real_file_parent() {
+        let real = TemporaryDirectory::new("preview-real-source-parent");
+        let links = TemporaryDirectory::new("preview-lexical-source-parent");
+        let target = real.file("readme.md", "![Image](image.png)\n");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+            .save(real.path.join("image.png"))
+            .unwrap();
+        let link = links.path.join("linked.md");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&link).unwrap();
+        let editor = TextEditorTab::new(id, &documents);
+        assert_eq!(
+            editor.local_preview_source.as_ref().unwrap().as_ref().unwrap().path(),
+            &fs::canonicalize(&target).unwrap(),
+            "saved-local Preview must derive resource authority from the complete real file identity"
+        );
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(
+                |ui, editor: &mut TextEditorTab| editor.show_preview_pane(ui, 500.0),
+                editor,
+            );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            harness.step();
+            if harness
+                .state()
+                .preview
+                .as_ref()
+                .unwrap()
+                .image_loaded_for_test(0)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "production Preview must read the image beside the real Markdown file"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn image_budget_unresolvable_local_source_keeps_preview_and_explains_image_refusal() {
+        let directory = TemporaryDirectory::new("preview-unresolvable-source");
+        let body = "# Still readable\n\n![Image](image.png)\n";
+        let path = directory.file("readme.md", body);
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        let editor = TextEditorTab::new(id, &documents);
+        let reason = editor.local_preview_source.as_ref().unwrap_err().clone();
+        let harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(
+                |ui, editor: &mut TextEditorTab| editor.show_preview_pane(ui, 500.0),
+                editor,
+            );
+        assert_eq!(harness.query_all_by_label(&reason).count(), 1);
+        assert_eq!(harness.query_all_by_label("Load local image").count(), 0);
+        assert_eq!(
+            harness.state().preview.as_ref().unwrap().rendered_text(),
+            body
+        );
+        assert!(!harness
+            .state()
+            .preview
+            .as_ref()
+            .unwrap()
+            .image_loaded_for_test(0));
+        assert_eq!(documents.borrow().get(id).unwrap().text().text(), body);
     }
 
     #[test]

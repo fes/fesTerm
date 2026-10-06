@@ -164,11 +164,19 @@ admissions survive lowering/saturation; additional growth is visibly refused,
 and temporary refusals recover when their required space or slot is available.
 Permanent failures do not retry every frame; explicit retry remains available.
 
-The real typed local origin grants reads, never a presentation label or fallback
-path. Actual encoded input is bounded to 8 MiB, dimensions to 16 Mi-pixels and
+The complete canonical saved Markdown file identity grants reads, never its
+lexical symlink-file parent, a presentation label or a fallback path. A source
+that cannot be resolved keeps its text Preview and visibly disables image reads.
+Actual encoded input is bounded to 8 MiB, dimensions to 16 Mi-pixels and
 the live texture-axis limit, before owned expansion. Canonical image destinations
 must stay inside the opened file's canonical parent directory; filesystem-rooted
-paths and traversal/symlink escapes are blocked. Unix nonblocking opens reject
+paths and traversal/symlink escapes are blocked. Root acquisition walks the
+already-authorized canonical parent without following newly inserted aliases;
+final image resolution stays beneath that directory handle even when names or
+intermediate components are rebound. Opened-handle metadata must identify a
+regular file before any content read. Authorized in-root image aliases remain
+readable. Directory capabilities belong only to active reads, not open tabs.
+Unix nonblocking opens reject
 special files without waiting for a FIFO writer. Reservations track actual
 worker/result/texture/CPU-upload owners through close and snapshot replacement.
 See ADR 0030 for the conservative envelope and bounded retirement traversal.
