@@ -191,6 +191,7 @@ const MATCH_LIMIT: usize = 2_000;
 /// the whole reason for a hover.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FindError {
+    summary: &'static str,
     headline: String,
     detail: String,
 }
@@ -198,8 +199,16 @@ struct FindError {
 impl FindError {
     fn from_parts(headline: &str, detail: &str) -> Self {
         Self {
+            summary: "Invalid pattern",
             headline: headline.to_owned(),
             detail: detail.to_owned(),
+        }
+    }
+
+    fn from_refusal(refusal: &festerm_document::EditRefusal) -> Self {
+        Self {
+            summary: "Change refused",
+            ..Self::from_parts(refusal.headline(), &refusal.detail())
         }
     }
 
@@ -1820,7 +1829,7 @@ impl TextEditorTab {
                 ui.set_width(width);
                 match &self.find.error {
                     Some(error) => {
-                        label(ui, "Invalid pattern", theme::STATUS_ERROR, false)
+                        label(ui, error.summary, theme::STATUS_ERROR, false)
                             .on_hover_text(error.full());
                         let (rect, _) = ui.allocate_exact_size(
                             egui::Vec2::splat(FIND_WARNING_SIZE),
@@ -1911,8 +1920,13 @@ impl TextEditorTab {
                 self.find.searched = None;
             }
             Err(refusal) => {
-                self.find.error =
-                    Some(FindError::from_parts(refusal.headline(), &refusal.detail()));
+                let error = FindError::from_refusal(&refusal);
+                self.command
+                    .report(CommandOutcome::Failed(CommandError::new(
+                        &error.headline,
+                        &error.detail,
+                    )));
+                self.find.error = Some(error);
             }
         }
     }
@@ -2549,10 +2563,15 @@ impl TextEditorTab {
         if output.response.changed() {
             let mut registry = documents.borrow_mut();
             if let Some(open) = registry.get_mut(self.document) {
-                if open.text_mut().sync_from_view(&self.buffer).is_err() {
+                if let Err(refusal) = open.text_mut().sync_from_view(&self.buffer) {
                     // The edit breached a bound, so it never happened; put the
                     // widget back in step with the text that still stands.
                     self.buffer = open.text().text().to_owned();
+                    self.command
+                        .report(CommandOutcome::Failed(CommandError::new(
+                            refusal.headline(),
+                            refusal.detail(),
+                        )));
                 }
             }
         }
@@ -3953,6 +3972,162 @@ mod tests {
             detail.starts_with(":wq saves through the ordinary Save command"),
             "the marker explains the command that has been typed: {detail}"
         );
+    }
+
+    #[test]
+    fn editor_refused_widget_paste_is_visible_and_preserves_redo() {
+        let directory = TemporaryDirectory::new("visible-widget-refusal");
+        let path = directory.file("notes.txt", "seed\n");
+        let mut harness = find_harness(&path);
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .type_text("x");
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        let revision = {
+            let (documents, editor) = harness.state();
+            let registry = documents.borrow();
+            let text = registry.get(editor.document()).unwrap().text();
+            assert!(text.can_redo());
+            text.revision()
+        };
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Paste("z".repeat(65_537)));
+        harness.run_steps(3);
+        assert_eq!(document_text(&harness), "seed\n");
+        let (documents, editor) = harness.state();
+        let registry = documents.borrow();
+        let text = registry.get(editor.document()).unwrap().text();
+        assert_eq!(text.revision(), revision);
+        assert!(text.can_redo());
+        assert!(!text.is_dirty());
+        assert!(!editor.options.vi_keys);
+        harness.get_by_label("This file has a line that is too long to edit");
+    }
+
+    #[test]
+    fn editor_undo_budget_refusal_is_visible_and_preserves_shared_undo_redo() {
+        let directory = TemporaryDirectory::new("visible-undo-refusal");
+        let path = directory.file("notes.txt", "seed\n");
+        let mut harness = vi_harness(&path);
+        {
+            let (documents, editor) = harness.state_mut();
+            let mut registry = documents.borrow_mut();
+            let text = registry.get_mut(editor.document()).unwrap().text_mut();
+            text.replace(0..0, "x").unwrap();
+            text.undo();
+        }
+        let mut inserted = String::with_capacity(festerm_document::UndoHistory::DEFAULT_MAX_BYTES);
+        inserted.push_str("private fixture payload");
+        {
+            let (documents, editor) = harness.state_mut();
+            editor.apply_vi_edits(
+                vec![festerm_document::TextEdit {
+                    start: 0,
+                    removed: String::new(),
+                    inserted,
+                }],
+                documents,
+            );
+        }
+        harness.run_steps(3);
+        assert_eq!(document_text(&harness), "seed\n");
+        let (documents, editor) = harness.state();
+        let registry = documents.borrow();
+        let text = registry.get(editor.document()).unwrap().text();
+        assert_eq!(text.revision(), 2);
+        assert!(text.can_redo());
+        assert!(!text.can_undo());
+        assert!(!text.is_dirty());
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("the undo refusal must use the standard visible error surface");
+        };
+        assert!(!error.detail().contains("private fixture payload"));
+        assert!(error.detail().contains("8 MB"));
+        harness.get_by_label("This change exceeds the undo storage limit");
+        harness.get_by_label(error.detail());
+    }
+
+    #[test]
+    fn editor_undo_budget_refusals_from_find_and_substitution_preserve_the_document() {
+        let directory = TemporaryDirectory::new("find-substitution-undo-refusal");
+        let original = format!("{}\n", "a".repeat(65_535)).repeat(64);
+        let path = directory.file("notes.txt", &original);
+        let (documents, mut editor) = editor_for(&path);
+        {
+            let mut registry = documents.borrow_mut();
+            let text = registry.get_mut(editor.document()).unwrap().text_mut();
+            text.replace(0..1, "c").unwrap();
+            text.undo();
+        }
+        let replacement = "b".repeat(65_535);
+        editor.find.open = true;
+        editor.find.replacing = true;
+        editor.find.query = "a+".to_owned();
+        editor.find.replacement = replacement.clone();
+        editor.replace_all(&documents);
+        let headline = "This change exceeds the undo storage limit";
+        assert_eq!(editor.find.error.as_ref().unwrap().headline, headline);
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("Find must visibly report the whole-transaction refusal");
+        };
+        assert_eq!(error.headline(), headline);
+        let command = SubstituteCommand::from_parts(
+            "a+",
+            &replacement,
+            SubstituteRange::WholeDocument,
+            SubstituteFlags {
+                global: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        editor.run_substitution(command, &documents);
+        let Some(CommandOutcome::Failed(error)) = editor.command.outcome() else {
+            panic!("substitution must report its unchanged whole-transaction refusal");
+        };
+        assert_eq!(error.headline(), headline);
+        let detail = error.detail().to_owned();
+        assert!(detail.contains("8 MB"));
+        assert!(!detail.contains(&replacement));
+        {
+            let registry = documents.borrow();
+            let text = registry.get(editor.document()).unwrap().text();
+            assert_eq!(text.text(), original);
+            assert_eq!(text.revision(), 2);
+            assert!(!text.is_dirty());
+            assert!(text.can_redo());
+            assert!(!text.can_undo());
+        }
+        assert_eq!(editor.buffer, original);
+        let tab_id = crate::tabs::TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1180.0, 240.0))
+            .build_ui_state(
+                move |ui, (documents, editor): &mut (SharedDocuments, TextEditorTab)| {
+                    editor.show_find_bar(ui, documents);
+                    editor.show_command_area(ui, tab_id, documents);
+                },
+                (documents, editor),
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Change refused");
+        harness.get_by_label(headline);
+        assert_eq!(
+            harness
+                .query_all(egui_kittest::kittest::By::new().label("Invalid pattern"))
+                .count(),
+            0
+        );
+        harness.get_by_label(&detail);
     }
 
     #[test]

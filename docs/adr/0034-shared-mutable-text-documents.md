@@ -137,7 +137,8 @@ terminal.
   origin, or lost permissions — because it is the escape hatch for all of them.
 - **Find/Replace** operate on the in-memory buffer including unsaved text.
   Replace-all is one undoable transaction, and both are bounded for large
-  documents.
+  documents. A transaction whose undo record cannot fit is refused whole,
+  preserving text and the existing undo/redo history.
 - **Duplicate view** opens a second editor view of the same document, which may then
   be dragged to another window. It is how a reader asks for two independently
   scrolled surfaces onto one file; `Edit | Preview | Split` remains the in-tab,
@@ -446,6 +447,29 @@ reader to guess whether the file, the application or their aim was at fault. Loa
 cancellable, and Preview reparsing is debounced and coalesced so typing cannot
 starve terminal or session event handling.
 
+Document-scoped history retains at most **2,048 transactions and 8 MiB**.
+The byte budget charges compact edit descriptors, removed/inserted string
+capacities, and allocated transaction slots, not just text lengths. Admission
+is staged before text mutation: an indivisible over-budget change is refused
+with the exact required bytes and limit, preserving text, revision, saved/dirty
+identity, undo and redo. There is no oversized-latest-entry exception. Optional
+typing coalescing starts a new transaction when the individual edit fits but
+the combined run does not. Validated no-ops preserve history and revision,
+including redo; callers still receive their original edit/match counts.
+Untitled snapshots have an explicit unwritten baseline, not a synthetic
+empty edit: they start dirty at revision zero with no undo entry, and undoing
+real edits cannot claim a never-saved document is saved. Successful save or
+reload establishes the written baseline.
+
+Front retirement preserves the base history identity so exhausting retained
+undo neither falsely announces the initial content as saved nor loses an
+evicted saved point. Saving closes the currently applied transaction, not a
+redo entry. Reload releases the history's slot allocation. Normal widget and
+Find/Replace commit refusals use the existing visible command-result area;
+Find labels an edit refusal **Change refused**, not **Invalid pattern**.
+This is a retained-history budget, not a bound on candidate text, staged
+allocations, undo/redo scratch, view buffers, allocator overhead or process RSS.
+
 ### 12. Nothing new is persisted
 
 Editor tabs, documents, paths, buffers, caret positions, and find state stay
@@ -559,6 +583,14 @@ existing Markdown rendering stays out of scope.
   partial/stale repeat, pure-navigation/yank preservation, next-change recovery,
   and repeated edits as one shared undo transaction. Native keyboard/IME,
   narrow-pane readability and screen-reader delivery remain in `CP-15`.
+- **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
+  `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
+  admission, churn/clone/clear, validated no-op, stable saved/base-token,
+  coalescing-split, explicit unwritten-baseline and atomic-refusal regressions. Production widget, vi edit,
+  Find/Replace and substitution routes preserve document/history and visibly
+  report content-free refusals. Native input/IME, focus/caret, narrow-pane
+  usability and screen-reader delivery remain `CP-15`; transient allocation
+  peaks and allocator fragmentation are not certified by these tests.
 - **Native/manual evidence required:** a new manual scenario registered with the
   implementation, covering real watcher behaviour, atomic replacement,
   permission preservation, and remote disconnect/reconnect on each platform.

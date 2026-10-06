@@ -3,6 +3,39 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding actual undo storage without discarding a refused change
+
+The allocation/lifecycle audit in #320 found that document history charged
+only text length, ignoring edit descriptors, reserved string storage and
+transaction slots. A compiled metadata-churn control retained 469,504 bytes
+under a 65,536-byte budget. The latest indivisible transaction could exceed
+the limit indefinitely, clearing history kept its slots, and no-op edits
+changed revision and discarded redo. Front eviction also lost the identity
+of the retained base, producing incorrect saved/dirty announcements.
+
+History now charges those retained allocations within the unchanged
+8-MiB/2,048-transaction defaults. Compact descriptor slices and a deque avoid
+spare edit-vector storage and shifting all survivors on oldest-entry removal.
+Admission stages its allocation and retirement before changing the document
+or history. The approved policy refuses an indivisible oversized change
+whole, retaining existing undo/redo; optional typing coalescing splits when
+the new edit fits alone. Saved/base identity survives retirement, saving
+closes the applied entry, validated no-ops preserve state and return counts,
+and clear releases slot allocation. Clones recalculate their compacted weight.
+Workspace coverage also caught the untitled-document factory's empty-edit
+workaround for marking content dirty. It now creates an explicit unwritten
+baseline, with no fake history or revision bump; New File, terminal snapshots,
+dirty-close and first-save routing retain their intended behaviour.
+
+Production-route checks uncovered two coupled presentation defects: ordinary
+widget errors reverted silently, and a storage refusal in Find was labelled
+Invalid pattern with details only on hover. Both now use the existing visible,
+content-free command-result area; Find says Change refused. Exact-capacity,
+churn, atomic-refusal and real default-budget replacement regressions cover
+the model and widget/vi/Find/substitution routes. Native input, focus/caret,
+narrow-pane and accessibility evidence remains CP-15. This bounds retained
+history, not candidate/staged/undo scratch, view allocation, allocator
+fragmentation or RSS, and does not establish #297's multi-day growth cause.
 ## Bounding live forwarding inventory without evicting tunnels
 
 The #320 allocation/lifecycle audit found that each requested SSH mapping
@@ -44,6 +77,7 @@ and removes a failed mapping to admit a retry. Native overlay readability,
 accessibility and OpenSSH interoperability remain `TI-11`; the count ceiling
 is not a total-payload/RSS bound, allocator-fragmentation diagnosis, or evidence
 for the multi-day CPU-growth cause in #297.
+
 ## Bounding Windows daemon attachment backlog without evicting its owner
 
 The allocation/lifecycle audit in #320 found an unbounded channel of accepted
