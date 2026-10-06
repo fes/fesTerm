@@ -3,6 +3,37 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reusing bounded Source offscreen geometry after actual UI attribution
+
+The actual #348 WARP comparison preserved pixels but Source normal-width UI
+construction stayed essentially unchanged (5.777 versus 5.774 ms). Reusing
+formatting instructions alone did not avoid egui's repeated job cloning and
+layout requests for every selectable row.
+
+The next slice stores only finite local desired/intrinsic geometry inside
+already-admitted Source jobs. Fully offscreen rows retain their ordinary live
+allocations, responses and accessibility; visible or uncached rows still use
+normal labels. Width/font/scale/options and snapshot/Find dependencies remain
+explicit, without retained galleys, atlas references or approximate heights.
+Regressions compare full shapes and navigation/selection fidelity
+against the actual descriptor-cached predecessor, and require at most 96 warm
+layouts rather than 4800 at both fixture widths. Actual warm narrow/normal
+requests are 31/34, becoming 34/37 after scrolling, while all 4800 responses and
+accessibility nodes remain live. The candidate clones 4408/4822 bytes of
+String/Vec capacity rather than the ordinary shared Label inputs' 680870-byte
+payload; this is not total allocator or RSS evidence. New geometry accounts
+for 24 bytes per admitted job plus one bounded active font/layout key.
+
+The API check came first: egui already accepts a shared job, but its live Label
+clones before applying wrapping and the memoized fonts API requires ownership.
+The lower-level Arc API bypasses that memoization, so it was not substituted.
+Dependency controls also exposed a real post-scale width-settling frame: it
+must relayout every row again, not pass as an unchanged frame. Exact shape,
+wrapped Unicode/CRLF selection/Copy, byte/heading navigation and bounded
+overflow/lifecycle controls pass without retained galleys or atlas UVs.
+#348, full traversal/Preview costs, cumulative rendering qualification and
+native latency evidence remain open.
+
 ## Measuring the real large Markdown drawing path
 
 The #348 investigation had preparation counters and small gallery captures,

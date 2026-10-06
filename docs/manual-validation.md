@@ -497,7 +497,15 @@ CP-06 Source preparation: ordinary/candidate CPU checks cover the same owned
 400-section fixture, all live labels/accessibility nodes, Find and offscreen
 byte navigation, wrapping across width/font/scale/theme changes, Unicode/CRLF/
 trailing-space selection/Copy and bounded snapshot-owner release. Cached jobs
-are formatting instructions only; every frame still lays out the labels.
+retain formatting instructions with bounded offscreen geometry. Focused CPU
+controls compare full clipped shapes,
+intrinsic sizes, interaction senses, accessibility, long wrapped Unicode/CRLF
+selection/Copy and offscreen navigation against descriptor-cached ordinary
+labels, including dependency invalidation and overflow fallback. The actual
+400-section warm layout requests fall from 4800 to 31/34 at narrow/normal
+widths while every row remains live. Cloned buffer capacities and additional
+geometry/key metadata are reported separately; they are not total allocator
+or process-memory evidence.
 These preparation counters do not qualify native clipboard/screen-reader
 delivery, input-to-display latency or GPU drawing; those statuses remain pending.
 

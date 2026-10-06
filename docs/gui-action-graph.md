@@ -700,6 +700,14 @@ label, exact syntax/Find formats, wrapping under width/font/scale/theme changes,
 offscreen byte navigation, Unicode/CRLF/trailing-space selection/Copy and live
 accessibility. Entry/payload/query overflow falls back without hiding text or
 truncating Find; snapshot replacement/close releases the actual cached owners.
+The Source offscreen-geometry candidate additionally requires complete clipped
+shape, intrinsic-size, interaction-sense and accessibility equivalence to the
+descriptor-cached ordinary labels. Exact finite geometry is limited to admitted
+jobs; width/font/scale/options/revision changes must invalidate it, while every
+row and offscreen byte/heading target remain live. Warm normal/narrow 400-section
+controls count actual layout requests and cloned-buffer capacities rather than
+cache access, with additional bounded metadata accounted separately. Focused
+CPU qualification does not close `MD-04`/`MD-06` native gates.
 The standalone viewer's shared outer-frame paint route must match the actual
 Preview/Source caller pixels at narrow/wide widths and 1/1.25x scale, retain live
 accessibility/response identities, and use ordinary fallback at reduced opacity.
