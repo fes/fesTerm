@@ -16,8 +16,10 @@ live/read-only selection, OSC 8 link, frozen enabled/disabled path and history
 menus; live-close/risky-paste/final-dirty-document confirmations; and actual-task
 small/large/error Open File and small/large/error/overwrite Save As states.
 
-**Initial status: scaffolding, awaiting the exclusive validation slot.**
-No new measurements, captures or native acceptance are claimed here. Missing
+**Bounded status:** earlier complete construction/completed-render evidence is
+retained in #349. The source-bound comparisons below add current measurements
+for eight picker and four actual large Markdown controls, not a newer-head
+rerun of the entire matrix or native acceptance. Missing
 updater variants, empty picker readiness (which needs a model-state accessor),
 filter/sort/final-row/reopen interactions, aggregate quit/drop/reset safety
 variants and all native-platform evidence remain explicit prerequisites in
@@ -59,6 +61,68 @@ all 52 appended variants, records that scope in its report and aggregate
 runner result, and changes no semantic guard or WARP replay selection.
 Unset the selector (or use `all`) for the full construction matrix.
 No missing variant or native row gains coverage from the controls-only result.
+
+### 2026-10-06 source-bound picker and Markdown observations
+
+The actual release replay compared clean cumulative
+`5fa487c635b4b43f0aed8017d85d42d9f142f565` against preserved before controls:
+`abb4a018373bd1469f92d534c7bce0dad52ac26c` for Markdown and
+`cbdc2aab6e499656e98f6da8ed2768297f421c56` for pickers. All use Windows x64
+DX12 CPU `Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2, and the same
+physical picker fixture paths where origin/breadcrumb text is visible.
+The four Markdown controls render the same owned 400-section document,
+not a substitute editor or untrusted external document.
+
+All twelve cross-revision reference PNGs are byte-identical. Every measured
+draw also passes the same-frame original-renderer oracle: twenty Markdown and
+forty picker guards. Ordered samples, finite timing buckets, adapter/format,
+source identity, dimensions, percentile convention and dimension-derived
+target/image/padded-readback payloads were checked independently.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:WGPU_BACKEND = 'dx12'
+# Set a fresh absolute FESTERM_WARP_UI_OUT and the preserved matching
+# FESTERM_WARP_UI_REFERENCE directory for each separately executed subset.
+$env:FESTERM_WARP_UI_SCENES = 'markdown-controls' # Passed: 10.88 seconds.
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+$env:FESTERM_WARP_UI_SCENES = 'picker-controls' # Passed: 46.40 seconds.
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+```
+
+| Scene | Before UI median (ms) | Current UI median (ms) | Before completed draw/readback median (ms) | Current median (ms) | Actual panel paints before/current |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Markdown Preview normal | 15.750 | 13.678 | 779.833 | 320.413 | 0 / 1 |
+| Markdown Preview narrow | 14.495 | 12.062 | 168.096 | 58.947 | 0 / 1 |
+| Markdown Source normal | 5.777 | 5.774 | 912.492 | 435.244 | 0 / 1 |
+| Markdown Source narrow | 5.463 | 5.101 | 206.244 | 69.948 | 0 / 1 |
+| Open File small ready normal | 0.702 | 0.667 | 1000.309 | 1074.010 | 4 / 4 |
+| Open File small ready narrow | 0.815 | 0.561 | 409.098 | 372.818 | 2 / 2 |
+| Open File error normal | 0.566 | 0.489 | 1005.937 | 1070.618 | 4 / 4 |
+| Open File error narrow | 0.574 | 0.560 | 396.448 | 368.457 | 2 / 2 |
+| Save As small ready normal | 0.558 | 0.740 | 1535.852 | 1017.992 | 2 / 3 |
+| Save As small ready narrow | 0.577 | 0.623 | 473.023 | 369.525 | 2 / 3 |
+| Save As error normal | 0.409 | 0.436 | 1511.286 | 1011.733 | 2 / 3 |
+| Save As error narrow | 0.423 | 0.457 | 461.132 | 339.882 | 2 / 3 |
+
+These shared-host samples show 52-66% lower Markdown and 22-34% lower Save As
+completed draw/readback medians on the combined source. Normal Source UI
+construction is effectively unchanged; zero preparation jobs do not prove a
+net live-UI improvement. Open File's unchanged paint route has opposite wide/
+narrow movement, so no gain or regression is established from that variance.
+Substantial completed drawing cost remains, without attributing it to a modal,
+shadow, font or individual paint operation.
+
+The seven buckets exclude small instrumentation/inter-bucket overhead included
+in the completed total; they need not sum exactly to it. CPU-observed completion
+waiting is not a GPU timestamp. Submitted geometry and temporary pixel/readback
+payloads are not actual rasterized-pixel counts, total GPU allocations or process
+peaks. This comparison does not isolate each cumulative optimization, qualify a
+quiet host, native presentation, input-to-display, real scrolling, Find or omitted
+variants. No syntax-colour normalization or reference-pixel exception was used.
+
+### Gallery capture and shared fixture identity
+
 Gallery generation uses
 `FESTERM_UI_GALLERY_OUT` pointed at a fresh owned directory before updating
 the reviewed document/images. `capture_surface_gallery(SurfaceKind, narrow)`

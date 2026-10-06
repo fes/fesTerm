@@ -144,6 +144,8 @@ CP-15 native responsiveness, caret/focus/IME and usability remain open.
 
 ```sh
 cargo test --locked -p festerm-document --lib single_pass_multi_edit -- --nocapture
+```
+
 ## Borrowed ordinary vi motion construction
 
 C1 in #320 removes full-document character/offset vector construction from
@@ -302,9 +304,64 @@ are rejected. Device-free Rust regressions cover retirement with all six output
 queues backlogged, stale clipboard completion/cancellation across lifecycle
 generations, and final-receipt identity. The Python checker tests include
 transient commitment, missing owners/windows/receipts and exact PNG rejection.
-This automated implementation coverage does not claim a completed native aging
-run; exclusive-runtime cumulative/native qualification and multi-day capture
-remain separate CP-18/#297/#282 work.
+This automated implementation coverage does not itself claim a completed aging
+run. The cumulative short offscreen execution below is separate evidence;
+native qualification and multi-day capture remain CP-18/#297/#282 work.
+
+### 2026-10-06 cumulative short retirement observations
+
+The revised supervisor completed at exact clean
+`5fa487c635b4b43f0aed8017d85d42d9f142f565`, tree
+`ab5cd853cbe983f5be674b0178ce75dbec06eea6`, using archived release executable
+SHA256 `8FBAF53B6D1982AC8E85AFDB7455F81DFEFB0BE70D6051B0581EA08A113D390C`.
+Its source-bound process interval was 53.123 seconds, with 102 external resource
+samples and normal exit 0. All twelve complete six-session phases and three
+whole-owner rounds passed the strict checker, including exact normalized
+framebuffers and the final acknowledged `complete` sample.
+
+```powershell
+# Passed with a fresh absolute output directory on the source above.
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-aging-short -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900
+# The supervisor invokes this checker; independent rechecking also passed.
+python validation\terminal-performance\check_session_aging.py C:\evidence\six-session-aging-short
+```
+
+These are reproducible example output paths, not the private evidence location.
+The supervisor's archived executable is `festerm-aging-probe.exe`.
+
+| Process observation | MiB |
+| --- | ---: |
+| OS-maintained lifetime peak commitment | 588.672 |
+| Maximum sampled current commitment | 586.984 |
+| Unsampled high-water excess | 1.688 |
+| Final acknowledged current commitment | 20.328 |
+
+All three rounds completed host submission, released the weak repaint owner,
+dropped the reporting instance and drained all 23 public registries to zero
+allocated/kept IDs. Vacant slots are not live or in-flight allocations.
+The held post-drop observations remain adverse rather than being hidden:
+
+| Whole-owner round | Held commitment (MiB) | Surviving threads | Valid held samples |
+| --- | ---: | ---: | ---: |
+| 0 | 142.543 | 24 | 6 |
+| 1 | 144.055 | 25 | 5 |
+| 2 | 148.203 | 26 | 6 |
+
+Renderer-only destruction retained eight public IDs and approximately
+516-540 MiB commitment; complete fixture/context destruction cleared those IDs.
+The final sample still had 26 threads. These whole-process observations include
+the test harness and do not attribute driver-private bytes or thread stacks.
+Three rounds do not establish long-run boundedness, a leak, complete native
+retirement or an accepted process-resource cap. Reconstruction is not native
+device loss or durable-shell reconnect; #297/#282 and CP-18 remain open.
+
+Fresh-source OS-input/lifecycle execution on the same head stopped before
+input at `Foreground activation is unavailable.` The existing opted-in
+separate-GUI-thread/no-input activation regression independently failed with
+the same error, despite active-RDP/default-desktop preflight. The original
+failure receipts and normal owned-tree cleanup are retained. No failed
+interval was retried as accepted, guard weakened, native capture obtained or
+native CPU/physical-latency result inferred.
 
 ### 2026-10-04 source-bound observations
 

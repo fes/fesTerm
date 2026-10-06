@@ -945,8 +945,10 @@ The bounded non-terminal expansion adds production-widget menu/About/safety/
 picker fixtures to those same opt-in probes and gallery, not to the native CPU
 oracle. Its [reconciled matrix](../validation/windows-warp/surface-matrix.json)
 retains 33 families, all audited state groups and named native prerequisites.
-The initial scaffolding awaits exclusive validation; no new headless evidence
-has been accepted. Even completed offscreen reports cannot qualify About/menu
+Earlier bounded construction/completed-render coverage is retained in #349;
+the source-bound picker/Markdown comparisons below qualify only their selected
+controls, not a rerun of every family on the newer head. Even completed
+offscreen reports cannot qualify About/menu
 idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
 mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
 unchanged; no new latency budgets are implied.
@@ -959,6 +961,15 @@ An explicit eight-scene picker subset leaves omitted variants unmeasured.
 These diagnostics do not automate CP-16/CP-17 input, presentation, mixed-DPI,
 native responsiveness or accessibility acceptance.
 
+The 2026-10-06 release comparison at clean cumulative `5fa487c` preserves all
+eight picker PNGs against `cbdc2aa` and passes forty measured original-renderer
+pixel guards. Each Save As control executes one additional eligible editor
+panel paint, with shared-host completed draw/readback medians 22-34% lower.
+Open File's unchanged route has opposing normal/narrow timing movement, not
+an established gain or regression. See the
+[source-bound scene record](../validation/windows-warp/README.md#2026-10-06-source-bound-picker-and-markdown-observations);
+no native row or latency budget changes.
+
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external
 resources. CPU readiness proves the rendered heading or raw Source marker and
@@ -967,6 +978,13 @@ draw/readback buckets and observed production panel paints; it is not a
 surrogate editor fixture. This automates bounded `MD-04` construction/rendering
 evidence only. Find, real scrolling, native screen-reader delivery, physical
 input-to-photon and CP-06/CP-16/CP-17 evidence remain separate and unmeasured.
+
+The same dated cumulative comparison preserves all four Markdown PNGs against
+pre-optimization `abb4a01`, passes twenty measured original-renderer guards and
+observes exactly one outer-frame panel paint per current draw. Completed
+draw/readback medians are 52-66% lower, but normal-width Source UI construction
+is effectively unchanged. This is combined shared-host offscreen evidence,
+not isolated preparation-cache attribution or native presentation.
 
 The editor's opaque outer frame now uses the same eligible textureless-panel
 helper as existing chrome; layout, child widgets and all ordinary-path guards
@@ -1369,10 +1387,28 @@ New Windows captures require OS-maintained lifetime peak commitment
 final acknowledged process sample. Current caches, temporary CPU pixel-oracle
 arrays and completed host submissions are classified separately; neither these
 nor vacant registry slots count driver allocations or queued/in-flight bytes.
-The implementation has deterministic automated coverage; executing the revised
-offscreen probe on the cumulative source in an exclusive runtime interval,
-native device recovery and multi-day resource attribution remain qualification
-work. No process-resource acceptance cap or native/manual row is closed.
+The implementation has deterministic automated coverage. On 2026-10-06 the
+revised release probe completed all twelve phases and three whole-owner rounds
+at exact clean cumulative `5fa487c`, with byte-identical normalized scenes,
+completed submissions, expired weak repaint owners, dropped reporting
+instances and the final acknowledged sample. The lifetime commitment peak was
+588.672 MiB, versus 586.984 MiB maximum sampled commitment; final commitment
+was 20.328 MiB. Zero public allocated/kept IDs do not erase the held whole-owner
+post-drop observations of 142.543/144.055/148.203 MiB and 24/25/26 threads.
+These remain adverse observations, not a leak diagnosis or complete driver
+retirement. See the
+[short resource record](../validation/terminal-performance/README.md#2026-10-06-cumulative-short-retirement-observations).
+Native device recovery and multi-day attribution remain qualification work;
+no process-resource acceptance cap or native/manual row is closed.
+
+The same source's fresh-build OS-input/lifecycle attempt stopped at initial
+foreground activation before any input or external captures. The existing
+separate-GUI-thread/no-input activation calibration independently failed with
+the same error, despite passing active-RDP/default-desktop preflight. The
+failed receipts are preserved; the owned app and descendants closed normally,
+without forced termination. Native lifecycle, automatic-route CPU observations
+and physical latency remain unqualified in this attempt. No safety guard was
+weakened or failed attempt replaced.
 The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
 normalized pixels, without reproducing the multi-day plateau. Moderate process
 memory growth remains an observation requiring separate attribution; no

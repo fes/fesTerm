@@ -19,6 +19,42 @@ readback buckets and temporary payload counts stay independently observable.
 Preparation reuse alone does not prove end-to-end rendering gain. Find,
 scrolling, native presentation and physical latency remain separate evidence.
 
+## Measuring cumulative improvements instead of inferring them from cache hits
+
+The bounded release replay now compares the actual cumulative `5fa487c` source
+with preserved pre-optimization Markdown (`abb4a01`) and picker (`cbdc2aa`)
+controls on the same Windows x64 WARP host. All twelve cross-revision reference
+PNGs are byte-identical, and all sixty measured original-renderer pixel guards
+passed. The actual Markdown outer-frame callback executes once rather than
+zero times; each Save As frame executes one additional eligible panel paint.
+
+The four Markdown completed draw/readback medians fell by 52-66%, and the four
+Save As medians by 22-34%. These shared-host observations concern the combined
+source, not isolated cache attribution or native display latency. Source's
+normal-width UI construction stayed effectively unchanged at 5.777 versus
+5.774 ms despite preparation reuse. Open File's unchanged paint route had
+opposing wide/narrow timing movement, not a demonstrated gain or regression.
+The exact scene results and limitations are retained in
+[`validation/windows-warp/README.md`](../validation/windows-warp/README.md#2026-10-06-source-bound-picker-and-markdown-observations).
+
+The revised six-session supervisor also completed its short twelve-phase
+matrix and three whole-owner retirement rounds on that exact source. The
+OS-maintained lifetime commitment peak was 588.672 MiB, above the sampled
+maximum; final acknowledged commitment was 20.328 MiB. Public allocated/kept
+IDs drained to zero, but held post-drop commitment and surviving thread counts
+rose across the three rounds. Those adverse observations remain visible,
+without calling them complete driver retirement, a leak diagnosis or an
+accepted total-resource budget. The
+[resource record](../validation/terminal-performance/README.md#2026-10-06-cumulative-short-retirement-observations)
+keeps reconstruction separate from real device loss and durable reconnect.
+
+Fresh-source native input/lifecycle execution stopped before any input at
+foreground activation. The existing separate-GUI-thread calibration failed
+the same way without fesTerm or injected input, despite the active RDP/default
+desktop preflight. Both failures and normal owned-process cleanup are
+preserved; no guard was weakened or failed attempt relabeled. Native CPU,
+window captures and physical latency therefore remain unqualified here.
+
 ## Routing the editor surface through eligible panel painting
 
 The first bounded #351 replay completed all eight picker controls with exact
@@ -33,8 +69,9 @@ now uses the shared helper without changing its geometry, children, widgets,
 colors or application commands. The established format, adapter, opacity,
 viewport and transform guards retain ordinary painting where necessary.
 A real-editor test checks executed painting and exact reference pixels at
-both widths and scales, plus opacity fallback. Matched release measurements
-and native evidence remain separate from this caller-level regression.
+both widths and scales, plus opacity fallback. The cumulative matched release
+observations above now supplement that caller regression; native evidence
+and operation-level cost attribution remain separate.
 
 ## Separating picker rendering from readback
 
