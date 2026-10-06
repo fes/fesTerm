@@ -236,11 +236,15 @@ metadata before replacement without copying the old modification time. Linux
 rewrites only user-owned xattrs and the POSIX access ACL; kernel-managed
 security labels remain in place and must already match the verified source
 snapshot. Windows applies and verifies the captured owner,
-group, DACL and attributes on the prepared file;
+group, DACL and attributes on the prepared file while its retained handle
+denies every other read or write open until publication completes and the
+handle closes;
 inability to apply them refuses before publication. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
-an owner-only staging directory on the destination filesystem. The prepared inode is
-verified through both its handle and staging name, and an independently
+an owner-only staging directory on the destination filesystem. Unix verifies
+the prepared inode through both its handle and staging name; Windows relies on
+exclusive native handle-relative creation so reopening by name cannot expose
+the staged bytes. An independently
 written private recovery copy exists before publication. Existing-target
 publication uses two capability-bound no-overwrite moves on both platforms:
 the no-follow current target is first moved into private staging and verified,

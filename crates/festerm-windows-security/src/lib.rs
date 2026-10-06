@@ -479,6 +479,7 @@ mod imp {
         directory: &File,
         name: &Path,
         desired_access: u32,
+        share_access: u32,
         disposition: u32,
         create_options: u32,
         security_attributes: *const SECURITY_ATTRIBUTES,
@@ -506,7 +507,7 @@ mod imp {
                 &raw mut status,
                 ptr::null(),
                 FILE_ATTRIBUTE_NORMAL,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                share_access,
                 disposition,
                 create_options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
                 ptr::null(),
@@ -576,11 +577,33 @@ mod imp {
     /// protected current-user-only DACL, then verifies its exact handle before
     /// returning it to a caller that may write document bytes.
     pub fn create_current_user_only_file(directory: &File, name: &Path) -> io::Result<File> {
+        create_current_user_only_file_with_sharing(
+            directory,
+            name,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        )
+    }
+
+    /// Creates a private file whose retained handle permits rename/delete but
+    /// prevents every other reader or writer until the caller closes it.
+    pub fn create_current_user_only_file_exclusive(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        create_current_user_only_file_with_sharing(directory, name, FILE_SHARE_DELETE)
+    }
+
+    fn create_current_user_only_file_with_sharing(
+        directory: &File,
+        name: &Path,
+        share_access: u32,
+    ) -> io::Result<File> {
         let file = with_current_user_only_security(|security| {
             open_relative(
                 directory,
                 name,
                 FILE_ALL_ACCESS | DELETE,
+                share_access,
                 FILE_CREATE,
                 FILE_NON_DIRECTORY_FILE,
                 security,
@@ -612,6 +635,7 @@ mod imp {
             directory,
             name,
             access,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             FILE_OPEN,
             FILE_NON_DIRECTORY_FILE,
             ptr::null(),
@@ -642,6 +666,7 @@ mod imp {
                 directory,
                 name,
                 FILE_ALL_ACCESS | DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 FILE_CREATE,
                 FILE_DIRECTORY_FILE,
                 security,
@@ -828,7 +853,7 @@ mod imp {
             time::{SystemTime, UNIX_EPOCH},
         };
         use windows_sys::Win32::{
-            Foundation::{LocalFree, ERROR_SUCCESS},
+            Foundation::{LocalFree, ERROR_SHARING_VIOLATION, ERROR_SUCCESS},
             Security::{
                 AclSizeInformation,
                 Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
@@ -969,6 +994,28 @@ mod imp {
         }
 
         #[test]
+        fn exclusive_private_file_blocks_other_readers_after_its_dacl_is_broadened() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let staging_handle =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+            let staged =
+                create_current_user_only_file_exclusive(&staging_handle, Path::new("payload"))
+                    .unwrap();
+            make_unprotected(&staged);
+
+            let error = File::open(directory.0.join("private.stage/payload")).unwrap_err();
+
+            assert_eq!(
+                error.raw_os_error(),
+                Some(ERROR_SHARING_VIOLATION as i32),
+                "the staged payload must remain unreadable through a second handle"
+            );
+            restrict_to_current_user(&staged).unwrap();
+        }
+
+        #[test]
         fn private_creation_and_conditional_publication_keep_the_current_user_only_dacl() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
@@ -1088,7 +1135,8 @@ mod imp {
 #[cfg(windows)]
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
-    disable_std_handle_inheritance, open_file_no_reparse, open_file_no_reparse_for_rename,
-    rename_file_noreplace, restrict_default_dacl_to_current_user, restrict_to_current_user,
-    security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
+    create_current_user_only_file_exclusive, disable_std_handle_inheritance, open_file_no_reparse,
+    open_file_no_reparse_for_rename, rename_file_noreplace, restrict_default_dacl_to_current_user,
+    restrict_to_current_user, security_metadata, security_metadata_matches, DefaultDaclGuard,
+    SecurityMetadata,
 };

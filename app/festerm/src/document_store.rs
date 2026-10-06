@@ -962,7 +962,9 @@ impl<'a> TemporaryFile<'a> {
                 .try_clone()
                 .map(cap_std::fs::Dir::into_std_file)
                 .and_then(|directory| {
-                    festerm_windows_security::create_current_user_only_file(&directory, payload)
+                    festerm_windows_security::create_current_user_only_file_exclusive(
+                        &directory, payload,
+                    )
                 });
             #[cfg(not(any(unix, windows)))]
             let file = {
@@ -1148,17 +1150,35 @@ impl<'a> TemporaryFile<'a> {
     }
 
     fn verify_name(&self) -> Result<(), SaveFailure> {
-        let reopened = open_named_file(self.directory, &self.name).map_err(classify_write_error)?;
-        let open = self
-            .file
-            .as_ref()
-            .ok_or(SaveFailure::Interrupted)
-            .and_then(|file| Generation::from_file(file).map_err(|_| SaveFailure::Interrupted))?;
-        let reopened = Generation::from_file(&reopened).map_err(|_| SaveFailure::Interrupted)?;
-        if open == reopened {
-            Ok(())
-        } else {
-            Err(SaveFailure::Interrupted)
+        #[cfg(windows)]
+        {
+            // Native relative creation already binds this exact non-reparse
+            // handle to the retained staging directory. Reopening by name
+            // would require sharing reads and writes with a staged payload.
+            return self
+                .file
+                .as_ref()
+                .map(|_| ())
+                .ok_or(SaveFailure::Interrupted);
+        }
+        #[cfg(not(windows))]
+        {
+            let reopened =
+                open_named_file(self.directory, &self.name).map_err(classify_write_error)?;
+            let open = self
+                .file
+                .as_ref()
+                .ok_or(SaveFailure::Interrupted)
+                .and_then(|file| {
+                    Generation::from_file(file).map_err(|_| SaveFailure::Interrupted)
+                })?;
+            let reopened =
+                Generation::from_file(&reopened).map_err(|_| SaveFailure::Interrupted)?;
+            if open == reopened {
+                Ok(())
+            } else {
+                Err(SaveFailure::Interrupted)
+            }
         }
     }
 }
