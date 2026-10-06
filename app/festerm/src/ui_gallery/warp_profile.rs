@@ -80,21 +80,7 @@ fn black_backdrop_index(
     }
     let mut matched = None;
     for (index, shape) in shapes.iter().enumerate() {
-        let egui::Shape::Rect(rect) = &shape.shape else {
-            continue;
-        };
-        if rect.rect != viewport
-            || !shape.clip_rect.contains_rect(viewport)
-            || rect.fill.r() != 0
-            || rect.fill.g() != 0
-            || rect.fill.b() != 0
-            || rect.fill.a() == 0
-            || rect.fill.is_opaque()
-            || rect.brush.is_some()
-            || rect.corner_radius != egui::CornerRadius::ZERO
-            || rect.stroke != egui::Stroke::NONE
-            || rect.blur_width != 0.0
-        {
+        if !crate::software_background::full_root_black_backdrop(shape, viewport) {
             continue;
         }
         if matched.replace(index).is_some() {

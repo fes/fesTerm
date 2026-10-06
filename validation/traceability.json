@@ -2738,6 +2738,7 @@
         "picker_backdrop_attribution_requires_explicit_bounded_supported_selection",
         "picker_backdrop_attribution_rejects_missing_ambiguous_or_nonexact_geometry",
         "picker_backdrop_attribution_preserves_full_frame_pixels_and_balanced_order",
+        "modal_surface_preserves_pixels_responses_and_guarded_fallbacks",
         "warp_scene_selection_preserves_full_default_and_bounds_picker_controls",
         "profiled_surface_render_matches_original_renderer_at_two_scales",
         "replay_warp_ui_surfaces",

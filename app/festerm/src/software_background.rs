@@ -540,7 +540,7 @@ fn supports_panel_frame(ui: &egui::Ui, frame: &egui::Frame) -> bool {
     frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
 }
 
-fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+pub(crate) fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
     let egui::Shape::Rect(rect) = &shape.shape else {
         return false;
     };
@@ -589,6 +589,16 @@ fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: eg
         && shadow.blur_width.is_finite()
 }
 
+#[cfg(test)]
+fn picker_backdrops_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-picker-backdrop")
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn set_picker_backdrops_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(picker_backdrops_disabled_id(), !enabled));
+}
+
 pub(crate) fn show_modal<R>(
     context: &egui::Context,
     modal: egui::Modal,
@@ -620,13 +630,22 @@ pub(crate) fn show_modal<R>(
         return response;
     }
     let viewport = context.viewport_rect();
+    #[cfg(test)]
+    let backdrop_enabled = context.data(|data| {
+        !data
+            .get_temp::<bool>(picker_backdrops_disabled_id())
+            .unwrap_or(false)
+    });
+    #[cfg(not(test))]
+    let backdrop_enabled = true;
     let replacements = context.graphics(|graphics| {
         let mut backdrop = None;
         let mut frame = None;
         let mut ambiguous_backdrop = false;
         let mut ambiguous_frame = false;
         for (index, shape) in graphics.get(layer)?.all_entries().enumerate().skip(start.0) {
-            if response.backdrop_response.rect == viewport
+            if backdrop_enabled
+                && response.backdrop_response.rect == viewport
                 && full_root_black_backdrop(shape, viewport)
                 && matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == color)
             {

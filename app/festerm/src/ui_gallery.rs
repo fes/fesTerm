@@ -1533,6 +1533,8 @@ fn replay_warp_ui_surfaces() {
         let mut probe = SurfaceProbe::with_setup(scene, &fixture_directory, 2.0, |context| {
             crate::software_background::install(context, &state);
             crate::direct2d::install_from_environment(context, Some(&state));
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            crate::software_background::set_picker_backdrops_enabled(context, !attribute_backdrop);
         });
         let started = Instant::now();
         std::hint::black_box(probe.context.tessellate(
