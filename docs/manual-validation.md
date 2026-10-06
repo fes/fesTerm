@@ -858,6 +858,14 @@ idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
 mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
 unchanged; no new latency budgets are implied.
 
+The CPU semantic fixture test now includes both widths for all 52 bounded
+variants. Chip targets are settled and revealed through the real scrolling
+controls, with unchanged active identity and zero terminal input; first,
+inactive-middle and read-only-last menus retain their required actions.
+This automates fixture reachability, not native chip interaction or completed
+WARP rendering. AS-03, native narrow-window/animation usability and the
+matrix's remaining platform prerequisites stay pending.
+
 ### Experimental Direct2D qualification
 
 Native quad preparation has a device-free deterministic allocation control in
