@@ -709,6 +709,14 @@ nor prove a global daemon RSS or recovery-snapshot peak budget.
 
 ### Rendering performance
 
+`TERM-01` presentation-cache allocation/lifecycle coverage is automated:
+portable tests preserve copied cell values, row revisions, backing reuse and
+dimension-change retirement; the CPU-only system-allocator oracle measures
+steady refresh calls and actual long-text freeing. Existing rendering
+snapshots retain both platform baselines. This internal representation change
+adds no GUI workflow or new native acceptance claim; CP-18's visual/resource/
+latency obligations and #297's multi-day investigation remain open.
+
 Issue #327 and proposed ADR 0044 track the macOS ordinary-row-cache repair.
 Its isolated synthetic profiles use no personal shells, remote accounts,
 clipboard or secrets. Native qualification requires matched binaries, actual

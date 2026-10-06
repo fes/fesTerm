@@ -115,6 +115,17 @@ without opening a window:
 - color and attribute mapping; and
 - bounded glyph-cache behavior.
 
+Presentation-cache regressions additionally cover inline ASCII/short Unicode/
+blank payloads, long-payload retirement, stable dirty-row and same-dimension
+viewport backing, dimension-change capacity retirement, copied style/color/
+hyperlink/width values and existing row-revision/dirty-ID semantics. The
+CPU-only `render_cache_allocations` benchmark instruments Rust's system
+allocator and checks two metadata allocations per steady refresh, zero
+reallocations and actual long-payload deallocation. Both optional suite runners
+include it; rendering snapshots retain their existing Windows/non-Windows
+baselines. These are cache-stage checks, not GPU memory, RSS or native CPU
+acceptance. See the [allocation oracle](../validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle).
+
 ### Interaction replay cases
 
 Add a small test-only replay helper that applies ordered `InputEvent`,
