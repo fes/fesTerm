@@ -147,26 +147,30 @@ mod imp {
         }
     }
 
-    /// Opens one file relative to an exact directory handle without following
-    /// the final component.
-    pub fn open_file_nofollow(directory: &File, name: &Path) -> io::Result<File> {
+    fn one_component(name: &Path) -> io::Result<()> {
+        let mut components = name.components();
+        if matches!(components.next(), Some(std::path::Component::Normal(_)))
+            && components.next().is_none()
+        {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the name must contain exactly one normal component",
+            ))
+        }
+    }
+
+    fn open_nofollow(directory: &File, name: &Path, flags: nix::fcntl::OFlag) -> io::Result<File> {
         use nix::{
             fcntl::{openat, OFlag},
             sys::stat::Mode,
         };
-        let mut components = name.components();
-        if !matches!(components.next(), Some(std::path::Component::Normal(_)))
-            || components.next().is_some()
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "the file name must contain exactly one normal component",
-            ));
-        }
+        one_component(name)?;
         let descriptor = openat(
             directory,
             name,
-            OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK,
+            flags | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
             Mode::empty(),
         )
         .map_err(|error| {
@@ -176,13 +180,66 @@ mod imp {
                 io::Error::from(error)
             }
         })?;
-        let file = File::from(descriptor);
+        Ok(File::from(descriptor))
+    }
+
+    /// Opens one file relative to an exact directory handle without following
+    /// the final component.
+    pub fn open_file_nofollow(directory: &File, name: &Path) -> io::Result<File> {
+        use nix::fcntl::OFlag;
+
+        let file = open_nofollow(directory, name, OFlag::O_RDONLY | OFlag::O_NONBLOCK)?;
         if file.metadata()?.is_file() {
             Ok(file)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "the path is not a regular file",
+            ))
+        }
+    }
+
+    /// Opens one directory relative to an exact directory handle without
+    /// following the final component, retaining read access for metadata work.
+    pub fn open_directory_read_nofollow(directory: &File, name: &Path) -> io::Result<File> {
+        use nix::fcntl::OFlag;
+
+        let file = open_nofollow(directory, name, OFlag::O_RDONLY | OFlag::O_DIRECTORY)?;
+        if file.metadata()?.is_dir() {
+            Ok(file)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the path is not a directory",
+            ))
+        }
+    }
+
+    /// Opens one directory for capability traversal without requiring read
+    /// permission on a search-only ancestor.
+    pub fn open_directory_search_nofollow(directory: &File, name: &Path) -> io::Result<File> {
+        use nix::fcntl::OFlag;
+
+        let mut flags = OFlag::O_DIRECTORY;
+        #[cfg(target_os = "linux")]
+        {
+            flags |= OFlag::O_PATH;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            flags |= OFlag::from_bits_retain(nix::libc::O_SEARCH);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            flags |= OFlag::O_RDONLY;
+        }
+        let file = open_nofollow(directory, name, flags)?;
+        if file.metadata()?.is_dir() {
+            Ok(file)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the path is not a directory",
             ))
         }
     }
@@ -231,7 +288,8 @@ mod imp {
             || !security_metadata_matches(original, &expected)?
             || !security_metadata_matches(temporary, &expected)?
         {
-            return Err(io::Error::other(
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
                 "security metadata changed while it was copied",
             ));
         }
@@ -280,7 +338,8 @@ mod imp {
         if !security_metadata_matches(original, &expected)?
             || !security_metadata_matches(temporary, &expected)?
         {
-            return Err(io::Error::other(
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
                 "security metadata changed while it was copied",
             ));
         }
@@ -399,7 +458,7 @@ mod imp {
             target,
             RenameFlags::RENAME_NOREPLACE,
         )
-        .map_err(io::Error::from)
+        .map_err(rename_error)
     }
 
     #[cfg(target_os = "macos")]
@@ -447,7 +506,7 @@ mod imp {
         if renamed == 0 {
             Ok(())
         } else {
-            Err(io::Error::last_os_error())
+            Err(rename_error(nix::errno::Errno::last()))
         }
     }
 
@@ -460,14 +519,48 @@ mod imp {
     ) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "atomic no-replace rename is unavailable on this platform",
+            "no-overwrite rename is unavailable on this platform",
         ))
+    }
+
+    fn rename_error(error: nix::errno::Errno) -> io::Error {
+        if [
+            nix::errno::Errno::EINVAL,
+            nix::errno::Errno::ENOSYS,
+            nix::errno::Errno::ENOTSUP,
+        ]
+        .contains(&error)
+        {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the filesystem cannot perform a no-overwrite rename",
+            )
+        } else {
+            io::Error::from(error)
+        }
+    }
+
+    #[cfg(test)]
+    mod error_tests {
+        use super::*;
+
+        #[test]
+        fn unsupported_no_overwrite_rename_errors_are_non_retryable() {
+            for error in [
+                nix::errno::Errno::EINVAL,
+                nix::errno::Errno::ENOSYS,
+                nix::errno::Errno::ENOTSUP,
+            ] {
+                assert_eq!(rename_error(error).kind(), io::ErrorKind::Unsupported);
+            }
+        }
     }
 }
 
 #[cfg(unix)]
 pub use imp::{
-    make_private, make_private_directory, open_file_nofollow, preserve_security_metadata,
+    make_private, make_private_directory, open_directory_read_nofollow,
+    open_directory_search_nofollow, open_file_nofollow, preserve_security_metadata,
     rename_noreplace, security_metadata, security_metadata_matches, SecurityMetadata,
 };
 

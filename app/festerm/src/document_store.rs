@@ -39,6 +39,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static BEFORE_STAGING_PAYLOAD_CREATE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static AFTER_STAGING_DIRECTORY_CREATE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
     static BEFORE_SAVE_VERIFICATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     static BEFORE_SAVE_REPLACEMENT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -72,6 +74,15 @@ fn before_save_write() {
 fn before_staging_payload_create() {
     #[cfg(test)]
     BEFORE_STAGING_PAYLOAD_CREATE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+fn after_staging_directory_create() {
+    #[cfg(test)]
+    AFTER_STAGING_DIRECTORY_CREATE.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -207,13 +218,25 @@ pub(crate) struct DirectoryIdentity(FileIdentity);
 
 impl DirectoryIdentity {
     fn from_directory(directory: &cap_std::fs::Dir) -> Result<Self, std::io::Error> {
-        use cap_fs_ext::MetadataExt;
+        #[cfg(not(windows))]
+        {
+            use cap_fs_ext::MetadataExt;
 
-        let metadata = directory.dir_metadata()?;
-        Ok(Self(FileIdentity {
-            volume: metadata.dev(),
-            file: metadata.ino(),
-        }))
+            let metadata = directory.dir_metadata()?;
+            Ok(Self(FileIdentity {
+                volume: metadata.dev(),
+                file: metadata.ino(),
+            }))
+        }
+        #[cfg(windows)]
+        {
+            let directory = directory.try_clone()?.into_std_file();
+            let information = winapi_util::file::information(&directory)?;
+            Ok(Self(FileIdentity {
+                volume: information.volume_serial_number(),
+                file: information.file_index(),
+            }))
+        }
     }
 
     pub(crate) fn matches_directory(self, directory: &cap_std::fs::Dir) -> bool {
@@ -390,6 +413,7 @@ pub enum SaveFailure {
     EncryptedFile,
     NamedStreams,
     UnsupportedFilesystem,
+    CrossVolume,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -413,6 +437,7 @@ impl SaveFailure {
             Self::EncryptedFile => "This file's encryption cannot be preserved",
             Self::NamedStreams => "This file's Windows data streams cannot be preserved",
             Self::UnsupportedFilesystem => "This disk cannot support safe saving",
+            Self::CrossVolume => "This destination crossed a filesystem boundary",
         }
     }
 
@@ -446,6 +471,9 @@ impl SaveFailure {
             }
             Self::UnsupportedFilesystem => {
                 "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk."
+            }
+            Self::CrossVolume => {
+                "Nothing was written. A mount point, junction, or reparse point redirected the destination to another disk. Choose a regular destination on the intended disk."
             }
         }
     }
@@ -489,6 +517,7 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
 }
 
 pub(crate) fn open_canonical_directory(parent: &Path) -> Result<cap_std::fs::Dir, std::io::Error> {
+    #[cfg(not(unix))]
     use cap_fs_ext::DirExt;
     use std::io;
 
@@ -508,7 +537,17 @@ pub(crate) fn open_canonical_directory(parent: &Path) -> Result<cap_std::fs::Dir
         let std::path::Component::Normal(name) = component else {
             return Err(invalid());
         };
-        directory = directory.open_dir_nofollow(name)?;
+        #[cfg(unix)]
+        {
+            let parent = directory.try_clone()?.into_std_file();
+            let child =
+                festerm_unix_security::open_directory_search_nofollow(&parent, Path::new(name))?;
+            directory = cap_std::fs::Dir::from_std_file(child);
+        }
+        #[cfg(not(unix))]
+        {
+            directory = directory.open_dir_nofollow(name)?;
+        }
     }
     Ok(directory)
 }
@@ -857,26 +896,20 @@ fn freshness_in_directory(
     target: &Path,
     known: Generation,
 ) -> Freshness {
-    match directory.metadata(target) {
-        Ok(metadata) if !metadata.is_file() => Freshness::Gone(LoadFailure::NotAFile),
-        Ok(_) => {
-            let mut options = cap_std::fs::OpenOptions::new();
-            options.read(true);
-            #[cfg(unix)]
-            {
-                use cap_std::fs::OpenOptionsExt;
-                options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK);
-            }
-            let current = directory
-                .open_with(target, &options)
-                .map(cap_std::fs::File::into_std)
-                .and_then(|file| Generation::from_file(&file));
-            match current {
-                Ok(current) if current == known => Freshness::Unchanged,
-                Ok(current) => Freshness::Changed(current),
-                Err(error) => Freshness::Gone(classify_read_error(error)),
-            }
+    let file = match open_named_file(directory, target) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+            return Freshness::Gone(LoadFailure::NotAFile);
         }
+        Err(error) => return Freshness::Gone(classify_read_error(error)),
+    };
+    match file.metadata() {
+        Ok(metadata) if !metadata.is_file() => Freshness::Gone(LoadFailure::NotAFile),
+        Ok(_) => match Generation::from_file(&file) {
+            Ok(current) if current == known => Freshness::Unchanged,
+            Ok(current) => Freshness::Changed(current),
+            Err(error) => Freshness::Gone(classify_read_error(error)),
+        },
         Err(error) => Freshness::Gone(classify_read_error(error)),
     }
 }
@@ -898,9 +931,10 @@ fn classify_read_error(error: std::io::Error) -> LoadFailure {
 fn classify_write_error(error: std::io::Error) -> SaveFailure {
     match error.kind() {
         std::io::ErrorKind::PermissionDenied => SaveFailure::PermissionDenied,
-        std::io::ErrorKind::Unsupported
-        | std::io::ErrorKind::InvalidData
-        | std::io::ErrorKind::CrossesDevices => SaveFailure::UnsupportedFilesystem,
+        std::io::ErrorKind::Unsupported | std::io::ErrorKind::InvalidData => {
+            SaveFailure::UnsupportedFilesystem
+        }
+        std::io::ErrorKind::CrossesDevices => SaveFailure::CrossVolume,
         _ => SaveFailure::Interrupted,
     }
 }
@@ -944,6 +978,22 @@ fn preserve_security_metadata(
         .map_err(classify_metadata_error)
 }
 
+fn open_staging_directory(
+    directory: &cap_std::fs::Dir,
+    name: &Path,
+) -> Result<cap_std::fs::Dir, std::io::Error> {
+    #[cfg(unix)]
+    {
+        let parent = directory.try_clone()?.into_std_file();
+        let child = festerm_unix_security::open_directory_read_nofollow(&parent, name)?;
+        Ok(cap_std::fs::Dir::from_std_file(child))
+    }
+    #[cfg(not(unix))]
+    {
+        directory.open_dir(name)
+    }
+}
+
 /// A file that deletes itself unless it is explicitly kept, so a save that
 /// fails half way through leaves no debris beside the user's file.
 struct TemporaryFile<'a> {
@@ -969,6 +1019,7 @@ impl<'a> TemporaryFile<'a> {
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => return Err(classify_write_error(error)),
                 }
+                after_staging_directory_create();
             }
             #[cfg(windows)]
             let staging = {
@@ -989,7 +1040,7 @@ impl<'a> TemporaryFile<'a> {
                 }
             };
             #[cfg(unix)]
-            let staging = match directory.open_dir(&staging_directory) {
+            let staging = match open_staging_directory(directory, &staging_directory) {
                 Ok(staging) => staging,
                 Err(error) => {
                     let _ = directory.remove_dir(&staging_directory);
@@ -1016,7 +1067,11 @@ impl<'a> TemporaryFile<'a> {
                     return Err(classify_write_error(error));
                 }
             }
-            sync_directory(directory);
+            if let Err(error) = sync_directory_durably(directory) {
+                drop(staging);
+                remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                return Err(classify_write_error(error));
+            }
             let payload = Path::new("payload");
             before_staging_payload_create();
             #[cfg(unix)]
@@ -1050,8 +1105,7 @@ impl<'a> TemporaryFile<'a> {
                     #[cfg(unix)]
                     if let Err(error) = festerm_unix_security::make_private(&file) {
                         let _ = staging.remove_file(payload);
-                        if directory
-                            .open_dir(&staging_directory)
+                        if open_staging_directory(directory, &staging_directory)
                             .is_ok_and(|current| staging_identity.matches_directory(&current))
                         {
                             let _ = directory.remove_dir(&staging_directory);
@@ -1145,7 +1199,8 @@ impl<'a> TemporaryFile<'a> {
         let mut prepared = self.file.take().ok_or(SaveFailure::Interrupted)?;
         let result = self.copy_to_private_staging_file(&mut prepared, Path::new("prepared"));
         self.file = Some(prepared);
-        result
+        result?;
+        sync_directory_durably(&self.staging).map_err(classify_write_error)
     }
 
     fn finish(&mut self) {
@@ -1216,8 +1271,7 @@ impl<'a> TemporaryFile<'a> {
     }
 
     fn staging_name_matches(&self) -> bool {
-        self.directory
-            .open_dir(&self.staging_directory)
+        open_staging_directory(self.directory, &self.staging_directory)
             .is_ok_and(|directory| self.staging_identity.matches_directory(&directory))
     }
 
@@ -1263,8 +1317,7 @@ fn remove_staging_if_matches(
     staging_directory: &Path,
     expected: DirectoryIdentity,
 ) {
-    if directory
-        .open_dir(staging_directory)
+    if open_staging_directory(directory, staging_directory)
         .is_ok_and(|current| expected.matches_directory(&current))
     {
         let _ = directory.remove_dir(staging_directory);
@@ -1330,15 +1383,23 @@ fn publish_temporary(
         rename_noreplace(&temporary.staging, Path::new("payload"), directory, target).map_err(
             |error| {
                 if error.kind() == std::io::ErrorKind::AlreadyExists {
-                    generation_in_directory(directory, target)
-                        .map(SaveFailure::Conflict)
-                        .unwrap_or(SaveFailure::Interrupted)
+                    match generation_in_directory(directory, target) {
+                        Ok(generation) => SaveFailure::Conflict(generation),
+                        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+                            SaveFailure::NotAFile
+                        }
+                        Err(error) => classify_write_error(error),
+                    }
                 } else {
                     classify_write_error(error)
                 }
             },
         )?;
         temporary.close_file();
+        if let Err(error) = sync_directory_durably(directory) {
+            tracing::error!(%error, "the newly published save directory could not be synchronized");
+            return Err(temporary.recovery_required());
+        }
         after_save_replacement();
         let published = match generation_in_directory(directory, target) {
             Ok(published) => published,
@@ -1389,12 +1450,24 @@ fn publish_temporary(
             }
         },
     )?;
+    if let Err(error) =
+        sync_directory_durably(&temporary.staging).and_then(|()| sync_directory_durably(directory))
+    {
+        tracing::error!(%error, "the captured original could not be synchronized");
+        return Err(temporary.recovery_required());
+    }
     let displaced = match temporary.original_generation() {
         Ok(generation) => generation,
         Err(_) => return Err(temporary.recovery_required()),
     };
     if displaced != original_generation {
         if rename_noreplace(&temporary.staging, Path::new("original"), directory, target).is_ok() {
+            if let Err(error) = sync_directory_durably(directory)
+                .and_then(|()| sync_directory_durably(&temporary.staging))
+            {
+                tracing::error!(%error, "the restored conflict target could not be synchronized");
+                return Err(temporary.recovery_required());
+            }
             return Err(SaveFailure::Conflict(displaced));
         }
         return Err(temporary.recovery_required());
@@ -1404,12 +1477,27 @@ fn publish_temporary(
         rename_noreplace(&temporary.staging, Path::new("payload"), directory, target)
     {
         if rename_noreplace(&temporary.staging, Path::new("original"), directory, target).is_ok() {
+            if let Err(sync_error) = sync_directory_durably(directory)
+                .and_then(|()| sync_directory_durably(&temporary.staging))
+            {
+                tracing::error!(
+                    %sync_error,
+                    "the restored target after failed publication could not be synchronized"
+                );
+                return Err(temporary.recovery_required());
+            }
             return Err(classify_write_error(error));
         }
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
     temporary.close_file();
+    if let Err(error) =
+        sync_directory_durably(directory).and_then(|()| sync_directory_durably(&temporary.staging))
+    {
+        tracing::error!(%error, "the published save state could not be synchronized");
+        return Err(temporary.recovery_required());
+    }
     after_save_replacement();
     let published_file = match open_named_file(directory, target) {
         Ok(file) => file,
@@ -1624,14 +1712,18 @@ fn rename_noreplace(
 }
 
 #[cfg(unix)]
-fn sync_directory(directory: &cap_std::fs::Dir) {
-    if let Ok(directory) = directory.try_clone() {
-        let _ = directory.into_std_file().sync_all();
-    }
+fn sync_directory_durably(directory: &cap_std::fs::Dir) -> Result<(), std::io::Error> {
+    directory.try_clone()?.into_std_file().sync_all()
 }
 
 #[cfg(not(unix))]
-fn sync_directory(_directory: &cap_std::fs::Dir) {}
+fn sync_directory_durably(_directory: &cap_std::fs::Dir) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+fn sync_directory(directory: &cap_std::fs::Dir) {
+    let _ = sync_directory_durably(directory);
+}
 
 #[cfg(test)]
 mod tests {
@@ -1698,6 +1790,25 @@ mod tests {
         assert_eq!(loaded.document.text(), "alpha\nbeta\n");
         assert_eq!(loaded.generation.size(), 11);
         assert_eq!(freshness(&path, loaded.generation), Freshness::Unchanged);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loading_traverses_a_search_only_ancestor_without_requiring_read_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("search-only-ancestor");
+        let ancestor = directory.path.join("search-only");
+        fs::create_dir(&ancestor).unwrap();
+        let path = ancestor.join("notes.md");
+        fs::write(&path, b"alpha\n").unwrap();
+        fs::set_permissions(&ancestor, fs::Permissions::from_mode(0o111)).unwrap();
+
+        let result = load(&path, bounds());
+
+        fs::set_permissions(&ancestor, fs::Permissions::from_mode(0o700)).unwrap();
+        let loaded = result.unwrap();
+        assert_eq!(loaded.document.text(), "alpha\n");
     }
 
     #[test]
@@ -1980,13 +2091,16 @@ mod tests {
         for kind in [
             std::io::ErrorKind::Unsupported,
             std::io::ErrorKind::InvalidData,
-            std::io::ErrorKind::CrossesDevices,
         ] {
             assert_eq!(
                 classify_write_error(std::io::Error::from(kind)),
                 SaveFailure::UnsupportedFilesystem
             );
         }
+        assert_eq!(
+            classify_write_error(std::io::Error::from(std::io::ErrorKind::CrossesDevices)),
+            SaveFailure::CrossVolume
+        );
     }
 
     #[test]
@@ -2179,6 +2293,53 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_symlink_substitution_before_open_is_refused_without_mutation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("staging-open-substitution");
+        let path = directory.file("notes.md", "before\n");
+        let victim = directory.path.join("victim");
+        fs::create_dir(&victim).unwrap();
+        fs::set_permissions(&victim, fs::Permissions::from_mode(0o750)).unwrap();
+        fs::write(victim.join("payload"), b"keep\n").unwrap();
+        let loaded = load(&path, bounds()).unwrap();
+        let observed_directory = directory.path.clone();
+        let victim_for_hook = victim.clone();
+        AFTER_STAGING_DIRECTORY_CREATE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let staging = fs::read_dir(&observed_directory)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|candidate| {
+                        candidate
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                name.starts_with(".festerm-save-") && name.ends_with(".stage")
+                            })
+                    })
+                    .expect("new staging directory");
+                fs::rename(&staging, observed_directory.join("stolen.stage")).unwrap();
+                std::os::unix::fs::symlink(&victim_for_hook, &staging).unwrap();
+            }));
+        });
+
+        let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+        assert_eq!(failure, SaveFailure::Interrupted);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert_eq!(
+            fs::read_to_string(victim.join("payload")).unwrap(),
+            "keep\n"
+        );
+        assert_eq!(
+            fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
     }
 
     #[cfg(unix)]
