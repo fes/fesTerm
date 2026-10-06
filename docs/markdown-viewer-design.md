@@ -202,6 +202,24 @@ the already-counted Unicode prefix, and highlighting visits only the matches
 overlapping each text run. These are internal cost reductions, not changes to
 match counts, current-match selection, clipping, or Unicode source offsets.
 
+The standalone viewer retains exact wrapped outline-row geometry for at most
+4096 headings in its current snapshot. An unchanged offscreen row reuses its
+height and text ink bounds instead of cloning its heading into another layout
+job. Every row still has a live response, focus identity and accessibility node;
+visible rows always prepare normally. Actual width, pixels per point, explicit
+font, active font definitions and text options invalidate geometry; successful
+snapshot replacement clears it. Theme/selection colors remain live and cannot
+affect the stored dimensions. Rows beyond the cap prepare normally, never
+disappear. No galley or atlas UV survives a frame in this cache.
+
+The shared editor Preview also reuses its existing heading-position vector,
+clearing positions before each render; the standalone viewer no longer collects
+unused positions. These are bounded preparation/allocation reductions, not
+Preview block virtualization. Source line construction, full Preview traversal,
+and the editor's separate outline remain follow-up work. Deterministic
+old-control/candidate layout counts and visible-shape/navigation/accessibility
+oracles do not establish native latency, GPU drawing or total-memory gains.
+
 Preview code-byte navigation forwards the existing selected row's vertical
 target after its horizontal code scroller closes. Find and the shared editor
 Preview therefore reach offscreen fences instead of consuming the byte request

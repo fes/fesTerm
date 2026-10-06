@@ -110,6 +110,7 @@ const OUTLINE_ITEM_PADDING_Y: f32 = 6.0;
 const OUTLINE_ITEM_INDENT: f32 = 12.0;
 const OUTLINE_ITEM_ACCENT_WIDTH: f32 = 2.0;
 const OUTLINE_ITEM_RADIUS: f32 = 3.0;
+const MAX_PREPARED_OUTLINE_ROWS: usize = 4096;
 /// Height reserved for the viewer's own footer, used only when the shared
 /// application status bar is hidden. Matches the status bar's own geometry
 /// so toggling it doesn't reflow the document.
@@ -458,6 +459,7 @@ pub struct MarkdownViewerTab {
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
+    outline_preparation: OutlinePreparation,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
 }
@@ -505,6 +507,7 @@ impl MarkdownViewerTab {
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
+            outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -561,6 +564,7 @@ impl MarkdownViewerTab {
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
+            outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -695,7 +699,6 @@ impl MarkdownViewerTab {
                     };
                     let body_height = (ui.available_height() - footer_height).max(120.0);
                     let mut document_rect = None;
-                    let mut heading_tops = Vec::new();
                     ui.allocate_ui(vec2(ui.available_width(), body_height), |ui| {
                         ui.set_height(body_height);
                         if let Some(document) = self.document.as_ref() {
@@ -718,8 +721,9 @@ impl MarkdownViewerTab {
                                     pending_scroll: &mut self.pending_scroll,
                                     line_heading_indices: &self.line_heading_indices,
                                     source_syntax: &mut self.source_syntax,
+                                    outline_preparation: &mut self.outline_preparation,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
-                                    heading_tops: &mut heading_tops,
+                                    heading_tops: None,
                                 };
                                 document_rect =
                                     Some(render_state.show_document(ui, document).document_rect);
@@ -774,6 +778,7 @@ impl MarkdownViewerTab {
                 self.pending_scroll = Some(pending_scroll_for_anchor(&document, anchor));
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
                 self.source_syntax = None;
+                self.outline_preparation.clear();
                 self.document = Some(document);
                 self.error = None;
                 self.stale_snapshot = false;
@@ -1547,11 +1552,130 @@ struct MarkdownRenderState<'a> {
     pending_scroll: &'a mut Option<PendingScroll>,
     line_heading_indices: &'a [Option<usize>],
     source_syntax: &'a mut Option<Vec<festerm_syntax::Span>>,
+    outline_preparation: &'a mut OutlinePreparation,
     outline_keyboard_focus: &'a mut bool,
-    /// Where each heading was painted this frame, so a caller that wants to
-    /// know which section the reader is looking at can ask the rendering
-    /// rather than guess from a scroll offset.
-    heading_tops: &'a mut Vec<(usize, f32)>,
+    /// Shared Preview measures section positions; the standalone viewer has
+    /// no consumer and does not collect them.
+    heading_tops: Option<&'a mut Vec<(usize, f32)>>,
+}
+
+#[derive(Default)]
+struct OutlinePreparation {
+    key: Option<OutlineGeometryKey>,
+    rows: Vec<Option<OutlineRowGeometry>>,
+    #[cfg(test)]
+    probe: Option<OutlinePreparationProbe>,
+}
+
+struct OutlineGeometryKey {
+    width: f32,
+    pixels_per_point: f32,
+    font: FontId,
+    definitions: egui::FontDefinitions,
+    options: egui::epaint::text::TextOptions,
+}
+
+#[derive(Clone, Copy)]
+struct OutlineRowGeometry {
+    height: f32,
+    text_bounds: egui::Rect,
+}
+
+impl OutlinePreparation {
+    fn clear(&mut self) {
+        self.key = None;
+        self.rows.clear();
+    }
+
+    fn begin(&mut self, ui: &egui::Ui, rows: usize) {
+        let width = ui.available_width();
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
+        let valid = self.key.as_ref().is_some_and(|key| {
+            key.width == width
+                && key.pixels_per_point == pixels_per_point
+                && key.font == font
+                && ui.painter().fonts(|fonts| {
+                    key.definitions == *fonts.definitions() && key.options == *fonts.options()
+                })
+        });
+        if !valid {
+            self.rows.clear();
+            self.key = Some(ui.painter().fonts(|fonts| OutlineGeometryKey {
+                width,
+                pixels_per_point,
+                font,
+                definitions: fonts.definitions().clone(),
+                options: *fonts.options(),
+            }));
+        }
+        let rows = rows.min(MAX_PREPARED_OUTLINE_ROWS);
+        if self.rows.capacity() < rows {
+            self.rows.reserve_exact(rows - self.rows.len());
+        }
+        self.rows.resize(rows, None);
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.rows = 0;
+            probe.layouts = 0;
+            probe.prepared_text_bytes = 0;
+            probe.observations.clear();
+        }
+    }
+
+    fn offscreen_geometry(&self, ui: &egui::Ui, index: usize) -> Option<OutlineRowGeometry> {
+        #[cfg(test)]
+        if self.probe.as_ref().is_some_and(|probe| probe.ordinary) {
+            return None;
+        }
+        let geometry = self.rows.get(index).copied().flatten()?;
+        let rect = egui::Rect::from_min_size(
+            ui.next_widget_position(),
+            vec2(ui.available_width(), geometry.height),
+        );
+        let text_rect = geometry.text_bounds.translate(rect.min.to_vec2());
+        (!ui.is_rect_visible(rect.union(text_rect))).then_some(geometry)
+    }
+
+    fn item(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        heading: &festerm_markdown::Heading,
+        selected: bool,
+    ) -> egui::Response {
+        let geometry = self.offscreen_geometry(ui, index);
+        let (response, measured) = outline_item_with_geometry(ui, heading, selected, geometry);
+        if let Some(cached) = self.rows.get_mut(index) {
+            *cached = Some(measured);
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.rows += 1;
+            if geometry.is_none() {
+                probe.layouts += 1;
+                probe.prepared_text_bytes += heading.text().len();
+            }
+            probe.observations.push((
+                response.id,
+                response.rect,
+                response.interact_rect,
+                response.has_focus(),
+                response.clicked(),
+            ));
+        }
+        response
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct OutlinePreparationProbe {
+    ordinary: bool,
+    rows: usize,
+    layouts: usize,
+    prepared_text_bytes: usize,
+    observations: Vec<(egui::Id, egui::Rect, egui::Rect, bool, bool)>,
 }
 
 #[derive(Default)]
@@ -1864,7 +1988,11 @@ impl MarkdownRenderState<'_> {
         heading: &festerm_markdown::Heading,
     ) {
         let selected = *self.outline_selected == Some(index);
-        if outline_item(ui, heading, selected).clicked() {
+        if self
+            .outline_preparation
+            .item(ui, index, heading, selected)
+            .clicked()
+        {
             *self.outline_selected = Some(index);
             *self.pending_scroll = Some(PendingScroll::Heading(index));
             *self.outline_keyboard_focus = true;
@@ -1883,6 +2011,8 @@ impl MarkdownRenderState<'_> {
             .max_height(content.available_height())
             .show(&mut content, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                self.outline_preparation
+                    .begin(ui, document.headings().len());
                 for (index, heading) in document.headings().iter().enumerate() {
                     self.show_outline_item(ui, index, heading);
                 }
@@ -2069,7 +2199,9 @@ impl MarkdownRenderState<'_> {
                 egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
             );
         }
-        self.heading_tops.push((heading_index, response.rect.top()));
+        if let Some(heading_tops) = self.heading_tops.as_mut() {
+            heading_tops.push((heading_index, response.rect.top()));
+        }
         if matches!(*self.pending_scroll, Some(PendingScroll::Heading(index)) if index == heading_index)
         {
             response.scroll_to_me(Some(Align::Center));
@@ -3945,7 +4077,8 @@ impl MarkdownPreviewPane {
         let Some(document) = self.document.take() else {
             return;
         };
-        let mut heading_tops = Vec::new();
+        let mut heading_tops = std::mem::take(&mut self.heading_tops);
+        heading_tops.clear();
         let mut state = MarkdownRenderState {
             code_copy_caption: CodeCopyCaptionPreparation::default(),
             mode: MarkdownViewerMode::Preview,
@@ -3959,8 +4092,9 @@ impl MarkdownPreviewPane {
             pending_scroll: &mut self.pending_scroll,
             line_heading_indices: &self.line_heading_indices,
             source_syntax: &mut self.source_syntax,
+            outline_preparation: &mut OutlinePreparation::default(),
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
-            heading_tops: &mut heading_tops,
+            heading_tops: Some(&mut heading_tops),
         };
         #[cfg(test)]
         {
@@ -4072,6 +4206,15 @@ fn outline_item(
     heading: &festerm_markdown::Heading,
     selected: bool,
 ) -> egui::Response {
+    outline_item_with_geometry(ui, heading, selected, None).0
+}
+
+fn outline_item_with_geometry(
+    ui: &mut egui::Ui,
+    heading: &festerm_markdown::Heading,
+    selected: bool,
+    cached_offscreen_geometry: Option<OutlineRowGeometry>,
+) -> (egui::Response, OutlineRowGeometry) {
     // `.fmd-outline-item` gives H1 and H2 the same inset and only steps in
     // from `.fmd-depth2` onward: in a document whose H1 is the title, the H2
     // sections read as its peers in the outline, and indenting every level
@@ -4088,14 +4231,29 @@ fn outline_item(
     let width = ui.available_width();
     let text_left =
         OUTLINE_ITEM_PADDING_X + OUTLINE_ITEM_ACCENT_WIDTH + OUTLINE_ITEM_PADDING_X + indent;
-    let galley = ui.painter().layout(
-        heading.text().to_owned(),
-        font,
-        text_color,
-        (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
-    );
-    let height = galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    // Retain only bounded, snapshot-owned geometry, never atlas-backed galleys.
+    // All rows still allocate live responses and accessibility nodes.
+    let galley = cached_offscreen_geometry.is_none().then(|| {
+        ui.painter().layout(
+            heading.text().to_owned(),
+            font,
+            text_color,
+            (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
+        )
+    });
+    let geometry = cached_offscreen_geometry.unwrap_or_else(|| {
+        let galley = galley.as_ref().expect("uncached row");
+        OutlineRowGeometry {
+            height: galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0,
+            text_bounds: egui::epaint::TextShape::new(
+                egui::pos2(text_left, OUTLINE_ITEM_PADDING_Y),
+                galley.clone(),
+                text_color,
+            )
+            .visual_bounding_rect(),
+        }
+    });
+    let (rect, response) = ui.allocate_exact_size(vec2(width, geometry.height), Sense::click());
     response.widget_info(|| {
         WidgetInfo::selected(
             WidgetType::Button,
@@ -4130,12 +4288,17 @@ fn outline_item(
             theme::ACCENT_PRIMARY,
         );
     }
-    ui.painter().galley(
-        egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
-        galley,
-        text_color,
-    );
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if let Some(galley) = galley {
+        ui.painter().galley(
+            egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
+            galley,
+            text_color,
+        );
+    }
+    (
+        response.on_hover_cursor(egui::CursorIcon::PointingHand),
+        geometry,
+    )
 }
 
 /// The outline panel's chrome and its titled content area.
@@ -4599,8 +4762,9 @@ mod tests {
                     pending_scroll: &mut pending_scroll,
                     line_heading_indices: &[],
                     source_syntax: &mut None,
+                    outline_preparation: &mut OutlinePreparation::default(),
                     outline_keyboard_focus: &mut outline_keyboard_focus,
-                    heading_tops: &mut heading_tops,
+                    heading_tops: Some(&mut heading_tops),
                 };
                 state.render_blocks(ui, parsed.blocks(), &parsed, InlineRenderStyle::body());
             },
@@ -6714,9 +6878,416 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
     }
 
-    /// `Ctrl+O` inside a viewer replaces the document but must not carry the
-    /// previous document's resource approvals across
-    /// (`docs/adr/0030-native-markdown-viewer.md`).
+    fn outline_preparation_fixture(rows: usize) -> String {
+        (0..rows)
+            .map(|index| {
+                let depth = "#".repeat(index % 6 + 1);
+                let title = if index % 7 == 0 {
+                    "Unicode café 漢字 and a deliberately long heading that wraps onto several rows"
+                } else {
+                    "Short heading"
+                };
+                format!("{depth} {title} {index}\n\n")
+            })
+            .collect()
+    }
+
+    fn outline_preparation_pair(text: &str) -> [(egui::Context, MarkdownViewerTab); 2] {
+        std::array::from_fn(|index| {
+            let context = code_navigation_context();
+            context.enable_accesskit();
+            let mut viewer = MarkdownViewerTab::open_remote(
+                test_remote_source("/owned/outline.md"),
+                "/owned/outline.md".into(),
+                text.as_bytes().to_vec(),
+            );
+            viewer.outline_preparation.probe = Some(OutlinePreparationProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
+            (context, viewer)
+        })
+    }
+
+    fn outline_preparation_frame(
+        pair: &mut [(egui::Context, MarkdownViewerTab); 2],
+        frame: usize,
+        size: egui::Vec2,
+        scroll: f32,
+        events: Vec<egui::Event>,
+    ) -> [egui::FullOutput; 2] {
+        let output = std::array::from_fn(|index| {
+            let (context, viewer) = &mut pair[index];
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(frame as f64 / 60.0),
+                    events: events.clone(),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("owned-outline-preparation")
+                        .vertical_scroll_offset(scroll)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let headings = viewer.document.as_ref().unwrap().headings();
+                            viewer.outline_preparation.begin(ui, headings.len());
+                            for (index, heading) in headings.iter().enumerate() {
+                                let response = viewer.outline_preparation.item(
+                                    ui,
+                                    index,
+                                    heading,
+                                    viewer.outline_selected == Some(index),
+                                );
+                                if response.clicked() {
+                                    viewer.outline_selected = Some(index);
+                                    viewer.pending_scroll = Some(PendingScroll::Heading(index));
+                                    viewer.outline_keyboard_focus = true;
+                                }
+                            }
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(
+            visible_outline_shapes(&output[0]),
+            visible_outline_shapes(&output[1])
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.accesskit_update),
+            format!("{:?}", output[1].platform_output.accesskit_update),
+            "all headings retain their accessibility nodes, IDs, bounds and order"
+        );
+        let ordinary = pair[0].1.outline_preparation.probe.as_ref().unwrap();
+        let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+        assert_eq!(ordinary.observations, prepared.observations);
+        assert_eq!(ordinary.rows, prepared.rows);
+        assert_eq!(ordinary.rows, ordinary.layouts);
+        assert_eq!(pair[0].1.outline_selected, pair[1].1.outline_selected);
+        assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
+        output
+    }
+
+    fn visible_outline_shapes(output: &egui::FullOutput) -> Vec<egui::epaint::ClippedShape> {
+        output
+            .shapes
+            .iter()
+            .filter(|shape| {
+                shape
+                    .shape
+                    .visual_bounding_rect()
+                    .intersects(shape.clip_rect)
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn outline_preparation_bounds_warm_layout_work_without_losing_wrapped_rows() {
+        for rows in [64, 400, 2000] {
+            let text = outline_preparation_fixture(rows);
+            let mut pair = outline_preparation_pair(&text);
+            let size = vec2(216.0, 480.0);
+            outline_preparation_frame(&mut pair, 0, size, 0.0, Vec::new());
+            assert_eq!(
+                pair[1]
+                    .1
+                    .outline_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .layouts,
+                rows
+            );
+            // Scrollbar admission can change the actual wrap width on pass two.
+            for frame in 1..4 {
+                outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+            }
+            let maximum_scroll = pair[0]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations
+                .iter()
+                .map(|(_, rect, ..)| rect.height())
+                .sum::<f32>()
+                - size.y;
+            for (frame, requested_scroll) in [(4, 0.0_f32), (5, 1100.0_f32), (6, 8000.0_f32)] {
+                let scroll = requested_scroll.min(maximum_scroll.max(0.0));
+                outline_preparation_frame(&mut pair, frame, size, scroll, Vec::new());
+                let ordinary = pair[0].1.outline_preparation.probe.as_ref().unwrap();
+                let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+                assert!(
+                    (1..=32).contains(&prepared.layouts),
+                    "{rows} rows: {}",
+                    prepared.layouts
+                );
+                assert!(prepared.prepared_text_bytes * 2 < ordinary.prepared_text_bytes);
+                println!(
+                    "outline rows={rows} scroll={scroll}: layouts old={} candidate={}, layout text bytes old={} candidate={}",
+                    ordinary.layouts, prepared.layouts,
+                    ordinary.prepared_text_bytes, prepared.prepared_text_bytes,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outline_preparation_invalidates_width_scale_fonts_options_and_snapshot() {
+        let mut pair = outline_preparation_pair(&outline_preparation_fixture(400));
+        let mut size = vec2(216.0, 480.0);
+        for frame in 0..3 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        for control in 0..5 {
+            for (context, viewer) in &mut pair {
+                match control {
+                    0 => {}
+                    1 => context.set_pixels_per_point(1.5),
+                    2 => {
+                        let mut definitions = egui::FontDefinitions::default();
+                        definitions
+                            .families
+                            .get_mut(&egui::FontFamily::Proportional)
+                            .unwrap()
+                            .reverse();
+                        context.set_fonts(definitions);
+                    }
+                    3 => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    _ => {
+                        let replacement = outline_preparation_fixture(400).replace(
+                            "Short heading",
+                            "A replacement heading with different wrapping",
+                        );
+                        viewer.apply_load_result(Ok((
+                            "owned replacement".into(),
+                            document(&replacement),
+                        )));
+                        assert!(viewer.outline_preparation.rows.is_empty());
+                    }
+                }
+            }
+            if control == 0 {
+                size.x = 140.0;
+            }
+            outline_preparation_frame(&mut pair, 3 + control * 3, size, 0.0, Vec::new());
+            assert_eq!(
+                pair[1]
+                    .1
+                    .outline_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .layouts,
+                400
+            );
+            for frame in 1..3 {
+                outline_preparation_frame(
+                    &mut pair,
+                    3 + control * 3 + frame,
+                    size,
+                    0.0,
+                    Vec::new(),
+                );
+            }
+            let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+            assert!(prepared.layouts <= 32);
+            println!(
+                "outline invalidation control={control}: cold layouts=400 warm layouts={}",
+                prepared.layouts,
+            );
+        }
+        for (context, _) in &pair {
+            context.set_theme(egui::ThemePreference::Light);
+        }
+        outline_preparation_frame(&mut pair, 20, size, 8000.0, Vec::new());
+    }
+
+    #[test]
+    fn outline_preparation_cap_falls_back_and_keeps_live_offscreen_navigation() {
+        let rows = MAX_PREPARED_OUTLINE_ROWS + 16;
+        let text = outline_preparation_fixture(rows);
+        let mut pair = outline_preparation_pair(&outline_preparation_fixture(3000));
+        let size = vec2(216.0, 480.0);
+        outline_preparation_frame(&mut pair, 0, size, 0.0, Vec::new());
+        for (_, viewer) in &mut pair {
+            viewer.apply_load_result(Ok(("owned larger revision".into(), document(&text))));
+        }
+        for frame in 0..4 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+        assert_eq!(
+            pair[1].1.outline_preparation.rows.len(),
+            MAX_PREPARED_OUTLINE_ROWS
+        );
+        assert!(pair[1].1.outline_preparation.rows.capacity() <= MAX_PREPARED_OUTLINE_ROWS);
+        assert!((16..=48).contains(&prepared.layouts));
+        println!(
+            "outline cap: rows={rows}, retained={}, capacity={}, geometry bytes={}, layouts old={rows} candidate={}",
+            pair[1].1.outline_preparation.rows.len(),
+            pair[1].1.outline_preparation.rows.capacity(),
+            pair[1].1.outline_preparation.rows.capacity() * std::mem::size_of::<Option<OutlineRowGeometry>>(),
+            prepared.layouts,
+        );
+        // All widgets, including uncached and offscreen rows, keep stable focus IDs.
+        for (context, viewer) in &mut pair {
+            let id = viewer
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations[rows - 1]
+                .0;
+            context.memory_mut(|memory| memory.request_focus(id));
+        }
+        outline_preparation_frame(&mut pair, 4, size, 0.0, Vec::new());
+        for (_, viewer) in &pair {
+            assert!(
+                viewer
+                    .outline_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .observations[rows - 1]
+                    .3
+            );
+        }
+
+        let total_height: f32 = pair[0]
+            .1
+            .outline_preparation
+            .probe
+            .as_ref()
+            .unwrap()
+            .observations
+            .iter()
+            .map(|(_, rect, ..)| rect.height())
+            .sum();
+        let scroll = total_height - size.y;
+        for frame in 5..7 {
+            outline_preparation_frame(&mut pair, frame, size, scroll, Vec::new());
+        }
+        let tail = pair[0]
+            .1
+            .outline_preparation
+            .probe
+            .as_ref()
+            .unwrap()
+            .observations[rows - 1]
+            .1;
+        assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains(tail.center()));
+        for (frame, pressed) in [(7, true), (8, false)] {
+            outline_preparation_frame(
+                &mut pair,
+                frame,
+                size,
+                scroll,
+                vec![
+                    egui::Event::PointerMoved(tail.center()),
+                    egui::Event::PointerButton {
+                        pos: tail.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(
+            pair[1].1.pending_scroll,
+            Some(PendingScroll::Heading(rows - 1))
+        );
+
+        let mut navigation = outline_preparation_pair(&outline_preparation_fixture(400));
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut arrivals = [None; 2];
+        for frame in 0..7 {
+            let events = match frame {
+                1 | 2 => vec![egui::Event::Key {
+                    key: if frame == 1 {
+                        egui::Key::ArrowDown
+                    } else {
+                        egui::Key::Enter
+                    },
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                _ => Vec::new(),
+            };
+            let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
+                let (context, viewer) = &mut navigation[index];
+                if frame == 1 {
+                    viewer.outline_selected = Some(398);
+                    viewer.outline_keyboard_focus = true;
+                }
+                let output = code_navigation_frame(context, frame, events.clone(), |ui| {
+                    viewer.show(ui, tab_id);
+                });
+                let title = viewer.document.as_ref().unwrap().headings()[399].text();
+                if arrivals[index].is_none() && visible_code_geometry(&output, title).is_some() {
+                    arrivals[index] = Some(frame);
+                }
+                output
+            });
+            assert_eq!(
+                visible_outline_shapes(&output[0]),
+                visible_outline_shapes(&output[1])
+            );
+            assert_eq!(
+                format!("{:?}", output[0].platform_output.accesskit_update),
+                format!("{:?}", output[1].platform_output.accesskit_update),
+            );
+        }
+        // Both paths must reach the same heading on the same settling frame.
+        assert!(arrivals[0].is_some());
+        assert_eq!(arrivals[0], arrivals[1]);
+        println!(
+            "outline keyboard tail arrival: old={:?} candidate={:?}",
+            arrivals[0], arrivals[1],
+        );
+        for (_, viewer) in &navigation {
+            assert_eq!(viewer.outline_selected, Some(399));
+            assert!(viewer.pending_scroll.is_none());
+        }
+    }
+
+    #[test]
+    fn preview_heading_positions_reuse_storage_and_replace_old_revision_positions() {
+        let context = code_navigation_context();
+        let mut pane = MarkdownPreviewPane::new(
+            LocalMarkdownSource::new(PathBuf::from(r"Q:\owned\positions.md"))
+                .unwrap()
+                .into(),
+            &outline_preparation_fixture(400),
+        );
+        code_navigation_frame(&context, 0, Vec::new(), |ui| pane.show(ui));
+        let pointer = pane.heading_tops.as_ptr();
+        let capacity = pane.heading_tops.capacity();
+        for frame in 1..4 {
+            pane.scroll_to_heading(399);
+            code_navigation_frame(&context, frame, Vec::new(), |ui| pane.show(ui));
+            assert_eq!(pane.heading_tops.as_ptr(), pointer);
+            assert_eq!(pane.heading_tops.capacity(), capacity);
+            assert_eq!(pane.visible_heading(), Some(399));
+        }
+        pane.parse("# Replacement\n\nOnly one section.\n".into());
+        code_navigation_frame(&context, 4, Vec::new(), |ui| pane.show(ui));
+        assert_eq!(pane.heading_tops.len(), 1);
+        assert_eq!(pane.heading_tops[0].0, 0);
+    }
+
     #[test]
     fn outline_and_preview_keep_separate_vertical_viewports() {
         let document = document(
@@ -6757,8 +7328,9 @@ mod tests {
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
                         source_syntax: &mut None,
+                        outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
-                        heading_tops: &mut heading_tops,
+                        heading_tops: Some(&mut heading_tops),
                     };
                     layout = Some(render_state.show_document(ui, &document));
                 });
@@ -6826,8 +7398,9 @@ mod tests {
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
                         source_syntax: &mut None,
+                        outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
-                        heading_tops: &mut heading_tops,
+                        heading_tops: Some(&mut heading_tops),
                     };
                     layout = Some(render_state.show_document(ui, &document));
                 });
