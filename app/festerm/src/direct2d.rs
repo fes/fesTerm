@@ -156,41 +156,6 @@ mod native {
         }
     }
 
-    #[cfg(test)]
-    mod admission_tests {
-        use super::*;
-
-        #[test]
-        fn native_atlas_refusal_keeps_backend_available_and_resumes() {
-            let status = Status {
-                active: AtomicBool::new(true),
-                frames: AtomicU64::new(0),
-                reused_frames: AtomicU64::new(0),
-                first_failure: OnceLock::new(),
-                unsupported_frame: AtomicBool::new(false),
-                last_updated_pixels: AtomicU64::new(0),
-                last_surface_pixels: AtomicU64::new(0),
-                last_surface: Mutex::new(None),
-                font_atlas_samples: Mutex::new(Vec::new()),
-            };
-            status.report_unsupported("invalid texture dimensions");
-            assert!(status.unsupported_frame.load(Ordering::Relaxed));
-            assert!(status.active.load(Ordering::Relaxed));
-            let first = status.first_failure.get().unwrap().as_ptr();
-            status.report_unsupported("another unsupported frame");
-            assert_eq!(status.first_failure.get().unwrap().as_ptr(), first);
-            assert_eq!(
-                status.first_failure.get().unwrap(),
-                "invalid texture dimensions"
-            );
-            status.report_resumed();
-            assert!(!status.unsupported_frame.load(Ordering::Relaxed));
-            assert!(status.active.load(Ordering::Relaxed));
-            status.report_unsupported("next refusal episode");
-            assert!(status.unsupported_frame.load(Ordering::Relaxed));
-        }
-    }
-
     struct Paint {
         pipeline: Arc<wgpu::RenderPipeline>,
         bindings: wgpu::BindGroup,
@@ -534,6 +499,41 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 "final-target host copy enabled; ineligible frames retain shader composition");
         }
         Ok(status)
+    }
+
+    #[cfg(test)]
+    mod admission_tests {
+        use super::*;
+
+        #[test]
+        fn native_atlas_refusal_keeps_backend_available_and_resumes() {
+            let status = Status {
+                active: AtomicBool::new(true),
+                frames: AtomicU64::new(0),
+                reused_frames: AtomicU64::new(0),
+                first_failure: OnceLock::new(),
+                unsupported_frame: AtomicBool::new(false),
+                last_updated_pixels: AtomicU64::new(0),
+                last_surface_pixels: AtomicU64::new(0),
+                last_surface: Mutex::new(None),
+                font_atlas_samples: Mutex::new(Vec::new()),
+            };
+            status.report_unsupported("invalid texture dimensions");
+            assert!(status.unsupported_frame.load(Ordering::Relaxed));
+            assert!(status.active.load(Ordering::Relaxed));
+            let first = status.first_failure.get().unwrap().as_ptr();
+            status.report_unsupported("another unsupported frame");
+            assert_eq!(status.first_failure.get().unwrap().as_ptr(), first);
+            assert_eq!(
+                status.first_failure.get().unwrap(),
+                "invalid texture dimensions"
+            );
+            status.report_resumed();
+            assert!(!status.unsupported_frame.load(Ordering::Relaxed));
+            assert!(status.active.load(Ordering::Relaxed));
+            status.report_unsupported("next refusal episode");
+            assert!(status.unsupported_frame.load(Ordering::Relaxed));
+        }
     }
 }
 
