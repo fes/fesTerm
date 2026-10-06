@@ -3,6 +3,28 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Retiring glyph layouts without discarding the warm cache
+
+The #320 review found that one new text/style key at the 4,096-layout limit
+cleared every glyph layout. A compiled production-route control confirmed
+4,096 entries became one. Even mostly repeated output could then rebuild
+thousands of unchanged layouts after a small style change.
+
+The same limit now retires one least-recently-used layout. The already-locked
+`lru-slab` implementation supplies constant-time indexed recency links; the
+cache stores hashes and slot IDs, not a second owned text-key inventory.
+Recorded hash plus exact slot identifies a victim even under collisions.
+Borrowed randomized/prehashed lookup remains unchanged, and recency IDs are
+explicitly excluded from glyph identity. Manual and font/atlas resets still
+clear affected layouts and release recency storage.
+
+Four new regressions cover survivors, key/hash equivalence, forced-collision
+owner retirement and 8,192 insertions interleaved with 65,536 hot hits at a
+fixed 4,096-slot plateau. Existing clear and both-platform rendering checks
+remain the correctness oracle. This adds bounded bookkeeping and deliberately
+keeps a saturated cache warm; it does not promise lower retained RAM, native
+CPU gains, GPU retirement or an explanation for #297.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged

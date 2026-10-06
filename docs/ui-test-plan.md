@@ -115,6 +115,17 @@ without opening a window:
 - color and attribute mapping; and
 - bounded glyph-cache behavior.
 
+The glyph-layout retirement oracle fills the unchanged 4,096-entry bound,
+refreshes a hot entry, and requires one capacity-crossing miss to preserve
+4,095 old entries while retiring the least-recently-used one. A churn fixture
+checks 8,192 further insertions, 65,536 hot hits and a fixed 4,096-slot plateau.
+Forced hash collisions prove slot-specific retirement and an actual cache
+`Arc` owner drop; key/query hash tests exclude recency IDs from glyph identity.
+Explicit reset releases recency storage, while existing font/atlas and rendering
+tests retain both platform baselines. This is bounded cache-work evidence, not
+total heap, native CPU or presentation acceptance. See the
+[retirement oracle](../validation/terminal-performance/README.md#glyph-layout-retirement-oracle).
+
 ### Interaction replay cases
 
 Add a small test-only replay helper that applies ordered `InputEvent`,

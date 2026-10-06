@@ -187,6 +187,14 @@ This is not a multi-day reproducer, real persistent-shell reconnect, native
 presentation measurement or attribution of WARP worker threads; #297 and
 CP-18 remain open. See the performance validation guide.
 
+For `TYPE-01` and `TERM-01`, the glyph-layout cache retains its 4,096-entry
+bound but retires only the least-recently-used entry on a capacity-crossing
+miss. Indexed recency touches do not scan arrays or copy keys; font/atlas and
+manual resets still invalidate every affected layout. Collision-safe recorded
+hash/slot identity and bounded slot reuse are automated cache-work checks.
+The extra bounded metadata and fuller warm-cache retention are intentional;
+these tests do not assert lower total memory, native CPU or CP-18 acceptance.
+
 ## How to use the graph
 
 ### Isolated iOS feasibility host

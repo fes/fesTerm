@@ -2282,6 +2282,7 @@ dependencies = [
  "festerm-test-support",
  "hashbrown 0.17.1",
  "icu_properties",
+ "lru-slab",
  "swash",
  "ttf-parser",
  "unicode-segmentation",

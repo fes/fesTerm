@@ -2217,6 +2217,28 @@ supports investigating incremental rendering; it is not evidence of an idle
 repaint loop. These are the benchmark-only PR #264 measurements, before the
 retained renderer.
 
+## Glyph-layout retirement oracle
+
+Run `cargo test --locked -p festerm-ui-egui --lib glyph_cache_ -- --nocapture`.
+These ordinary portable tests also run in the workspace suite; no opt-in
+native window, GPU, accounts or configuration is required.
+
+At the unchanged 4,096-layout limit, one miss must retire exactly the
+least-recently-used entry and preserve 4,095 others, including a just-touched
+hot key. The compiled former implementation instead reduced the inventory
+to one. Further churn combines 8,192 new keys with 65,536 hits across eight
+hot styles, requiring both occupied count and slot capacity to remain 4,096.
+Forced-collision retirement identifies the exact slot and drops one actual
+cache `Arc` owner; equality/hash checks prove slot IDs do not change text/style
+identity or borrowed cached-hash lookup. Explicit reset drops slot backing.
+
+LRU tracking adds bounded metadata and keeps the warm cache at its existing
+limit after saturation instead of periodically discarding it. It stores no
+duplicate text-key inventory and adds no array scan to a hit. This is a
+cache-survival/work-shape oracle, not allocation-request totals, lower retained
+bytes, native CPU, RSS, GPU retirement, frame latency or multi-day acceptance.
+Existing font/atlas reset and both-platform snapshot tests protect rendering.
+
 ## Retained-rendering regression coverage
 
 The native renderer now compares exact bounded region snapshots and texture
