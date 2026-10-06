@@ -3,6 +3,40 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Sharing recursive-copy metadata without evicting paused work
+
+The #320 audit found that each recursive SFTP copy had its own 65,536-item /
+64-MiB planning ceiling. Many collision-paused copies could multiply that
+allowance, and the planner received a complete directory before checking it.
+The pinned SFTP convenience API also rebuilt all previously collected entries
+after every page. A compiled pre-repair control demonstrated that a second
+copy was admitted while another paused plan had already consumed the shared
+item allowance.
+
+The owner approved those same limits shared per worker, including enumeration
+scratch, and a narrow pinned-library getter needed for real paged access.
+Rows now transfer actual-owner reservations into units; copy, collision,
+resume and cancellation preserve the charge until the owned data retires.
+Container capacity and overlapping growth remain charged. Sparse retirement
+moves at most 128 entries, frees the old backing before rebuilding, and keeps
+a slot for collision requeue. Full admission refuses new planning visibly
+without stealing another plan or rolling back copied files.
+
+Local enumeration checks each retained row. Remote planning reads one page
+at a time over the same authenticated subsystem, retains no repeatedly copied
+whole-directory library result, and closes or requests closure of its cursor.
+Controlled real-protocol tests cover refusal before the next page, ordered
+rows, cancellation and combined planning/close errors. Snapshot publication
+also reuses unchanged request allocations: 4,096 single-item updates in a
+1,000-item inventory touch one row each, rather than reconstructing and
+sorting every request after every unit.
+
+These are deterministic managed-metadata/work-shape results, not RSS or
+fragmentation measurements or a #297 causal finding. Protocol-private decode,
+ordinary browsing snapshots, other request/event/view storage and native
+SFTP-03 refusal/retry/accessibility qualification remain separate. This
+preserves the existing transport and application-command ownership boundary.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged

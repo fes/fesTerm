@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     future::Future,
     path::{Path, PathBuf},
@@ -22,10 +22,12 @@ use tokio::{
 };
 
 use crate::sftp::{
-    display_path, join_path_segment, join_remote_path, local_error, read_local_directory_snapshot,
-    read_local_path_metadata, remote_file_name, SftpEntryType, SftpSession, SftpSessionError,
+    display_path, join_path_segment, join_remote_path, local_error,
+    read_local_directory_for_planning, read_local_directory_snapshot, read_local_path_metadata,
+    remote_file_name, SftpEntryType, SftpSession, SftpSessionError,
     SFTP_CANCELLATION_CLEANUP_TIMEOUT,
 };
+use crate::sftp_planning::{Budgeted, PlanningQueue, PlanningReservation, SharedPlanningBudget};
 
 const TEMP_SUFFIX: &str = ".festerm-part";
 const TRANSFER_COMMAND_QUEUE_CAPACITY: usize = 64;
@@ -36,7 +38,7 @@ const MAX_QUEUED_TRANSFER_ITEMS: usize = 1_024;
 const MAX_TRANSFER_PLAN_ITEMS: usize = 65_536;
 const MAX_TRANSFER_PLAN_MEMORY_PROXY_BYTES: usize = 64 * 1024 * 1024;
 // Covers container/node bookkeeping beyond the source, destination, and name text.
-const TRANSFER_PLAN_ITEM_OVERHEAD_BYTES: usize = 512;
+pub(crate) const TRANSFER_PLAN_ITEM_OVERHEAD_BYTES: usize = 512;
 
 /// Which filesystem a GUI SFTP path or snapshot refers to.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -682,6 +684,12 @@ struct WorkerState {
     next_collision_id: u64,
     admitted_items: Option<Arc<AtomicUsize>>,
     pending_events: VecDeque<SftpTransferEvent>,
+    planning_budget: Option<SharedPlanningBudget>,
+    snapshot_dirty: HashSet<SftpTransferId>,
+    snapshot_indexes: HashMap<SftpTransferId, usize>,
+    snapshot_membership_changed: bool,
+    #[cfg(test)]
+    snapshot_rows_updated: usize,
 }
 
 #[derive(Default)]
@@ -710,11 +718,11 @@ struct TransferItem {
 enum TransferRootState {
     Pending,
     Ready(TransferPlan),
-    WaitingCollision(Box<PendingCollision>),
+    WaitingCollision(Box<Budgeted<PendingCollision>>),
 }
 
 struct TransferPlan {
-    units: VecDeque<TransferUnit>,
+    units: PlanningQueue<TransferUnit>,
     total_bytes: Option<u64>,
 }
 
@@ -741,7 +749,7 @@ enum PendingCollision {
         collision: SftpCollision,
         source: SftpPathMetadata,
         destination: SftpPath,
-        remaining_units: VecDeque<TransferUnit>,
+        remaining_units: PlanningQueue<TransferUnit>,
         whole_item: bool,
     },
 }
@@ -765,20 +773,22 @@ impl PendingCollision {
 struct FileDecisionContext {
     source: SftpPathMetadata,
     destination: SftpPath,
-    remaining_units: VecDeque<TransferUnit>,
+    remaining_units: PlanningQueue<TransferUnit>,
     whole_item: bool,
+    reservation: PlanningReservation,
 }
 
 struct RootDirectoryDecisionContext {
     source: SftpPathMetadata,
     destination: SftpPath,
     decision: SftpCollisionDecision,
+    reservation: PlanningReservation,
 }
 
 #[derive(Clone, Copy)]
-struct TransferPlanningLimits {
-    max_items: usize,
-    max_memory_proxy_bytes: usize,
+pub(crate) struct TransferPlanningLimits {
+    pub(crate) max_items: usize,
+    pub(crate) max_memory_proxy_bytes: usize,
 }
 
 impl Default for TransferPlanningLimits {
@@ -791,13 +801,13 @@ impl Default for TransferPlanningLimits {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TransferPlanningLimit {
+pub(crate) enum TransferPlanningLimit {
     Items,
     MemoryProxyBytes,
 }
 
 #[derive(Debug)]
-enum TransferWorkError {
+pub(crate) enum TransferWorkError {
     Operation(SftpSessionError),
     PlanningLimitExceeded {
         limit: TransferPlanningLimit,
@@ -806,6 +816,10 @@ enum TransferWorkError {
     },
     Cancelled,
     Manager(SftpTransferManagerError),
+    DirectoryCloseFailed {
+        operation_error: Option<Box<TransferWorkError>>,
+        close_error: SftpSessionError,
+    },
 }
 
 impl fmt::Display for TransferWorkError {
@@ -823,11 +837,20 @@ impl fmt::Display for TransferWorkError {
                 };
                 write!(
                     formatter,
-                    "recursive transfer planning exceeded its {resource} limit: observed {observed}, maximum {maximum}"
+                    "recursive transfer planning exceeded its shared {resource} limit: observed {observed}, maximum {maximum}"
                 )
             }
             Self::Cancelled => formatter.write_str("transfer cancelled during planning"),
             Self::Manager(error) => error.fmt(formatter),
+            Self::DirectoryCloseFailed {
+                operation_error,
+                close_error,
+            } => {
+                if let Some(error) = operation_error {
+                    write!(formatter, "{error}; ")?;
+                }
+                write!(formatter, "remote directory close failed: {close_error}")
+            }
         }
     }
 }
@@ -844,53 +867,6 @@ impl From<SftpTransferManagerError> for TransferWorkError {
     }
 }
 
-struct TransferPlanBudget {
-    limits: TransferPlanningLimits,
-    items: usize,
-    memory_proxy_bytes: usize,
-}
-
-impl TransferPlanBudget {
-    fn new(limits: TransferPlanningLimits) -> Self {
-        Self {
-            limits,
-            items: 0,
-            memory_proxy_bytes: 0,
-        }
-    }
-
-    fn account(
-        &mut self,
-        source: &SftpPath,
-        destination: &SftpPath,
-        name_bytes: usize,
-    ) -> Result<(), TransferWorkError> {
-        self.items = self.items.saturating_add(1);
-        if self.items > self.limits.max_items {
-            return Err(TransferWorkError::PlanningLimitExceeded {
-                limit: TransferPlanningLimit::Items,
-                observed: self.items,
-                maximum: self.limits.max_items,
-            });
-        }
-
-        self.memory_proxy_bytes = self.memory_proxy_bytes.saturating_add(
-            TRANSFER_PLAN_ITEM_OVERHEAD_BYTES
-                .saturating_add(path_memory_proxy_bytes(source))
-                .saturating_add(path_memory_proxy_bytes(destination))
-                .saturating_add(name_bytes),
-        );
-        if self.memory_proxy_bytes > self.limits.max_memory_proxy_bytes {
-            return Err(TransferWorkError::PlanningLimitExceeded {
-                limit: TransferPlanningLimit::MemoryProxyBytes,
-                observed: self.memory_proxy_bytes,
-                maximum: self.limits.max_memory_proxy_bytes,
-            });
-        }
-        Ok(())
-    }
-}
-
 struct PlanningControl<'a> {
     transfer_id: SftpTransferId,
     command_receiver: &'a mut Receiver<WorkerCommand>,
@@ -899,6 +875,13 @@ struct PlanningControl<'a> {
 
 type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SftpSessionError>> + Send + 'a>>;
 type CopyFuture<'a> = Pin<Box<dyn Future<Output = Result<u64, CopyFileError>> + Send + 'a>>;
+type DirectoryFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<PlanningQueue<SftpDirectoryItem>, TransferWorkError>>
+            + Send
+            + 'a,
+    >,
+>;
 
 trait TransferBackend {
     fn protect_partial_commit(&mut self, _temporary: &SftpPath, _destination: &SftpPath) {}
@@ -913,7 +896,8 @@ trait TransferBackend {
     fn read_directory<'a>(
         &'a mut self,
         path: &'a SftpPath,
-    ) -> BackendFuture<'a, SftpDirectorySnapshot>;
+        budget: &'a SharedPlanningBudget,
+    ) -> DirectoryFuture<'a>;
     fn create_directory<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()>;
     fn remove_file<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()>;
     fn rename<'a>(
@@ -964,11 +948,16 @@ impl TransferBackend for LiveTransferBackend {
     fn read_directory<'a>(
         &'a mut self,
         path: &'a SftpPath,
-    ) -> BackendFuture<'a, SftpDirectorySnapshot> {
+        budget: &'a SharedPlanningBudget,
+    ) -> DirectoryFuture<'a> {
         Box::pin(async move {
             match path {
-                SftpPath::Local(path) => read_local_directory_snapshot(path).await,
-                SftpPath::Remote(path) => self.session.remote_directory_snapshot_exact(path).await,
+                SftpPath::Local(path) => read_local_directory_for_planning(path, budget).await,
+                SftpPath::Remote(path) => {
+                    self.session
+                        .remote_directory_for_planning(path, budget)
+                        .await
+                }
             }
         })
     }
@@ -1143,6 +1132,7 @@ async fn run_transfer_worker<B: TransferBackend>(
 ) {
     let mut state = WorkerState {
         admitted_items,
+        planning_budget: Some(SharedPlanningBudget::new(planning_limits)),
         ..WorkerState::default()
     };
     loop {
@@ -1177,6 +1167,12 @@ async fn run_transfer_worker<B: TransferBackend>(
 }
 
 impl WorkerState {
+    fn planning_budget(&mut self, limits: TransferPlanningLimits) -> SharedPlanningBudget {
+        self.planning_budget
+            .get_or_insert_with(|| SharedPlanningBudget::new(limits))
+            .clone()
+    }
+
     async fn handle_command(
         &mut self,
         command: WorkerCommand,
@@ -1201,6 +1197,7 @@ impl WorkerState {
                 );
                 for item in items {
                     let direction = item.request.direction();
+                    self.snapshot_dirty.insert(item.id);
                     self.ready.push_back(item.id);
                     self.items.insert(
                         item.id,
@@ -1222,6 +1219,7 @@ impl WorkerState {
                         },
                     );
                 }
+                self.snapshot_membership_changed = true;
                 Some(SftpTransferEvent::BatchQueued {
                     batch_id,
                     transfer_ids,
@@ -1276,6 +1274,7 @@ impl WorkerState {
                 item.active_collision = None;
                 item.pending_resolution = Some(resolution.clone());
                 item.state = SftpTransferState::Queued;
+                self.snapshot_dirty.insert(transfer_id);
                 let batch_id = item.batch_id;
                 if matches!(
                     resolution.scope,
@@ -1300,9 +1299,12 @@ impl WorkerState {
                     .filter(|item| item.batch_id == batch_id && item.pending_resolution.is_none())
                     .filter_map(|item| match &item.root_state {
                         TransferRootState::WaitingCollision(collision)
-                            if collision.allowed_decisions().contains(&resolution.decision) =>
+                            if collision
+                                .value
+                                .allowed_decisions()
+                                .contains(&resolution.decision) =>
                         {
-                            Some((item.id, collision.id()))
+                            Some((item.id, collision.value.id()))
                         }
                         _ => None,
                     })
@@ -1318,6 +1320,7 @@ impl WorkerState {
                             scope: SftpCollisionScope::ThisItem,
                         });
                         item.state = SftpTransferState::Queued;
+                        self.snapshot_dirty.insert(item_id);
                         self.ready.push_back(item_id);
                     }
                 }
@@ -1408,26 +1411,74 @@ impl WorkerState {
         let _ = event_sender.send(event).await;
     }
 
-    fn publish_snapshot(&self, snapshot: &Arc<Mutex<SftpTransferQueueSnapshot>>) {
-        let mut items = self
-            .items
-            .values()
-            .map(|item| SftpTransferItemSnapshot {
-                batch_id: item.batch_id,
-                transfer_id: item.id,
-                request: item.request.clone(),
-                direction: item.direction,
-                state: item.state.clone(),
-                bytes_transferred: item.bytes_transferred,
-                total_bytes: item.total_bytes,
-                destination: item.destination.clone(),
-            })
-            .collect::<Vec<_>>();
-        items.sort_by_key(|item| (item.batch_id.raw(), item.transfer_id.raw()));
-        *snapshot
+    fn publish_snapshot(&mut self, snapshot: &Arc<Mutex<SftpTransferQueueSnapshot>>) {
+        #[cfg(test)]
+        {
+            self.snapshot_rows_updated = 0;
+        }
+        if self.snapshot_dirty.is_empty() && !self.snapshot_membership_changed {
+            return;
+        }
+        let mut snapshot = snapshot
             .lock()
-            .expect("SFTP transfer snapshot lock is not poisoned") =
-            SftpTransferQueueSnapshot { items };
+            .expect("SFTP transfer snapshot lock is not poisoned");
+        if std::mem::take(&mut self.snapshot_membership_changed) {
+            snapshot
+                .items
+                .retain(|row| self.items.contains_key(&row.transfer_id));
+            self.snapshot_indexes.clear();
+            self.snapshot_indexes.extend(
+                snapshot
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, row)| (row.transfer_id, index)),
+            );
+        }
+        let mut changed = self.snapshot_dirty.drain().collect::<Vec<_>>();
+        changed.sort_unstable_by_key(|id| id.raw());
+        for id in changed {
+            let Some(item) = self.items.get(&id) else {
+                continue;
+            };
+            #[cfg(test)]
+            {
+                self.snapshot_rows_updated += 1;
+            }
+            if let Some(&index) = self.snapshot_indexes.get(&id) {
+                let row = &mut snapshot.items[index];
+                row.state = item.state.clone();
+                row.bytes_transferred = item.bytes_transferred;
+                row.total_bytes = item.total_bytes;
+                if row.destination != item.destination {
+                    row.destination = item.destination.clone();
+                }
+            } else {
+                let row = SftpTransferItemSnapshot {
+                    batch_id: item.batch_id,
+                    transfer_id: item.id,
+                    request: item.request.clone(),
+                    direction: item.direction,
+                    state: item.state.clone(),
+                    bytes_transferred: item.bytes_transferred,
+                    total_bytes: item.total_bytes,
+                    destination: item.destination.clone(),
+                };
+                let index = snapshot
+                    .items
+                    .binary_search_by_key(&(row.batch_id.raw(), id.raw()), |row| {
+                        (row.batch_id.raw(), row.transfer_id.raw())
+                    })
+                    .unwrap_or_else(|index| index);
+                snapshot.items.insert(index, row);
+                self.snapshot_indexes.extend(
+                    snapshot.items[index..]
+                        .iter()
+                        .enumerate()
+                        .map(|(offset, row)| (row.transfer_id, index + offset)),
+                );
+            }
+        }
     }
 
     async fn process_one<B: TransferBackend>(
@@ -1441,6 +1492,7 @@ impl WorkerState {
         if !self.items.contains_key(&transfer_id) {
             return;
         }
+        self.snapshot_dirty.insert(transfer_id);
         if self.items[&transfer_id].cancel_requested {
             self.finish_cancelled(transfer_id, event_sender).await;
             return;
@@ -1495,9 +1547,9 @@ impl WorkerState {
                 {
                     let error = match backend.cleanup_interrupted_copy().await {
                         Ok(()) => error,
-                        Err(cleanup_error) => cleanup_error,
+                        Err(cleanup_error) => cleanup_error.into(),
                     };
-                    self.finish_failed(transfer_id, None, error.to_string(), event_sender)
+                    self.finish_work_error(transfer_id, error, event_sender)
                         .await;
                 }
             }
@@ -1528,6 +1580,8 @@ impl WorkerState {
             .ok_or_else(|| missing_source_error(&request.source))?;
         let destination =
             normalize_requested_destination(backend, &request.source, &request.destination).await?;
+        let budget = self.planning_budget(planning_limits);
+        let reservation = budget.unit(&source.path, &destination)?;
         let destination_metadata = backend.metadata(&destination).await?;
 
         {
@@ -1549,6 +1603,7 @@ impl WorkerState {
                             source,
                             destination,
                             decision,
+                            reservation,
                         },
                         backend,
                         command_receiver,
@@ -1567,13 +1622,14 @@ impl WorkerState {
                     let item = self.items.get_mut(&transfer_id).expect("item exists");
                     item.state = SftpTransferState::AwaitingCollision(collision.id);
                     item.active_collision = Some(collision.id);
-                    item.root_state = TransferRootState::WaitingCollision(Box::new(
-                        PendingCollision::RootDirectory {
+                    item.root_state = TransferRootState::WaitingCollision(Box::new(Budgeted {
+                        value: PendingCollision::RootDirectory {
                             collision: collision.clone(),
                             source,
                             destination,
                         },
-                    ));
+                        reservation,
+                    }));
                     self.emit_event(event_sender, SftpTransferEvent::Collision(collision))
                         .await;
                 }
@@ -1584,9 +1640,11 @@ impl WorkerState {
                     event_sender,
                 };
                 let plan = self
-                    .build_directory_plan(
-                        &source,
-                        &destination,
+                    .build_directory_plan_with_root(
+                        Budgeted {
+                            value: (source, destination),
+                            reservation,
+                        },
                         false,
                         backend,
                         Some(&mut control),
@@ -1607,15 +1665,15 @@ impl WorkerState {
                     FileDecisionContext {
                         source,
                         destination,
-                        remaining_units: VecDeque::new(),
+                        remaining_units: PlanningQueue::new(&budget),
                         whole_item: true,
+                        reservation,
                     },
                     decision,
                     backend,
                     event_sender,
                 )
-                .await
-                .map_err(TransferWorkError::from)?;
+                .await?;
             } else {
                 let collision = self.register_collision(
                     batch_id,
@@ -1627,26 +1685,33 @@ impl WorkerState {
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.state = SftpTransferState::AwaitingCollision(collision.id);
                 item.active_collision = Some(collision.id);
-                item.root_state =
-                    TransferRootState::WaitingCollision(Box::new(PendingCollision::File {
+                item.root_state = TransferRootState::WaitingCollision(Box::new(Budgeted {
+                    value: PendingCollision::File {
                         collision: collision.clone(),
                         source,
                         destination,
-                        remaining_units: VecDeque::new(),
+                        remaining_units: PlanningQueue::new(&budget),
                         whole_item: true,
-                    }));
+                    },
+                    reservation,
+                }));
                 self.emit_event(event_sender, SftpTransferEvent::Collision(collision))
                     .await;
             }
         } else {
-            let item = self.items.get_mut(&transfer_id).expect("item exists");
-            item.root_state = TransferRootState::Ready(TransferPlan {
-                units: VecDeque::from([TransferUnit::CopyFile {
+            let mut units = PlanningQueue::new(&budget);
+            units.push_back(Budgeted {
+                value: TransferUnit::CopyFile {
                     source,
                     destination,
                     replace_existing_at_commit: false,
                     whole_item: true,
-                }]),
+                },
+                reservation,
+            })?;
+            let item = self.items.get_mut(&transfer_id).expect("item exists");
+            item.root_state = TransferRootState::Ready(TransferPlan {
+                units,
                 total_bytes: item.total_bytes,
             });
             item.state = SftpTransferState::Queued;
@@ -1655,49 +1720,115 @@ impl WorkerState {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn build_directory_plan<B: TransferBackend>(
         &mut self,
         source_root: &SftpPathMetadata,
         destination_root: &SftpPath,
         replace_existing_non_directory: bool,
         backend: &mut B,
+        control: Option<&mut PlanningControl<'_>>,
+        limits: TransferPlanningLimits,
+    ) -> Result<TransferPlan, TransferWorkError> {
+        let budget = self.planning_budget(limits);
+        let reservation = budget.unit(&source_root.path, destination_root)?;
+        self.build_directory_plan_with_root(
+            Budgeted {
+                value: (source_root.clone(), destination_root.clone()),
+                reservation,
+            },
+            replace_existing_non_directory,
+            backend,
+            control,
+            limits,
+        )
+        .await
+    }
+
+    async fn build_directory_plan_with_root<B: TransferBackend>(
+        &mut self,
+        root: Budgeted<(SftpPathMetadata, SftpPath)>,
+        replace_existing_non_directory: bool,
+        backend: &mut B,
         mut control: Option<&mut PlanningControl<'_>>,
         limits: TransferPlanningLimits,
     ) -> Result<TransferPlan, TransferWorkError> {
-        let mut units = VecDeque::new();
+        let budget = self.planning_budget(limits);
+        let mut units = PlanningQueue::new(&budget);
         let mut total_bytes = 0_u64;
         let mut total_known = true;
-        let mut budget = TransferPlanBudget::new(limits);
-        budget.account(&source_root.path, destination_root, 0)?;
-        units.push_back(TransferUnit::EnsureDirectory {
-            destination: destination_root.clone(),
-            replace_existing_non_directory,
-        });
-        let mut stack = vec![(source_root.path.clone(), destination_root.clone())];
-        while let Some((source_directory, destination_directory)) = stack.pop() {
-            let snapshot = match control.as_deref_mut() {
+        let (source_root, destination_root) = root.value;
+        units.push_back(Budgeted {
+            value: TransferUnit::EnsureDirectory {
+                destination: destination_root.clone(),
+                replace_existing_non_directory,
+            },
+            reservation: root.reservation,
+        })?;
+        let mut stack = PlanningQueue::new(&budget);
+        let pair_reservation = budget.reserve(
+            0,
+            std::mem::size_of::<(SftpPath, SftpPath)>()
+                .saturating_add(path_memory_proxy_bytes(&source_root.path))
+                .saturating_add(path_memory_proxy_bytes(&destination_root)),
+        )?;
+        stack.push_back(Budgeted {
+            value: (source_root.path.clone(), destination_root.clone()),
+            reservation: pair_reservation,
+        })?;
+        while let Some(directory) = stack.pop_back() {
+            let _directory_reservation = directory.reservation;
+            let (source_directory, destination_directory) = directory.value;
+            let mut entries = match control.as_deref_mut() {
                 Some(control) => {
-                    self.read_directory_during_planning(&source_directory, backend, control)
-                        .await?
+                    self.read_directory_during_planning(
+                        &source_directory,
+                        backend,
+                        control,
+                        &budget,
+                    )
+                    .await?
                 }
-                None => backend.read_directory(&source_directory).await?,
+                None => backend.read_directory(&source_directory, &budget).await?,
             };
-            let mut child_directories = Vec::new();
-            for entry in snapshot.entries {
+            let mut child_directories = PlanningQueue::new(&budget);
+            while let Some(entry) = entries.pop_front() {
+                let mut reservation = entry.reservation;
+                let entry = entry.value;
                 if matches!(source_directory, SftpPath::Remote(_))
-                    && matches!(destination_root, SftpPath::Local(_))
+                    && matches!(&destination_root, SftpPath::Local(_))
                 {
                     validate_remote_directory_entry_name(&entry.name)?;
                 }
+                reservation.grow(
+                    0,
+                    path_memory_proxy_bytes(&entry.path).saturating_add(
+                        path_memory_proxy_bytes(&destination_directory)
+                            .saturating_add(entry.name.capacity())
+                            .saturating_add(2)
+                            .saturating_mul(12),
+                    ),
+                )?;
                 let child_destination = destination_directory.join_child(&entry.name);
-                ensure_local_child_within_root(destination_root, &child_destination)?;
-                budget.account(&entry.path, &child_destination, entry.name.len())?;
+                ensure_local_child_within_root(&destination_root, &child_destination)?;
                 if entry.file_type == SftpEntryType::Directory {
-                    units.push_back(TransferUnit::EnsureDirectory {
-                        destination: child_destination.clone(),
-                        replace_existing_non_directory: false,
-                    });
-                    child_directories.push((entry.path.clone(), child_destination));
+                    let pair_reservation = budget.reserve(
+                        0,
+                        std::mem::size_of::<(SftpPath, SftpPath)>()
+                            .saturating_add(path_memory_proxy_bytes(&entry.path))
+                            .saturating_add(path_memory_proxy_bytes(&child_destination)),
+                    )?;
+                    units.push_back(Budgeted {
+                        value: TransferUnit::EnsureDirectory {
+                            destination: child_destination.clone(),
+                            replace_existing_non_directory: false,
+                        },
+                        reservation,
+                    })?;
+                    child_directories.push_back(Budgeted {
+                        value: (entry.path, child_destination),
+                        reservation: pair_reservation,
+                    })?;
                 } else {
                     if let Some(size) = entry.size {
                         if total_known {
@@ -1710,16 +1841,26 @@ impl WorkerState {
                     } else {
                         total_known = false;
                     }
-                    units.push_back(TransferUnit::CopyFile {
-                        source: entry.metadata(),
-                        destination: child_destination,
-                        replace_existing_at_commit: false,
-                        whole_item: false,
-                    });
+                    units.push_back(Budgeted {
+                        value: TransferUnit::CopyFile {
+                            source: SftpPathMetadata {
+                                path: entry.path,
+                                file_type: entry.file_type,
+                                size: entry.size,
+                                modified_at: entry.modified_at,
+                                permissions: entry.permissions,
+                            },
+                            destination: child_destination,
+                            replace_existing_at_commit: false,
+                            whole_item: false,
+                        },
+                        reservation,
+                    })?;
                 }
             }
-            child_directories.reverse();
-            stack.extend(child_directories);
+            while let Some(directory) = child_directories.pop_back() {
+                stack.push_back(directory)?;
+            }
         }
         Ok(TransferPlan {
             units,
@@ -1732,8 +1873,9 @@ impl WorkerState {
         path: &SftpPath,
         backend: &mut B,
         control: &mut PlanningControl<'_>,
-    ) -> Result<SftpDirectorySnapshot, TransferWorkError> {
-        let read = backend.read_directory(path);
+        budget: &SharedPlanningBudget,
+    ) -> Result<PlanningQueue<SftpDirectoryItem>, TransferWorkError> {
+        let read = backend.read_directory(path, budget);
         tokio::pin!(read);
         loop {
             tokio::select! {
@@ -1750,10 +1892,10 @@ impl WorkerState {
                                 return Err(TransferWorkError::Cancelled);
                             }
                         }
-                        None => return read.await.map_err(TransferWorkError::from),
+                        None => return read.await,
                     }
                 }
-                result = &mut read => return result.map_err(TransferWorkError::from),
+                result = &mut read => return result,
             }
         }
     }
@@ -1767,11 +1909,10 @@ impl WorkerState {
         event_sender: &Sender<SftpTransferEvent>,
         planning_limits: TransferPlanningLimits,
     ) -> Result<(), TransferWorkError> {
-        let RootDirectoryDecisionContext {
-            source,
-            destination,
-            decision,
-        } = context;
+        let mut reservation = context.reservation;
+        let source = context.source;
+        let destination = context.destination;
+        let decision = context.decision;
         match decision {
             SftpCollisionDecision::Skip => {
                 self.finish_skipped(transfer_id, event_sender).await;
@@ -1780,15 +1921,18 @@ impl WorkerState {
                 let target = self
                     .first_available_keep_both_destination(backend, &destination)
                     .await?;
+                reservation.grow(0, path_memory_proxy_bytes(&target))?;
                 let mut control = PlanningControl {
                     transfer_id,
                     command_receiver,
                     event_sender,
                 };
                 let plan = self
-                    .build_directory_plan(
-                        &source,
-                        &target,
+                    .build_directory_plan_with_root(
+                        Budgeted {
+                            value: (source, target.clone()),
+                            reservation,
+                        },
                         false,
                         backend,
                         Some(&mut control),
@@ -1809,9 +1953,11 @@ impl WorkerState {
                     event_sender,
                 };
                 let plan = self
-                    .build_directory_plan(
-                        &source,
-                        &destination,
+                    .build_directory_plan_with_root(
+                        Budgeted {
+                            value: (source, destination),
+                            reservation,
+                        },
                         false,
                         backend,
                         Some(&mut control),
@@ -1831,9 +1977,11 @@ impl WorkerState {
                     event_sender,
                 };
                 let plan = self
-                    .build_directory_plan(
-                        &source,
-                        &destination,
+                    .build_directory_plan_with_root(
+                        Budgeted {
+                            value: (source, destination),
+                            reservation,
+                        },
                         true,
                         backend,
                         Some(&mut control),
@@ -1865,63 +2013,69 @@ impl WorkerState {
             std::mem::replace(&mut item.root_state, TransferRootState::Pending)
         };
         match pending {
-            TransferRootState::WaitingCollision(pending) => match *pending {
-                PendingCollision::RootDirectory {
-                    collision,
-                    source,
-                    destination,
-                } => {
-                    if !collision.allowed_decisions.contains(&resolution.decision) {
-                        return Err(SftpTransferManagerError::InvalidCollisionDecision {
-                            collision_id: collision.id,
-                            decision: resolution.decision,
+            TransferRootState::WaitingCollision(pending) => {
+                let reservation = pending.reservation;
+                match pending.value {
+                    PendingCollision::RootDirectory {
+                        collision,
+                        source,
+                        destination,
+                    } => {
+                        if !collision.allowed_decisions.contains(&resolution.decision) {
+                            return Err(SftpTransferManagerError::InvalidCollisionDecision {
+                                collision_id: collision.id,
+                                decision: resolution.decision,
+                            }
+                            .into());
                         }
-                        .into());
+                        drop(collision);
+                        self.apply_root_directory_decision(
+                            transfer_id,
+                            RootDirectoryDecisionContext {
+                                source,
+                                destination,
+                                decision: resolution.decision,
+                                reservation,
+                            },
+                            backend,
+                            command_receiver,
+                            event_sender,
+                            planning_limits,
+                        )
+                        .await?;
                     }
-                    self.apply_root_directory_decision(
-                        transfer_id,
-                        RootDirectoryDecisionContext {
-                            source,
-                            destination,
-                            decision: resolution.decision,
-                        },
-                        backend,
-                        command_receiver,
-                        event_sender,
-                        planning_limits,
-                    )
-                    .await?;
-                }
-                PendingCollision::File {
-                    collision,
-                    source,
-                    destination,
-                    remaining_units,
-                    whole_item,
-                } => {
-                    if !collision.allowed_decisions.contains(&resolution.decision) {
-                        return Err(SftpTransferManagerError::InvalidCollisionDecision {
-                            collision_id: collision.id,
-                            decision: resolution.decision,
+                    PendingCollision::File {
+                        collision,
+                        source,
+                        destination,
+                        remaining_units,
+                        whole_item,
+                    } => {
+                        if !collision.allowed_decisions.contains(&resolution.decision) {
+                            return Err(SftpTransferManagerError::InvalidCollisionDecision {
+                                collision_id: collision.id,
+                                decision: resolution.decision,
+                            }
+                            .into());
                         }
-                        .into());
+                        drop(collision);
+                        self.apply_file_decision(
+                            transfer_id,
+                            FileDecisionContext {
+                                source,
+                                destination,
+                                remaining_units,
+                                whole_item,
+                                reservation,
+                            },
+                            resolution.decision,
+                            backend,
+                            event_sender,
+                        )
+                        .await?;
                     }
-                    self.apply_file_decision(
-                        transfer_id,
-                        FileDecisionContext {
-                            source,
-                            destination,
-                            remaining_units,
-                            whole_item,
-                        },
-                        resolution.decision,
-                        backend,
-                        event_sender,
-                    )
-                    .await
-                    .map_err(TransferWorkError::from)?;
                 }
-            },
+            }
             other => {
                 self.items
                     .get_mut(&transfer_id)
@@ -1939,13 +2093,12 @@ impl WorkerState {
         decision: SftpCollisionDecision,
         backend: &mut B,
         event_sender: &Sender<SftpTransferEvent>,
-    ) -> Result<(), SftpSessionError> {
-        let FileDecisionContext {
-            source,
-            destination,
-            mut remaining_units,
-            whole_item,
-        } = context;
+    ) -> Result<(), TransferWorkError> {
+        let mut reservation = context.reservation;
+        let source = context.source;
+        let destination = context.destination;
+        let mut remaining_units = context.remaining_units;
+        let whole_item = context.whole_item;
         match decision {
             SftpCollisionDecision::Skip => {
                 if whole_item && remaining_units.is_empty() {
@@ -1966,12 +2119,16 @@ impl WorkerState {
                 let target = self
                     .first_available_keep_both_destination(backend, &destination)
                     .await?;
-                remaining_units.push_front(TransferUnit::CopyFile {
-                    source,
-                    destination: target.clone(),
-                    replace_existing_at_commit: false,
-                    whole_item,
-                });
+                reservation.grow(0, path_memory_proxy_bytes(&target))?;
+                remaining_units.push_front(Budgeted {
+                    value: TransferUnit::CopyFile {
+                        source,
+                        destination: target.clone(),
+                        replace_existing_at_commit: false,
+                        whole_item,
+                    },
+                    reservation,
+                })?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 if whole_item {
                     item.destination = Some(target);
@@ -1984,12 +2141,15 @@ impl WorkerState {
                 self.ready.push_front(transfer_id);
             }
             SftpCollisionDecision::Replace => {
-                remaining_units.push_front(TransferUnit::CopyFile {
-                    source,
-                    destination,
-                    replace_existing_at_commit: true,
-                    whole_item,
-                });
+                remaining_units.push_front(Budgeted {
+                    value: TransferUnit::CopyFile {
+                        source,
+                        destination,
+                        replace_existing_at_commit: true,
+                        whole_item,
+                    },
+                    reservation,
+                })?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.root_state = TransferRootState::Ready(TransferPlan {
                     units: remaining_units,
@@ -2003,7 +2163,8 @@ impl WorkerState {
                     operation: "copy file",
                     path: destination.display(),
                     reason: "Merge folders is only valid for directory collisions".to_owned(),
-                });
+                }
+                .into());
             }
         }
         Ok(())
@@ -2016,12 +2177,13 @@ impl WorkerState {
         backend: &mut B,
         command_receiver: &mut Receiver<WorkerCommand>,
         event_sender: &Sender<SftpTransferEvent>,
-    ) -> Result<(), SftpSessionError> {
+    ) -> Result<(), TransferWorkError> {
         let Some(unit) = plan.units.pop_front() else {
             self.finish_completed(transfer_id, event_sender).await;
             return Ok(());
         };
-        match unit {
+        let reservation = unit.reservation;
+        match unit.value {
             TransferUnit::EnsureDirectory {
                 destination,
                 replace_existing_non_directory,
@@ -2040,7 +2202,8 @@ impl WorkerState {
                             operation: "create directory",
                             path: destination.display(),
                             reason: "destination contains a non-directory entry".to_owned(),
-                        });
+                        }
+                        .into());
                     }
                     None => backend.create_directory(&destination).await?,
                 }
@@ -2078,6 +2241,7 @@ impl WorkerState {
                                     destination,
                                     remaining_units: plan.units,
                                     whole_item,
+                                    reservation,
                                 },
                                 decision,
                                 backend,
@@ -2095,15 +2259,17 @@ impl WorkerState {
                             let item = self.items.get_mut(&transfer_id).expect("item exists");
                             item.state = SftpTransferState::AwaitingCollision(collision.id);
                             item.active_collision = Some(collision.id);
-                            item.root_state = TransferRootState::WaitingCollision(Box::new(
-                                PendingCollision::File {
-                                    collision: collision.clone(),
-                                    source,
-                                    destination,
-                                    remaining_units: plan.units,
-                                    whole_item,
-                                },
-                            ));
+                            item.root_state =
+                                TransferRootState::WaitingCollision(Box::new(Budgeted {
+                                    value: PendingCollision::File {
+                                        collision: collision.clone(),
+                                        source,
+                                        destination,
+                                        remaining_units: plan.units,
+                                        whole_item,
+                                    },
+                                    reservation,
+                                }));
                             self.emit_event(event_sender, SftpTransferEvent::Collision(collision))
                                 .await;
                         }
@@ -2165,15 +2331,17 @@ impl WorkerState {
                                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                                 item.state = SftpTransferState::AwaitingCollision(collision.id);
                                 item.active_collision = Some(collision.id);
-                                item.root_state = TransferRootState::WaitingCollision(Box::new(
-                                    PendingCollision::File {
-                                        collision: collision.clone(),
-                                        source,
-                                        destination,
-                                        remaining_units: plan.units,
-                                        whole_item,
-                                    },
-                                ));
+                                item.root_state =
+                                    TransferRootState::WaitingCollision(Box::new(Budgeted {
+                                        value: PendingCollision::File {
+                                            collision: collision.clone(),
+                                            source,
+                                            destination,
+                                            remaining_units: plan.units,
+                                            whole_item,
+                                        },
+                                        reservation,
+                                    }));
                                 self.emit_event(
                                     event_sender,
                                     SftpTransferEvent::Collision(collision),
@@ -2203,7 +2371,7 @@ impl WorkerState {
                     }
                     Err(CopyFileError::Operation(error)) => {
                         self.cleanup_temporary_output(backend, event_sender).await?;
-                        return Err(error);
+                        return Err(error.into());
                     }
                 }
             }
@@ -2460,6 +2628,8 @@ impl WorkerState {
 
     fn remove_item(&mut self, transfer_id: SftpTransferId) -> Option<TransferItem> {
         let item = self.items.remove(&transfer_id)?;
+        self.snapshot_membership_changed = true;
+        self.snapshot_dirty.remove(&transfer_id);
         if let Some(admitted_items) = &self.admitted_items {
             admitted_items.fetch_sub(1, Ordering::AcqRel);
         }
@@ -2474,10 +2644,10 @@ impl WorkerState {
     }
 }
 
-fn path_memory_proxy_bytes(path: &SftpPath) -> usize {
+pub(crate) fn path_memory_proxy_bytes(path: &SftpPath) -> usize {
     match path {
-        SftpPath::Local(path) => path.as_os_str().to_string_lossy().len(),
-        SftpPath::Remote(path) => path.len(),
+        SftpPath::Local(path) => path.capacity(),
+        SftpPath::Remote(path) => path.capacity(),
     }
 }
 
@@ -2696,16 +2866,19 @@ mod tests {
         fn read_directory<'a>(
             &'a mut self,
             path: &'a SftpPath,
-        ) -> BackendFuture<'a, SftpDirectorySnapshot> {
+            budget: &'a SharedPlanningBudget,
+        ) -> DirectoryFuture<'a> {
             Box::pin(async move {
                 let real = real_path(path);
-                let mut snapshot = read_local_directory_snapshot(&real).await?;
-                snapshot.location = path.location();
-                snapshot.path = path.clone();
-                for entry in &mut snapshot.entries {
-                    entry.path = remap(entry.path.clone(), path.location());
+                let mut entries = read_local_directory_for_planning(&real, budget).await?;
+                for entry in entries.entries_mut() {
+                    entry.reservation.grow(
+                        0,
+                        path_memory_proxy_bytes(&entry.value.path).saturating_mul(2),
+                    )?;
+                    entry.value.path = remap(entry.value.path.clone(), path.location());
                 }
-                Ok(snapshot)
+                Ok(entries)
             })
         }
 
@@ -2839,12 +3012,24 @@ mod tests {
         fn read_directory<'a>(
             &'a mut self,
             path: &'a SftpPath,
-        ) -> BackendFuture<'a, SftpDirectorySnapshot> {
+            budget: &'a SharedPlanningBudget,
+        ) -> DirectoryFuture<'a> {
             Box::pin(async move {
-                self.snapshots
+                let snapshot = self
+                    .snapshots
                     .get(&path.display())
-                    .cloned()
-                    .ok_or_else(|| missing_source_error(path))
+                    .ok_or_else(|| missing_source_error(path))?;
+                let mut entries = PlanningQueue::new(budget);
+                for entry in &snapshot.entries {
+                    let reservation = budget
+                        .entry(entry.name.capacity(), path_memory_proxy_bytes(&entry.path))?;
+                    entries.push_back(Budgeted {
+                        value: entry.clone(),
+                        reservation,
+                    })?;
+                }
+                entries.sort_by_name();
+                Ok(entries)
             })
         }
 
@@ -2897,13 +3082,14 @@ mod tests {
         fn read_directory<'a>(
             &'a mut self,
             _path: &'a SftpPath,
-        ) -> BackendFuture<'a, SftpDirectorySnapshot> {
+            _budget: &'a SharedPlanningBudget,
+        ) -> DirectoryFuture<'a> {
             let enumeration_started = self.enumeration_started.take();
             Box::pin(async move {
                 if let Some(enumeration_started) = enumeration_started {
                     let _ = enumeration_started.send(());
                 }
-                pending::<Result<SftpDirectorySnapshot, SftpSessionError>>().await
+                pending::<Result<PlanningQueue<SftpDirectoryItem>, TransferWorkError>>().await
             })
         }
 
@@ -3026,6 +3212,25 @@ mod tests {
         SftpQueuedTransferBatch {
             batch_id,
             transfer_ids,
+        }
+    }
+
+    fn queue_numbered_batch(
+        commands: &Sender<WorkerCommand>,
+        number: u64,
+        request: SftpTransferRequest,
+    ) -> SftpQueuedTransferBatch {
+        let batch_id = SftpTransferBatchId(number);
+        let id = SftpTransferId(number);
+        commands
+            .try_send(WorkerCommand::EnqueueBatch {
+                batch_id,
+                items: vec![QueuedTransferInput { id, request }],
+            })
+            .unwrap();
+        SftpQueuedTransferBatch {
+            batch_id,
+            transfer_ids: vec![id],
         }
     }
 
@@ -3490,6 +3695,297 @@ mod tests {
                 capacity: TRANSFER_COMMAND_QUEUE_CAPACITY,
             })
         );
+    }
+
+    #[test]
+    fn transfer_snapshot_updates_only_affected_rows_and_preserves_request_allocations() {
+        let mut state = WorkerState::default();
+        let snapshot = Arc::new(Mutex::new(SftpTransferQueueSnapshot::default()));
+        state.apply_command(WorkerCommand::EnqueueBatch {
+            batch_id: SftpTransferBatchId(1),
+            items: (1..=1_000)
+                .map(|id| QueuedTransferInput {
+                    id: SftpTransferId(id),
+                    request: SftpTransferRequest::new(
+                        SftpPath::remote(format!("/source/{id}")),
+                        SftpPath::local(format!("destination-{id}")),
+                    )
+                    .unwrap(),
+                })
+                .collect(),
+        });
+        state.publish_snapshot(&snapshot);
+        assert_eq!(state.snapshot_rows_updated, 1_000);
+        let request_allocations = snapshot
+            .lock()
+            .unwrap()
+            .items
+            .iter()
+            .map(|row| match &row.request.source {
+                SftpPath::Remote(path) => path.as_ptr(),
+                SftpPath::Local(_) => panic!("snapshot sources must be remote"),
+            })
+            .collect::<Vec<_>>();
+        for bytes in 0..4_096 {
+            let id = SftpTransferId(500);
+            state.items.get_mut(&id).unwrap().bytes_transferred = bytes;
+            state.snapshot_dirty.insert(id);
+            state.publish_snapshot(&snapshot);
+            assert_eq!(state.snapshot_rows_updated, 1);
+        }
+        {
+            let published = snapshot.lock().unwrap();
+            assert_eq!(published.items[499].bytes_transferred, 4_095);
+            for (row, allocation) in published.items.iter().zip(&request_allocations) {
+                match &row.request.source {
+                    SftpPath::Remote(path) => assert_eq!(path.as_ptr(), *allocation),
+                    SftpPath::Local(_) => panic!("snapshot source must remain remote"),
+                }
+            }
+        }
+        state.publish_snapshot(&snapshot);
+        assert_eq!(state.snapshot_rows_updated, 0);
+        drop(state.remove_item(SftpTransferId(1)));
+        state.publish_snapshot(&snapshot);
+        assert_eq!(state.snapshot_rows_updated, 0);
+        assert_eq!(snapshot.lock().unwrap().items.len(), 999);
+        state
+            .items
+            .get_mut(&SftpTransferId(500))
+            .unwrap()
+            .bytes_transferred = 8_000;
+        state.snapshot_dirty.insert(SftpTransferId(500));
+        state.publish_snapshot(&snapshot);
+        let published = snapshot.lock().unwrap();
+        assert_eq!(published.items[498].transfer_id, SftpTransferId(500));
+        assert_eq!(published.items[498].bytes_transferred, 8_000);
+    }
+
+    #[test]
+    fn transfer_snapshot_keeps_batch_order_and_updates_resolved_collision() {
+        let mut state = WorkerState::default();
+        let snapshot = Arc::new(Mutex::new(SftpTransferQueueSnapshot::default()));
+        for (batch, id) in [(2, 1), (1, 2)] {
+            state.apply_command(WorkerCommand::EnqueueBatch {
+                batch_id: SftpTransferBatchId(batch),
+                items: vec![QueuedTransferInput {
+                    id: SftpTransferId(id),
+                    request: SftpTransferRequest::new(
+                        SftpPath::remote(format!("/source/{id}")),
+                        SftpPath::local(format!("destination-{id}")),
+                    )
+                    .unwrap(),
+                }],
+            });
+        }
+        state.publish_snapshot(&snapshot);
+        assert_eq!(
+            snapshot
+                .lock()
+                .unwrap()
+                .items
+                .iter()
+                .map(|row| row.batch_id.raw())
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let id = SftpTransferId(2);
+        state.collisions.insert(SftpCollisionId(1), id);
+        state.apply_command(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+            collision_id: SftpCollisionId(1),
+            decision: SftpCollisionDecision::Skip,
+            scope: SftpCollisionScope::ThisItem,
+        }));
+        state.publish_snapshot(&snapshot);
+        assert_eq!(state.snapshot_rows_updated, 1);
+        assert_eq!(
+            snapshot.lock().unwrap().items[0].state,
+            SftpTransferState::Queued
+        );
+    }
+
+    #[test]
+    fn paused_recursive_plan_refuses_aggregate_growth_and_cancel_restores_admission() {
+        let root = unique_test_directory("aggregate-paused-plans");
+        let local = root.join("local");
+        let remote = root.join("remote");
+        let first = local.join("first");
+        let second = local.join("second");
+        recreate_directory(&first);
+        recreate_directory(&second);
+        recreate_directory(&remote.join("first"));
+        stdfs::write(first.join("a.txt"), b"new a").unwrap();
+        stdfs::write(first.join("b.txt"), b"new b").unwrap();
+        stdfs::write(second.join("only.txt"), b"second").unwrap();
+        stdfs::write(remote.join("first").join("a.txt"), b"old a").unwrap();
+
+        test_runtime().block_on(async {
+            let work = async {
+                let (commands, mut events, _snapshot) = spawn_worker_with_limits(
+                    TestBackend::default(),
+                    TransferPlanningLimits {
+                        max_items: 3,
+                        max_memory_proxy_bytes: usize::MAX,
+                    },
+                )
+                .await;
+                let first_batch =
+                    queue_numbered_batch(&commands, 1, upload_request(&first, &remote));
+                let (_, root_collision) = next_collision(&mut events).await;
+                commands
+                    .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                        collision_id: root_collision.id,
+                        decision: SftpCollisionDecision::MergeFolders,
+                        scope: SftpCollisionScope::ThisItem,
+                    }))
+                    .unwrap();
+                let (_, file_collision) = next_collision(&mut events).await;
+                assert_eq!(file_collision.transfer_id, first_batch.transfer_ids[0]);
+
+                let second_batch =
+                    queue_numbered_batch(&commands, 2, upload_request(&second, &remote));
+                let refused =
+                    collect_until_batch_finished(&mut events, second_batch.batch_id).await;
+                commands
+                    .try_send(WorkerCommand::CancelBatch(first_batch.batch_id))
+                    .unwrap();
+                collect_until_batch_finished(&mut events, first_batch.batch_id).await;
+
+                assert!(
+                    refused.iter().any(|event| matches!(
+                        event,
+                        SftpTransferEvent::ItemFailed { reason, .. }
+                            if reason.contains("items limit")
+                    )),
+                    "paused recursive metadata must share admission with new planning"
+                );
+                assert!(
+                    !remote.join("second").exists(),
+                    "refused planning must not materialize its destination"
+                );
+                let retry_batch =
+                    queue_numbered_batch(&commands, 3, upload_request(&second, &remote));
+                let retried = collect_until_batch_finished(&mut events, retry_batch.batch_id).await;
+                assert!(retried
+                    .iter()
+                    .any(|event| matches!(event, SftpTransferEvent::ItemCompleted { .. })));
+                assert_eq!(
+                    stdfs::read(remote.join("second").join("only.txt")).unwrap(),
+                    b"second"
+                );
+                assert_eq!(
+                    stdfs::read(remote.join("first").join("a.txt")).unwrap(),
+                    b"old a"
+                );
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(10), work)
+                .await
+                .expect("aggregate planning control must not wait indefinitely");
+        });
+
+        stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn multiple_paused_plans_preserve_decisions_and_resume_releases_shared_admission() {
+        let root = unique_test_directory("multiple-paused-plans");
+        let local = root.join("local");
+        let remote = root.join("remote");
+        for name in ["first", "second", "third"] {
+            let source = local.join(name);
+            recreate_directory(&source);
+            stdfs::write(source.join("a.txt"), b"new a").unwrap();
+            stdfs::write(source.join("b.txt"), b"new b").unwrap();
+            if name != "third" {
+                let destination = remote.join(name);
+                recreate_directory(&destination);
+                stdfs::write(destination.join("a.txt"), b"old a").unwrap();
+            }
+        }
+        test_runtime().block_on(async {
+            let work = async {
+                let (commands, mut events, _snapshot) = spawn_worker_with_limits(
+                    TestBackend::default(),
+                    TransferPlanningLimits {
+                        max_items: 6,
+                        max_memory_proxy_bytes: usize::MAX,
+                    },
+                )
+                .await;
+                let mut paused = Vec::new();
+                for (number, name) in [(1, "first"), (2, "second")] {
+                    queue_numbered_batch(
+                        &commands,
+                        number,
+                        upload_request(&local.join(name), &remote),
+                    );
+                    let (_, root_collision) = next_collision(&mut events).await;
+                    commands
+                        .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                            collision_id: root_collision.id,
+                            decision: SftpCollisionDecision::MergeFolders,
+                            scope: SftpCollisionScope::ThisItem,
+                        }))
+                        .unwrap();
+                    let (_, collision) = next_collision(&mut events).await;
+                    paused.push(collision);
+                }
+                let third = local.join("third");
+                let refused = queue_numbered_batch(&commands, 3, upload_request(&third, &remote));
+                let failures = collect_until_batch_finished(&mut events, refused.batch_id).await;
+                assert!(failures.iter().any(|event| matches!(
+                    event,
+                    SftpTransferEvent::ItemFailed { reason, .. }
+                        if reason.contains("items limit")
+                )));
+                assert!(!remote.join("third").exists());
+                commands
+                    .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                        collision_id: paused[0].id,
+                        decision: SftpCollisionDecision::Skip,
+                        scope: SftpCollisionScope::ThisItem,
+                    }))
+                    .unwrap();
+                let completed =
+                    collect_until_batch_finished(&mut events, SftpTransferBatchId(1)).await;
+                assert!(completed.iter().any(|event| matches!(
+                    event,
+                    SftpTransferEvent::ItemCompleted {
+                        skipped_conflicts: 1,
+                        ..
+                    }
+                )));
+                let retry = queue_numbered_batch(&commands, 4, upload_request(&third, &remote));
+                let completed = collect_until_batch_finished(&mut events, retry.batch_id).await;
+                assert!(completed
+                    .iter()
+                    .any(|event| matches!(event, SftpTransferEvent::ItemCompleted { .. })));
+                commands
+                    .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                        collision_id: paused[1].id,
+                        decision: SftpCollisionDecision::Replace,
+                        scope: SftpCollisionScope::ThisItem,
+                    }))
+                    .unwrap();
+                collect_until_batch_finished(&mut events, SftpTransferBatchId(2)).await;
+                assert_eq!(
+                    stdfs::read(remote.join("first").join("a.txt")).unwrap(),
+                    b"old a"
+                );
+                assert_eq!(
+                    stdfs::read(remote.join("second").join("a.txt")).unwrap(),
+                    b"new a"
+                );
+                assert_eq!(
+                    stdfs::read(remote.join("third").join("b.txt")).unwrap(),
+                    b"new b"
+                );
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(10), work)
+                .await
+                .expect("paused-plan resume must not wait indefinitely");
+        });
+        stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]
