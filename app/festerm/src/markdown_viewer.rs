@@ -2685,7 +2685,9 @@ fn read_local_image_with_budget(
     pixels.extend(
         decoded
             .as_raw()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])),
     );
     let pixels = egui::ColorImage::new([width as usize, height as usize], pixels);
