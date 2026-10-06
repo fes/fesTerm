@@ -90,7 +90,7 @@ jobs:
           key: cargo-packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
       - name: Install pinned cargo-packager
         if: steps.cargo-packager-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-packager --version 0.11.8 --locked
+        run: cargo install cargo-packager --version 0.11.8 --locked --force
       - name: Build unsigned macOS package
         if: matrix.platform == 'macos'
         env:
