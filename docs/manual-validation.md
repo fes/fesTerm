@@ -474,6 +474,29 @@ latency.
 | CP-14 | With two windows open, drag a live session's chip onto the other window's chip row and body, confirming the running shell, its scrollback, and its state survive the move and land where dropped. Drag a chip clear of every window and confirm a new window opens under the pointer owning that tab, sized like the one it left, and that detaching a later window's only tab does nothing. Move a later window's last tab away and confirm that window closes with no confirmation; do the same to the first window and confirm it falls back to the Launcher and keeps the menu bar and quit path. With workspace restore enabled, quit and restart and confirm both windows reopen with their own tabs and positions. Confirm the Launcher, Settings, and Profiles chips cannot be dragged into another window or detached into one. On macOS confirm that dragging a chip in a *later* window drags the chip rather than moving the window itself. On Wayland confirm a cross-window drag degrades to an in-window reorder rather than dropping a tab somewhere unexpected. | Native functional + visual | Automated coverage drives real press/move/release gestures against published window footprints and the Application-level move/detach/collapse and multi-window workspace round trip (ADR 0033); real cross-window pointer capture, native placement of a detached window, and Wayland's geometry refusal still need recorded platform evidence |
 | CP-15 | Validate the native text editor against `docs/text-editor-design.md` and ADR 0034. Create two documents through New File and confirm each is a separate blank, dirty `UNTITLED` editor, Auto-save is unavailable, and the first Save opens Save As. Open one file into two views in two windows; type in one and confirm the other shows the text, the unsaved marker, and a single shared undo history. Change the file underneath a clean view and confirm it adopts; repeat dirty and confirm Conflict offers Compare, Reload, Keep my version, and Save As without losing either version. Replace All, then undo with a toolbar button still focused. Narrow the window until the Find verbs collapse and confirm every action is still reachable. Set a fixed column count and confirm by reading the file on disk that no newline was written. Save As onto a new name and onto an already-open file, confirming the saving view follows the new file, other views keep the original, and one file remains one buffer. Exercise every state with a screen reader and a high-contrast theme, confirming shape and words alone carry it. | Native functional + visual + accessibility | New-file identity and first-save routing, document sharing, freshness/conflict transitions, bounds, Save As rebinding, Find behaviour, bounded body-widget history, view-scoped text-widget teardown, and sibling widget-state survival under repeated open/close are automated; retain human review for readability, caret and focus behaviour, screen-reader wording, conflict comprehension under time pressure, and the honesty of disabled-control explanations |
 
+CP-06/CP-15 saved-local images: open owned local Markdown fixtures in Preview
+and Split, exceed 64 automatic references and explicitly load the next image.
+Across windows, lower **Image memory budget** below admitted usage, check that
+existing images remain and new growth is explained, then increase it and verify
+recovery. First Save/Save As must use the new real parent; remote, untitled and
+terminal-history labels must never grant local image reads. Inspect rooted and
+canonical traversal/symlink refusal, symlinked Markdown filenames, changed
+source-root/image/intermediate names and Windows reparse points. A source that
+cannot be resolved must keep its text Preview and explain image refusal.
+Review keyboard retry after repairing a failed file and screen-reader/refusal
+wording. Shared allowances/workers, actual
+read/header limits, real editor/button routing, stale results, reparse/close,
+settings/save/restart/reset/failed-save and Unix FIFO refusal are automated.
+Deterministic production-route tests cover Unix symlink-file authority,
+final/intermediate symlink races, captured-root rebinding and supported in-root
+aliases. Unprivileged Windows junction tests cover intermediate and root
+acquisition races; portable tests cover visible source-resolution refusal and
+directory-handle release after successful/refused reads. Windows file-symlink
+native presentation still needs an owned fixture on a Developer Mode or
+symlink-privileged machine; the unprivileged junction tests do not claim it.
+Native visual/focus/accessibility and filesystem-permission review remain
+pending; this is not total-RAM/VRAM or long-running RSS acceptance.
+
 CP-15 undo retention: exercise an owned large multiline file with widget
 paste, vi edit and toolbar/colon substitution. A whole change whose undo
 record exceeds 8 MiB must leave text, revision, dirty/saved state, undo and

@@ -396,6 +396,7 @@ pub(crate) struct TextEditorTab {
     document: DocumentId,
     title: String,
     origin_label: String,
+    local_preview_source: Result<Option<LocalMarkdownSource>, String>,
     remote: bool,
     untitled: bool,
     /// The widget's copy of the text. egui's `TextEdit` needs a `String` it
@@ -591,6 +592,7 @@ impl TextEditorTab {
             document,
             title,
             origin_label: open.origin().qualified_label(),
+            local_preview_source: saved_local_preview_source(open.origin()),
             remote: open.origin().is_remote(),
             untitled: matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_)),
             buffer: open.text().text().to_owned(),
@@ -661,6 +663,7 @@ impl TextEditorTab {
         self.document = document;
         self.title = open.origin().file_name().to_owned();
         self.origin_label = open.origin().qualified_label();
+        self.local_preview_source = saved_local_preview_source(open.origin());
         self.remote = open.origin().is_remote();
         self.untitled = matches!(open.origin(), festerm_document::DocumentOrigin::Untitled(_));
         self.buffer = open.text().text().to_owned();
@@ -2093,7 +2096,7 @@ impl TextEditorTab {
     /// the start of that section and takes the viewport with it.
     fn show_outline_rail(&mut self, ui: &mut egui::Ui, height: f32) {
         let pane = self.preview.get_or_insert_with(|| {
-            MarkdownPreviewPane::new(preview_source(&self.origin_label), &self.buffer)
+            editor_markdown_preview(&self.local_preview_source, &self.origin_label, &self.buffer)
         });
         pane.sync(ui.ctx(), &self.buffer);
         let headings = pane.headings();
@@ -2181,7 +2184,7 @@ impl TextEditorTab {
     /// view's buffer instead of from a file.
     fn show_preview_pane(&mut self, ui: &mut egui::Ui, height: f32) {
         let pane = self.preview.get_or_insert_with(|| {
-            MarkdownPreviewPane::new(preview_source(&self.origin_label), &self.buffer)
+            editor_markdown_preview(&self.local_preview_source, &self.origin_label, &self.buffer)
         });
         pane.sync(ui.ctx(), &self.buffer);
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
@@ -2198,6 +2201,12 @@ impl TextEditorTab {
     /// section is the unit because it is the one both panes can name: a line
     /// of source has no height in the rendering, but a heading has a place in
     /// both.
+    pub(crate) fn load_local_image(&mut self, index: usize, context: &egui::Context) {
+        if let Some(preview) = &mut self.preview {
+            preview.load_local_image(index, context);
+        }
+    }
+
     fn sync_split_scroll(&mut self) {
         let top_offset = self.top_visible_offset;
         // Whichever pane moved this frame is the one being read; without that
@@ -2747,10 +2756,43 @@ fn match_count_message(count: usize) -> String {
     }
 }
 
-/// The identity the preview parses under. It only ever affects how relative
-/// links and images are resolved, so a path the loader will not accept
-/// degrades to a bare name rather than costing the user their preview.
-fn preview_source(origin_label: &str) -> MarkdownSource {
+fn saved_local_preview_source(
+    origin: &festerm_document::DocumentOrigin,
+) -> Result<Option<LocalMarkdownSource>, String> {
+    match origin {
+        festerm_document::DocumentOrigin::Local(local) => {
+            let path = std::fs::canonicalize(local.path()).map_err(|_| {
+                "Local images are unavailable because the saved Markdown file could not be resolved."
+                    .to_owned()
+            })?;
+            LocalMarkdownSource::new(path).map(Some).map_err(|_| {
+                "Local images are unavailable because the saved Markdown file has an invalid source identity."
+                    .to_owned()
+            })
+        }
+        festerm_document::DocumentOrigin::Remote(_)
+        | festerm_document::DocumentOrigin::Untitled(_) => Ok(None),
+    }
+}
+
+fn editor_markdown_preview(
+    source: &Result<Option<LocalMarkdownSource>, String>,
+    origin_label: &str,
+    text: &str,
+) -> MarkdownPreviewPane {
+    match source {
+        Ok(Some(source)) => MarkdownPreviewPane::for_saved_local_source(source.clone(), text),
+        Ok(None) => MarkdownPreviewPane::new(preview_presentation_source(origin_label), text),
+        Err(reason) => MarkdownPreviewPane::with_unavailable_local_images(
+            preview_presentation_source(origin_label),
+            text,
+            reason,
+        ),
+    }
+}
+
+// A presentation label, including the fallback, never grants filesystem access.
+fn preview_presentation_source(origin_label: &str) -> MarkdownSource {
     LocalMarkdownSource::new(PathBuf::from(origin_label))
         .or_else(|_| LocalMarkdownSource::new(PathBuf::from("preview.md")))
         .map(MarkdownSource::from)
@@ -3178,6 +3220,299 @@ mod tests {
         let id = documents.borrow_mut().open_local(path).unwrap();
         let editor = TextEditorTab::new(id, &documents);
         (documents, editor)
+    }
+
+    #[test]
+    fn image_budget_real_editor_preview_and_manual_image_command_load_saved_local_images() {
+        let directory = TemporaryDirectory::new("preview-image-command");
+        let mut body = String::new();
+        for index in 0..65 {
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+                .save(directory.path.join(format!("image-{index}.png")))
+                .unwrap();
+            body.push_str(&format!("![Image {index}](image-{index}.png)\n\n"));
+        }
+        let path = directory.file("readme.md", &body);
+        let mut state = crate::tabs::AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path,
+                replacing: None,
+            },
+            &egui::Context::default(),
+        );
+        let mut harness = Harness::builder()
+            .with_size(vec2(1200.0, 6000.0))
+            .build_ui_state(
+                |ui,
+                 state: &mut (
+                    crate::tabs::AppState,
+                    Option<crate::markdown_images::ImageMemoryBudget>,
+                    bool,
+                )| {
+                    state.1 = Some(crate::markdown_images::ImageMemoryBudget::for_context(
+                        ui.ctx(),
+                        Default::default(),
+                    ));
+                    let documents = state.0.documents().clone();
+                    let tab = state.0.active();
+                    let crate::tabs::TabContent::TextEditor(editor) =
+                        &mut state.0.active_tab_mut().content
+                    else {
+                        panic!("the file picker must open the editor");
+                    };
+                    editor.show(ui, tab, &documents);
+                    for command in crate::markdown_viewer::take_viewer_commands(ui.ctx()) {
+                        if matches!(
+                            command,
+                            AppCommand::LoadMarkdownLocalImage {
+                                reference_index: 64
+                            }
+                        ) {
+                            state.2 = true;
+                        }
+                        state.0.dispatch(command, ui.ctx());
+                    }
+                },
+                (state, None, false),
+            );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            harness.step();
+            let crate::tabs::TabContent::TextEditor(editor) =
+                &harness.state().0.active_tab().content
+            else {
+                unreachable!()
+            };
+            if (0..64).all(|index| {
+                editor
+                    .preview
+                    .as_ref()
+                    .unwrap()
+                    .image_loaded_for_test(index)
+            }) && harness.query_all_by_label("Load local image").count() == 1
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the automatic image budget did not settle"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let crate::tabs::TabContent::TextEditor(editor) = &harness.state().0.active_tab().content
+        else {
+            unreachable!()
+        };
+        assert!(editor.preview.as_ref().unwrap().image_loaded_for_test(0));
+        assert!(!editor.preview.as_ref().unwrap().image_loaded_for_test(64));
+        harness.get_by_label("Load local image").click();
+        harness.run();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            harness.step();
+            let crate::tabs::TabContent::TextEditor(editor) =
+                &harness.state().0.active_tab().content
+            else {
+                unreachable!()
+            };
+            if editor.preview.as_ref().unwrap().image_loaded_for_test(64) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the real image command did not reach the editor Preview (command observed: {})",
+                harness.state().2
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(harness.state().2);
+    }
+
+    #[test]
+    fn image_budget_nonlocal_editor_origins_never_authorize_path_looking_preview_labels() {
+        let directory = TemporaryDirectory::new("preview-origin-permission");
+        let path = directory.file("readme.md", "![Image](image.png)\n");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+            .save(directory.path.join("image.png"))
+            .unwrap();
+        let label = path.to_string_lossy().into_owned();
+        let documents = DocumentRegistry::shared();
+        let remote = festerm_document::RemoteOrigin::new(
+            "example.invalid",
+            22,
+            festerm_document::RemoteOwner::username("reader").unwrap(),
+            "test-fingerprint",
+            label.clone(),
+            1,
+        )
+        .unwrap();
+        let untitled =
+            festerm_document::UntitledOrigin::new("scratch", "scratch.md", &label).unwrap();
+        let text = festerm_document::TextDocument::from_bytes(
+            b"![Image](image.png)\n",
+            festerm_document::DocumentBounds::DEFAULT,
+        )
+        .unwrap();
+        let mut registry = documents.borrow_mut();
+        let ids = [
+            registry.adopt(remote.into(), text.clone(), true),
+            registry.adopt(untitled.into(), text, false),
+            registry.create_untitled("terminal-history", &label, b"![Image](image.png)\n"),
+        ];
+        drop(registry);
+        for id in ids {
+            let mut editor = TextEditorTab::new(id, &documents);
+            assert!(editor.local_preview_source.as_ref().unwrap().is_none());
+            editor.origin_label = label.clone();
+            let context = egui::Context::default();
+            let budget = crate::markdown_images::ImageMemoryBudget::for_context(
+                &context,
+                Default::default(),
+            );
+            let mut output =
+                context.run_ui(Default::default(), |ui| editor.show_preview_pane(ui, 400.0));
+            output.textures_delta.clear();
+            editor.load_local_image(0, &context);
+            let mut output =
+                context.run_ui(Default::default(), |ui| editor.show_preview_pane(ui, 400.0));
+            output.textures_delta.clear();
+            assert!(!editor.preview.as_ref().unwrap().image_loaded_for_test(0));
+            assert_eq!(budget.usage_for_test(), (0, 0));
+        }
+    }
+
+    #[test]
+    fn image_budget_first_save_and_save_as_rebind_preview_to_the_real_new_parent() {
+        let original = TemporaryDirectory::new("preview-first-save");
+        let destination = TemporaryDirectory::new("preview-save-as");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().create_untitled(
+            "scratch",
+            "readme.md",
+            b"![Image](image.png)\n",
+        );
+        let mut editor = TextEditorTab::new(id, &documents);
+        assert!(editor.local_preview_source.as_ref().unwrap().is_none());
+        let first = original.path.join("readme.md");
+        let (_, moved) = documents.borrow_mut().save_as(id, &first).unwrap();
+        editor.rebind(moved.unwrap_or(id), &documents);
+        assert_eq!(
+            editor
+                .local_preview_source
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .path(),
+            &fs::canonicalize(&first).unwrap()
+        );
+        let context = egui::Context::default();
+        let mut output =
+            context.run_ui(Default::default(), |ui| editor.show_preview_pane(ui, 400.0));
+        output.textures_delta.clear();
+        assert!(editor.preview.is_some());
+        let second = destination.path.join("readme.md");
+        let (_, moved) = documents
+            .borrow_mut()
+            .save_as(editor.document(), &second)
+            .unwrap();
+        editor.rebind(moved.unwrap_or(editor.document()), &documents);
+        assert!(editor.preview.is_none());
+        assert_eq!(
+            editor
+                .local_preview_source
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .path(),
+            &fs::canonicalize(second).unwrap()
+        );
+        let history = documents.borrow_mut().create_untitled(
+            "terminal-history",
+            first.to_str().unwrap(),
+            b"![Image](image.png)\n",
+        );
+        editor.rebind(history, &documents);
+        assert!(editor.local_preview_source.as_ref().unwrap().is_none());
+        assert!(editor.preview.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_symlinked_editor_markdown_uses_the_real_file_parent() {
+        let real = TemporaryDirectory::new("preview-real-source-parent");
+        let links = TemporaryDirectory::new("preview-lexical-source-parent");
+        let target = real.file("readme.md", "![Image](image.png)\n");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+            .save(real.path.join("image.png"))
+            .unwrap();
+        let link = links.path.join("linked.md");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&link).unwrap();
+        let editor = TextEditorTab::new(id, &documents);
+        assert_eq!(
+            editor.local_preview_source.as_ref().unwrap().as_ref().unwrap().path(),
+            &fs::canonicalize(&target).unwrap(),
+            "saved-local Preview must derive resource authority from the complete real file identity"
+        );
+        let mut harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(
+                |ui, editor: &mut TextEditorTab| editor.show_preview_pane(ui, 500.0),
+                editor,
+            );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            harness.step();
+            if harness
+                .state()
+                .preview
+                .as_ref()
+                .unwrap()
+                .image_loaded_for_test(0)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "production Preview must read the image beside the real Markdown file"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn image_budget_unresolvable_local_source_keeps_preview_and_explains_image_refusal() {
+        let directory = TemporaryDirectory::new("preview-unresolvable-source");
+        let body = "# Still readable\n\n![Image](image.png)\n";
+        let path = directory.file("readme.md", body);
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        let editor = TextEditorTab::new(id, &documents);
+        let reason = editor.local_preview_source.as_ref().unwrap_err().clone();
+        let harness = Harness::builder()
+            .with_size(vec2(800.0, 600.0))
+            .build_ui_state(
+                |ui, editor: &mut TextEditorTab| editor.show_preview_pane(ui, 500.0),
+                editor,
+            );
+        assert_eq!(harness.query_all_by_label(&reason).count(), 1);
+        assert_eq!(harness.query_all_by_label("Load local image").count(), 0);
+        assert_eq!(
+            harness.state().preview.as_ref().unwrap().rendered_text(),
+            body
+        );
+        assert!(!harness
+            .state()
+            .preview
+            .as_ref()
+            .unwrap()
+            .image_loaded_for_test(0));
+        assert_eq!(documents.borrow().get(id).unwrap().text().text(), body);
     }
 
     #[test]

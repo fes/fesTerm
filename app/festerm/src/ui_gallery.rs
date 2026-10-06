@@ -1300,6 +1300,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
+        image_memory_budget: festerm_config::ImageMemoryBudgetPreference::MiB512,
+        image_memory_over_budget: false,
         quick_switch_overlay: true,
         compact_launcher_grid: false,
         show_resumable_sessions: true,

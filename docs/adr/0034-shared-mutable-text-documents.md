@@ -155,6 +155,15 @@ reading it, writing it, and both. A separate read-only Markdown viewer tab
 remains only for what the editor cannot hold: a remote snapshot or an HTTP
 document with no local file behind it.
 
+Saved-local Preview uses ADR 0030's bounded relative-image loader and shared
+managed-image allowance. The grant is derived from the document's typed local
+origin, not its displayed label; remote, untitled and terminal-history origins
+never authorize local images. First Save and Save As/rebinding replace the
+Preview's source, approvals, image caches and pending receivers. Snapshot
+reparses do the same, and an unavailable parse releases hidden images without
+starting loads for the old snapshot. This does not move image ownership or
+terminal mutation into the document registry.
+
 The alternative — a viewer tab and an editor tab for one file — was what
 fesTerm did, and it made a Markdown file two places that could disagree, each
 with its own outline, find state and scroll, each needing to be told about the
@@ -583,6 +592,12 @@ existing Markdown rendering stays out of scope.
   partial/stale repeat, pure-navigation/yank preservation, next-change recovery,
   and repeated edits as one shared undo transaction. Native keyboard/IME,
   narrow-pane readability and screen-reader delivery remain in `CP-15`.
+- **Saved-local Preview refinement:** `EDIT-18`, `MD-05`, `SET-13` and
+  `EDIT-04` have deterministic production-editor/manual-command,
+  typed-origin denial, first-save/Save As rebinding, shared allowance/worker,
+  explicit-retry, failed-parse and stale-result coverage. ADR 0030 owns the
+  image-policy limits and exclusions. Native image presentation,
+  refusal/recovery comprehension and accessibility remain `CP-06`/`CP-15`.
 - **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
   `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
   admission, churn/clone/clear, validated no-op, stable saved/base-token,

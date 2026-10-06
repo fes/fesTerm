@@ -3,6 +3,58 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Bounding image ownership and connecting saved-local Preview
+
+Review of #337 caught two filesystem-authority flaws alongside the memory
+repair: a symlinked Markdown filename granted its lexical parent, and a path
+could be rebound after containment checks but before opening. Three compiled
+old-path controls reproduced those failures. A further control showed that
+recanonicalizing the saved parent while acquiring a directory handle could
+still redirect the grant.
+
+Preview now resolves the complete saved file identity and reports resolution
+failure without losing readable text. Image reads acquire that canonical parent
+through a component-by-component no-follow directory walk, then use the
+`cap-std` sandboxed directory-handle resolver for the final file. Actual handle
+metadata and bounded reading follow, with no pathname reopen. Supported
+in-root aliases remain usable, and directory handles live only through file
+acquisition, including refusals. Nine new deterministic regressions cover real
+editor routing, Unix symlinks, unprivileged Windows junctions, root acquisition,
+compatibility, visible refusal and handle retirement. Native visual and
+Windows file-symlink presentation remain separate evidence; this repair does
+not establish total-memory or fragmentation conclusions.
+
+The allocation/lifecycle audit in #320 found that per-image limits left
+combined images unbounded, manual loads bypassed the four-worker cap, and
+decoder expansion began before raster dimensions were rejected. The review
+also uncovered a routing gap: ordinary local Markdown opens in the shared
+editor, whose Preview never invoked the standalone loader. Connecting only
+saved-local Preview was explicitly approved; displayed labels and fallback
+paths must not grant filesystem access.
+
+Both surfaces now borrow one admission/poll/retry implementation and share a
+512 MiB managed allowance plus four actual running workers. A bounded Settings
+choice applies live and survives save failures without an unsaved broadcast.
+Whole-load reservation happens atomically before owned expansion, and actual
+reading probes at most one byte beyond 8 MiB. Directory-handle confinement
+rejects rooted/traversal/symlink escapes, and nonblocking Unix opens keep FIFOs
+from pinning a worker waiting for a writer.
+
+Reservations follow actual worker, decoded-result, texture and CPU-upload
+owners through close/reparse/rebinding; a rotating 128-entry retirement scan
+avoids an unbounded reclamation walk. Permanent failures need an explicit
+retry; sparse ledgers release exceptional backing capacity with at most
+128 retained entries copied. Temporary refusals wait for their whole required
+allowance rather than retrying one another's released scratch storage.
+Existing admissions survive saturation or lowering.
+
+Deterministic regressions exercise real editor Preview and its image button,
+shared bytes/workers, first Save/Save As and nonlocal origins, stale results,
+failed parsing, retirement and Settings persistence/reset. CP-06/CP-15 retain
+native visual/accessibility evidence. Decoder-private memory, native renderer
+and GPU retirement, allocator fragmentation and total RSS are outside this
+allowance; the repair does not establish #297's multi-day growth cause.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged
@@ -36,6 +88,7 @@ the model and widget/vi/Find/substitution routes. Native input, focus/caret,
 narrow-pane and accessibility evidence remains CP-15. This bounds retained
 history, not candidate/staged/undo scratch, view allocation, allocator
 fragmentation or RSS, and does not establish #297's multi-day growth cause.
+
 ## Bounding live forwarding inventory without evicting tunnels
 
 The #320 allocation/lifecycle audit found that each requested SSH mapping
