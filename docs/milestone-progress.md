@@ -36,6 +36,43 @@ set; the narrower run cannot qualify omitted variants or native presentation.
 The addition is diagnostic, not a production rendering optimization or a
 claimed cause of multi-day growth.
 
+## Reducing unchanged Markdown outline preparation without virtualizing content
+
+The #348 forced-frame diagnostic found that constructing a 400-section Preview
+cost much more CPU time than tessellating it. It did not measure native latency
+or Markdown GPU drawing. Full variable-height Preview virtualization would risk
+Find, selection and offscreen code navigation, so the first implementation
+targets the standalone outline and unused heading-position allocations.
+
+The viewer now retains only exact row height/ink geometry for at most 4096
+headings, keyed to the loaded snapshot and actual wrap/font/scale dependencies.
+Offscreen rows skip repeated text preparation but retain every live response
+and accessibility node; visible and uncached rows prepare normally. No atlas
+galley is retained. The shared Preview clears and reuses its heading-position
+vector, while the viewer stops collecting positions it never consumes.
+Co-located old-control/candidate tests enforce at most 32 text layouts on warm
+64/400/2000-heading, 216-by-480-point unchanged and scrolled controls, plus less
+than half the ordinary heading-text bytes submitted for layout. They compare
+visible ink, all response/accessibility identities, wrapping, dependency
+invalidation, cap overflow and offscreen keyboard navigation.
+
+The isolated Windows run prepared 17/18/17 layouts for the 400-heading
+top/1100-point/8000-point controls, versus 400 each in the ordinary path, and
+submitted 466/424/425 heading-text bytes versus 10,634. The 64- and 2000-heading
+controls also prepared 17–18 layouts. Width/scale/font/text-option/revision
+changes first prepared all 400 rows and then returned to 9–15 visible layouts.
+A 3000-to-4112-heading replacement retained exactly 4096 geometry slots
+(98,304 bytes on this target), with 33 layouts including every uncached row;
+the old and candidate keyboard paths reached the tail on the same frame.
+These are layout-preparation counters, not measurements of total allocations
+or end-to-end time.
+
+This is an Outline-first preparation/allocation slice, not a fix for full
+Preview block traversal or Source line construction. The editor's separate
+outline, native accessibility/usability and cumulative GPU/native qualification
+remain follow-ups; these counters establish neither #297 causality nor
+fragmentation, leak or native performance conclusions.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory
