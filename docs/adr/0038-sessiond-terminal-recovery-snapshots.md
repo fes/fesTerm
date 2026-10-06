@@ -137,6 +137,31 @@ forwarded to the hosting terminal, which would generate duplicate replies.
 History is emitted once on attach, not appended again on each live frame.
 Full styled/native-GUI rendering is not claimed for this CLI projection.
 
+### Recovery buffer lifetimes
+
+Snapshot generation sizes the sanitized terminal under the existing 768-MiB
+payload limit before allocating wire storage. Serialization writes directly
+into one pre-sized header-prefixed buffer; the fixed payload slice cannot
+grow, and its final written length must match the advertised length. There
+is no second full payload vector copied into that wire buffer. The fixed
+slice replaces the serializer's redundant write-time sizing pass, not the
+protocol's limit or validation. Wire allocation failures are explicit.
+
+Receiving still reads the entire bounded payload before deserialization,
+using the same fixed-width bincode encoding and trailing-byte rejection.
+Once deserialization produces an owned `Terminal`, the received wire payload
+retires before structural validation and allocation-capacity restoration.
+Invalid state never reaches restoration or adoption. Live output remains
+withheld until acknowledgement; failed candidates leave the old client
+usable. The outgoing wire buffer already retires after its final write.
+
+This removes redundant managed wire overlap without changing schema 2,
+terminal ownership or takeover ordering. The mirror, sanitized clone,
+decoded terminal, restored capacities, private serializer/allocator costs
+and transport queues still have separate lifetimes. One payload's 768-MiB
+cap is not a total attach/process-memory budget. The pre-sized destination
+also has initialization cost; no process CPU improvement is implied.
+
 ## Rationale
 
 This is chosen over larger replay buffers or synthetic redraws because only a
@@ -192,6 +217,13 @@ Changes implementing this ADR must provide evidence for:
   another frame in the same read, failed-candidate rollback, and CLI framing;
 - frontend backend-owned resize deferral and output/resize/output ordering,
   with duplicate query replies suppressed and invalid controls reported.
+- large byte-identical legacy/new snapshot encoding with one observed
+  encoder-owned wire allocation; received payload retirement before capacity
+  restoration; exact payload-limit admission and pre-allocation refusal;
+- continued invalid-state, trailing-byte, truncated-payload and oversized
+  header rejection without adoption. Test observations track known managed
+  vector capacities before encoder handoff and incoming payload retirement,
+  not total allocator/RSS peaks or native signed-package acceptance.
 
 ## Rejected alternatives
 
