@@ -1015,6 +1015,15 @@ draw/readback medians are 52-66% lower, but normal-width Source UI construction
 is effectively unchanged. This is combined shared-host offscreen evidence,
 not isolated preparation-cache attribution or native presentation.
 
+The bounded Source-geometry successor at clean `a295d65` also preserves those
+four current `5fa487c` PNGs and twenty measured original-renderer guards.
+Normal/narrow Source UI medians are 3.684/2.766 ms versus 5.774/5.101 ms,
+but all four completed draw/readback medians increased. The Preview construction
+controls also moved, so this shared-host comparison is not isolated net-speedup
+or native-latency evidence. The
+[complete Source record](../validation/windows-warp/README.md#2026-10-06-bounded-source-geometry-observations)
+retains the adverse observations; CP-06/CP-16/CP-17 classifications stay unchanged.
+
 The editor's opaque outer frame now uses the same eligible textureless-panel
 helper as existing chrome; layout, child widgets and all ordinary-path guards
 are unchanged. A real-editor regression asserts executed painting and exact

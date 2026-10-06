@@ -121,6 +121,52 @@ peaks. This comparison does not isolate each cumulative optimization, qualify a
 quiet host, native presentation, input-to-display, real scrolling, Find or omitted
 variants. No syntax-colour normalization or reference-pixel exception was used.
 
+### 2026-10-06 bounded Source geometry observations
+
+Clean cumulative `a295d6596664362e86b31cf7dc56421d22bac432` completed the four
+actual 400-section Markdown controls after the Source/Outline font-metadata
+admission repair. The preserved comparison source is
+`5fa487c635b4b43f0aed8017d85d42d9f142f565`, which already executes the same
+single outer-panel callback. This is not another zero-to-one panel comparison.
+The exact measured release test executable SHA256 is
+`8818649d835fc4a34d9fc123e8abf225925d3b327268602f577844e457738a44`;
+an archived copy was checked against all four report hashes.
+
+The Windows x64 DX12 CPU adapter remains `Microsoft Basic Render Driver`,
+driver `10.0.26100.9278`, target `Rgba8Unorm`, scale 2. All four cross-revision
+reference PNGs are identical, all twenty measured original-renderer guards pass,
+and every baseline/current draw executes one panel callback. Source cleanliness,
+actual fixture readiness, adapter/format, dimensions, ordered samples,
+percentiles, finite completion buckets and dimension-derived payload equations
+were independently checked. The existing release replay command above was used
+with `FESTERM_WARP_UI_SCENES=markdown-controls`, fresh output and the preserved
+current reference directory; the picker-backdrop option was unset.
+
+| Actual viewer | Previous UI median (ms) | Bounded Source UI median (ms) | Previous completed draw/readback median (ms) | Current median (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Preview normal | 13.678 | 10.061 | 320.413 | 332.295 |
+| Preview narrow | 12.062 | 10.217 | 58.947 | 74.529 |
+| Source normal | 5.774 | 3.684 | 435.244 | 457.205 |
+| Source narrow | 5.101 | 2.766 | 69.948 | 103.971 |
+
+Normal/narrow Source construction medians are lower by 36.2%/45.8%, but Preview
+construction also moved and all four completed drawing medians increased
+by 3.7-48.6%. Those adverse samples remain in the record. The measurements are
+noncontemporaneous shared-host observations, not balanced isolated attribution,
+a proven drawing regression cause, or a net latency acceptance. No other owned
+build/probe was active when the replay acquired its runtime slot; this does not
+establish quietness of the shared machine.
+
+Focused CPU controls separately preserve all 4800 live responses/accessibility
+nodes while reducing warm actual layout requests to 34/31 normal/narrow.
+Geometry remains inside the existing 8192-job/4-MiB admission bounds; metadata
+is admitted before cloning at 128 entries per font/family map, 8192 charged
+name bytes and 256 family-reference capacity slots. Exact-limit, over-limit,
+ordinary-fallback and cold-to-warm recovery controls passed. These are specific
+callsite/layout/capacity observations, not global allocator, total-font or RSS
+accounting. Full traversal, Preview work, native scrolling/Find/presentation,
+physical latency, resource caps and broader platform evidence remain open.
+
 ### Optional same-frame black-backdrop attribution
 
 After reserving the exclusive runtime slot, set

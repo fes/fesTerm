@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Measuring bounded Source geometry on the cumulative application
+
+Clean `a295d65` ran all four actual 400-section Markdown WARP controls after
+the dependency-font admission repair. All four preserved `5fa487c` PNGs and
+twenty measured original-renderer guards passed, with one executed outer-panel
+callback on both revisions. Warm Source UI medians moved from 5.774 to 3.684 ms
+at normal width and 5.101 to 2.766 ms at narrow width.
+
+The Preview controls also had lower construction medians, while every completed
+draw/readback median increased, including Source's 435.244 to 457.205 ms and
+69.948 to 103.971 ms. Those adverse observations are retained, not converted into
+a drawing gain or dismissed as a proven host cause. This noncontemporaneous
+shared-host comparison does not isolate a net implementation speedup.
+The deterministic 4800-to-31/34 layout-request reduction proves the narrower
+mechanism; it does not prove physical latency or total-resource acceptance.
+The [source-bound record](../validation/windows-warp/README.md#2026-10-06-bounded-source-geometry-observations)
+keeps all four controls, the measured binary and the remaining evidence limits.
+
 ## Bounding dependency-font metadata before Source publication
 
 The Source handoff counted geometry slots and actual fixture metadata, but its
@@ -19,7 +37,7 @@ and key-clone payloads remain separate from label/layout work. Exact-limit and
 over-limit controls preserve full Source shapes, responses, accessibility and
 raw Unicode Copy; the existing width/font/scale/Find/navigation controls remain.
 This repairs a cache bound, not total allocator/RSS accounting or native/GPU
-performance evidence. #348 and cumulative runtime qualification remain open.
+performance evidence. #348 and broader native/runtime qualification remain open.
 
 ## Waiting for actual Markdown retry readiness
 
@@ -96,8 +114,7 @@ Dependency controls also exposed a real post-scale width-settling frame: it
 must relayout every row again, not pass as an unchanged frame. Exact shape,
 wrapped Unicode/CRLF selection/Copy, byte/heading navigation and bounded
 overflow/lifecycle controls pass without retained galleys or atlas UVs.
-#348, full traversal/Preview costs, cumulative rendering qualification and
-native latency evidence remain open.
+#348, full traversal/Preview costs and native latency evidence remain open.
 
 ## Measuring the real large Markdown drawing path
 
