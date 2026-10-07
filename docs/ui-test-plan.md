@@ -142,9 +142,9 @@ capture, post-tessellation metadata and unchanged font deltas, current-owner
 snapshot retirement, repeated refusal/recovery and replacement-hook isolation.
 The backend's shared pure dimension predicate checks exact existing limits
 and overflow on every platform. Windows additionally exercises native
-unsupported-state recovery and existing framebuffer/fallback tests. Proposed
-ADR 0045 requires owner review; these are capture-stage correctness/work
-checks, not native CPU, total-memory or CP-18 acceptance.
+unsupported-state recovery and existing framebuffer/fallback tests. Accepted
+ADR 0045 covers only this capture ordering; these are capture-stage
+correctness/work checks, not native CPU, total-memory or CP-18 acceptance.
 
 ### Interaction replay cases
 

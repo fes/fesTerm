@@ -381,10 +381,9 @@ controls keep their intentional copies.
 
 Four UI regressions plus portable bounds and Windows status checks cover
 these routes alongside existing atlas/font-delta and framebuffer tests.
-Proposed ADR 0045 records the ordering amendment to accepted ADR 0043 and
-requires architectural review before merge. The saved work is atlas copying,
-not a promise about total heap/RSS, frame-time/native CPU, GPU retirement
-or #297's cause; CP-18 remains open.
+Accepted ADR 0045 records the ordering amendment to accepted ADR 0043. The
+saved work is atlas copying, not a promise about total heap/RSS,
+frame-time/native CPU, GPU retirement or #297's cause; CP-18 remains open.
 
 ## Bounding actual undo storage without discarding a refused change
 

@@ -355,7 +355,7 @@ The optional native painter may supply metadata-only atlas admission after
 tessellation and before pixel capture. Backend policy owns eligibility and
 refusal reporting; rejection retains ordinary shapes without consuming font
 deltas. Hook revalidation and current-owner teardown protect replacement
-state. Proposed ADR 0045 changes only ADR 0043's oversized capture ordering;
+state. Accepted ADR 0045 changes only ADR 0043's oversized capture ordering;
 trusted revision and immutable owned-snapshot contracts remain intact.
 
 The UI routes egui keyboard, text, paste, focus, pointer, wheel, selection,

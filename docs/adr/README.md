@@ -35,6 +35,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0037: Reverse Wraparound Climbs Only the Line It Is On](0037-reverse-wraparound-bounds.md) — implements `DECSET 45` with xterm's post-383 bounds and retires stale soft-wrap marks on explicit line breaks
 - [ADR 0038: Authoritative Terminal Snapshots for `festerm-sessiond` Reattach Recovery](0038-sessiond-terminal-recovery-snapshots.md) — updates ADR 0025's recovery model to use protocol-v2 terminal snapshots rather than raw replay tails
 - [ADR 0043: Immutable Native Font Atlas Snapshots](0043-immutable-native-font-atlas-snapshots.md) - narrowly vendored non-consuming identity and bounded context snapshot ownership only; native CPU/resource/presentation/latency qualification remains open under #298 and CP-18
+- [ADR 0045: Native Atlas Admission Before Capture](0045-native-atlas-admission-before-capture.md) - accepted backend-owned metadata preflight; changes only ADR 0043's oversized capture ordering, with existing limits/fallback preserved
 - [ADR 0039: Direct2D Terminal Composition on Supported Windows x64 WARP](0039-opt-in-direct2d-terminal-composition.md) - automatic supported-route policy and ownership; broader native qualification remains open
 - [ADR 0040: Automatic Final-Target Terminal Copy](0040-opt-in-final-target-terminal-copy.md) - owner-approved bounded WARP rollout without production switches
 - [ADR 0041: Automatic Retained Window Prefix](0041-opt-in-retained-window-prefix.md) - owner-approved exact immutable prefix reuse; resource/native/latency follow-ups remain in #282
@@ -44,8 +45,6 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md) — superseded by ADR 0015
 
 ## Proposed Decisions
-
-- [ADR 0045: Native Atlas Admission Before Capture](0045-native-atlas-admission-before-capture.md) - #320 C5's backend-owned metadata preflight; changes only ADR 0043's oversized capture ordering, with existing limits/fallback preserved; explicit owner architectural review required before merge
 
 - [ADR 0044: Bounded Ordinary Terminal Row Paint Cache](0044-bounded-ordinary-terminal-row-paint-cache.md) - issue #327's internal presentation repair; independent gates and 52-run cleanup qualification complete, owner accepts the residual shaped-heavy CPU tradeoff under #334; external PR review remains required
 

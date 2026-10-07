@@ -1,8 +1,8 @@
 # ADR 0045: Native Atlas Admission Before Capture
 
-- **Status:** Proposed
+- **Status:** Accepted (capture ordering only; native qualification remains open)
 - **Date:** 2026-10-05
-- **Supersedes:** ADR 0043's oversized temporary-capture ordering only, if accepted
+- **Supersedes:** ADR 0043's oversized temporary-capture ordering only
 
 ## Context
 
@@ -38,8 +38,8 @@ non-consuming revision, immutable owned snapshots and retention limit.
 Zero retention continues to make explicit uncached captures for eligible
 atlases; it is not reinterpreted as refusal.
 
-This proposal requires architectural review and owner approval before merge.
-ADR 0043 remains accepted; no broader renderer acceptance is implied.
+Architectural review accepts this narrow ordering change. ADR 0043 remains
+accepted; no broader renderer acceptance is implied.
 
 ## Alternatives considered
 

@@ -81,9 +81,9 @@ and refusal/resumption episodes.
 
 This is a metadata-refusal mechanism control, not a large native-atlas stress
 run, native CPU/frame-time, total-memory/fragmentation, GPU-owner retirement
-or #297-causality measurement. Proposed ADR 0045 amends accepted ADR 0043's
-oversized temporary-copy ordering only if approved; architectural owner review
-is required before merge. Existing CP-18 native/manual prerequisites remain.
+or #297-causality measurement. Accepted ADR 0045 amends only ADR 0043's
+oversized temporary-copy ordering. Existing CP-18 native/manual prerequisites
+remain.
 
 ```sh
 cargo test --locked -p festerm-ui-egui -p festerm-windows-direct2d --lib
