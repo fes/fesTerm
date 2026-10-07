@@ -33,6 +33,8 @@
 //! A changed UI here simply produces a changed PNG; the test never fails
 //! because of it.
 
+mod warp_profile;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -698,6 +700,9 @@ impl SurfaceDriver for SurfaceProbe {
             self.node().get_by_label(label).click();
         }
     }
+    fn rect(&self, label: &str) -> egui::Rect {
+        self.node().get_by_label(label).rect()
+    }
     fn event(&self, event: egui::Event) {
         self.events.lock().push(event);
     }
@@ -1300,6 +1305,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
+        image_memory_budget: festerm_config::ImageMemoryBudgetPreference::MiB512,
+        image_memory_over_budget: false,
         quick_switch_overlay: true,
         compact_launcher_grid: false,
         show_resumable_sessions: true,
@@ -1322,6 +1329,9 @@ fn replay_warp_ui_surfaces() {
         Ok("1"),
         "set FESTERM_RUN_OPTIONAL_VALIDATION=1",
     );
+    let selected =
+        warp_profile::SceneSet::parse(std::env::var_os("FESTERM_WARP_UI_SCENES").as_deref())
+            .expect("valid WARP scene selection");
     let output =
         PathBuf::from(std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"));
     assert!(
@@ -1330,7 +1340,10 @@ fn replay_warp_ui_surfaces() {
     );
     fs::create_dir_all(&output).expect("create replay output directory");
     let provenance = surface_probe_provenance();
-    for surface in ["launcher", "settings", "profiles", "terminal"] {
+    for surface in ["launcher", "settings", "profiles", "terminal"]
+        .into_iter()
+        .filter(|_| selected == warp_profile::SceneSet::All)
+    {
         let scene_output = output.join(surface);
         fs::create_dir(&scene_output).unwrap();
         fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
@@ -1462,6 +1475,7 @@ fn replay_warp_ui_surfaces() {
         }
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
+            "scene_set": selected.name(),
             "scene": surface, "viewport_points": [1774, 1075],
             "physical_pixels": [3548, 2150], "pixels_per_point": 2,
             "adapter": format!("{info:?}"), "provenance": provenance,
@@ -1488,7 +1502,11 @@ fn replay_warp_ui_surfaces() {
         fs::write(scene_output.join("status.json"), r#"{"status":"complete"}"#).unwrap();
         eprintln!("{report}");
     }
-    for scene in bounded_surface_scenes() {
+    for scene in bounded_surface_scenes()
+        .into_iter()
+        .chain(markdown_surface_scenes())
+        .filter(|scene| selected.includes(scene.kind))
+    {
         let scene_output = output.join(scene.id);
         fs::create_dir(&scene_output).unwrap();
         fs::write(scene_output.join("status.json"), r#"{"status":"running"}"#).unwrap();
@@ -1577,19 +1595,26 @@ fn replay_warp_ui_surfaces() {
             );
             tessellation_times.push(started.elapsed().as_secs_f64() * 1000.0);
         }
+        let expected = renderer
+            .render(&probe.context, &frame)
+            .expect("unchanged-frame profiled-render pixel reference");
+        let (profiled, _) = warp_profile::render(&state, &probe.context, &frame);
+        assert_eq!(profiled, expected, "{} profiled renderer pixels", scene.id);
         let mut draw_times = Vec::new();
+        let mut draw_buckets = Vec::new();
         for _ in 0..5 {
-            let started = Instant::now();
-            renderer
-                .render(&probe.context, &frame)
-                .expect("completed drawing, synchronization and readback");
-            draw_times.push(started.elapsed().as_secs_f64() * 1000.0);
+            let (image, sample) = warp_profile::render(&state, &probe.context, &frame);
+            assert_eq!(image, expected, "{} measured render pixels", scene.id);
+            draw_times.push(sample.total_ms);
+            draw_buckets.push(sample);
         }
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
+            "scene_set": selected.name(),
             "scene": scene.id, "viewport_points": [scene.size().x, scene.size().y],
             "physical_pixels": [dimensions.0, dimensions.1], "pixels_per_point": 2,
             "adapter": format!("{info:?}"), "provenance": provenance,
+            "target_format": format!("{:?}", state.target_format),
             "renderer_initialization_ms": renderer_initialization_ms,
             "fixture_state_verified": true,
             "preparation_ms": probe.preparation_ms, "readiness_ms": probe.readiness_ms,
@@ -1600,6 +1625,9 @@ fn replay_warp_ui_surfaces() {
             "steady_ui": crate::surface_performance::timing_distribution(&ui_times),
             "steady_tessellation": crate::surface_performance::timing_distribution(&tessellation_times),
             "steady_completed_draw_readback": crate::surface_performance::timing_distribution(&draw_times),
+            "steady_draw_buckets": draw_buckets,
+            "profiled_renderer_pixels_equal": true,
+            "draw_bucket_scope": "CPU tessellation; callback preparation/encoding/target creation; queue submit; device completion wait; readback preparation/submit; readback wait; CPU image copy. Wait is not a GPU timestamp. Work counts describe submitted geometry and temporary target/readback/image payloads, not total GPU allocations or actual rasterized pixels. Panel paints count actual calls only for the installed production pipeline; null means no eligible installed pipeline.",
             "ui_scope": "raw production Dark Context::run_ui, AccessKit enabled; excludes query-tree updates and texture uploads",
             "preparation_scope": "owned synthetic fixture creation and actual model construction; readiness separately includes interaction frames and actual picker worker completion",
             "draw_scope": "completed drawing, tessellation, submission, synchronization and CPU readback; NOT native input-to-display or presentation latency",
@@ -2973,6 +3001,8 @@ pub(crate) enum SurfaceKind {
     SaveLarge,
     SaveError,
     SaveOverwrite,
+    MarkdownPreview,
+    MarkdownSource,
 }
 
 #[derive(Clone, Copy)]
@@ -3003,38 +3033,39 @@ impl SurfaceScene {
     }
 }
 
+macro_rules! pair {
+    ($id:literal, $kind:ident, $title:literal, $caption:literal) => {{
+        fn normal() -> image::RgbaImage {
+            capture_surface_gallery(SurfaceKind::$kind, false)
+        }
+        fn narrow() -> image::RgbaImage {
+            capture_surface_gallery(SurfaceKind::$kind, true)
+        }
+        [
+            SurfaceScene {
+                id: $id,
+                kind: SurfaceKind::$kind,
+                narrow: false,
+                title: $title,
+                caption: $caption,
+                capture: normal,
+            },
+            SurfaceScene {
+                id: concat!($id, "-narrow"),
+                kind: SurfaceKind::$kind,
+                narrow: true,
+                title: concat!($title, " — narrow root"),
+                caption: concat!(
+                    $caption,
+                    " The root is 360 × 516 logical pixels; this is not native acceptance."
+                ),
+                capture: narrow,
+            },
+        ]
+    }};
+}
+
 pub(crate) fn bounded_surface_scenes() -> Vec<SurfaceScene> {
-    macro_rules! pair {
-        ($id:literal, $kind:ident, $title:literal, $caption:literal) => {{
-            fn normal() -> image::RgbaImage {
-                capture_surface_gallery(SurfaceKind::$kind, false)
-            }
-            fn narrow() -> image::RgbaImage {
-                capture_surface_gallery(SurfaceKind::$kind, true)
-            }
-            [
-                SurfaceScene {
-                    id: $id,
-                    kind: SurfaceKind::$kind,
-                    narrow: false,
-                    title: $title,
-                    caption: $caption,
-                    capture: normal,
-                },
-                SurfaceScene {
-                    id: concat!($id, "-narrow"),
-                    kind: SurfaceKind::$kind,
-                    narrow: true,
-                    title: concat!($title, " — narrow root"),
-                    caption: concat!(
-                        $caption,
-                        " The root is 360 × 516 logical pixels; this is not native acceptance."
-                    ),
-                    capture: narrow,
-                },
-            ]
-        }};
-    }
     [
         pair!("about-unavailable", About, "About in a developer build", "The real About dialog honestly reports unavailable updating. No endpoint is contacted."),
         pair!("about-licenses", Licenses, "About with licenses expanded", "Bundled-font attribution is expanded in the real bounded license scroll area."),
@@ -3068,9 +3099,45 @@ pub(crate) fn bounded_surface_scenes() -> Vec<SurfaceScene> {
     .collect()
 }
 
+fn markdown_surface_scenes() -> Vec<SurfaceScene> {
+    [
+        pair!(
+            "markdown-large-preview",
+            MarkdownPreview,
+            "Large owned Markdown Preview",
+            "Four hundred owned sections and Rust fences use the actual remote-snapshot model and Preview renderer; no network, images or clipboard are accessed."
+        ),
+        pair!(
+            "markdown-large-source",
+            MarkdownSource,
+            "Large owned Markdown Source",
+            "The same four-hundred-section snapshot uses its actual Source mode, not a text-editor substitute. Find and native presentation remain unmeasured."
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn large_markdown_surface_fixture() -> Vec<u8> {
+    let mut text = String::with_capacity(400 * 192);
+    for section in 0..400 {
+        if section == 0 {
+            text.push_str("# WARP Markdown fixture\n\n");
+        } else {
+            text.push_str(&format!("## Section {section:04}\n\n"));
+        }
+        text.push_str(&format!(
+            "An owned paragraph for section {section:04} includes **strong text** and `inline code`.\n\n```rust\nfn section_{section:04}() {{ println!(\"owned section {section:04}\"); }}\n```\n\n"
+        ));
+    }
+    text.into_bytes()
+}
+
 enum SurfaceBody {
     App(Box<crate::app::FesTermApp>),
     Terminal(Box<TerminalMenuState>),
+    Markdown(Box<MarkdownViewerTab>, crate::tabs::TabId),
 }
 
 pub(crate) struct SurfaceFixture {
@@ -3111,6 +3178,21 @@ impl SurfaceFixture {
             assert!(directory.is_dir(), "retained owned scene directory");
         } else {
             fs::create_dir_all(directory).expect("create owned surface fixture");
+        }
+        if matches!(kind, K::MarkdownPreview | K::MarkdownSource) {
+            let mut tab = MarkdownViewerTab::open_remote(
+                synthetic_markdown_source(),
+                "Owned WARP Markdown".to_owned(),
+                large_markdown_surface_fixture(),
+            );
+            if kind == K::MarkdownSource {
+                tab.toggle_mode();
+            }
+            return Self {
+                body: SurfaceBody::Markdown(Box::new(tab), crate::tabs::TabId::next_for_test()),
+                transport: None,
+                active_tab: None,
+            };
         }
         if matches!(
             kind,
@@ -3269,6 +3351,9 @@ impl SurfaceFixture {
                     state.options.clone(),
                 );
             }
+            SurfaceBody::Markdown(tab, id) => {
+                assert!(tab.show(ui, *id).is_none());
+            }
         }
     }
 
@@ -3302,6 +3387,7 @@ trait SurfaceDriver {
     fn has_label_containing(&self, label: &str) -> bool;
     fn focused(&self, label: &str) -> bool;
     fn click(&self, label: &str, secondary: bool);
+    fn rect(&self, label: &str) -> egui::Rect;
     fn event(&self, event: egui::Event);
 }
 
@@ -3328,6 +3414,9 @@ impl SurfaceDriver for Harness<'_, SurfaceFixture> {
             self.get_by_label(label).click();
         }
     }
+    fn rect(&self, label: &str) -> egui::Rect {
+        self.get_by_label(label).rect()
+    }
     fn event(&self, event: egui::Event) {
         Harness::event(self, event);
     }
@@ -3347,6 +3436,57 @@ fn surface_cell(driver: &impl SurfaceDriver, column: usize) -> egui::Pos2 {
         )
 }
 
+fn settled_chip_rect(driver: &mut impl SurfaceDriver) -> egui::Rect {
+    let mut previous = driver.rect("Synthetic SSH chip");
+    for _ in 0..32 {
+        driver.step();
+        let current = driver.rect("Synthetic SSH chip");
+        if current == previous {
+            return current;
+        }
+        previous = current;
+    }
+    panic!("chip fixture bounds did not settle within 32 frames");
+}
+
+fn chip_scroll_viewport(driver: &impl SurfaceDriver) -> Option<egui::Rect> {
+    if !driver.has_label("Scroll chips left") {
+        return None;
+    }
+    let left = driver.rect("Scroll chips left");
+    let right = driver.rect("Scroll chips right");
+    Some(
+        egui::Rect::from_min_max(
+            egui::pos2(left.right(), left.top()),
+            egui::pos2(right.left(), right.bottom()),
+        )
+        .shrink(1.0),
+    )
+}
+
+fn reveal_chip_target(driver: &mut impl SurfaceDriver) {
+    for clicks in 0..=8 {
+        let target = settled_chip_rect(driver);
+        let Some(viewport) = chip_scroll_viewport(driver) else {
+            return;
+        };
+        if viewport.contains(target.center()) {
+            return;
+        }
+        if clicks == 8 {
+            break;
+        }
+        let direction = if target.center().x < viewport.left() {
+            "Scroll chips left"
+        } else {
+            "Scroll chips right"
+        };
+        driver.click(direction, false);
+        driver.step();
+    }
+    panic!("chip fixture target was not revealed by 8 real scroll-control clicks");
+}
+
 fn prepare_surface(kind: SurfaceKind, driver: &mut impl SurfaceDriver) {
     use SurfaceKind as K;
     // Fixed settling is bounded even for a widget that requests animation.
@@ -3359,6 +3499,7 @@ fn prepare_surface(kind: SurfaceKind, driver: &mut impl SurfaceDriver) {
             driver.step();
         }
         K::ChipFirst | K::ChipMiddle | K::ChipLastReadOnly => {
+            reveal_chip_target(driver);
             driver.click("Synthetic SSH chip", true);
             driver.step();
         }
@@ -3462,9 +3603,17 @@ fn assert_surface(kind: SurfaceKind, driver: &impl SurfaceDriver) {
         K::Paste => "Paste",
         K::DirtyClose => "Save",
         K::OpenError | K::SaveError => "Could not load the folder.",
+        K::MarkdownPreview => "Heading level 1: WARP Markdown fixture",
+        K::MarkdownSource => "# WARP Markdown fixture",
         _ => "entry-000000.md",
     };
     assert!(driver.has_label(required), "{kind:?} must show {required}");
+    if kind == K::MarkdownSource {
+        assert!(driver.has_label_containing("# WARP Markdown fixture"));
+    }
+    if matches!(kind, K::MarkdownPreview | K::MarkdownSource) {
+        assert!(driver.has_label_containing("fn section_0399()"));
+    }
     if matches!(kind, K::LiveClose | K::Paste) {
         assert!(driver.focused("Cancel"));
     }
@@ -3671,6 +3820,9 @@ impl SurfaceProbe {
                 } else {
                     self.probe.node().get_by_label(label).click();
                 }
+            }
+            fn rect(&self, label: &str) -> egui::Rect {
+                self.probe.node().get_by_label(label).rect()
             }
             fn event(&self, event: egui::Event) {
                 self.probe.events.lock().push(event);
@@ -5336,6 +5488,7 @@ fn style_review_fixtures_verify_ready_tasks_and_semantics_before_short_resize() 
 pub(crate) fn capture_surface_gallery(kind: SurfaceKind, narrow: bool) -> image::RgbaImage {
     let scene = bounded_surface_scenes()
         .into_iter()
+        .chain(markdown_surface_scenes())
         .find(|scene| scene.kind == kind && scene.narrow == narrow)
         .unwrap();
     let directory = surface_fixture_directory(scene.id);
@@ -5358,11 +5511,48 @@ pub(crate) fn capture_surface_gallery(kind: SurfaceKind, narrow: bool) -> image:
 }
 
 #[test]
+fn chip_surface_fixtures_reveal_real_targets_without_activating_them() {
+    for scene in bounded_surface_scenes().into_iter().filter(|scene| {
+        matches!(
+            scene.kind,
+            SurfaceKind::ChipFirst | SurfaceKind::ChipMiddle | SurfaceKind::ChipLastReadOnly
+        )
+    }) {
+        let directory = unique_surface_fixture_directory();
+        let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
+        probe.prepare(scene.kind, |delta| delta.clear());
+        if let Some(viewport) = chip_scroll_viewport(&probe) {
+            assert!(
+                viewport.contains(probe.rect("Synthetic SSH chip").center()),
+                "{}: secondary-click target must remain inside the real chip viewport",
+                scene.id
+            );
+        }
+        probe.fixture.assert_no_transport_input();
+        drop(probe);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn markdown_warp_fixtures_show_real_large_preview_and_raw_source_at_both_widths() {
+    for scene in markdown_surface_scenes() {
+        let directory = unique_surface_fixture_directory();
+        let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
+        probe.prepare(scene.kind, |delta| delta.clear());
+        if !scene.narrow {
+            assert!(probe.has_label("Heading level 1: WARP Markdown fixture"));
+        }
+        let raw_source = probe.has_label_containing("# WARP Markdown fixture");
+        assert_eq!(raw_source, scene.kind == SurfaceKind::MarkdownSource);
+        drop(probe);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
 fn bounded_surface_fixtures_preserve_ready_state_focus_selection_and_targets() {
-    for scene in bounded_surface_scenes()
-        .into_iter()
-        .filter(|scene| !scene.narrow)
-    {
+    for scene in bounded_surface_scenes() {
         let directory = unique_surface_fixture_directory();
         let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
         probe.prepare(scene.kind, |delta| delta.clear());
