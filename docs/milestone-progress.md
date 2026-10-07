@@ -524,6 +524,25 @@ failed parsing, retirement and Settings persistence/reset. CP-06/CP-15 retain
 native visual/accessibility evidence. Decoder-private memory, native renderer
 and GPU retirement, allocator fragmentation and total RSS are outside this
 allowance; the repair does not establish #297's multi-day growth cause.
+## Admitting selected remote roots before deriving local destinations
+
+PR #338's security review found that recursive download children were checked
+but the selected root basename was joined directly to the local directory.
+A Unix remote filename containing Windows path syntax could therefore select
+an unintended local destination before any collision existed.
+
+The existing child policy now lives in a shared `festerm-ssh` helper, extended
+to reject drive/stream syntax and platform filename aliases as well as either
+separator. Selected file and directory roots, recursive children and text-mode
+`get`'s derived destinations validate before joining and verify immediate-child
+containment. Ordinary Unicode names and explicit local target paths keep their
+semantics. Invalid roots fail through the existing actionable operation error,
+with no output to clean up and without stopping other queued work. GUI entry
+points continue to share the transfer-manager boundary; planning reservations,
+collision decisions and owner cancellation retain their contracts. Native
+refusal readability and accessibility remain `SFTP-03` evidence; this does not
+claim race-free containment against a local filesystem replacement.
+
 ## Sharing recursive-copy metadata without evicting paused work
 
 The #320 audit found that each recursive SFTP copy had its own 65,536-item /
