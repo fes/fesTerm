@@ -22,10 +22,9 @@ mod imp {
     use windows_sys::Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            FileEaInformation, FileStreamInformation, NtCreateFile, NtQueryInformationFile,
-            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_EA_INFORMATION, FILE_NON_DIRECTORY_FILE,
-            FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_STREAM_INFORMATION,
-            FILE_SYNCHRONOUS_IO_NONALERT,
+            FileStreamInformation, NtCreateFile, NtQueryEaFile, NtQueryInformationFile,
+            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+            FILE_OPEN_REPARSE_POINT, FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
         },
     };
     use windows_sys::Win32::{
@@ -34,7 +33,8 @@ mod imp {
             SetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, ERROR_NOT_SUPPORTED,
             ERROR_NO_TOKEN, ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
             INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
-            STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
+            STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_NO_EAS_ON_FILE,
+            STATUS_NO_MORE_EAS, STATUS_SUCCESS, UNICODE_STRING,
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
@@ -305,22 +305,34 @@ mod imp {
 
     fn file_has_extended_attributes(file: &File) -> io::Result<bool> {
         let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
-        let mut information = FILE_EA_INFORMATION::default();
+        let mut probe = [0u8; 1];
         let result = unsafe {
-            NtQueryInformationFile(
+            NtQueryEaFile(
                 file.as_raw_handle() as HANDLE,
                 &raw mut status,
-                (&raw mut information).cast(),
-                mem::size_of::<FILE_EA_INFORMATION>() as u32,
-                FileEaInformation,
+                probe.as_mut_ptr().cast(),
+                probe.len() as u32,
+                false,
+                ptr::null(),
+                0,
+                ptr::null(),
+                true,
             )
         };
-        if result != STATUS_SUCCESS {
-            return Err(io::Error::from_raw_os_error(unsafe {
-                RtlNtStatusToDosError(result) as i32
-            }));
+        match extended_attribute_query_result(result) {
+            Ok(has_attributes) => Ok(has_attributes),
+            Err(status) => Err(io::Error::from_raw_os_error(unsafe {
+                RtlNtStatusToDosError(status) as i32
+            })),
         }
-        Ok(information.EaSize != 0)
+    }
+
+    fn extended_attribute_query_result(status: i32) -> Result<bool, i32> {
+        match status {
+            STATUS_NO_EAS_ON_FILE | STATUS_NO_MORE_EAS => Ok(false),
+            STATUS_SUCCESS | STATUS_BUFFER_OVERFLOW | STATUS_BUFFER_TOO_SMALL => Ok(true),
+            _ => Err(status),
+        }
     }
 
     fn file_has_named_streams(file: &File) -> io::Result<bool> {
@@ -1676,6 +1688,28 @@ mod imp {
                 ),
                 UNSUPPORTED_INTEGRITY_ATTRIBUTES
             );
+        }
+
+        #[test]
+        fn extended_attribute_probe_distinguishes_absent_present_and_failed_queries() {
+            assert_eq!(
+                extended_attribute_query_result(STATUS_NO_EAS_ON_FILE),
+                Ok(false)
+            );
+            assert_eq!(
+                extended_attribute_query_result(STATUS_NO_MORE_EAS),
+                Ok(false)
+            );
+            assert_eq!(extended_attribute_query_result(STATUS_SUCCESS), Ok(true));
+            assert_eq!(
+                extended_attribute_query_result(STATUS_BUFFER_OVERFLOW),
+                Ok(true)
+            );
+            assert_eq!(
+                extended_attribute_query_result(STATUS_BUFFER_TOO_SMALL),
+                Ok(true)
+            );
+            assert!(extended_attribute_query_result(STATUS_INFO_LENGTH_MISMATCH).is_err());
         }
 
         fn unsupported_metadata(reason: UnsupportedSecurityMetadata) -> SecurityMetadata {

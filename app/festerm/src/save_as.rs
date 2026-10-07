@@ -941,7 +941,11 @@ mod tests {
         harness.state_mut().0.navigate_up();
         settle(&mut harness);
 
-        assert!(harness.state().0.pane.error.is_none());
+        assert_ne!(
+            harness.state().0.pane.error.as_deref(),
+            Some("Destination changed after the folder was listed"),
+            "navigation must clear the stale-destination notice even if the new folder reports its own error"
+        );
         assert!(harness.state().0.refresh_notice.is_none());
     }
 
