@@ -3,6 +3,33 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Labeling surviving resource threads without inventing an allocation owner
+
+The earlier short retirement probe observed additional surviving TIDs but
+could not distinguish recycled identities or label their start modules.
+A supervisor-only opt-in now reads creation FILETIME, CPU, description and
+start-module metadata from the same verified owned-child thread handle.
+Complete UTC-contained sampling intervals preserve the existing held windows;
+bounded metadata does not change application or renderer scheduling.
+
+Clean cumulative `8f4b874`, after #367/#368, completes the actual labeled
+capture: twelve six-session phases, three whole-owner rounds, exact normalized
+pixels and normal exit. Independent raw correlation confirms 99 samples,
+2,487 thread records, 41 creation-bound identities and all seven held windows.
+All public allocated/kept registry IDs drain, weak repaint owners expire and
+reporting instances drop. Held whole-owner commitment remains
+144.605/143.457/145.254 MiB with 25/26/26 observed threads.
+
+The first two whole-owner windows each add one unnamed identity starting in
+`ntdll.dll`; the third adds none. Both identities are observed again in the
+final acknowledgment. All admitted held identity CPU deltas are measured zero,
+not fabricated defaults. Module labels are not stacks, continuous liveness or
+private-byte ownership, so this narrows the discriminator without establishing
+a leak or motivating a speculative lifecycle fix. The
+[source-bound record](../validation/terminal-performance/README.md#2026-10-06-cumulative-owned-thread-observations)
+keeps those adverse resource observations separate from the historical capture,
+native qualification and resource-cap acceptance.
+
 ## Measuring live Preview preparation without hiding the Source control
 
 The frame-local table-cell successor is now ordinarily composed after the
