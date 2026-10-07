@@ -79,7 +79,7 @@ mod imp {
         if !staging_parent_security_is_safe(
             shared_writable,
             sticky,
-            metadata.uid() == nix::unistd::Uid::effective().as_raw(),
+            metadata.uid() == nix::unistd::Uid::effective().as_raw() || metadata.uid() == 0,
             permissive_acl,
         ) {
             return Err(io::Error::new(
@@ -99,10 +99,10 @@ mod imp {
     pub(crate) const fn staging_parent_security_is_safe(
         shared_writable: bool,
         sticky: bool,
-        owned_by_current_user: bool,
+        owned_by_trusted_user: bool,
         permissive_acl: bool,
     ) -> bool {
-        !(shared_writable && (!sticky || !owned_by_current_user)) && !permissive_acl
+        !(shared_writable && (!sticky || !owned_by_trusted_user)) && !permissive_acl
     }
 
     pub fn staging_parent_matches(
@@ -518,10 +518,12 @@ mod imp {
         unsafe extern "C" {
             fn acl_get_fd_np(fd: RawFd, acl_type: i32) -> Acl;
             fn acl_get_entry(acl: Acl, entry_id: i32, entry: *mut AclEntry) -> i32;
+            fn acl_get_qualifier(entry: AclEntry) -> *mut c_void;
             fn acl_get_tag_type(entry: AclEntry, tag_type: *mut i32) -> i32;
             fn acl_get_permset(entry: AclEntry, permset: *mut AclPermset) -> i32;
             fn acl_get_perm_np(permset: AclPermset, permission: i32) -> i32;
             fn acl_free(object: *mut c_void) -> i32;
+            fn mbr_uuid_to_id(uuid: *const u8, id: *mut u32, id_type: *mut i32) -> i32;
         }
 
         let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED) };
@@ -564,7 +566,28 @@ mod imp {
             let permits_substitution = [ACL_ADD_FILE, ACL_DELETE, ACL_DELETE_CHILD]
                 .into_iter()
                 .any(|permission| unsafe { acl_get_perm_np(permset, permission) } == 1);
-            if tag_type == ACL_EXTENDED_ALLOW && permits_substitution {
+            let granted_to_current_user = if tag_type == ACL_EXTENDED_ALLOW {
+                let qualifier = unsafe { acl_get_qualifier(entry) };
+                if qualifier.is_null() {
+                    let error = io::Error::last_os_error();
+                    let _ = unsafe { acl_free(acl) };
+                    return Err(error);
+                }
+                let mut id = 0;
+                let mut id_type = -1;
+                let resolved =
+                    unsafe { mbr_uuid_to_id(qualifier.cast(), &raw mut id, &raw mut id_type) } == 0;
+                let freed = unsafe { acl_free(qualifier) };
+                if freed != 0 {
+                    let error = io::Error::last_os_error();
+                    let _ = unsafe { acl_free(acl) };
+                    return Err(error);
+                }
+                resolved && id_type == 0 && id == nix::unistd::Uid::effective().as_raw()
+            } else {
+                false
+            };
+            if tag_type == ACL_EXTENDED_ALLOW && permits_substitution && !granted_to_current_user {
                 if unsafe { acl_free(acl) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
@@ -1014,6 +1037,26 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
+        let user = Command::new("id").arg("-un").output().unwrap();
+        assert!(user.status.success());
+        let user = String::from_utf8(user.stdout).unwrap();
+        let status = Command::new("chmod")
+            .args([
+                "+a",
+                &format!("user:{} allow add_file,delete_child", user.trim()),
+            ])
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(secure_staging_parent(&directory.open()).is_ok());
+
+        let status = Command::new("chmod")
+            .arg("-N")
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
         let status = Command::new("chmod")
             .args(["+a", "everyone allow read"])
             .arg(&directory.0)
@@ -1041,7 +1084,7 @@ mod tests {
     }
 
     #[test]
-    fn sticky_shared_parent_must_be_owned_by_the_current_user() {
+    fn sticky_shared_parent_requires_a_trusted_owner() {
         assert!(imp::staging_parent_security_is_safe(
             true, true, true, false
         ));

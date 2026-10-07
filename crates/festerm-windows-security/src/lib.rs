@@ -16,6 +16,7 @@ mod imp {
         },
         path::Path,
         ptr,
+        sync::{Mutex, MutexGuard},
     };
 
     use windows_sys::Wdk::{
@@ -97,7 +98,10 @@ mod imp {
     pub struct SecurityPrivilegeGuard {
         token: HANDLE,
         previous: TOKEN_PRIVILEGES,
+        _lock: MutexGuard<'static, ()>,
     }
+
+    static SECURITY_PRIVILEGE_LOCK: Mutex<()> = Mutex::new(());
 
     impl Drop for SecurityPrivilegeGuard {
         fn drop(&mut self) {
@@ -119,6 +123,9 @@ mod imp {
     /// file's SACL. Existing-file replacement is refused when the process
     /// token does not hold this privilege.
     pub fn enable_security_privilege() -> io::Result<SecurityPrivilegeGuard> {
+        let lock = SECURITY_PRIVILEGE_LOCK
+            .lock()
+            .map_err(|_| io::Error::other("the security-privilege lock is poisoned"))?;
         let mut token = ptr::null_mut();
         if unsafe {
             OpenProcessToken(
@@ -171,7 +178,11 @@ mod imp {
                     "SeSecurityPrivilege is unavailable",
                 ));
             }
-            Ok(SecurityPrivilegeGuard { token, previous })
+            Ok(SecurityPrivilegeGuard {
+                token,
+                previous,
+                _lock: lock,
+            })
         })();
         if result.is_err() {
             let _ = unsafe { CloseHandle(token) };

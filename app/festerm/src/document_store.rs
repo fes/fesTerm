@@ -11,6 +11,9 @@
 //! The target name can be briefly absent after its prior entry is captured;
 //! ambiguous in-process failures retain both versions and never report success.
 
+#[cfg(not(any(unix, windows)))]
+compile_error!("native document saving is supported only on Unix and Windows");
+
 #[cfg(not(windows))]
 use std::fs::Metadata;
 use std::fs::{self, File};
@@ -1879,17 +1882,40 @@ fn publish_temporary(
     drop(mover);
     let displaced = match Generation::from_file(&current) {
         Ok(generation) => generation,
-        Err(_) => return Err(temporary.recovery_required()),
+        Err(error) => {
+            tracing::error!(%error, "the displaced Windows original generation could not be read");
+            if let Err(error) = festerm_windows_security::restrict_to_current_user(&current) {
+                tracing::error!(
+                    %error,
+                    "the unverifiable displaced Windows original could not be made private"
+                );
+            }
+            return Err(temporary.recovery_required());
+        }
     };
     let displaced_security_matches =
-        festerm_windows_security::security_metadata_matches(&current, security_metadata)
-            .unwrap_or(false);
+        match festerm_windows_security::security_metadata_matches(&current, security_metadata) {
+            Ok(matches) => matches,
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    "the displaced Windows original security metadata could not be verified"
+                );
+                false
+            }
+        };
     if displaced != original_generation || !displaced_security_matches {
         if let Ok(_restored_lock) =
             restore_windows_displaced(&current, &staging_handle, &directory_handle, target, None)
         {
             temporary.finish();
             return Err(SaveFailure::Conflict(displaced));
+        }
+        if let Err(error) = festerm_windows_security::restrict_to_current_user(&current) {
+            tracing::error!(
+                %error,
+                "the unrestored displaced Windows original could not be made private"
+            );
         }
         return Err(temporary.recovery_required());
     }

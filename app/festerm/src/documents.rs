@@ -13,8 +13,8 @@
 //! panics on loudly.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -48,6 +48,7 @@ const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 /// and, on a remote origin, spend a round trip on text the user is still in
 /// the middle of typing.
 const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
+const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -67,6 +68,7 @@ pub(crate) struct OpenDocument {
     auto_save_requested: bool,
     last_error: Option<SaveError>,
     recovery_error: Option<SaveError>,
+    recovery_path: Option<PathBuf>,
     /// When this document's source was last checked, so metadata queries run
     /// once per interval, not per frame. Windows also opens a file handle to
     /// retrieve its stable identity; Unix obtains identity from the stat.
@@ -228,6 +230,7 @@ pub(crate) struct DocumentRegistry {
     by_key: HashMap<DocumentKey, DocumentId>,
     next_id: u64,
     next_untitled_by_prefix: HashMap<String, u64>,
+    pending_recovery_notices: VecDeque<(PathBuf, SaveError)>,
     bounds: DocumentBounds,
 }
 
@@ -336,6 +339,7 @@ impl DocumentRegistry {
                 auto_save_requested: false,
                 last_error: None,
                 recovery_error: None,
+                recovery_path: None,
                 checked: Instant::now(),
                 reloaded: None,
                 settled: None,
@@ -392,9 +396,23 @@ impl DocumentRegistry {
             return false;
         }
         let key = document.origin.key();
+        let recovery = document
+            .recovery_path
+            .clone()
+            .zip(document.recovery_error.clone());
         self.documents.remove(&id);
         self.by_key.remove(&key);
+        if let Some(recovery) = recovery {
+            if self.pending_recovery_notices.len() == MAX_PENDING_RECOVERY_NOTICES {
+                self.pending_recovery_notices.pop_front();
+            }
+            self.pending_recovery_notices.push_back(recovery);
+        }
         true
+    }
+
+    pub(crate) fn take_recovery_notice(&mut self) -> Option<(PathBuf, SaveError)> {
+        self.pending_recovery_notices.pop_front()
     }
 
     pub(crate) fn get(&self, id: DocumentId) -> Option<&OpenDocument> {
@@ -503,6 +521,9 @@ impl DocumentRegistry {
             }
             Err(failure @ SaveFailure::RecoveryRequired(_)) => {
                 let error = SaveError::new(failure.headline(), failure.detail());
+                if let SaveFailure::RecoveryRequired(path) = &failure {
+                    document.recovery_path = Some(path.clone());
+                }
                 document.recovery_error = Some(error.clone());
                 SaveOutcome::Failed(error)
             }
@@ -588,6 +609,17 @@ impl DocumentRegistry {
             }
         }
         matching.sort_unstable();
+        if let Some(error) = matching
+            .iter()
+            .filter(|candidate| **candidate != id)
+            .filter_map(|candidate| self.documents.get(candidate))
+            .find_map(|destination| destination.recovery_error.clone())
+        {
+            if let Some(source) = self.documents.get_mut(&id) {
+                source.last_error = Some(error.clone());
+            }
+            return Some((SaveOutcome::Failed(error), None));
+        }
         if matching
             .iter()
             .filter(|candidate| **candidate != id)
@@ -661,6 +693,16 @@ impl DocumentRegistry {
         let saved =
             match document_store::save(path, &bytes, SaveExpectation::Destination(confirmed)) {
                 Ok(saved) => saved,
+                Err(failure @ SaveFailure::RecoveryRequired(_)) => {
+                    let error = SaveError::new(failure.headline(), failure.detail());
+                    if let Some(document) = self.documents.get_mut(&id) {
+                        if let SaveFailure::RecoveryRequired(path) = &failure {
+                            document.recovery_path = Some(path.clone());
+                        }
+                        document.recovery_error = Some(error.clone());
+                    }
+                    return Some((SaveOutcome::Failed(error), None));
+                }
                 Err(failure) => {
                     let error = SaveError::new(failure.headline(), failure.detail());
                     if let Some(document) = self.documents.get_mut(&id) {
@@ -687,6 +729,7 @@ impl DocumentRegistry {
                 document.conflict = None;
                 document.last_error = None;
                 document.recovery_error = None;
+                document.recovery_path = None;
                 document.save = SaveProgress::Idle;
                 document.reloaded = Some(Instant::now());
                 document.checked = Instant::now();
@@ -1278,6 +1321,33 @@ mod tests {
     }
 
     #[test]
+    fn save_as_refuses_a_destination_with_pending_manual_recovery() {
+        let directory = TemporaryDirectory::new("save-as-recovery");
+        let source = directory.file("notes.md", "alpha\n");
+        let destination = directory.file("other.md", "protected\n");
+        let recovery = directory.path.join(".festerm-save-recovery.stage");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "beta\n");
+        let error = SaveError::new(
+            "Saving needs manual recovery",
+            format!("Recover retained versions from {}.", recovery.display()),
+        );
+        let destination_document = registry.get_mut(existing).unwrap();
+        destination_document.recovery_path = Some(recovery);
+        destination_document.recovery_error = Some(error.clone());
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Failed(error));
+        assert_eq!(moved, None);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "protected\n");
+        assert!(registry.get(existing).unwrap().recovery_error.is_some());
+    }
+
+    #[test]
     fn save_as_refuses_a_dirty_open_destination_without_mutating_either_buffer_or_disk() {
         let directory = TemporaryDirectory::new("save-as-dirty-open");
         let source = directory.file("notes.md", "source\n");
@@ -1642,7 +1712,9 @@ mod tests {
             "Saving needs manual recovery",
             format!("Recover retained versions from {}.", recovery.display()),
         );
-        registry.get_mut(id).unwrap().recovery_error = Some(error);
+        let document = registry.get_mut(id).unwrap();
+        document.recovery_path = Some(recovery.clone());
+        document.recovery_error = Some(error);
         fs::write(&path, "theirs\n").unwrap();
 
         assert!(registry.poll(Instant::now() + POLL_INTERVAL).is_empty());
@@ -1657,6 +1729,13 @@ mod tests {
         assert_eq!(document.status().severity(), Severity::Blocking);
         assert!(!document.status().can_save());
         assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
+        assert!(registry.release(id));
+        let (retained_path, retained_error) =
+            registry.take_recovery_notice().expect("application notice");
+        assert_eq!(retained_path, recovery);
+        assert!(retained_error
+            .detail()
+            .contains(&recovery.display().to_string()));
     }
 
     #[test]

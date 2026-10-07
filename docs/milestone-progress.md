@@ -89,7 +89,8 @@ generation, or its explicit missing state accepts a confirmed-absent
 destination, and receives the source buffer with undo history intact on
 successful rebind. Final symbolic-link/reparse-point destinations refuse
 without being moved. Unix refuses shared-writable parents unless they are
-sticky and current-user-owned, and refuses permissive extended ACLs before
+sticky and current-user- or root-owned, and refuses extended ACL mutation
+grants to other accounts before
 staging while retaining restrictive ACL support. Windows existing-target
 saves preserve audit SACLs or refuse before staging when the required
 privilege is unavailable. Crash or power loss in the briefly absent-name window can

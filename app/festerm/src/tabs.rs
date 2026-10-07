@@ -4334,7 +4334,17 @@ impl AppState {
     }
 
     pub fn take_open_refusal_notice(&mut self) -> Option<crate::overlay_state::OpenRefusalNotice> {
-        self.pending_open_refusal_notice.take()
+        self.pending_open_refusal_notice.take().or_else(|| {
+            self.documents
+                .borrow_mut()
+                .take_recovery_notice()
+                .map(|(path, error)| crate::overlay_state::OpenRefusalNotice {
+                    name: "Save recovery retained".to_owned(),
+                    path: path.display().to_string(),
+                    headline: error.headline().to_owned(),
+                    detail: error.detail().to_owned(),
+                })
+        })
     }
 
     pub(crate) fn take_sftp_cleanup_notice(

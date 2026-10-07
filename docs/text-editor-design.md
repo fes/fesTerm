@@ -146,7 +146,8 @@ The editor never resolves a divergence silently.
   is never deleted by pathname rollback: every recoverable version remains in
   the private `.festerm-save-*.stage` directory and the editor reports manual
   recovery with the exact directory path. That notice remains authoritative
-  until the view is closed or rebound and is not replaced by polling.
+  and is not replaced by polling; closing or rebinding the final view promotes
+  it to a dismissible application-level notice.
   Access-metadata or publication-identity failure is a failed save,
   never a best-effort success. Cleanup failure after verified publication may
   retain the private staging directory but does not turn a successful save
@@ -163,8 +164,8 @@ The editor never resolves a divergence silently.
   **unsupported for safe saving**. The error directs Save As to a different
   local disk rather than suggesting a retry that cannot succeed.
 - On Unix, a shared-writable destination directory is likewise refused unless
-  it is sticky and owned by the current user. The owner of somebody else's
-  sticky directory could still substitute the staging name. If the parent's
+  it is sticky and owned by the current user or root. An unprivileged owner of
+  somebody else's sticky directory could still substitute the staging name. If the parent's
   security changes after an empty
   private staging directory is created, that directory is retained and named
   in the refusal rather than removed through the now-untrusted parent.

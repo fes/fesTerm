@@ -279,7 +279,10 @@ failed rollback instead retains private recovery. A mismatch never triggers an u
 pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error that
-names the exact retained directory and is not replaced by freshness polling. This
+names the exact retained directory and is not replaced by freshness polling.
+If the last view closes or rebinds, the registry promotes that record to a
+bounded application-level notice rather than discarding the only visible
+breadcrumb. This
 also covers partial move failures; every ambiguous arrangement is retained for
 manual recovery. Failure to reproduce ownership/access metadata refuses before
 publication with an ownership-specific Save As explanation. Cleanup failure
@@ -309,8 +312,8 @@ no-overwrite moves are refused with a dedicated, non-retryable filesystem
 explanation. fesTerm does not silently weaken confidentiality or publication
 semantics for FAT/exFAT and unsupported network/FUSE filesystems. Unix also
 refuses private staging with folder-specific guidance in a shared-writable
-destination directory unless it is sticky and owned by the current user.
-Another account, including the owner of somebody else's sticky directory,
+destination directory unless it is sticky and owned by the current user or
+root. Another unprivileged account that owns a sticky directory
 could otherwise substitute the random staging name before its handle is
 retained. A parent-security change
 after handle retention refuses and may leave the empty private staging
@@ -322,6 +325,15 @@ filesystem capability.
 fesTerm tags its own completed save generation so the watcher event it causes is
 recognized and ignored: no reload, no duplicate undo entry, no caret jump, no
 false conflict.
+
+Platform file authority is isolated behind two app-owned, platform-API-only
+workspace boundaries. `festerm-unix-security` owns no-follow file/directory
+opens, private staging and metadata snapshots, ACL handling, and native
+no-overwrite publication. `festerm-windows-security` owns native
+handle-relative creation and moves, exact file identity, current-user-only
+staging, access-policy capture/application (including audit SACLs), and final
+pathname locks. Neither crate owns document state, editor policy, or UI; the
+application orchestrates them according to this ADR.
 
 ### 6. Freshness is bounded, and conflict is never resolved silently
 
