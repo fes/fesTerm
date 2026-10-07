@@ -52,7 +52,8 @@ mod imp {
             SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS,
             FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL,
             FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, SYNCHRONIZE,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+            READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
         },
         System::{
             Console::{
@@ -378,6 +379,19 @@ mod imp {
                 "object owner and DACL are not protected current-user-only access",
             ))
         }
+    }
+
+    /// Reports whether an exact object is owned by the current user and has a
+    /// protected DACL containing only one full-access ACE for that user.
+    pub fn is_current_user_only(file: &File) -> io::Result<bool> {
+        let mut token = ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let user = token_information(token.as_raw_handle(), TokenUser)?;
+        let token_user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+        current_user_only_security(file, token_user.User.Sid)
     }
 
     fn current_user_only_security(
@@ -706,29 +720,36 @@ mod imp {
         create_current_user_only_file_with_sharing(
             directory,
             name,
+            FILE_ALL_ACCESS | DELETE,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         )
     }
 
-    /// Creates a private file whose retained handle permits rename/delete but
-    /// prevents every other reader or writer until the caller closes it.
+    /// Creates a private file whose retained handle permits a separate
+    /// delete-only move handle but prevents every other data reader or writer.
     pub fn create_current_user_only_file_exclusive(
         directory: &File,
         name: &Path,
     ) -> io::Result<File> {
-        create_current_user_only_file_with_sharing(directory, name, FILE_SHARE_DELETE)
+        create_current_user_only_file_with_sharing(
+            directory,
+            name,
+            FILE_ALL_ACCESS & !DELETE,
+            FILE_SHARE_DELETE,
+        )
     }
 
     fn create_current_user_only_file_with_sharing(
         directory: &File,
         name: &Path,
+        desired_access: u32,
         share_access: u32,
     ) -> io::Result<File> {
         let file = with_current_user_only_security(|security| {
             open_relative(
                 directory,
                 name,
-                FILE_ALL_ACCESS | DELETE,
+                desired_access,
                 share_access,
                 FILE_CREATE,
                 FILE_NON_DIRECTORY_FILE,
@@ -747,9 +768,18 @@ mod imp {
     }
 
     /// Opens a no-follow file handle that can be moved into private recovery
-    /// storage.
+    /// storage, protected there, and restored with its original metadata.
     pub fn open_file_no_reparse_for_rename(directory: &File, name: &Path) -> io::Result<File> {
-        open_file_no_reparse_with_access(directory, name, GENERIC_READ | DELETE)
+        open_file_no_reparse_with_access(
+            directory,
+            name,
+            GENERIC_READ | DELETE | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER,
+        )
+    }
+
+    /// Opens an exact staged file with only the access needed to move it.
+    pub fn open_file_no_reparse_for_move(directory: &File, name: &Path) -> io::Result<File> {
+        open_file_no_reparse_with_access(directory, name, FILE_READ_ATTRIBUTES | DELETE)
     }
 
     /// Opens a pathname for identity and security verification without
@@ -758,7 +788,12 @@ mod imp {
         directory: &File,
         name: &Path,
     ) -> io::Result<File> {
-        open_file_no_reparse_with_access(directory, name, FILE_READ_ATTRIBUTES | READ_CONTROL)
+        open_file_no_reparse_with_access_and_sharing(
+            directory,
+            name,
+            FILE_READ_ATTRIBUTES | READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+        )
     }
 
     fn open_file_no_reparse_with_access(
@@ -766,11 +801,25 @@ mod imp {
         name: &Path,
         access: u32,
     ) -> io::Result<File> {
-        let file = open_relative(
+        open_file_no_reparse_with_access_and_sharing(
             directory,
             name,
             access,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        )
+    }
+
+    fn open_file_no_reparse_with_access_and_sharing(
+        directory: &File,
+        name: &Path,
+        access: u32,
+        share_access: u32,
+    ) -> io::Result<File> {
+        let file = open_relative(
+            directory,
+            name,
+            access,
+            share_access,
             FILE_OPEN,
             FILE_NON_DIRECTORY_FILE,
             ptr::null(),
@@ -791,6 +840,15 @@ mod imp {
         } else {
             Ok(file)
         }
+    }
+
+    /// Reports whether two retained handles identify the same filesystem object.
+    pub fn same_file_identity(left: &File, right: &File) -> io::Result<bool> {
+        let left = file_information(left)?;
+        let right = file_information(right)?;
+        Ok(left.dwVolumeSerialNumber == right.dwVolumeSerialNumber
+            && left.nFileIndexHigh == right.nFileIndexHigh
+            && left.nFileIndexLow == right.nFileIndexLow)
     }
 
     /// Creates a directory relative to the exact `directory` handle with a
@@ -1208,7 +1266,7 @@ mod imp {
         }
 
         #[test]
-        fn exclusive_private_file_allows_identity_and_security_verification() {
+        fn exclusive_private_file_uses_a_transient_move_and_blocks_later_delete_access() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
             let staging_handle =
@@ -1218,20 +1276,21 @@ mod imp {
                 create_current_user_only_file_exclusive(&staging_handle, Path::new("payload"))
                     .unwrap();
             let expected = security_metadata(&staged).unwrap();
+            let mover =
+                open_file_no_reparse_for_move(&staging_handle, Path::new("payload")).unwrap();
+            assert!(same_file_identity(&staged, &mover).unwrap());
+            rename_file_noreplace(&mover, &directory_handle, Path::new("published.md")).unwrap();
+            drop(mover);
 
             let verification =
-                open_file_no_reparse_for_verification(&staging_handle, Path::new("payload"))
+                open_file_no_reparse_for_verification(&directory_handle, Path::new("published.md"))
                     .unwrap();
 
-            assert_eq!(
-                file_information(&verification).unwrap().nFileIndexHigh,
-                file_information(&staged).unwrap().nFileIndexHigh
-            );
-            assert_eq!(
-                file_information(&verification).unwrap().nFileIndexLow,
-                file_information(&staged).unwrap().nFileIndexLow
-            );
+            assert!(same_file_identity(&staged, &verification).unwrap());
             assert!(security_metadata_matches(&verification, &expected).unwrap());
+            let error = open_file_no_reparse_for_move(&directory_handle, Path::new("published.md"))
+                .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
         }
 
         #[test]
@@ -1354,8 +1413,9 @@ mod imp {
 #[cfg(windows)]
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
-    create_current_user_only_file_exclusive, disable_std_handle_inheritance, open_file_no_reparse,
-    open_file_no_reparse_for_rename, open_file_no_reparse_for_verification, rename_file_noreplace,
-    restrict_default_dacl_to_current_user, restrict_to_current_user, security_metadata,
-    security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
+    create_current_user_only_file_exclusive, disable_std_handle_inheritance, is_current_user_only,
+    open_file_no_reparse, open_file_no_reparse_for_move, open_file_no_reparse_for_rename,
+    open_file_no_reparse_for_verification, rename_file_noreplace,
+    restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
+    security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
 };

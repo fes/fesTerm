@@ -111,8 +111,11 @@ The editor never resolves a divergence silently.
   requiring kernel security labels to match in place. Windows applies and
   verifies the target owner/group/DACL/attributes on the prepared file before
   publication while the retained payload handle denies every other read/write
-  open until the published pathname, exact payload security, and retained
-  original security have all been verified; only then is it closed. An NTFS EFS-encrypted target is
+  open. A transient identity-checked delete handle publishes it; after that
+  handle closes, a non-delete-sharing pathname handle pins the published name
+  through final identity and security verification. The displaced original is
+  immediately restricted to the current user and also has a separately written
+  private byte copy. An NTFS EFS-encrypted target is
   refused before staging because fesTerm cannot yet preserve that encryption;
   so is any target with an alternate data stream such as the
   `Zone.Identifier` Mark-of-the-Web stream.
@@ -131,8 +134,9 @@ The editor never resolves a divergence silently.
   editor bytes. A final no-follow target opening checks the old generation
   immediately before capture; old/new generations, the Unix
   owner/group/mode/ACL/xattr snapshot, and the Windows
-  owner/group/DACL/attribute snapshot on both exact retained files are
-  verified. A late or ambiguous change
+  owner/group/DACL/attribute snapshot on the exact retained payload are
+  verified; Windows also compares the private prior-byte copy with the exact
+  displaced original. A late or ambiguous change
   is never deleted by pathname rollback: every recoverable version remains in
   the private `.festerm-save-*.stage` directory and the editor reports manual
   recovery. Access-metadata or publication-identity failure is a failed save,

@@ -239,9 +239,12 @@ rewrites only user-owned xattrs and the POSIX access ACL; kernel-managed
 security labels remain in place and must already match the verified source
 snapshot. Windows applies and verifies the captured owner,
 group, DACL and attributes on the prepared file while its retained handle
-denies every other read or write open until publication completes and the
-final pathname identity, published security snapshot, and retained-original
-security snapshot are verified; only then does the payload handle close. An
+denies every other read or write open. A separately opened, identity-checked
+delete handle performs publication and closes; a metadata-only final pathname
+handle that does not share delete access then pins the visible name while the
+published security snapshot is verified. The displaced original is immediately
+restricted to the current user and has an independently written
+current-user-only byte copy for recovery; only then do retained handles close. An
 individually NTFS EFS-encrypted target is refused before
 staging or writing because basic attribute restoration cannot reproduce its
 encryption. A target with any NTFS alternate data stream, including
@@ -264,7 +267,9 @@ Unix owner/group/mode/ACL/xattr
 snapshots and Windows owner/group/DACL/attribute snapshots are revalidated
 against a no-follow opening of the current target immediately before
 publication and against both the exact retained payload and retained original
-afterward. A mismatch never triggers an unconditional second
+afterward. Windows additionally compares the private original byte copy with
+the exact displaced handle and holds a non-delete-sharing pathname lock through
+final success. A mismatch never triggers an unconditional second
 pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error. This

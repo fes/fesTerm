@@ -460,7 +460,7 @@ impl SaveFailure {
                 "The previous contents are unchanged. Try saving again, or use Save As…."
             }
             Self::RecoveryRequired => {
-                "Publication could not be verified. The destination may contain the new bytes or be absent. In the private .festerm-save-* folder beside it, original (if present) is the prior file, while prepared or payload contains the new bytes. Compare every retained version before recovering or saving there again."
+                "Publication could not be verified. The destination may contain the new bytes or be absent. In the private .festerm-save-* folder beside it, original is the private prior version, displaced (if present) is Windows' captured prior file, and prepared or payload contains the new bytes. Compare every retained version before recovering or saving there again."
             }
             Self::MetadataPreservation => {
                 "The file's owner, group, ACL, security labels, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a destination with compatible access metadata."
@@ -1245,9 +1245,45 @@ impl<'a> TemporaryFile<'a> {
         sync_directory_durably(&self.staging).map_err(classify_write_error)
     }
 
+    #[cfg(windows)]
+    fn retain_original_recovery_copy(&self, source: &mut File) -> Result<(), SaveFailure> {
+        self.copy_to_private_staging_file(source, Path::new("original"))?;
+        sync_directory_durably(&self.staging).map_err(classify_write_error)
+    }
+
+    #[cfg(windows)]
+    fn original_recovery_copy_matches(&self, source: &mut File) -> Result<bool, SaveFailure> {
+        let mut recovery =
+            open_named_file(&self.staging, Path::new("original")).map_err(classify_write_error)?;
+        source.rewind().map_err(classify_write_error)?;
+        recovery.rewind().map_err(classify_write_error)?;
+        let mut source_buffer = [0_u8; 64 * 1024];
+        let mut recovery_buffer = [0_u8; 64 * 1024];
+        loop {
+            let source_read = source
+                .read(&mut source_buffer)
+                .map_err(classify_write_error)?;
+            let recovery_read = recovery
+                .read(&mut recovery_buffer)
+                .map_err(classify_write_error)?;
+            if source_read != recovery_read
+                || source_buffer[..source_read] != recovery_buffer[..recovery_read]
+            {
+                return Ok(false);
+            }
+            if source_read == 0 {
+                return Ok(true);
+            }
+        }
+    }
+
     fn finish(&mut self) {
         self.close_file();
-        for name in ["original", "prepared"] {
+        #[cfg(windows)]
+        let cleanup_names = ["original", "displaced", "prepared"].as_slice();
+        #[cfg(not(windows))]
+        let cleanup_names = ["original", "prepared"].as_slice();
+        for name in cleanup_names {
             if let Err(error) = self.staging.remove_file(name) {
                 if error.kind() != std::io::ErrorKind::NotFound {
                     tracing::warn!(
@@ -1305,11 +1341,21 @@ impl<'a> TemporaryFile<'a> {
     #[cfg(windows)]
     fn publish_new(&self, target: &Path) -> Result<(), std::io::Error> {
         let target_directory = self.directory.try_clone()?.into_std_file();
-        let source = self
+        let exact_source = self
             .file
             .as_ref()
             .ok_or_else(|| std::io::Error::other("the save payload is closed"))?;
-        festerm_windows_security::rename_file_noreplace(source, &target_directory, target)
+        let staging = self.staging.try_clone()?.into_std_file();
+        let source = festerm_windows_security::open_file_no_reparse_for_move(
+            &staging,
+            Path::new("payload"),
+        )?;
+        if !festerm_windows_security::same_file_identity(exact_source, &source)? {
+            return Err(std::io::Error::other(
+                "the staged payload name no longer identifies its retained handle",
+            ));
+        }
+        festerm_windows_security::rename_file_noreplace(&source, &target_directory, target)
     }
 
     fn staging_name_matches(&self) -> bool {
@@ -1370,7 +1416,11 @@ impl Drop for TemporaryFile<'_> {
     fn drop(&mut self) {
         if !self.persist {
             self.close_file();
-            for name in ["payload", "prepared"] {
+            #[cfg(windows)]
+            let cleanup_names = ["payload", "original", "displaced", "prepared"].as_slice();
+            #[cfg(not(windows))]
+            let cleanup_names = ["payload", "prepared"].as_slice();
+            for name in cleanup_names {
                 if let Err(error) = self.staging.remove_file(name) {
                     if error.kind() != std::io::ErrorKind::NotFound {
                         tracing::warn!(
@@ -1594,6 +1644,20 @@ fn publish_temporary(
 }
 
 #[cfg(windows)]
+fn restore_windows_displaced(
+    displaced: &File,
+    destination: &File,
+    target: &Path,
+    security_metadata: &festerm_windows_security::SecurityMetadata,
+) -> bool {
+    festerm_windows_security::apply_security_metadata(displaced, security_metadata)
+        .and_then(|()| {
+            festerm_windows_security::rename_file_noreplace(displaced, destination, target)
+        })
+        .is_ok()
+}
+
+#[cfg(windows)]
 fn publish_temporary(
     directory: &cap_std::fs::Dir,
     temporary: &mut TemporaryFile<'_>,
@@ -1604,8 +1668,14 @@ fn publish_temporary(
     security_metadata: Option<&festerm_windows_security::SecurityMetadata>,
 ) -> Result<Generation, SaveFailure> {
     temporary.retain_recovery_copy()?;
-    before_save_replacement();
+    let directory_handle = directory
+        .try_clone()
+        .map(cap_std::fs::Dir::into_std_file)
+        .map_err(classify_write_error)?;
     let Some(original_generation) = original_generation else {
+        let expected_security = festerm_windows_security::security_metadata(temporary.file_mut())
+            .map_err(classify_write_error)?;
+        before_save_replacement();
         temporary.publish_new(target).map_err(|error| {
             if error.kind() == std::io::ErrorKind::AlreadyExists {
                 generation_in_directory(directory, target)
@@ -1615,23 +1685,45 @@ fn publish_temporary(
                 classify_write_error(error)
             }
         })?;
-        temporary.close_file();
+        let published_file = match festerm_windows_security::open_file_no_reparse_for_verification(
+            &directory_handle,
+            target,
+        ) {
+            Ok(file) => file,
+            Err(error) => {
+                tracing::error!(%error, "a newly published save could not be locked for verification");
+                return Err(temporary.recovery_required());
+            }
+        };
         after_save_replacement();
-        let published = match generation_in_directory(directory, target) {
-            Ok(published) => published,
+        let published = match Generation::from_file(&published_file) {
+            Ok(generation) => generation,
             Err(error) => {
                 tracing::error!(%error, "a newly published save could not be verified");
                 return Err(temporary.recovery_required());
             }
         };
-        if published != temporary_generation {
+        let exact_payload = temporary.file.as_ref().ok_or(SaveFailure::Interrupted)?;
+        let exact_generation =
+            Generation::from_file(exact_payload).map_err(|_| SaveFailure::Interrupted)?;
+        let same_identity =
+            festerm_windows_security::same_file_identity(exact_payload, &published_file)
+                .unwrap_or(false);
+        let security_matches =
+            festerm_windows_security::security_metadata_matches(exact_payload, &expected_security)
+                .unwrap_or(false);
+        if published != temporary_generation
+            || exact_generation != temporary_generation
+            || !same_identity
+            || !security_matches
+        {
             return Err(temporary.recovery_required());
         }
         temporary.finish();
         return Ok(published);
     };
 
-    let original_file = original_file.ok_or(SaveFailure::Interrupted)?;
+    let mut original_file = original_file.ok_or(SaveFailure::Interrupted)?;
     let security_metadata = security_metadata.ok_or(SaveFailure::Interrupted)?;
     if Generation::from_file(&original_file).map_err(|_| SaveFailure::Interrupted)?
         != original_generation
@@ -1640,18 +1732,17 @@ fn publish_temporary(
     {
         return Err(SaveFailure::Conflict(original_generation));
     }
+    temporary.retain_original_recovery_copy(&mut original_file)?;
     festerm_windows_security::apply_security_metadata(temporary.file_mut(), security_metadata)
         .map_err(classify_metadata_error)?;
-    let directory_handle = directory
-        .try_clone()
-        .map(cap_std::fs::Dir::into_std_file)
-        .map_err(classify_write_error)?;
+    drop(original_file);
+    before_save_replacement();
     let staging_handle = temporary
         .staging
         .try_clone()
         .map(cap_std::fs::Dir::into_std_file)
         .map_err(classify_write_error)?;
-    let current =
+    let mut current =
         festerm_windows_security::open_file_no_reparse_for_rename(&directory_handle, target)
             .map_err(|error| {
                 if error.kind() == std::io::ErrorKind::NotFound {
@@ -1671,14 +1762,17 @@ fn publish_temporary(
     festerm_windows_security::rename_file_noreplace(
         &current,
         &staging_handle,
-        Path::new("original"),
+        Path::new("displaced"),
     )
     .map_err(classify_write_error)?;
-    let displaced = match temporary.original_generation() {
+    let displaced = match Generation::from_file(&current) {
         Ok(generation) => generation,
         Err(_) => return Err(temporary.recovery_required()),
     };
-    if displaced != original_generation {
+    let displaced_security_matches =
+        festerm_windows_security::security_metadata_matches(&current, security_metadata)
+            .unwrap_or(false);
+    if displaced != original_generation || !displaced_security_matches {
         if festerm_windows_security::rename_file_noreplace(&current, &directory_handle, target)
             .is_ok()
         {
@@ -1686,17 +1780,27 @@ fn publish_temporary(
         }
         return Err(temporary.recovery_required());
     }
+    if let Err(error) = festerm_windows_security::restrict_to_current_user(&current) {
+        tracing::error!(%error, "the displaced Windows original could not be made private");
+        if restore_windows_displaced(&current, &directory_handle, target, security_metadata) {
+            return Err(classify_metadata_error(error));
+        }
+        return Err(temporary.recovery_required());
+    }
+    if !temporary.original_recovery_copy_matches(&mut current)? {
+        if restore_windows_displaced(&current, &directory_handle, target, security_metadata) {
+            return Err(SaveFailure::Conflict(displaced));
+        }
+        return Err(temporary.recovery_required());
+    }
     after_target_capture();
     if let Err(error) = temporary.publish_new(target) {
-        if festerm_windows_security::rename_file_noreplace(&current, &directory_handle, target)
-            .is_ok()
-        {
+        if restore_windows_displaced(&current, &directory_handle, target, security_metadata) {
             return Err(classify_write_error(error));
         }
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
-    after_save_replacement();
     let published_file = match festerm_windows_security::open_file_no_reparse_for_verification(
         &directory_handle,
         target,
@@ -1707,6 +1811,7 @@ fn publish_temporary(
             return Err(temporary.recovery_required());
         }
     };
+    after_save_replacement();
     let published = match Generation::from_file(&published_file) {
         Ok(generation) => generation,
         Err(error) => {
@@ -1714,7 +1819,7 @@ fn publish_temporary(
             return Err(temporary.recovery_required());
         }
     };
-    let retained_original = match Generation::from_file(&original_file) {
+    let retained_original = match Generation::from_file(&current) {
         Ok(generation) => generation,
         Err(error) => {
             tracing::error!(%error, "the retained Windows original could not be identified");
@@ -1742,26 +1847,22 @@ fn publish_temporary(
             return Err(temporary.recovery_required());
         }
     };
-    let original_security_matches = match festerm_windows_security::security_metadata_matches(
-        &original_file,
-        security_metadata,
-    ) {
-        Ok(matches) => matches,
-        Err(error) => {
-            tracing::error!(%error, "the retained Windows original metadata could not be verified");
-            return Err(temporary.recovery_required());
-        }
-    };
+    let same_published_identity =
+        festerm_windows_security::same_file_identity(retained_payload.0, &published_file)
+            .unwrap_or(false);
+    let original_copy_matches = temporary
+        .original_recovery_copy_matches(&mut current)
+        .unwrap_or(false);
     if published != temporary_generation
         || retained_payload.1 != temporary_generation
         || retained_original != original_generation
+        || !same_published_identity
         || !published_security_matches
-        || !original_security_matches
+        || !original_copy_matches
     {
         return Err(temporary.recovery_required());
     }
     drop(current);
-    drop(original_file);
     temporary.finish();
     Ok(published)
 }
@@ -2554,6 +2655,14 @@ mod tests {
             fs::read_to_string(staging.join("original")).unwrap(),
             "loaded\n"
         );
+        #[cfg(windows)]
+        for recovery_name in ["original", "displaced"] {
+            let recovery = File::open(staging.join(recovery_name)).unwrap();
+            assert!(
+                festerm_windows_security::is_current_user_only(&recovery).unwrap(),
+                "{recovery_name} must be independently current-user-only"
+            );
+        }
         assert_eq!(
             fs::read_to_string(staging.join("payload")).unwrap(),
             "editor\n"
@@ -2564,6 +2673,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn replacement_after_publication_keeps_the_later_winner_and_recovery_copies() {
         let directory = TemporaryDirectory::new("post-publication-conflict");
@@ -2598,6 +2708,28 @@ mod tests {
             fs::read_to_string(staging.join("prepared")).unwrap(),
             "editor\n"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn published_target_cannot_be_deleted_during_final_verification() {
+        use windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION;
+
+        let directory = TemporaryDirectory::new("post-publication-lock");
+        let path = directory.file("notes.md", "loaded\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let target = path.clone();
+        AFTER_SAVE_REPLACEMENT.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let error = fs::remove_file(&target).unwrap_err();
+                assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+            }));
+        });
+
+        save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
     #[cfg(unix)]
