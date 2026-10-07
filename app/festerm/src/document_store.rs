@@ -1650,9 +1650,9 @@ fn restore_windows_displaced(
     target: &Path,
     security_metadata: &festerm_windows_security::SecurityMetadata,
 ) -> bool {
-    festerm_windows_security::apply_security_metadata(displaced, security_metadata)
+    festerm_windows_security::rename_file_noreplace(displaced, destination, target)
         .and_then(|()| {
-            festerm_windows_security::rename_file_noreplace(displaced, destination, target)
+            festerm_windows_security::apply_security_metadata(displaced, security_metadata)
         })
         .is_ok()
 }
