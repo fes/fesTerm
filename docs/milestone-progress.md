@@ -3,6 +3,17 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Waiting for interactive autocomplete geometry
+
+Native qualification exposed a flaky profile executable-suggestion pointer
+control. A controlled late completion reproduced a click that left the typed
+query unchanged: the suggestion's accessibility node existed while its popup
+was still sizing. The fixture now holds the search until the pending state
+has rendered, and the existing bounded wait requires stable target bounds
+across consecutive frames. The raw pointer event and exact absolute-path
+assertion remain unchanged; production autocomplete behavior is untouched.
+An unchanged passing rerun is not treated as evidence of this repair.
+
 ## Routing the editor surface through eligible panel painting
 
 The first bounded #351 replay completed all eight picker controls with exact

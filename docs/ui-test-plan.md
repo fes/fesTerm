@@ -278,6 +278,15 @@ The first harness tests should:
    through semantic roles/names rather than pixels.
 4. Repeat frames after every event until no repaint/state work remains.
 
+Autocomplete pointer controls must wait for the suggestion's bounds to remain
+unchanged across consecutive frames: an AccessKit node can appear during the
+popup's initial sizing pass before it is a stable pointer target. The local
+profile regression holds its fixture search until the pending placeholder has
+rendered, releases the result, and retains the real pointer click and exact
+absolute-path assertion. Its bounded readiness wait covers late completion
+without changing production behavior or replacing pointer input with an
+AccessKit action.
+
 Do not make the core, session, or production UI depend on the test harness.
 
 ## Tier 5: Rendered Visual Regression
