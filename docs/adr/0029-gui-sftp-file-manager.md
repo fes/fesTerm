@@ -212,6 +212,16 @@ updates without per-unit whole-inventory reconstruction. Membership
 compaction/reindexing and explicit public snapshot requests remain bounded
 full-vector operations; unchanged request allocations are retained.
 
+Remote-to-local basename admission is owned by `festerm-ssh`, not the GUI.
+Selected file/directory roots and recursive children use the same portable
+single-filename policy and checked local join; text-mode `get` shares that
+helper when deriving a destination name. An invalid name fails through the
+existing SFTP error path before collision handling or writes, without partial
+output or stopping other work. Exact user-requested local paths retain their
+semantics. See the [name-admission policy](../sftp-ui-design.md#remote-to-local-name-admission);
+this is lexical containment, not a change to the local filesystem race/cleanup
+contract.
+
 The tab-owned command/event bridges are also bounded (64 commands, 128 events).
 Frontend polling and worker transfer-event batching each consume at most 64
 events per invocation; only adjacent same-batch/same-transfer progress is
@@ -427,6 +437,8 @@ core transfer workflow.
   refusal and retirement accounting. Recursive enumeration and retained plans
   share a per-worker allowance; metadata credit follows actual data ownership
   through copy, collision, cancellation and exceptional-capacity retirement.
+  Remote-derived local names, including selected roots, are admitted as safe
+  single filenames before joining and verified as immediate local children.
 - **GUI/action edges affected:** `LAUNCH-10` opens a GUI SFTP tab from a
   saved SSH profile or live SSH tab. `SFTPG-01/02/03` cover browsing,
   transfer/cancel/history and collision decisions; `SFTPG-04` retains deferred
@@ -435,6 +447,9 @@ core transfer workflow.
   Markdown fetch and drag/drop admission) without changing the
   application/transport ownership boundary or accepting native disconnect
   recovery.
+  Name admission refines `SFTPG-02/03/08`: unsafe roots fail before collision
+  or output creation; they require no partial cleanup and leave unrelated work
+  and owner cancellation intact.
 - **Automated tests required:** Planned coverage includes
   `sftp_directory_snapshot_contains_sortable_metadata`,
   `sftp_transfer_manager_emits_progress_and_completion`,
