@@ -1270,11 +1270,7 @@ mod imp {
     /// Retains a no-follow file for generation, content, and security checks
     /// without holding delete access; a separate exact move handle can coexist.
     pub fn open_file_no_reparse_for_capture(directory: &File, name: &Path) -> io::Result<File> {
-        open_file_no_reparse_with_access(
-            directory,
-            name,
-            GENERIC_READ | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER,
-        )
+        open_file_no_reparse_for_capture_with_access(directory, name, 0)
     }
 
     /// Retains a save target with access to capture and later restore its
@@ -1283,10 +1279,18 @@ mod imp {
         directory: &File,
         name: &Path,
     ) -> io::Result<File> {
+        open_file_no_reparse_for_capture_with_access(directory, name, ACCESS_SYSTEM_SECURITY)
+    }
+
+    fn open_file_no_reparse_for_capture_with_access(
+        directory: &File,
+        name: &Path,
+        security_access: u32,
+    ) -> io::Result<File> {
         open_file_no_reparse_with_access(
             directory,
             name,
-            GENERIC_READ | READ_CONTROL | ACCESS_SYSTEM_SECURITY,
+            GENERIC_READ | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER | security_access,
         )
     }
 
@@ -2220,6 +2224,89 @@ mod imp {
             let error = open_file_no_reparse_for_move(&directory_handle, Path::new("original.md"))
                 .unwrap_err();
             assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+        }
+
+        #[test]
+        fn security_capture_can_privatize_and_restore_a_displaced_original() {
+            let directory = TemporaryDirectory::new();
+            fs::write(directory.0.join("original.md"), b"original").unwrap();
+            let directory_handle = directory.handle();
+            let captured = open_file_no_reparse_for_capture_with_access(
+                &directory_handle,
+                Path::new("original.md"),
+                0,
+            )
+            .unwrap();
+            let information =
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+            let original_descriptor = security_descriptor(&captured, information).unwrap();
+            let original_attributes = file_information(&captured).unwrap().dwFileAttributes;
+            let staging =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+            let mover =
+                open_file_no_reparse_for_move(&directory_handle, Path::new("original.md")).unwrap();
+            assert!(same_file_identity(&captured, &mover).unwrap());
+            rename_file_noreplace(&mover, &staging, Path::new("displaced")).unwrap();
+            drop(mover);
+
+            restrict_to_current_user(&captured).unwrap();
+            assert!(is_current_user_only(&captured).unwrap());
+            if unsafe {
+                SetKernelObjectSecurity(
+                    captured.as_raw_handle() as HANDLE,
+                    information,
+                    original_descriptor.as_ptr().cast_mut().cast(),
+                )
+            } == 0
+            {
+                panic!(
+                    "original access restoration failed: {}",
+                    io::Error::last_os_error()
+                );
+            }
+            assert_eq!(
+                security_descriptor(&captured, information).unwrap(),
+                original_descriptor
+            );
+            let attributes = FILE_BASIC_INFO {
+                FileAttributes: settable_file_attributes(original_attributes),
+                ..FILE_BASIC_INFO::default()
+            };
+            if unsafe {
+                SetFileInformationByHandle(
+                    captured.as_raw_handle() as HANDLE,
+                    FileBasicInfo,
+                    (&raw const attributes).cast(),
+                    mem::size_of::<FILE_BASIC_INFO>() as u32,
+                )
+            } == 0
+            {
+                panic!(
+                    "original attributes restoration failed: {}",
+                    io::Error::last_os_error()
+                );
+            }
+            assert_eq!(
+                settable_file_attributes(file_information(&captured).unwrap().dwFileAttributes),
+                settable_file_attributes(original_attributes)
+            );
+
+            let restorer = open_file_no_reparse_for_move(&staging, Path::new("displaced")).unwrap();
+            assert!(same_file_identity(&captured, &restorer).unwrap());
+            rename_file_noreplace(&restorer, &directory_handle, Path::new("original.md")).unwrap();
+            drop(restorer);
+            let locked =
+                open_file_no_reparse_for_verification(&directory_handle, Path::new("original.md"))
+                    .unwrap();
+            assert!(same_file_identity(&captured, &locked).unwrap());
+            let error = open_file_no_reparse_for_move(&directory_handle, Path::new("original.md"))
+                .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+            assert_eq!(
+                fs::read(directory.0.join("original.md")).unwrap(),
+                b"original"
+            );
         }
 
         #[test]

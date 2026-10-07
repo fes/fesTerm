@@ -121,6 +121,10 @@ The editor never resolves a divergence silently.
   metadata-only handles cannot enforce that pathname lock. Content digests
   read the retained exclusive payload, while the locked published handle
   supplies matching metadata and identity without gaining payload-read access.
+  The retained original's security-capture handle requests attribute-write,
+  DACL-write, and owner-write access for private restriction and rollback,
+  plus system-security access for its audit SACL. It holds no delete access;
+  identity-checked transient movers remain separate.
   The displaced original is
   immediately restricted to the current user and also has a separately written
   private byte copy. An NTFS EFS-encrypted target is

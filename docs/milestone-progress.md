@@ -39,6 +39,16 @@ the retained directory, and proves a collision leaves both versions intact.
 Audit-privilege and unsupported-EA refusals remain unchanged; local endpoint
 protection and native crash/power-loss evidence are not bypassed or accepted.
 
+The next native Windows run passed the rename stage but retained recovery:
+the audit-capable original handle had only read access even though capture
+must make the displaced object private and restore its metadata on rollback.
+Audit and ordinary capture now share the same attribute-, DACL-, and
+owner-write recipe, with only the audit variant adding system-security access.
+An unprivileged regression uses that shared recipe to reproduce the old access
+denial, then proves private restriction, exact access/attribute restoration,
+handle-relative rollback, and final pathname locking. It does not claim to
+exercise audit-SACL access without the required privilege.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory

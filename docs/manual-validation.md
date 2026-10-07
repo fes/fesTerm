@@ -480,6 +480,9 @@ collision, retained-payload digest verification against a metadata-only
 pathname lock, and Windows save-parent rename prevention. Source-parent tests
 first prove the live Windows identity pin blocks rebinding, then explicitly
 retire the test-owned pin to exercise independent parent-identity refusal.
+The shared security-capture access recipe also has an unprivileged displaced
+original regression for private restriction, exact owner/group/DACL and
+attribute restoration, handle-relative rollback, and final pathname locking.
 These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.
