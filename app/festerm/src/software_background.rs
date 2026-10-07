@@ -1315,15 +1315,15 @@ mod tests {
     #[test]
     fn owned_picker_frame_preserves_pixels_responses_and_guarded_fallbacks() {
         use egui_kittest::TestRenderer;
-        let mut setup = default_wgpu_setup();
-        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
-            unreachable!()
-        };
-        options.instance_descriptor.backends = wgpu::Backends::DX12;
-        let state = create_render_state(setup, Default::default());
-        assert_eq!(state.adapter.get_info().backend, wgpu::Backend::Dx12);
-        assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
         let render = |enabled: bool, scale: f32, case: &str| {
+            let mut setup = default_wgpu_setup();
+            let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                unreachable!()
+            };
+            options.instance_descriptor.backends = wgpu::Backends::DX12;
+            let state = create_render_state(setup, Default::default());
+            assert_eq!(state.adapter.get_info().backend, wgpu::Backend::Dx12);
+            assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
             let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
             let context = egui::Context::default();
             context.set_visuals(if case == "light" {

@@ -44,7 +44,12 @@ There is no new cache, crate boundary, command policy or ownership contract.
 Explicit per-context test-only controls retain the frame diagnostic's ordinary
 frame with live optimized backdrop, and the historical backdrop diagnostic's
 two original shapes. Device-free controls cover selection, refusal and live
-fallback responses; a two-scale GPU regression is prepared but unexecuted.
+fallback responses. The first parent GPU qualification exposed a fixture
+lifetime error: the new two-scale regression reused one already-used RenderState
+across independent original/candidate contexts, which egui-kittest rejects.
+Every comparison arm now creates its own fresh state; the exact regression
+passes with all pixels, live responses, callback counts and fallbacks intact.
+This changes only the fixture, not the production route or its guards.
 The coordinator still owns actual cumulative default eight-picker pixels,
 construction/callback tradeoffs, frame/legacy diagnostics and full/native gates.
 No predecessor measurement is relabeled as a production result or new acceptance.
