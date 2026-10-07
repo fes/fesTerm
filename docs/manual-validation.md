@@ -869,6 +869,19 @@ second dirty document open in multiple views; primary-window Quit and updater
 install/restart must include the secondary session and refuse the unresolved
 documents rather than closing the process.
 
+CP-06/CP-15 table preparation: ordinary/current CPU controls retain all 1600
+live cells in the 400-section Preview at normal/narrow widths, across cold/
+warm/scroll/Find and width/font/options/scale/theme/revision changes. They
+compare complete clipped shapes, responses and accessibility, Unicode Copy
+and offscreen heading navigation. Actual unwrapped requests are 1600 versus
+403 (802 when Find highlights every `Item` cell); the ordinary constrained
+layouts remain unchanged. The frame-local 32-entry/256-byte-input/64 KiB
+accounted-payload limits have exact-ceiling, spare-capacity, refusal and
+recovery controls. Fixed entry/key metadata and Arc/allocator overhead are
+separate from the payload; these counters establish neither total UI speed,
+native clipboard/screen-reader delivery nor GPU drawing. No native scenario
+or capability status is advanced, and table-cell byte navigation remains open.
+
 CP-06 Source preparation: ordinary/candidate CPU checks cover the same owned
 400-section fixture, all live labels/accessibility nodes, Find and offscreen
 byte navigation, wrapping across width/font/scale/theme changes, Unicode/CRLF/
