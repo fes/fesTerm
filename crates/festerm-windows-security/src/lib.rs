@@ -1728,6 +1728,16 @@ mod imp {
             assert!(extended_attribute_query_result(STATUS_INFO_LENGTH_MISMATCH, 0).is_err());
         }
 
+        #[test]
+        fn ordinary_temp_file_has_no_extended_attributes() {
+            let directory = TemporaryDirectory::new();
+            let path = directory.0.join("ordinary.txt");
+            fs::write(&path, b"ordinary").unwrap();
+            let file = File::open(path).unwrap();
+
+            assert!(!file_has_extended_attributes(&file).unwrap());
+        }
+
         fn unsupported_metadata(reason: UnsupportedSecurityMetadata) -> SecurityMetadata {
             SecurityMetadata {
                 descriptor: Vec::new(),
