@@ -560,7 +560,7 @@ pub(crate) fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewp
         && rect.blur_width == 0.0
 }
 
-fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+pub(crate) fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
     if !viewport.is_finite()
         || viewport.min != egui::Pos2::ZERO
         || !viewport.is_positive()
@@ -597,6 +597,16 @@ fn picker_backdrops_disabled_id() -> egui::Id {
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 pub(crate) fn set_picker_backdrops_enabled(context: &egui::Context, enabled: bool) {
     context.data_mut(|data| data.insert_temp(picker_backdrops_disabled_id(), !enabled));
+}
+
+#[cfg(test)]
+fn picker_frames_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-picker-frame")
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn set_picker_frames_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(picker_frames_disabled_id(), !enabled));
 }
 
 pub(crate) fn show_modal<R>(
@@ -638,6 +648,14 @@ pub(crate) fn show_modal<R>(
     });
     #[cfg(not(test))]
     let backdrop_enabled = true;
+    #[cfg(test)]
+    let frame_enabled = context.data(|data| {
+        !data
+            .get_temp::<bool>(picker_frames_disabled_id())
+            .unwrap_or(false)
+    });
+    #[cfg(not(test))]
+    let frame_enabled = true;
     let replacements = context.graphics(|graphics| {
         let mut backdrop = None;
         let mut frame = None;
@@ -653,7 +671,7 @@ pub(crate) fn show_modal<R>(
                     .replace((egui::layers::ShapeIdx(index), shape.clone()))
                     .is_some();
             }
-            if complete_opaque_window_frame(shape, viewport) {
+            if frame_enabled && complete_opaque_window_frame(shape, viewport) {
                 ambiguous_frame |= frame
                     .replace((egui::layers::ShapeIdx(index), shape.clone()))
                     .is_some();
@@ -935,6 +953,17 @@ mod tests {
                 style.animation_time = 0.0;
                 style.visuals.text_cursor.blink = false;
             });
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                set_picker_backdrops_enabled(
+                    &context,
+                    !matches!(case, "frame-only" | "ordinary-controls"),
+                );
+                set_picker_frames_enabled(
+                    &context,
+                    !matches!(case, "backdrop-only" | "ordinary-controls"),
+                );
+            }
             let probe = (optimized && case != "no-renderer")
                 .then(|| PanelTestProbe::install(&context, &state));
             let id = egui::Id::new("owned-modal-pixels");
@@ -1025,6 +1054,12 @@ mod tests {
                 "translucent",
                 "no-shadow",
                 "ambiguous",
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                "frame-only",
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                "backdrop-only",
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                "ordinary-controls",
             ] {
                 let (ordinary, ordinary_response, _) = draw(false, scale, case);
                 let (optimized, optimized_response, paints) = draw(true, scale, case);
@@ -1035,7 +1070,7 @@ mod tests {
                 assert_eq!(ordinary, optimized, "scale={scale}, {case}");
                 let expected = match case {
                     "normal" => 2,
-                    "colored" | "translucent" | "no-shadow" => 1,
+                    "colored" | "translucent" | "no-shadow" | "frame-only" | "backdrop-only" => 1,
                     _ => 0,
                 };
                 assert_eq!(paints, expected, "scale={scale}, {case}");
