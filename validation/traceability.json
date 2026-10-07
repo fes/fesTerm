@@ -1584,6 +1584,7 @@
         "save_uses_the_captured_parent_after_its_path_is_rebound",
         "saving_a_symlinked_source_updates_its_canonical_target",
         "loading_traverses_a_search_only_ancestor_without_requiring_read_access",
+        "saving_refuses_a_non_sticky_shared_writable_parent_before_staging",
         "save_as_refuses_a_symlink_destination_without_moving_it",
         "payload_creation_collision_is_cleaned_before_retry",
         "staging_symlink_substitution_before_open_is_refused_without_mutation",

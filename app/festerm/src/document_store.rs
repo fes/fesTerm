@@ -1007,6 +1007,14 @@ struct TemporaryFile<'a> {
 
 impl<'a> TemporaryFile<'a> {
     fn create(directory: &'a cap_std::fs::Dir) -> Result<Self, SaveFailure> {
+        #[cfg(unix)]
+        let parent_security = {
+            let parent = directory
+                .try_clone()
+                .map(cap_std::fs::Dir::into_std_file)
+                .map_err(classify_write_error)?;
+            festerm_unix_security::secure_staging_parent(&parent).map_err(classify_write_error)?
+        };
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
             let staging_directory = temporary_directory_path()?;
             #[cfg(unix)]
@@ -1047,6 +1055,19 @@ impl<'a> TemporaryFile<'a> {
                     return Err(classify_write_error(error));
                 }
             };
+            #[cfg(unix)]
+            {
+                let parent = directory
+                    .try_clone()
+                    .map(cap_std::fs::Dir::into_std_file)
+                    .map_err(classify_write_error)?;
+                if !festerm_unix_security::security_metadata_matches(&parent, &parent_security)
+                    .map_err(classify_write_error)?
+                {
+                    drop(staging);
+                    return Err(SaveFailure::Interrupted);
+                }
+            }
             let staging_identity = match DirectoryIdentity::from_directory(&staging) {
                 Ok(identity) => identity,
                 Err(error) => {
@@ -1713,7 +1734,8 @@ fn rename_noreplace(
 
 #[cfg(unix)]
 fn sync_directory_durably(directory: &cap_std::fs::Dir) -> Result<(), std::io::Error> {
-    directory.try_clone()?.into_std_file().sync_all()
+    let directory = directory.try_clone()?.into_std_file();
+    festerm_unix_security::reopen_directory_read(&directory)?.sync_all()
 }
 
 #[cfg(not(unix))]
@@ -1800,15 +1822,42 @@ mod tests {
         let directory = TemporaryDirectory::new("search-only-ancestor");
         let ancestor = directory.path.join("search-only");
         fs::create_dir(&ancestor).unwrap();
-        let path = ancestor.join("notes.md");
+        let writable_parent = ancestor.join("documents");
+        fs::create_dir(&writable_parent).unwrap();
+        let path = writable_parent.join("notes.md");
         fs::write(&path, b"alpha\n").unwrap();
         fs::set_permissions(&ancestor, fs::Permissions::from_mode(0o111)).unwrap();
 
-        let result = load(&path, bounds());
+        let loaded = load(&path, bounds());
+        let saved = loaded.as_ref().map_err(|_| ()).and_then(|loaded| {
+            save(&path, b"beta\n", loaded_expectation(loaded))
+                .map(|_| ())
+                .map_err(|_| ())
+        });
 
         fs::set_permissions(&ancestor, fs::Permissions::from_mode(0o700)).unwrap();
-        let loaded = result.unwrap();
+        let loaded = loaded.unwrap();
+        saved.unwrap();
         assert_eq!(loaded.document.text(), "alpha\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "beta\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_refuses_a_non_sticky_shared_writable_parent_before_staging() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("shared-writable-parent");
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o777)).unwrap();
+
+        let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+        fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(failure, SaveFailure::UnsupportedFilesystem);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
     #[test]

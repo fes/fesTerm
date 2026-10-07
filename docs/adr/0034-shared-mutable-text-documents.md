@@ -68,9 +68,9 @@ ADR 0032 already threads through every window, keyed by a canonical
 `DocumentId`:
 
 - **Local:** the resolved file identity where the platform reports one (device
-  plus inode on Unix; on Windows the file index is behind an unstable standard
-  library feature, so creation time stands in for it), falling back to the
-  canonicalized path. Symlinks resolve to their target, so a file reached by
+  plus inode on Unix; Windows document generations use a native handle query
+  for volume serial and file index, as does retained directory authority),
+  falling back to the canonicalized path. Symlinks resolve to their target, so a file reached by
   two paths is one document. Path comparison respects the volume's case
   sensitivity rather than assuming the platform's default.
 - **Remote:** the existing `HostIdentity` of the authenticated SFTP origin plus
@@ -139,7 +139,9 @@ terminal.
   rather than creating a second buffer for one file (§1). A dirty or conflicted
   open destination is refused before disk mutation, with guidance to save or
   resolve that document first. A clean open destination contributes its
-  recorded exact generation to the conditional write; the saving view then
+  recorded exact generation to the conditional write; if it is explicitly
+  unavailable because the file is missing, it can instead accept a
+  picker-confirmed absent destination. The saving view then
   rebinds with its source buffer and undo history intact. Save As stays
   available when Save cannot run — conflict, an unavailable source, an offline
   origin, or lost permissions — because it is the escape hatch for all of them.
@@ -290,7 +292,12 @@ that server's limitation. An interrupted write never reports `Saved`.
 Volumes that cannot enforce private staging or capability-relative
 no-overwrite moves are refused with a dedicated, non-retryable filesystem
 explanation. fesTerm does not silently weaken confidentiality or publication
-semantics for FAT/exFAT and unsupported network/FUSE filesystems.
+semantics for FAT/exFAT and unsupported network/FUSE filesystems. Unix also
+refuses private staging in a non-sticky shared-writable destination directory,
+where another account could substitute the random staging name before its
+handle is retained. Cross-volume redirection has a separate mount,
+junction, or reparse-point refusal rather than being misdiagnosed as a missing
+filesystem capability.
 
 fesTerm tags its own completed save generation so the watcher event it causes is
 recognized and ignored: no reload, no duplicate undo entry, no caret jump, no

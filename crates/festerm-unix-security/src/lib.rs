@@ -53,6 +53,26 @@ mod imp {
         Ok(&security_metadata(file)? == expected)
     }
 
+    /// Captures the exact parent security state after refusing directories
+    /// where another account can rename a newly created staging entry.
+    pub fn secure_staging_parent(directory: &File) -> io::Result<SecurityMetadata> {
+        let metadata = directory.metadata()?;
+        let mode = metadata.mode();
+        let shared_writable = mode & 0o022 != 0;
+        let sticky = mode & nix::libc::S_ISVTX != 0;
+        #[cfg(target_os = "macos")]
+        let access_list = macos_acl(directory)?;
+        #[cfg(not(target_os = "macos"))]
+        let access_list: Vec<u8> = Vec::new();
+        if (shared_writable && !sticky) || !access_list.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the destination directory permits staging-name substitution",
+            ));
+        }
+        security_metadata(directory)
+    }
+
     pub fn make_private(file: &File) -> io::Result<()> {
         use nix::sys::stat::{fchmod, Mode};
 
@@ -225,6 +245,7 @@ mod imp {
         {
             flags |= OFlag::O_PATH;
         }
+
         #[cfg(target_os = "macos")]
         {
             flags |= OFlag::from_bits_retain(nix::libc::O_SEARCH);
@@ -242,6 +263,24 @@ mod imp {
                 "the path is not a directory",
             ))
         }
+    }
+
+    /// Reopens an exact directory capability with read access so its directory
+    /// entries can be synchronized even when traversal used Linux `O_PATH`.
+    pub fn reopen_directory_read(directory: &File) -> io::Result<File> {
+        use nix::{
+            fcntl::{openat, OFlag},
+            sys::stat::Mode,
+        };
+
+        openat(
+            directory,
+            Path::new("."),
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)
     }
 
     #[cfg(target_os = "macos")]
@@ -561,7 +600,8 @@ mod imp {
 pub use imp::{
     make_private, make_private_directory, open_directory_read_nofollow,
     open_directory_search_nofollow, open_file_nofollow, preserve_security_metadata,
-    rename_noreplace, security_metadata, security_metadata_matches, SecurityMetadata,
+    rename_noreplace, reopen_directory_read, secure_staging_parent, security_metadata,
+    security_metadata_matches, SecurityMetadata,
 };
 
 #[cfg(test)]

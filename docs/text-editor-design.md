@@ -119,7 +119,8 @@ The editor never resolves a divergence silently.
   natively relative to exact retained handles; each returned handle must be
   non-reparse, current-user-owned, protected current-user-only, and on the
   expected volume before any document bytes are written or copied. ACL-less or
-  cross-volume redirection is refused. Inability to preserve target metadata
+  cross-volume redirection is refused with a distinct mount/junction/reparse
+  explanation. Inability to preserve target metadata
   refuses before mutation. A new destination remains owner-only. Prepared files remain
   beneath a private same-filesystem staging directory, with an independently
   written private recovery copy before publication. Both platforms first move
@@ -147,6 +148,8 @@ The editor never resolves a divergence silently.
 - A volume without private staging or no-overwrite publication support is
   **unsupported for safe saving**. The error directs Save As to a different
   local disk rather than suggesting a retry that cannot succeed.
+- On Unix, a non-sticky shared-writable destination directory is likewise
+  unsupported because another account could substitute the staging name.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit
   is refused whole, not applied without undo or retained as an oversized
   exception. Text, revision, saved/dirty state, undo and redo are unchanged.
@@ -297,7 +300,9 @@ The Save press records whether the destination was absent or the exact
 generation then present. A later appearance, disappearance, or generation
 change refuses before displacement. If that destination is already open, a
 dirty or conflicted buffer blocks the operation with a visible recovery
-instruction; a clean buffer supplies its recorded generation. On success the
+instruction; a clean buffer supplies its recorded generation, while a clean
+buffer explicitly unavailable because its file is missing can accept a
+picker-confirmed absent destination. On success the
 saving view follows the existing destination document without discarding the
 source buffer's undo history.
 
