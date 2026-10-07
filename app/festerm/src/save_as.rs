@@ -560,9 +560,10 @@ impl SaveAsPicker {
                         if observed_exists == file_collision {
                             outcome = SaveAsOutcome::Save { path, destination };
                         } else {
+                            self.load(SftpPath::Local(directory));
                             self.pane.set_error(
                                 "Destination changed after the folder was listed".to_owned(),
-                                "Refresh this folder, review the destination, and press Save again. Nothing was written.".to_owned(),
+                                "The folder is refreshing. Review the destination, then press Save again. Nothing was written.".to_owned(),
                             );
                         }
                     }
@@ -888,18 +889,24 @@ mod tests {
         harness.run();
 
         assert!(harness.state().1.is_none());
-        let error = harness
-            .state()
-            .0
-            .pane
-            .error
-            .as_deref()
-            .expect("visible stale-list refusal");
-        assert!(error.contains("Destination changed"));
         assert_eq!(
             fs::read_to_string(directory.path.join("winner.md")).unwrap(),
             "newer\n"
         );
+
+        settle(&mut harness);
+        assert!(harness.state().0.pane.error.is_none());
+        harness.get_by_label("Save").click();
+        harness.run();
+        match harness.state().1.as_ref().expect("an outcome") {
+            SaveAsOutcome::Save { destination, .. } => {
+                assert!(matches!(
+                    destination.expectation(),
+                    DestinationExpectation::Existing(_)
+                ));
+            }
+            other => panic!("expected refreshed Save, got {}", describe(other)),
+        }
     }
 
     #[test]

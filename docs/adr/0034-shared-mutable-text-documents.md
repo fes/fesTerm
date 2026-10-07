@@ -237,8 +237,8 @@ group, mode and ACL from verified file handles and durably flushes that
 metadata before replacement without copying the old modification time. Linux
 rewrites only user-owned xattrs and the POSIX access ACL; kernel-managed
 security labels remain in place and must already match the verified source
-snapshot. Windows applies and verifies the captured owner, group, DACL, mandatory
-integrity label, resource attributes, scoped policy and file attributes on the
+snapshot. Windows applies and verifies the captured owner, group, DACL, audit SACL,
+mandatory integrity label, resource attributes, scoped policy and file attributes on the
 prepared file while its retained handle
 denies every other read or write open. A separately opened, identity-checked
 delete handle performs publication and closes; a metadata-only final pathname
@@ -251,7 +251,10 @@ staging or writing because basic attribute restoration cannot reproduce its
 encryption. A target with any NTFS alternate data stream, including
 `Zone.Identifier` Mark-of-the-Web, is likewise refused before staging until
 complete handle-bound stream copying and verification exists;
-inability to apply them refuses before publication. A new Save As target keeps
+inability to apply them refuses before publication. Existing-target
+replacement also refuses before staging when `SeSecurityPrivilege` is
+unavailable, because the target's audit SACL cannot then be captured and
+reproduced exactly; Save As to an absent destination remains available. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
 an owner-only staging directory on the destination filesystem. Unix verifies
 the prepared inode through both its handle and staging name; Windows relies on
@@ -265,7 +268,7 @@ concurrent winner has claimed it. The target name can therefore be briefly
 absent, but stale editor bytes can never displace a newer entry. The published
 generation and retained-original generation are validated after publication.
 Unix owner/group/mode/ACL/xattr
-snapshots and Windows owner/group/DACL/label/resource/scoped-policy/attribute snapshots are revalidated
+snapshots and Windows owner/group/DACL/audit-SACL/label/resource/scoped-policy/attribute snapshots are revalidated
 against a no-follow opening of the current target immediately before
 publication and against both the exact retained payload and retained original
 afterward. Windows additionally compares the private original byte copy with
@@ -275,7 +278,8 @@ then pins and verifies the restored pathname while private staging is cleaned;
 failed rollback instead retains private recovery. A mismatch never triggers an unconditional second
 pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
-`.festerm-save-*.stage` directory with a visible manual-recovery error. This
+`.festerm-save-*.stage` directory with a visible manual-recovery error that
+names the exact retained directory and is not replaced by freshness polling. This
 also covers partial move failures; every ambiguous arrangement is retained for
 manual recovery. Failure to reproduce ownership/access metadata refuses before
 publication with an ownership-specific Save As explanation. Cleanup failure
@@ -304,9 +308,11 @@ Volumes that cannot enforce private staging or capability-relative
 no-overwrite moves are refused with a dedicated, non-retryable filesystem
 explanation. fesTerm does not silently weaken confidentiality or publication
 semantics for FAT/exFAT and unsupported network/FUSE filesystems. Unix also
-refuses private staging with folder-specific guidance in a non-sticky
-shared-writable destination directory, where another account could substitute
-the random staging name before its handle is retained. A parent-security change
+refuses private staging with folder-specific guidance in a shared-writable
+destination directory unless it is sticky and owned by the current user.
+Another account, including the owner of somebody else's sticky directory,
+could otherwise substitute the random staging name before its handle is
+retained. A parent-security change
 after handle retention refuses and may leave the empty private staging
 directory for inspection rather than deleting through the now-untrusted
 parent. Cross-volume redirection has a separate mount,

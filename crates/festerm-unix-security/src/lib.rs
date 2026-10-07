@@ -76,7 +76,12 @@ mod imp {
         let permissive_acl = macos_acl_has_allow_entry(directory)?;
         #[cfg(not(target_os = "macos"))]
         let permissive_acl = false;
-        if (shared_writable && !sticky) || permissive_acl {
+        if !staging_parent_security_is_safe(
+            shared_writable,
+            sticky,
+            metadata.uid() == nix::unistd::Uid::effective().as_raw(),
+            permissive_acl,
+        ) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "the destination directory permits staging-name substitution",
@@ -89,6 +94,15 @@ mod imp {
             #[cfg(target_os = "macos")]
             acl: macos_acl(directory)?,
         })
+    }
+
+    pub(crate) const fn staging_parent_security_is_safe(
+        shared_writable: bool,
+        sticky: bool,
+        owned_by_current_user: bool,
+        permissive_acl: bool,
+    ) -> bool {
+        !(shared_writable && (!sticky || !owned_by_current_user)) && !permissive_acl
     }
 
     pub fn staging_parent_matches(
@@ -1024,6 +1038,16 @@ mod tests {
             secure_staging_parent(&directory.open()).unwrap_err().kind(),
             std::io::ErrorKind::Unsupported
         );
+    }
+
+    #[test]
+    fn sticky_shared_parent_must_be_owned_by_the_current_user() {
+        assert!(imp::staging_parent_security_is_safe(
+            true, true, true, false
+        ));
+        assert!(!imp::staging_parent_security_is_safe(
+            true, true, false, false
+        ));
     }
 
     #[cfg(target_os = "macos")]

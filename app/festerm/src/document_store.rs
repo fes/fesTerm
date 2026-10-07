@@ -423,7 +423,7 @@ pub enum SaveFailure {
     NoDirectory,
     NotAFile,
     Interrupted,
-    RecoveryRequired,
+    RecoveryRequired(PathBuf),
     MetadataPreservation,
     EncryptedFile,
     NamedStreams,
@@ -448,7 +448,7 @@ impl SaveFailure {
             Self::NoDirectory => "This folder is no longer there",
             Self::NotAFile => "This destination is not a regular file",
             Self::Interrupted => "Saving did not complete",
-            Self::RecoveryRequired => "Saving needs manual recovery",
+            Self::RecoveryRequired(_) => "Saving needs manual recovery",
             Self::MetadataPreservation => "This file's access cannot be preserved",
             Self::EncryptedFile => "This file's encryption cannot be preserved",
             Self::NamedStreams => "This file's Windows data streams cannot be preserved",
@@ -458,42 +458,45 @@ impl SaveFailure {
         }
     }
 
-    pub fn detail(&self) -> &'static str {
+    pub fn detail(&self) -> String {
         match self {
             Self::Conflict(_) => {
-                "Nothing was written. Compare the two versions before deciding what to keep."
+                "Nothing was written. Compare the two versions before deciding what to keep.".to_owned()
             }
-            Self::Gone => "Nothing was written. Use Save As… to write it somewhere else.",
+            Self::Gone => "Nothing was written. Use Save As… to write it somewhere else.".to_owned(),
             Self::PermissionDenied => {
-                "Your account does not have permission to replace it. Use Save As… to write it somewhere else."
+                "Your account does not have permission to replace it. Use Save As… to write it somewhere else.".to_owned()
             }
-            Self::NoDirectory => "Nothing was written. Use Save As… to write it somewhere else.",
+            Self::NoDirectory => "Nothing was written. Use Save As… to write it somewhere else.".to_owned(),
             Self::NotAFile => {
-                "Nothing was written. For a symbolic link or reparse point, choose the regular file it points to; otherwise choose a file, not a folder or special device."
+                "Nothing was written. For a symbolic link or reparse point, choose the regular file it points to; otherwise choose a file, not a folder or special device.".to_owned()
             }
             Self::Interrupted => {
-                "The previous contents are unchanged. Try saving again, or use Save As…."
+                "The previous contents are unchanged. Try saving again, or use Save As….".to_owned()
             }
-            Self::RecoveryRequired => {
-                "Publication could not be verified. The destination may contain the new bytes, another process's bytes, or the prior bytes with access metadata that still needs review; it may also be absent. In the private .festerm-save-* folder beside it, original (if present) is the private prior version, displaced (if present) is Windows' captured prior file, and prepared and/or payload (if present) contains the new bytes. Compare every retained version and its access metadata before recovering or saving there again."
+            Self::RecoveryRequired(path) => {
+                format!(
+                    "Publication could not be verified. The destination may contain the new bytes, another process's bytes, or the prior bytes with access metadata that still needs review; it may also be absent. In the private recovery folder {}, original (if present) is the private prior version, displaced (if present) is Windows' captured prior file, and prepared and/or payload (if present) contains the new bytes. Compare every retained version and its access metadata before recovering or saving there again.",
+                    path.display()
+                )
             }
             Self::MetadataPreservation => {
-                "The file's owner, group, ACL, security labels, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a destination with compatible access metadata."
+                "The file's owner, group, ACL, audit policy, security labels, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a destination with compatible access metadata.".to_owned()
             }
             Self::EncryptedFile => {
-                "fesTerm cannot safely preserve Windows EFS encryption during replacement. Use Save As to choose a new destination, or edit it with an EFS-aware tool."
+                "fesTerm cannot safely preserve Windows EFS encryption during replacement. Use Save As to choose a new destination, or edit it with an EFS-aware tool.".to_owned()
             }
             Self::NamedStreams => {
-                "The file has NTFS alternate data streams such as Zone.Identifier that fesTerm cannot safely preserve yet. Use Save As to choose a new destination."
+                "The file has NTFS alternate data streams such as Zone.Identifier that fesTerm cannot safely preserve yet. Use Save As to choose a new destination.".to_owned()
             }
             Self::UnsupportedFilesystem => {
-                "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk."
+                "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk.".to_owned()
             }
             Self::CrossVolume => {
-                "Nothing was written. A mount point, junction, or reparse point redirected the destination to another disk. Choose a regular destination on the intended disk."
+                "Nothing was written. A mount point, junction, or reparse point redirected the destination to another disk. Choose a regular destination on the intended disk.".to_owned()
             }
             Self::UnsafeDestinationFolder => {
-                "Nothing was written. Another account may be able to replace temporary save entries in this folder. Use Save As to choose a folder protected from other writers. If the folder's protection changed during this attempt, an empty private .festerm-save-* folder may remain."
+                "Nothing was written. Another account may be able to replace temporary save entries in this folder. Use Save As to choose a folder protected from other writers. If the folder's protection changed during this attempt, an empty private .festerm-save-* folder may remain.".to_owned()
             }
         }
     }
@@ -728,6 +731,33 @@ pub fn save(
         (None, None) => {}
     }
     #[cfg(windows)]
+    let _security_privilege = original
+        .is_some()
+        .then(festerm_windows_security::enable_security_privilege)
+        .transpose()
+        .map_err(classify_metadata_error)?;
+    #[cfg(windows)]
+    if let Some(original) = &mut original {
+        let directory = save_directory
+            .directory
+            .try_clone()
+            .map(cap_std::fs::Dir::into_std_file)
+            .map_err(classify_write_error)?;
+        let security_handle = festerm_windows_security::open_file_no_reparse_for_security_capture(
+            &directory,
+            &save_directory.target,
+        )
+        .map_err(classify_metadata_error)?;
+        if !festerm_windows_security::same_file_identity(&original.file, &security_handle)
+            .map_err(classify_write_error)?
+        {
+            let current =
+                Generation::from_file(&security_handle).map_err(|_| SaveFailure::Interrupted)?;
+            return Err(SaveFailure::Conflict(current));
+        }
+        original.file = security_handle;
+    }
+    #[cfg(windows)]
     let security_metadata = original
         .as_ref()
         .map(|original| {
@@ -750,7 +780,17 @@ pub fn save(
         return Err(SaveFailure::NamedStreams);
     }
 
-    let mut temporary = TemporaryFile::create(&save_directory.directory)?;
+    let parent_path = save_directory
+        .source_authority
+        .canonical_path()
+        .parent()
+        .ok_or(SaveFailure::NoDirectory)?;
+    let mut temporary = TemporaryFile::create(
+        &save_directory.directory,
+        parent_path,
+        #[cfg(windows)]
+        security_metadata.is_some(),
+    )?;
     before_save_write();
     write_all_durably(temporary.file_mut(), bytes)?;
     #[cfg(unix)]
@@ -1021,13 +1061,18 @@ struct TemporaryFile<'a> {
     staging: cap_std::fs::Dir,
     staging_identity: DirectoryIdentity,
     staging_directory: PathBuf,
+    recovery_directory: PathBuf,
     file: Option<File>,
     payload_is_published: bool,
     persist: bool,
 }
 
 impl<'a> TemporaryFile<'a> {
-    fn create(directory: &'a cap_std::fs::Dir) -> Result<Self, SaveFailure> {
+    fn create(
+        directory: &'a cap_std::fs::Dir,
+        parent_path: &Path,
+        #[cfg(windows)] preserve_audit_sacl: bool,
+    ) -> Result<Self, SaveFailure> {
         #[cfg(unix)]
         let parent_security = {
             let parent = directory
@@ -1044,6 +1089,7 @@ impl<'a> TemporaryFile<'a> {
         };
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
             let staging_directory = temporary_directory_path()?;
+            let recovery_directory = parent_path.join(&staging_directory);
             #[cfg(unix)]
             {
                 use cap_std::fs::DirBuilderExt;
@@ -1154,9 +1200,15 @@ impl<'a> TemporaryFile<'a> {
                 .try_clone()
                 .map(cap_std::fs::Dir::into_std_file)
                 .and_then(|directory| {
-                    festerm_windows_security::create_current_user_only_file_exclusive(
-                        &directory, payload,
-                    )
+                    if preserve_audit_sacl {
+                        festerm_windows_security::create_current_user_only_file_exclusive_with_audit(
+                            &directory, payload,
+                        )
+                    } else {
+                        festerm_windows_security::create_current_user_only_file_exclusive(
+                            &directory, payload,
+                        )
+                    }
                 });
             #[cfg(not(any(unix, windows)))]
             let file = {
@@ -1183,6 +1235,7 @@ impl<'a> TemporaryFile<'a> {
                         staging,
                         staging_identity,
                         staging_directory,
+                        recovery_directory,
                         file: Some(file),
                         payload_is_published: false,
                         persist: false,
@@ -1358,8 +1411,12 @@ impl<'a> TemporaryFile<'a> {
                 }
             }
         }
+        tracing::error!(
+            path = %self.recovery_directory.display(),
+            "save publication needs manual recovery from retained private staging"
+        );
         self.persist();
-        SaveFailure::RecoveryRequired
+        SaveFailure::RecoveryRequired(self.recovery_directory.clone())
     }
 
     fn original_generation(&self) -> Result<Generation, std::io::Error> {
@@ -1787,15 +1844,17 @@ fn publish_temporary(
         .try_clone()
         .map(cap_std::fs::Dir::into_std_file)
         .map_err(classify_write_error)?;
-    let mut current =
-        festerm_windows_security::open_file_no_reparse_for_capture(&directory_handle, target)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    SaveFailure::Gone
-                } else {
-                    classify_write_error(error)
-                }
-            })?;
+    let mut current = festerm_windows_security::open_file_no_reparse_for_security_capture(
+        &directory_handle,
+        target,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            SaveFailure::Gone
+        } else {
+            classify_write_error(error)
+        }
+    })?;
     let current_generation =
         Generation::from_file(&current).map_err(|_| SaveFailure::Interrupted)?;
     if current_generation != original_generation
@@ -1896,16 +1955,17 @@ fn publish_temporary(
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
-    let published_file = match festerm_windows_security::open_file_no_reparse_for_verification(
-        &directory_handle,
-        target,
-    ) {
-        Ok(file) => file,
-        Err(error) => {
-            tracing::error!(%error, "the replaced Windows save target could not be reopened");
-            return Err(temporary.recovery_required());
-        }
-    };
+    let published_file =
+        match festerm_windows_security::open_file_no_reparse_for_security_verification(
+            &directory_handle,
+            target,
+        ) {
+            Ok(file) => file,
+            Err(error) => {
+                tracing::error!(%error, "the replaced Windows save target could not be reopened");
+                return Err(temporary.recovery_required());
+            }
+        };
     after_save_replacement();
     let published = match Generation::from_file(&published_file) {
         Ok(generation) => generation,
@@ -2736,7 +2796,7 @@ mod tests {
 
         let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
-        assert_eq!(failure, SaveFailure::RecoveryRequired);
+        assert!(matches!(failure, SaveFailure::RecoveryRequired(_)));
         assert_eq!(fs::read_to_string(&path).unwrap(), "winner\n");
         let staging = fs::read_dir(&directory.path)
             .unwrap()
@@ -2785,7 +2845,7 @@ mod tests {
 
         let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
-        assert_eq!(failure, SaveFailure::RecoveryRequired);
+        assert!(matches!(failure, SaveFailure::RecoveryRequired(_)));
         assert_eq!(fs::read_to_string(&path).unwrap(), "later\n");
         let staging = fs::read_dir(&directory.path)
             .unwrap()
@@ -2847,7 +2907,7 @@ mod tests {
 
         let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
-        assert_eq!(failure, SaveFailure::RecoveryRequired);
+        assert!(matches!(failure, SaveFailure::RecoveryRequired(_)));
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_readonly(false);
         fs::set_permissions(&path, permissions).unwrap();
@@ -2990,7 +3050,7 @@ mod tests {
 
         let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
-        assert_eq!(failure, SaveFailure::RecoveryRequired);
+        assert!(matches!(failure, SaveFailure::RecoveryRequired(_)));
         assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,

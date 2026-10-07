@@ -66,6 +66,7 @@ pub(crate) struct OpenDocument {
     save: SaveProgress,
     auto_save_requested: bool,
     last_error: Option<SaveError>,
+    recovery_error: Option<SaveError>,
     /// When this document's source was last checked, so metadata queries run
     /// once per interval, not per frame. Windows also opens a file handle to
     /// retrieve its stable identity; Unix obtains identity from the stat.
@@ -146,6 +147,7 @@ impl OpenDocument {
             conflict: self.conflict.clone(),
             auto_save_requested: self.auto_save_requested,
             last_error: self.last_error.clone(),
+            recovery_error: self.recovery_error.clone(),
             remote: self.origin.is_remote(),
             has_save_target: !matches!(self.origin, DocumentOrigin::Untitled(_)),
             recently_reloaded: self.reloaded.is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
@@ -333,6 +335,7 @@ impl DocumentRegistry {
                 save: SaveProgress::Idle,
                 auto_save_requested: false,
                 last_error: None,
+                recovery_error: None,
                 checked: Instant::now(),
                 reloaded: None,
                 settled: None,
@@ -439,6 +442,9 @@ impl DocumentRegistry {
     pub(crate) fn save(&mut self, id: DocumentId) -> Option<SaveOutcome> {
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
+        if let Some(error) = document.recovery_error.clone() {
+            return Some(SaveOutcome::Failed(error));
+        }
         let DocumentOrigin::Local(origin) = &document.origin else {
             if matches!(document.origin, DocumentOrigin::Untitled(_)) {
                 let error = SaveError::new(
@@ -495,6 +501,11 @@ impl DocumentRegistry {
                 let _ = failure;
                 SaveOutcome::Unavailable(UnavailableReason::PermissionDenied)
             }
+            Err(failure @ SaveFailure::RecoveryRequired(_)) => {
+                let error = SaveError::new(failure.headline(), failure.detail());
+                document.recovery_error = Some(error.clone());
+                SaveOutcome::Failed(error)
+            }
             Err(failure) => {
                 let error = SaveError::new(failure.headline(), failure.detail());
                 document.last_error = Some(error.clone());
@@ -532,6 +543,17 @@ impl DocumentRegistry {
                 source.last_error = Some(error.clone());
             }
             return Some((SaveOutcome::Failed(error), None));
+        }
+        if let Some(source) = self.documents.get(&id) {
+            if let Some(error) = source.recovery_error.clone() {
+                if matches!(
+                    source.origin(),
+                    DocumentOrigin::Local(local)
+                        if confirmed.matches_requested_path(local.path())
+                ) {
+                    return Some((SaveOutcome::Failed(error), None));
+                }
+            }
         }
         let origin = match LocalOrigin::new(path).map(DocumentOrigin::Local) {
             Ok(origin) => origin,
@@ -626,7 +648,13 @@ impl DocumentRegistry {
                 return Some((SaveOutcome::Failed(error), None));
             }
         }
-        let document = self.documents.get(&id)?;
+        let Some(document) = self.documents.get(&id) else {
+            let error = SaveError::new(
+                "This document cannot be verified",
+                "Refresh the open documents and try Save As again. Nothing was written.",
+            );
+            return Some((SaveOutcome::Failed(error), None));
+        };
         let bytes = document.text.to_bytes();
         let text = document.text.clone();
 
@@ -658,6 +686,7 @@ impl DocumentRegistry {
                 document.availability = Availability::Available;
                 document.conflict = None;
                 document.last_error = None;
+                document.recovery_error = None;
                 document.save = SaveProgress::Idle;
                 document.reloaded = Some(Instant::now());
                 document.checked = Instant::now();
@@ -758,6 +787,7 @@ impl DocumentRegistry {
                     // A conflict is the user's to resolve; re-checking would
                     // only replace their banner with the same banner.
                     && document.conflict.is_none()
+                    && document.recovery_error.is_none()
                     && now.duration_since(document.checked) >= POLL_INTERVAL
             })
             .map(|(id, _)| *id)
@@ -782,7 +812,9 @@ impl DocumentRegistry {
             .documents
             .iter()
             .filter(|(_, document)| {
-                document.save == SaveProgress::Idle && document.conflict.is_none()
+                document.save == SaveProgress::Idle
+                    && document.conflict.is_none()
+                    && document.recovery_error.is_none()
             })
             .map(|(id, _)| *id)
             .collect();
@@ -1596,6 +1628,35 @@ mod tests {
         assert!(document.conflict().unwrap().can_compare());
         assert_eq!(document.status().severity(), Severity::Blocking);
         assert!(!document.status().can_save());
+    }
+
+    #[test]
+    fn manual_recovery_notice_survives_polling_and_names_the_recovery_directory() {
+        let directory = TemporaryDirectory::new("manual-recovery");
+        let path = directory.file("notes.md", "alpha\n");
+        let recovery = directory.path.join(".festerm-save-recovery.stage");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "mine\n");
+        let error = SaveError::new(
+            "Saving needs manual recovery",
+            format!("Recover retained versions from {}.", recovery.display()),
+        );
+        registry.get_mut(id).unwrap().recovery_error = Some(error);
+        fs::write(&path, "theirs\n").unwrap();
+
+        assert!(registry.poll(Instant::now() + POLL_INTERVAL).is_empty());
+        assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
+
+        let document = registry.get(id).unwrap();
+        assert!(document.conflict().is_none());
+        assert!(document
+            .status()
+            .detail()
+            .contains(&recovery.display().to_string()));
+        assert_eq!(document.status().severity(), Severity::Blocking);
+        assert!(!document.status().can_save());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
     }
 
     #[test]

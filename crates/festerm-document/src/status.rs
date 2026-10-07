@@ -214,6 +214,8 @@ pub struct StatusInputs {
     /// currently run.
     pub auto_save_requested: bool,
     pub last_error: Option<SaveError>,
+    /// A publication whose retained versions require explicit manual review.
+    pub recovery_error: Option<SaveError>,
     /// Whether the origin is remote, which only changes the wording.
     pub remote: bool,
     /// Whether Save already has a concrete destination instead of needing
@@ -234,6 +236,7 @@ impl Default for StatusInputs {
             conflict: None,
             auto_save_requested: false,
             last_error: None,
+            recovery_error: None,
             remote: false,
             has_save_target: true,
             recently_reloaded: false,
@@ -287,6 +290,21 @@ impl DocumentStatus {
         } else {
             "disk"
         };
+
+        if let Some(error) = &inputs.recovery_error {
+            return Self {
+                severity: Severity::Blocking,
+                headline: error.headline().to_owned(),
+                detail: error.detail().to_owned(),
+                actions: vec![BannerAction::SaveAs, BannerAction::CloseWithoutSaving],
+                can_save: false,
+                auto_save: pause_or_keep(inputs.auto_save_requested),
+                accent: StatusAccent::Failing,
+                chip_state: "needs recovery",
+                short_label: "Manual recovery required",
+                can_compare: false,
+            };
+        }
 
         if let Some(conflict) = &inputs.conflict {
             let mut actions = vec![BannerAction::Compare];
@@ -749,6 +767,28 @@ mod tests {
             ..remote_inputs()
         });
         assert_eq!(status.severity(), Severity::Blocking);
+    }
+
+    #[test]
+    fn manual_recovery_outranks_conflict_and_disables_retry() {
+        let recovery = SaveError::new(
+            "Saving needs manual recovery",
+            "Recover retained versions from C:\\private\\stage.",
+        );
+        let status = DocumentStatus::derive(&StatusInputs {
+            dirty: true,
+            conflict: Some(ConflictState::new("changed")),
+            recovery_error: Some(recovery),
+            ..StatusInputs::default()
+        });
+
+        assert_eq!(status.severity(), Severity::Blocking);
+        assert_eq!(status.headline(), "Saving needs manual recovery");
+        assert_eq!(
+            status.actions(),
+            [BannerAction::SaveAs, BannerAction::CloseWithoutSaving]
+        );
+        assert!(!status.can_save());
     }
 
     #[test]

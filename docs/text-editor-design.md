@@ -135,14 +135,19 @@ The editor never resolves a divergence silently.
   editor bytes. A final no-follow target opening checks the old generation
   immediately before capture; old/new generations, the Unix
   owner/group/mode/ACL/xattr snapshot, and the Windows
-  owner/group/DACL/label/resource/scoped-policy/attribute snapshot on the exact retained payload are
+  owner/group/DACL/audit-SACL/label/resource/scoped-policy/attribute snapshot on the exact retained payload are
   verified; Windows also compares the private prior-byte copy with the exact
-  displaced original. A successful rollback is identity-checked and
+  displaced original. Replacing an existing Windows target refuses before
+  staging if `SeSecurityPrivilege` is unavailable, because its audit SACL
+  cannot otherwise be preserved; Save As to an absent destination remains
+  available. A successful rollback is identity-checked and
   non-delete-locked through private-staging cleanup; an ambiguous rollback
   retains recovery instead. A late or ambiguous change
   is never deleted by pathname rollback: every recoverable version remains in
   the private `.festerm-save-*.stage` directory and the editor reports manual
-  recovery. Access-metadata or publication-identity failure is a failed save,
+  recovery with the exact directory path. That notice remains authoritative
+  until the view is closed or rebound and is not replaced by polling.
+  Access-metadata or publication-identity failure is a failed save,
   never a best-effort success. Cleanup failure after verified publication may
   retain the private staging directory but does not turn a successful save
   into a false failure.
@@ -157,9 +162,10 @@ The editor never resolves a divergence silently.
 - A volume without private staging or no-overwrite publication support is
   **unsupported for safe saving**. The error directs Save As to a different
   local disk rather than suggesting a retry that cannot succeed.
-- On Unix, a non-sticky shared-writable destination directory is likewise
-  refused with folder-specific guidance because another account could
-  substitute the staging name. If the parent's security changes after an empty
+- On Unix, a shared-writable destination directory is likewise refused unless
+  it is sticky and owned by the current user. The owner of somebody else's
+  sticky directory could still substitute the staging name. If the parent's
+  security changes after an empty
   private staging directory is created, that directory is retained and named
   in the refusal rather than removed through the now-untrusted parent.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit

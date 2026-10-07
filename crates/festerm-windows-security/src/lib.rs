@@ -29,13 +29,13 @@ mod imp {
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, GetLastError, LocalFree, RtlNtStatusToDosError, SetHandleInformation,
-            ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED, ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ,
-            HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE,
-            STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH,
-            STATUS_SUCCESS, UNICODE_STRING,
+            SetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, ERROR_NOT_SUPPORTED,
+            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
+            INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
+            STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
         },
         Security::{
-            AclSizeInformation, AddAccessAllowedAceEx,
+            AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
             EqualSid, GetAce, GetAclInformation, GetKernelObjectSecurity, GetLengthSid,
             GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl,
@@ -44,9 +44,10 @@ mod imp {
             TokenDefaultDacl, TokenUser, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION,
             ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION,
             GROUP_SECURITY_INFORMATION, LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-            PROTECTED_DACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
-            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL,
-            TOKEN_QUERY, TOKEN_USER,
+            PROTECTED_DACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+            SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME, TOKEN_ADJUST_DEFAULT,
+            TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             FileBasicInfo, FileRenameInfoEx, GetFileInformationByHandle,
@@ -60,6 +61,7 @@ mod imp {
             Console::{
                 GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
             },
+            SystemServices::ACCESS_SYSTEM_SECURITY,
             Threading::{
                 GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
             },
@@ -91,10 +93,97 @@ mod imp {
         restored: bool,
     }
 
+    /// Restores the process token's previous SeSecurityPrivilege state.
+    pub struct SecurityPrivilegeGuard {
+        token: HANDLE,
+        previous: TOKEN_PRIVILEGES,
+    }
+
+    impl Drop for SecurityPrivilegeGuard {
+        fn drop(&mut self) {
+            let _ = unsafe {
+                AdjustTokenPrivileges(
+                    self.token,
+                    0,
+                    &raw const self.previous,
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            let _ = unsafe { CloseHandle(self.token) };
+        }
+    }
+
+    /// Enables the audit-policy privilege needed to capture and reproduce a
+    /// file's SACL. Existing-file replacement is refused when the process
+    /// token does not hold this privilege.
+    pub fn enable_security_privilege() -> io::Result<SecurityPrivilegeGuard> {
+        let mut token = ptr::null_mut();
+        if unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES,
+                &raw mut token,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let result = (|| {
+            let mut luid = windows_sys::Win32::Foundation::LUID::default();
+            if unsafe {
+                windows_sys::Win32::Security::LookupPrivilegeValueW(
+                    ptr::null(),
+                    SE_SECURITY_NAME,
+                    &raw mut luid,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            let requested = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [windows_sys::Win32::Security::LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: SE_PRIVILEGE_ENABLED,
+                }],
+            };
+            let mut previous = TOKEN_PRIVILEGES::default();
+            let mut previous_length = 0;
+            unsafe { SetLastError(ERROR_SUCCESS) };
+            if unsafe {
+                AdjustTokenPrivileges(
+                    token,
+                    0,
+                    &raw const requested,
+                    mem::size_of::<TOKEN_PRIVILEGES>() as u32,
+                    &raw mut previous,
+                    &raw mut previous_length,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "SeSecurityPrivilege is unavailable",
+                ));
+            }
+            Ok(SecurityPrivilegeGuard { token, previous })
+        })();
+        if result.is_err() {
+            let _ = unsafe { CloseHandle(token) };
+        }
+        result
+    }
+
     /// Access-control and attribute metadata that replacement must preserve.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SecurityMetadata {
         descriptor: Vec<u8>,
+        audit_sacl: Option<Vec<u8>>,
         mandatory_label: Vec<u8>,
         resource_attributes: Vec<u8>,
         scoped_policy: Vec<u8>,
@@ -254,6 +343,11 @@ mod imp {
             file,
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
         )?;
+        let audit_sacl = match security_descriptor(file, SACL_SECURITY_INFORMATION) {
+            Ok(descriptor) => Some(descriptor),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => None,
+            Err(error) => return Err(error),
+        };
         let mandatory_label = security_descriptor(file, LABEL_SECURITY_INFORMATION)?;
         let resource_attributes = security_descriptor(file, ATTRIBUTE_SECURITY_INFORMATION)?;
         let scoped_policy = security_descriptor(file, SCOPE_SECURITY_INFORMATION)?;
@@ -265,6 +359,7 @@ mod imp {
         }
         Ok(SecurityMetadata {
             descriptor,
+            audit_sacl,
             mandatory_label,
             resource_attributes,
             scoped_policy,
@@ -329,6 +424,12 @@ mod imp {
                 "NTFS alternate data streams cannot be preserved through basic file metadata",
             ));
         }
+        let audit_sacl = metadata.audit_sacl.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the file's audit SACL was not captured",
+            )
+        })?;
         let handle = file.as_raw_handle() as HANDLE;
         if unsafe {
             SetKernelObjectSecurity(
@@ -340,6 +441,7 @@ mod imp {
         {
             return Err(io::Error::last_os_error());
         }
+        apply_security_descriptor_if_changed(file, SACL_SECURITY_INFORMATION, audit_sacl)?;
         apply_security_descriptor_if_changed(
             file,
             LABEL_SECURITY_INFORMATION,
@@ -790,6 +892,20 @@ mod imp {
         )
     }
 
+    /// Creates a movable private file with access to apply and verify an audit
+    /// SACL while SeSecurityPrivilege is enabled.
+    pub fn create_current_user_only_file_with_audit(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        create_current_user_only_file_with_sharing(
+            directory,
+            name,
+            FILE_ALL_ACCESS | DELETE | ACCESS_SYSTEM_SECURITY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        )
+    }
+
     /// Creates a private file whose retained handle permits a separate
     /// delete-only move handle but prevents every other data reader or writer.
     pub fn create_current_user_only_file_exclusive(
@@ -800,6 +916,20 @@ mod imp {
             directory,
             name,
             FILE_ALL_ACCESS & !DELETE,
+            FILE_SHARE_DELETE,
+        )
+    }
+
+    /// Creates the retained save payload with the additional system-security
+    /// access needed to reproduce and verify an existing target's audit SACL.
+    pub fn create_current_user_only_file_exclusive_with_audit(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        create_current_user_only_file_with_sharing(
+            directory,
+            name,
+            (FILE_ALL_ACCESS & !DELETE) | ACCESS_SYSTEM_SECURITY,
             FILE_SHARE_DELETE,
         )
     }
@@ -842,6 +972,19 @@ mod imp {
         )
     }
 
+    /// Retains a save target with access to capture and later restore its
+    /// audit SACL as well as its ordinary access metadata.
+    pub fn open_file_no_reparse_for_security_capture(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        open_file_no_reparse_with_access(
+            directory,
+            name,
+            GENERIC_READ | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER | ACCESS_SYSTEM_SECURITY,
+        )
+    }
+
     /// Opens an exact staged file with only the access needed to move it.
     pub fn open_file_no_reparse_for_move(directory: &File, name: &Path) -> io::Result<File> {
         open_file_no_reparse_with_access(directory, name, FILE_READ_ATTRIBUTES | DELETE)
@@ -857,6 +1000,20 @@ mod imp {
             directory,
             name,
             FILE_READ_ATTRIBUTES | READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+        )
+    }
+
+    /// Pins a published pathname while verifying its complete access policy,
+    /// including the audit SACL.
+    pub fn open_file_no_reparse_for_security_verification(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        open_file_no_reparse_with_access_and_sharing(
+            directory,
+            name,
+            FILE_READ_ATTRIBUTES | READ_CONTROL | ACCESS_SYSTEM_SECURITY,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
         )
     }
@@ -1127,10 +1284,12 @@ mod imp {
         use windows_sys::Win32::{
             Foundation::{LocalFree, ERROR_SHARING_VIOLATION, ERROR_SUCCESS},
             Security::{
-                AclSizeInformation,
+                AclSizeInformation, AddAuditAccessAceEx,
                 Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
-                GetAce, GetAclInformation, GetSecurityDescriptorControl, ACCESS_ALLOWED_ACE,
-                ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+                GetAce, GetAclInformation, GetSecurityDescriptorControl, SetSecurityDescriptorSacl,
+                ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
+                PROTECTED_SACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+                SE_SACL_PROTECTED, SYSTEM_AUDIT_ACE,
             },
             Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS,
         };
@@ -1185,6 +1344,7 @@ mod imp {
                 create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
             let encrypted = SecurityMetadata {
                 descriptor: Vec::new(),
+                audit_sacl: None,
                 mandatory_label: Vec::new(),
                 resource_attributes: Vec::new(),
                 scoped_policy: Vec::new(),
@@ -1200,6 +1360,7 @@ mod imp {
 
         #[test]
         fn security_copy_preserves_an_explicit_mandatory_integrity_label() {
+            let _privilege = enable_security_privilege().unwrap();
             let directory = TemporaryDirectory::new();
             let source_path = directory.0.join("source.md");
             fs::write(&source_path, b"source").unwrap();
@@ -1209,15 +1370,102 @@ mod imp {
                 .status()
                 .unwrap();
             assert!(status.success());
-            let source = File::open(&source_path).unwrap();
             let directory_handle = directory.handle();
-            let target =
-                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+            let source = open_file_no_reparse_for_security_capture(
+                &directory_handle,
+                Path::new("source.md"),
+            )
+            .unwrap();
+            let target = create_current_user_only_file_exclusive_with_audit(
+                &directory_handle,
+                Path::new("target.md"),
+            )
+            .unwrap();
             let metadata = security_metadata(&source).unwrap();
 
             apply_security_metadata(&target, &metadata).unwrap();
 
             assert!(security_metadata_matches(&target, &metadata).unwrap());
+        }
+
+        #[test]
+        fn security_copy_preserves_an_explicit_audit_sacl() {
+            let _privilege = enable_security_privilege().unwrap();
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let source = create_current_user_only_file_exclusive_with_audit(
+                &directory_handle,
+                Path::new("source.md"),
+            )
+            .unwrap();
+            set_current_user_audit_sacl(&source);
+            let target = create_current_user_only_file_exclusive_with_audit(
+                &directory_handle,
+                Path::new("target.md"),
+            )
+            .unwrap();
+            let metadata = security_metadata(&source).unwrap();
+
+            apply_security_metadata(&target, &metadata).unwrap();
+
+            assert!(security_metadata_matches(&target, &metadata).unwrap());
+        }
+
+        fn set_current_user_audit_sacl(file: &File) {
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            let sid_length = unsafe { GetLengthSid(user.User.Sid) };
+            assert_ne!(sid_length, 0);
+            let acl_bytes = mem::size_of::<ACL>() + mem::size_of::<SYSTEM_AUDIT_ACE>()
+                - mem::size_of::<u32>()
+                + sid_length as usize;
+            let mut acl_storage = vec![0usize; acl_bytes.div_ceil(mem::size_of::<usize>())];
+            let acl = acl_storage.as_mut_ptr().cast::<ACL>();
+            assert_ne!(
+                unsafe { InitializeAcl(acl, acl_bytes as u32, ACL_REVISION) },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    AddAuditAccessAceEx(acl, ACL_REVISION, 0, FILE_ALL_ACCESS, user.User.Sid, 1, 1)
+                },
+                0
+            );
+            let mut descriptor = SECURITY_DESCRIPTOR::default();
+            assert_ne!(
+                unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) },
+                0
+            );
+            assert_ne!(
+                unsafe { SetSecurityDescriptorSacl((&raw mut descriptor).cast(), 1, acl, 0) },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    SetSecurityDescriptorControl(
+                        (&raw mut descriptor).cast(),
+                        SE_SACL_PROTECTED,
+                        SE_SACL_PROTECTED,
+                    )
+                },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    SetKernelObjectSecurity(
+                        file.as_raw_handle() as HANDLE,
+                        SACL_SECURITY_INFORMATION | PROTECTED_SACL_SECURITY_INFORMATION,
+                        (&raw mut descriptor).cast(),
+                    )
+                },
+                0
+            );
         }
 
         #[test]
@@ -1419,6 +1667,7 @@ mod imp {
 
         #[test]
         fn private_creation_and_conditional_publication_keep_the_current_user_only_dacl() {
+            let _privilege = enable_security_privilege().unwrap();
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
             let staging_handle =
@@ -1447,15 +1696,18 @@ mod imp {
             assert_eq!(fs::read(directory.0.join("published.md")).unwrap(), b"new");
 
             let mut target =
-                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+                create_current_user_only_file_with_audit(&directory_handle, Path::new("target.md"))
+                    .unwrap();
             target.write_all(b"before").unwrap();
             target.sync_all().unwrap();
             assert_current_user_only_dacl(&target);
             let target_security = security_metadata(&target).unwrap();
 
-            let mut replacement =
-                create_current_user_only_file(&staging_handle, Path::new("replacement.tmp"))
-                    .unwrap();
+            let mut replacement = create_current_user_only_file_with_audit(
+                &staging_handle,
+                Path::new("replacement.tmp"),
+            )
+            .unwrap();
             replacement.write_all(b"after").unwrap();
             replacement.sync_all().unwrap();
             apply_security_metadata(&replacement, &target_security).unwrap();
@@ -1463,7 +1715,11 @@ mod imp {
             rename_file_noreplace(&target, &staging_handle, Path::new("original")).unwrap();
             rename_file_noreplace(&replacement, &directory_handle, Path::new("target.md")).unwrap();
 
-            let target = File::open(directory.0.join("target.md")).unwrap();
+            let target = open_file_no_reparse_for_security_verification(
+                &directory_handle,
+                Path::new("target.md"),
+            )
+            .unwrap();
             assert_current_user_only_dacl(&target);
             assert!(security_metadata_matches(&target, &target_security).unwrap());
             assert!(open_file_no_reparse(&directory_handle, Path::new("target.md")).is_ok());
@@ -1537,9 +1793,13 @@ mod imp {
 #[cfg(windows)]
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
-    create_current_user_only_file_exclusive, disable_std_handle_inheritance, is_current_user_only,
-    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
+    create_current_user_only_file_with_audit, disable_std_handle_inheritance,
+    enable_security_privilege, is_current_user_only, open_file_no_reparse,
+    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, rename_file_noreplace,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
     security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
+    SecurityPrivilegeGuard,
 };
