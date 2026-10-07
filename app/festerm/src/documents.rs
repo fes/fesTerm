@@ -264,6 +264,13 @@ impl DocumentRegistry {
         }
 
         let loaded = document_store::load(path, self.bounds).map_err(OpenFailure::Load)?;
+        if let Some(existing) = self.documents.iter().find_map(|(id, document)| {
+            (document.source_authority.as_ref() == Some(&loaded.source_authority)).then_some(*id)
+        }) {
+            self.by_key.insert(origin.key(), existing);
+            self.retain(existing);
+            return Ok(existing);
+        }
         Ok(self.insert(
             origin,
             loaded.document,
@@ -395,13 +402,12 @@ impl DocumentRegistry {
         if document.views > 0 {
             return false;
         }
-        let key = document.origin.key();
         let recovery = document
             .recovery_path
             .clone()
             .zip(document.recovery_error.clone());
         self.documents.remove(&id);
-        self.by_key.remove(&key);
+        self.by_key.retain(|_, document| *document != id);
         if let Some(recovery) = recovery {
             if self.pending_recovery_notices.len() == MAX_PENDING_RECOVERY_NOTICES {
                 self.pending_recovery_notices.pop_front();
@@ -413,6 +419,18 @@ impl DocumentRegistry {
 
     pub(crate) fn take_recovery_notice(&mut self) -> Option<(PathBuf, SaveError)> {
         self.pending_recovery_notices.pop_front()
+    }
+
+    pub(crate) fn has_recovery_notices(&self) -> bool {
+        !self.pending_recovery_notices.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_recovery_notice(&mut self, path: PathBuf, error: SaveError) {
+        if self.pending_recovery_notices.len() == MAX_PENDING_RECOVERY_NOTICES {
+            self.pending_recovery_notices.pop_front();
+        }
+        self.pending_recovery_notices.push_back((path, error));
     }
 
     pub(crate) fn get(&self, id: DocumentId) -> Option<&OpenDocument> {
@@ -719,8 +737,10 @@ impl DocumentRegistry {
             // may already name a different parent.
             let mut reloaded = text;
             reloaded.mark_saved();
+            self.by_key.insert(origin.key(), existing);
             if let Some(document) = self.documents.get_mut(&existing) {
-                document.syntax = DocumentSyntax::new(document.origin.file_name(), reloaded.text());
+                document.syntax = DocumentSyntax::new(origin.file_name(), reloaded.text());
+                document.origin = origin;
                 document.text = reloaded;
                 document.generation = Some(saved.generation);
                 document.source_authority = Some(saved.source_authority);
@@ -1064,6 +1084,23 @@ mod tests {
         type_into(&mut registry, first, "beta\n");
         assert_eq!(registry.get(second).unwrap().text().text(), "alpha\nbeta\n");
         assert!(registry.get(second).unwrap().text().is_dirty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_a_symlink_alias_reuses_the_loaded_source_authority() {
+        let directory = TemporaryDirectory::new("symlink-alias");
+        let path = directory.file("notes.md", "alpha\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&path).unwrap();
+        let second = registry.open_local(&alias).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(first).unwrap().views(), 2);
     }
 
     #[test]

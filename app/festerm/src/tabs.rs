@@ -3970,7 +3970,9 @@ impl AppState {
     }
 
     pub(crate) fn has_pending_open_refusal(&self) -> bool {
-        self.open_refusal.is_some() || self.pending_open_refusal_notice.is_some()
+        self.open_refusal.is_some()
+            || self.pending_open_refusal_notice.is_some()
+            || self.documents.borrow().has_recovery_notices()
     }
 
     pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
@@ -4186,6 +4188,7 @@ impl AppState {
                 );
                 if generation != request.lifecycle_generation {
                     self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
@@ -4198,6 +4201,7 @@ impl AppState {
                 }
                 let Some(requestor) = session.live_remote_file_requestor() else {
                     self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
@@ -4218,6 +4222,7 @@ impl AppState {
                 let display_path = request.request.display_path.clone();
                 if self.pending_terminal_path_opens.len() >= 4 {
                     self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
                         name: "remote path".to_owned(),
                         path: display_path,
                         headline: "Too many remote files are opening".to_owned(),
@@ -4243,6 +4248,7 @@ impl AppState {
                     Err(error) => {
                         self.pending_open_refusal_notice =
                             Some(crate::overlay_state::OpenRefusalNotice {
+                                title: None,
                                 name: Path::new(&display_path)
                                     .file_name()
                                     .map(|name| name.to_string_lossy().into_owned())
@@ -4287,6 +4293,7 @@ impl AppState {
                     }
                     self.pending_open_refusal_notice =
                         Some(crate::overlay_state::OpenRefusalNotice {
+                            title: None,
                             name: "remote path".to_owned(),
                             path: "remote path".to_owned(),
                             headline: "This remote path could not be opened".to_owned(),
@@ -4339,12 +4346,24 @@ impl AppState {
                 .borrow_mut()
                 .take_recovery_notice()
                 .map(|(path, error)| crate::overlay_state::OpenRefusalNotice {
+                    title: Some("Saving needs manual recovery".to_owned()),
                     name: "Save recovery retained".to_owned(),
                     path: path.display().to_string(),
                     headline: error.headline().to_owned(),
                     detail: error.detail().to_owned(),
                 })
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_recovery_notice_for_test(
+        &mut self,
+        path: PathBuf,
+        error: festerm_document::SaveError,
+    ) {
+        self.documents
+            .borrow_mut()
+            .queue_recovery_notice(path, error);
     }
 
     pub(crate) fn take_sftp_cleanup_notice(
@@ -7288,6 +7307,34 @@ mod tests {
             .take_open_refusal_notice()
             .expect("generation mismatch should refuse");
         assert!(notice.detail.contains("different transport generation"));
+    }
+
+    #[test]
+    fn queued_recovery_notices_are_delivered_in_order_with_recovery_titles() {
+        let mut state = AppState::for_test();
+        let first = PathBuf::from("/tmp/.festerm-save-first.stage");
+        let second = PathBuf::from("/tmp/.festerm-save-second.stage");
+        {
+            let mut documents = state.documents.borrow_mut();
+            documents.queue_recovery_notice(
+                first.clone(),
+                festerm_document::SaveError::new("First recovery", "first detail"),
+            );
+            documents.queue_recovery_notice(
+                second.clone(),
+                festerm_document::SaveError::new("Second recovery", "second detail"),
+            );
+        }
+
+        let first_notice = state.take_open_refusal_notice().expect("first notice");
+        assert_eq!(
+            first_notice.title.as_deref(),
+            Some("Saving needs manual recovery")
+        );
+        assert_eq!(first_notice.path, first.display().to_string());
+        let second_notice = state.take_open_refusal_notice().expect("second notice");
+        assert_eq!(second_notice.path, second.display().to_string());
+        assert!(state.take_open_refusal_notice().is_none());
     }
 
     /// A scratch directory with two Markdown files in it, for the routes that

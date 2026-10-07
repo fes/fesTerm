@@ -5447,6 +5447,7 @@ impl FesTermApp {
 
     pub(crate) fn report_document_activation_error(&mut self, detail: String) {
         self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
+            title: None,
             name: "Document request".to_owned(),
             path: String::new(),
             headline: "The document request could not be accepted".to_owned(),
@@ -6278,24 +6279,23 @@ impl FesTermApp {
         }
 
         self.state.update_pending_terminal_path_opens(ui.ctx());
-        if let Some((path, failure)) = self.state.take_open_refusal() {
-            self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
-                name: path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.to_string_lossy().into_owned()),
-                path: path.to_string_lossy().into_owned(),
-                headline: failure.headline(),
-                detail: failure.detail(),
-            });
-            self.overlays.open_refusal_focused = false;
-        }
-        if let Some(notice) = self.state.take_open_refusal_notice() {
-            self.overlays.open_refusal = Some(notice);
-            self.overlays.open_refusal_focused = false;
-        }
         if self.overlays.open_refusal.is_none() {
-            if let Some(notice) = self.state.take_sftp_cleanup_notice() {
+            let notice = self
+                .state
+                .take_open_refusal()
+                .map(|(path, failure)| crate::overlay_state::OpenRefusalNotice {
+                    title: None,
+                    name: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+                    path: path.to_string_lossy().into_owned(),
+                    headline: failure.headline(),
+                    detail: failure.detail(),
+                })
+                .or_else(|| self.state.take_open_refusal_notice())
+                .or_else(|| self.state.take_sftp_cleanup_notice());
+            if let Some(notice) = notice {
                 self.overlays.open_refusal = Some(notice);
                 self.overlays.open_refusal_focused = false;
             }
@@ -6773,6 +6773,55 @@ mod tests {
         assert!(!app.document_activation_blocked());
         app.window_close_accepted = true;
         assert!(app.document_activation_blocked());
+    }
+
+    #[test]
+    fn recovery_notices_wait_for_the_visible_modal_and_then_arrive_in_order() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.report_document_activation_error("Existing detail".to_owned());
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-first.stage"),
+            festerm_document::SaveError::new("First recovery", "first detail"),
+        );
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-second.stage"),
+            festerm_document::SaveError::new("Second recovery", "second detail"),
+        );
+        let mut harness = editor_harness(app);
+
+        assert_eq!(
+            harness
+                .state()
+                .overlays
+                .open_refusal
+                .as_ref()
+                .map(|notice| notice.headline.as_str()),
+            Some("The document request could not be accepted")
+        );
+
+        harness.state_mut().overlays.open_refusal = None;
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .overlays
+                .open_refusal
+                .as_ref()
+                .map(|notice| (notice.title.as_deref(), notice.headline.as_str())),
+            Some((Some("Saving needs manual recovery"), "First recovery"))
+        );
+
+        harness.state_mut().overlays.open_refusal = None;
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .overlays
+                .open_refusal
+                .as_ref()
+                .map(|notice| notice.headline.as_str()),
+            Some("Second recovery")
+        );
     }
 
     fn smoke_artifact_directory(name: &str) -> PathBuf {

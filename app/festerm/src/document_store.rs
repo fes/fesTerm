@@ -1090,6 +1090,20 @@ impl<'a> TemporaryFile<'a> {
                 }
             })?
         };
+        #[cfg(windows)]
+        let parent_security = {
+            let parent = directory
+                .try_clone()
+                .map(cap_std::fs::Dir::into_std_file)
+                .map_err(classify_write_error)?;
+            festerm_windows_security::secure_staging_parent(&parent).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::Unsupported {
+                    SaveFailure::UnsafeDestinationFolder
+                } else {
+                    classify_write_error(error)
+                }
+            })?
+        };
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
             let staging_directory = temporary_directory_path()?;
             let recovery_directory = parent_path.join(&staging_directory);
@@ -1139,6 +1153,34 @@ impl<'a> TemporaryFile<'a> {
                     return Err(classify_write_error(error));
                 }
             };
+            #[cfg(windows)]
+            {
+                let parent = match directory.try_clone().map(cap_std::fs::Dir::into_std_file) {
+                    Ok(parent) => parent,
+                    Err(error) => {
+                        drop(staging);
+                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                        return Err(classify_write_error(error));
+                    }
+                };
+                let matches = match festerm_windows_security::staging_parent_matches(
+                    &parent,
+                    &parent_security,
+                ) {
+                    Ok(matches) => matches,
+                    Err(error) if error.kind() == std::io::ErrorKind::Unsupported => false,
+                    Err(error) => {
+                        drop(staging);
+                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                        return Err(classify_write_error(error));
+                    }
+                };
+                if !matches {
+                    drop(staging);
+                    remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                    return Err(SaveFailure::UnsafeDestinationFolder);
+                }
+            }
             #[cfg(unix)]
             {
                 let parent = match directory.try_clone().map(cap_std::fs::Dir::into_std_file) {
@@ -2822,7 +2864,10 @@ mod tests {
 
         let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
 
-        assert!(matches!(failure, SaveFailure::RecoveryRequired(_)));
+        let reported_recovery = match failure {
+            SaveFailure::RecoveryRequired(path) => path,
+            other => panic!("expected manual recovery, got {other:?}"),
+        };
         assert_eq!(fs::read_to_string(&path).unwrap(), "winner\n");
         let staging = fs::read_dir(&directory.path)
             .unwrap()
@@ -2832,6 +2877,7 @@ mod tests {
                     .is_some_and(|extension| extension == "stage")
             })
             .expect("private recovery directory");
+        assert_eq!(reported_recovery, fs::canonicalize(&staging).unwrap());
         assert_eq!(
             fs::read_to_string(staging.join("original")).unwrap(),
             "loaded\n"

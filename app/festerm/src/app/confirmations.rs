@@ -470,7 +470,8 @@ impl FesTermApp {
         let Some(notice) = self.overlays.open_refusal.as_ref() else {
             return;
         };
-        let (name, path, headline, detail) = (
+        let (title, name, path, headline, detail) = (
+            notice.title.clone(),
             notice.name.clone(),
             notice.path.clone(),
             notice.headline.clone(),
@@ -482,7 +483,7 @@ impl FesTermApp {
             .show(context, |ui| {
                 ui.set_width(confirmation_width(context.content_rect().width(), 560.0));
                 ui.add_space(4.0);
-                ui.heading(format!("Cannot open {name}"));
+                ui.heading(title.unwrap_or_else(|| format!("Cannot open {name}")));
                 ui.add_space(10.0);
                 ui.separator();
                 ui.add_space(12.0);

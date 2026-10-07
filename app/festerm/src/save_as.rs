@@ -100,6 +100,7 @@ pub(crate) struct SaveAsPicker {
     repaint: egui::Context,
     local_loader: LocalDirectoryLoader,
     next_request_id: u64,
+    refresh_notice: Option<(String, String)>,
 }
 
 impl SaveAsPicker {
@@ -116,6 +117,7 @@ impl SaveAsPicker {
             repaint,
             local_loader,
             next_request_id: 0,
+            refresh_notice: None,
         };
         let start = picker.pane.current_path.clone();
         picker.load(start);
@@ -166,6 +168,9 @@ impl SaveAsPicker {
                 } => {
                     if request_id == self.pane.pending_request_id {
                         self.pane.set_snapshot(snapshot, metadata);
+                        if let Some((summary, details)) = &self.refresh_notice {
+                            self.pane.set_error(summary.clone(), details.clone());
+                        }
                     }
                 }
                 SaveAsEvent::Failed {
@@ -550,6 +555,9 @@ impl SaveAsPicker {
             }
             let should_save = save_enabled && (save.clicked() || enter_saves);
             if let Some(directory) = self.current_directory().filter(|_| should_save) {
+                self.refresh_notice = None;
+                self.pane.error = None;
+                self.pane.details = None;
                 let path = directory.join(&trimmed);
                 match document_store::observe_destination(&path) {
                     Ok(destination) => {
@@ -561,10 +569,12 @@ impl SaveAsPicker {
                             outcome = SaveAsOutcome::Save { path, destination };
                         } else {
                             self.load(SftpPath::Local(directory));
-                            self.pane.set_error(
+                            let notice = (
                                 "Destination changed after the folder was listed".to_owned(),
                                 "The folder is refreshing. Review the destination, then press Save again. Nothing was written.".to_owned(),
                             );
+                            self.pane.set_error(notice.0.clone(), notice.1.clone());
+                            self.refresh_notice = Some(notice);
                         }
                     }
                     Err(failure) => {
@@ -895,7 +905,10 @@ mod tests {
         );
 
         settle(&mut harness);
-        assert!(harness.state().0.pane.error.is_none());
+        assert_eq!(
+            harness.state().0.pane.error.as_deref(),
+            Some("Destination changed after the folder was listed")
+        );
         harness.get_by_label("Save").click();
         harness.run();
         match harness.state().1.as_ref().expect("an outcome") {

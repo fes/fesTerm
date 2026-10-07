@@ -515,6 +515,8 @@ mod imp {
         const ACL_ADD_FILE: i32 = 1 << 2;
         const ACL_DELETE: i32 = 1 << 4;
         const ACL_DELETE_CHILD: i32 = 1 << 6;
+        const ACL_WRITE_SECURITY: i32 = 1 << 12;
+        const ACL_CHANGE_OWNER: i32 = 1 << 13;
         unsafe extern "C" {
             fn acl_get_fd_np(fd: RawFd, acl_type: i32) -> Acl;
             fn acl_get_entry(acl: Acl, entry_id: i32, entry: *mut AclEntry) -> i32;
@@ -563,9 +565,15 @@ mod imp {
                 let _ = unsafe { acl_free(acl) };
                 return Err(error);
             }
-            let permits_substitution = [ACL_ADD_FILE, ACL_DELETE, ACL_DELETE_CHILD]
-                .into_iter()
-                .any(|permission| unsafe { acl_get_perm_np(permset, permission) } == 1);
+            let permits_substitution = [
+                ACL_ADD_FILE,
+                ACL_DELETE,
+                ACL_DELETE_CHILD,
+                ACL_WRITE_SECURITY,
+                ACL_CHANGE_OWNER,
+            ]
+            .into_iter()
+            .any(|permission| unsafe { acl_get_perm_np(permset, permission) } == 1);
             let granted_to_current_user = if tag_type == ACL_EXTENDED_ALLOW {
                 let qualifier = unsafe { acl_get_qualifier(entry) };
                 if qualifier.is_null() {

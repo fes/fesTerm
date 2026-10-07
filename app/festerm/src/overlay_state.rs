@@ -222,6 +222,7 @@ pub(crate) enum StoredCredentialLaunch {
 /// layer already uses.
 #[derive(Debug)]
 pub(crate) struct OpenRefusalNotice {
+    pub(crate) title: Option<String>,
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) headline: String,

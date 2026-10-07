@@ -226,6 +226,10 @@ and recovery file likewise has inherited ACLs cleared and is verified as mode
 `0600`. Windows creates both the staging directory and each child with
 `NtCreateFile` relative to the retained exact directory handle, not by
 reconstructing a pathname. Before any document bytes are written or copied,
+the Windows parent must be owned by the current user, LocalSystem, or Builtin
+Administrators and its DACL must not grant another principal child deletion or
+access-policy mutation rights; the owner/DACL snapshot is revalidated after
+the private staging handle is retained. Then
 the exact returned handle is verified as a non-reparse object on the expected
 volume, owned by the current user, with a protected one-ACE current-user-only
 DACL; ACL-less and cross-volume results are refused. This removes the
@@ -281,8 +285,9 @@ exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error that
 names the exact retained directory and is not replaced by freshness polling.
 If the last view closes or rebinds, the registry promotes that record to a
-bounded application-level notice rather than discarding the only visible
-breadcrumb. This
+bounded ordered application-level notice rather than discarding the only
+visible breadcrumb. A queued recovery notice never replaces an undismissed
+modal. This
 also covers partial move failures; every ambiguous arrangement is retained for
 manual recovery. Failure to reproduce ownership/access metadata refuses before
 publication with an ownership-specific Save As explanation. Cleanup failure
