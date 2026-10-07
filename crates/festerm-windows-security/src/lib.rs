@@ -42,8 +42,9 @@ mod imp {
             InitializeSecurityDescriptor, SetKernelObjectSecurity, SetSecurityDescriptorControl,
             SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, SetTokenInformation,
             TokenDefaultDacl, TokenUser, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION,
-            ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+            ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION,
+            GROUP_SECURITY_INFORMATION, LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
             SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL,
             TOKEN_QUERY, TOKEN_USER,
         },
@@ -94,6 +95,9 @@ mod imp {
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SecurityMetadata {
         descriptor: Vec<u8>,
+        mandatory_label: Vec<u8>,
+        resource_attributes: Vec<u8>,
+        scoped_policy: Vec<u8>,
         attributes: u32,
         encrypted: bool,
         has_named_streams: bool,
@@ -212,16 +216,13 @@ mod imp {
         }
     }
 
-    /// Snapshots owner, group, DACL, and file attributes through an open handle.
-    pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
-        const INFORMATION: u32 =
-            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    fn security_descriptor(file: &File, information: u32) -> io::Result<Vec<u8>> {
         const MAX_DESCRIPTOR_SIZE: u32 = 8 * 1024 * 1024;
 
         let handle = file.as_raw_handle() as HANDLE;
         let mut required = 0;
         let _ = unsafe {
-            GetKernelObjectSecurity(handle, INFORMATION, ptr::null_mut(), 0, &raw mut required)
+            GetKernelObjectSecurity(handle, information, ptr::null_mut(), 0, &raw mut required)
         };
         if required == 0 || required > MAX_DESCRIPTOR_SIZE {
             return Err(if required == 0 {
@@ -234,7 +235,7 @@ mod imp {
         if unsafe {
             GetKernelObjectSecurity(
                 handle,
-                INFORMATION,
+                information,
                 descriptor.as_mut_ptr().cast(),
                 required,
                 &raw mut required,
@@ -244,13 +245,29 @@ mod imp {
             return Err(io::Error::last_os_error());
         }
         descriptor.truncate(required as usize);
+        Ok(descriptor)
+    }
 
+    /// Snapshots access-control metadata and file attributes through an open handle.
+    pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
+        let descriptor = security_descriptor(
+            file,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        )?;
+        let mandatory_label = security_descriptor(file, LABEL_SECURITY_INFORMATION)?;
+        let resource_attributes = security_descriptor(file, ATTRIBUTE_SECURITY_INFORMATION)?;
+        let scoped_policy = security_descriptor(file, SCOPE_SECURITY_INFORMATION)?;
+
+        let handle = file.as_raw_handle() as HANDLE;
         let mut information = BY_HANDLE_FILE_INFORMATION::default();
         if unsafe { GetFileInformationByHandle(handle, &raw mut information) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(SecurityMetadata {
             descriptor,
+            mandatory_label,
+            resource_attributes,
+            scoped_policy,
             attributes: settable_file_attributes(information.dwFileAttributes),
             encrypted: file_is_encrypted(information.dwFileAttributes),
             has_named_streams: file_has_named_streams(file)?,
@@ -262,8 +279,41 @@ mod imp {
         security_metadata(file).map(|current| current == *expected)
     }
 
-    /// Applies captured owner, group, DACL, and file attributes to a prepared
-    /// replacement before it can become visible.
+    fn apply_security_descriptor_if_changed(
+        file: &File,
+        information: u32,
+        expected: &[u8],
+    ) -> io::Result<()> {
+        if security_descriptor(file, information)? == expected {
+            return Ok(());
+        }
+        if information == SCOPE_SECURITY_INFORMATION {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the file's central access policy cannot be reproduced safely",
+            ));
+        }
+        if unsafe {
+            SetKernelObjectSecurity(
+                file.as_raw_handle() as HANDLE,
+                information,
+                expected.as_ptr().cast_mut().cast(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if security_descriptor(file, information)? == expected {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "prepared Windows access-control metadata did not match its source",
+            ))
+        }
+    }
+
+    /// Applies captured access-control metadata and file attributes to a
+    /// prepared replacement before it can become visible.
     pub fn apply_security_metadata(file: &File, metadata: &SecurityMetadata) -> io::Result<()> {
         const INFORMATION: u32 =
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
@@ -290,6 +340,21 @@ mod imp {
         {
             return Err(io::Error::last_os_error());
         }
+        apply_security_descriptor_if_changed(
+            file,
+            LABEL_SECURITY_INFORMATION,
+            &metadata.mandatory_label,
+        )?;
+        apply_security_descriptor_if_changed(
+            file,
+            ATTRIBUTE_SECURITY_INFORMATION,
+            &metadata.resource_attributes,
+        )?;
+        apply_security_descriptor_if_changed(
+            file,
+            SCOPE_SECURITY_INFORMATION,
+            &metadata.scoped_policy,
+        )?;
         let basic = FILE_BASIC_INFO {
             FileAttributes: metadata.attributes,
             ..FILE_BASIC_INFO::default()
@@ -1056,6 +1121,7 @@ mod imp {
             io::Write,
             os::windows::fs::OpenOptionsExt,
             path::PathBuf,
+            process::Command,
             time::{SystemTime, UNIX_EPOCH},
         };
         use windows_sys::Win32::{
@@ -1119,6 +1185,9 @@ mod imp {
                 create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
             let encrypted = SecurityMetadata {
                 descriptor: Vec::new(),
+                mandatory_label: Vec::new(),
+                resource_attributes: Vec::new(),
+                scoped_policy: Vec::new(),
                 attributes: FILE_ATTRIBUTE_NORMAL,
                 encrypted: true,
                 has_named_streams: false,
@@ -1127,6 +1196,28 @@ mod imp {
             let error = apply_security_metadata(&file, &encrypted).unwrap_err();
 
             assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        }
+
+        #[test]
+        fn security_copy_preserves_an_explicit_mandatory_integrity_label() {
+            let directory = TemporaryDirectory::new();
+            let source_path = directory.0.join("source.md");
+            fs::write(&source_path, b"source").unwrap();
+            let status = Command::new("icacls")
+                .arg(&source_path)
+                .args(["/setintegritylevel", "L"])
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let source = File::open(&source_path).unwrap();
+            let directory_handle = directory.handle();
+            let target =
+                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+            let metadata = security_metadata(&source).unwrap();
+
+            apply_security_metadata(&target, &metadata).unwrap();
+
+            assert!(security_metadata_matches(&target, &metadata).unwrap());
         }
 
         #[test]

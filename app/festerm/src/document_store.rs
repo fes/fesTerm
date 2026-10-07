@@ -475,7 +475,7 @@ impl SaveFailure {
                 "The previous contents are unchanged. Try saving again, or use Save As…."
             }
             Self::RecoveryRequired => {
-                "Publication could not be verified. The destination may contain the new bytes, another process's bytes, or the prior bytes with access metadata that still needs review; it may also be absent. In the private .festerm-save-* folder beside it, original is the private prior version, displaced (if present) is Windows' captured prior file, and prepared or payload contains the new bytes. Compare every retained version and its access metadata before recovering or saving there again."
+                "Publication could not be verified. The destination may contain the new bytes, another process's bytes, or the prior bytes with access metadata that still needs review; it may also be absent. In the private .festerm-save-* folder beside it, original (if present) is the private prior version, displaced (if present) is Windows' captured prior file, and prepared and/or payload (if present) contains the new bytes. Compare every retained version and its access metadata before recovering or saving there again."
             }
             Self::MetadataPreservation => {
                 "The file's owner, group, ACL, security labels, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a destination with compatible access metadata."
@@ -1081,19 +1081,35 @@ impl<'a> TemporaryFile<'a> {
                     return Err(classify_write_error(error));
                 }
             };
+            let staging_identity = match DirectoryIdentity::from_directory(&staging) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    drop(staging);
+                    let _ = directory.remove_dir(&staging_directory);
+                    return Err(classify_write_error(error));
+                }
+            };
             #[cfg(unix)]
             {
-                let parent = directory
-                    .try_clone()
-                    .map(cap_std::fs::Dir::into_std_file)
-                    .map_err(classify_write_error)?;
+                let parent = match directory.try_clone().map(cap_std::fs::Dir::into_std_file) {
+                    Ok(parent) => parent,
+                    Err(error) => {
+                        drop(staging);
+                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                        return Err(classify_write_error(error));
+                    }
+                };
                 let matches = match festerm_unix_security::staging_parent_matches(
                     &parent,
                     &parent_security,
                 ) {
                     Ok(matches) => matches,
                     Err(error) if error.kind() == std::io::ErrorKind::Unsupported => false,
-                    Err(error) => return Err(classify_write_error(error)),
+                    Err(error) => {
+                        drop(staging);
+                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                        return Err(classify_write_error(error));
+                    }
                 };
                 if !matches {
                     drop(staging);
@@ -1104,14 +1120,6 @@ impl<'a> TemporaryFile<'a> {
                     return Err(SaveFailure::Interrupted);
                 }
             }
-            let staging_identity = match DirectoryIdentity::from_directory(&staging) {
-                Ok(identity) => identity,
-                Err(error) => {
-                    drop(staging);
-                    let _ = directory.remove_dir(&staging_directory);
-                    return Err(classify_write_error(error));
-                }
-            };
             #[cfg(unix)]
             {
                 let private = staging

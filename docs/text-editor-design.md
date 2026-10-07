@@ -109,7 +109,8 @@ The editor never resolves a divergence silently.
   previous modification time. macOS copies the target's full ACL and xattr
   sets. Linux rewrites user xattrs/POSIX ACLs while
   requiring kernel security labels to match in place. Windows applies and
-  verifies the target owner/group/DACL/attributes on the prepared file before
+  verifies the target owner/group/DACL, mandatory integrity label, resource
+  attributes, scoped policy, and file attributes on the prepared file before
   publication while the retained payload handle denies every other read/write
   open. A transient identity-checked delete handle publishes it; after that
   handle closes, a non-delete-sharing pathname handle pins the published name
@@ -134,7 +135,7 @@ The editor never resolves a divergence silently.
   editor bytes. A final no-follow target opening checks the old generation
   immediately before capture; old/new generations, the Unix
   owner/group/mode/ACL/xattr snapshot, and the Windows
-  owner/group/DACL/attribute snapshot on the exact retained payload are
+  owner/group/DACL/label/resource/scoped-policy/attribute snapshot on the exact retained payload are
   verified; Windows also compares the private prior-byte copy with the exact
   displaced original. A successful rollback is identity-checked and
   non-delete-locked through private-staging cleanup; an ambiguous rollback

@@ -237,8 +237,9 @@ group, mode and ACL from verified file handles and durably flushes that
 metadata before replacement without copying the old modification time. Linux
 rewrites only user-owned xattrs and the POSIX access ACL; kernel-managed
 security labels remain in place and must already match the verified source
-snapshot. Windows applies and verifies the captured owner,
-group, DACL and attributes on the prepared file while its retained handle
+snapshot. Windows applies and verifies the captured owner, group, DACL, mandatory
+integrity label, resource attributes, scoped policy and file attributes on the
+prepared file while its retained handle
 denies every other read or write open. A separately opened, identity-checked
 delete handle performs publication and closes; a metadata-only final pathname
 handle that does not share delete access then pins the visible name while the
@@ -264,7 +265,7 @@ concurrent winner has claimed it. The target name can therefore be briefly
 absent, but stale editor bytes can never displace a newer entry. The published
 generation and retained-original generation are validated after publication.
 Unix owner/group/mode/ACL/xattr
-snapshots and Windows owner/group/DACL/attribute snapshots are revalidated
+snapshots and Windows owner/group/DACL/label/resource/scoped-policy/attribute snapshots are revalidated
 against a no-follow opening of the current target immediately before
 publication and against both the exact retained payload and retained original
 afterward. Windows additionally compares the private original byte copy with
@@ -654,7 +655,8 @@ metadata. Temporary files are created private before receiving content. Unix
 owner/group/mode/ACL/xattr metadata is restored through verified handles only
 after the durable content write and while the file remains beneath an
 owner-only staging directory; Windows applies and verifies the destination
-owner/group/DACL/attributes before publication rather than inheriting broader
+owner/group/DACL/label/resource/scoped-policy/attributes before publication
+rather than inheriting broader
 access. Unpredictable names, pre-publication identity/security snapshots, a
 prepared recovery copy, and no-overwrite target capture/publication prevent a
 substituted temporary or late target replacement from being accepted or

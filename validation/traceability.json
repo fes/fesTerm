@@ -1613,6 +1613,7 @@
         "private_creation_and_conditional_publication_keep_the_current_user_only_dacl",
         "private_directory_clears_inherited_access",
         "security_snapshot_keeps_only_settable_file_attributes",
+        "security_copy_preserves_an_explicit_mandatory_integrity_label",
         "pathname_substitution_cannot_replace_the_native_created_directory_handle",
         "unprotected_created_directory_is_rejected_before_child_creation",
         "unprotected_created_child_is_rejected_before_caller_bytes_can_be_written",
