@@ -347,7 +347,8 @@ if ($env:OS -eq 'Windows_NT') {
             if (-not $env:FESTERM_AGING_SUITE_OUT) {
                 throw 'Set FESTERM_AGING_SUITE_OUT to a fresh absolute evidence directory.'
             }
-            & "$PSScriptRoot\check-windows-session-aging.ps1" -OutputDirectory $env:FESTERM_AGING_SUITE_OUT
+            & "$PSScriptRoot\check-windows-session-aging.ps1" -OutputDirectory $env:FESTERM_AGING_SUITE_OUT `
+                -ThreadOwnership:($env:FESTERM_AGING_THREAD_OWNERSHIP -eq '1')
             Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=pass"
         } catch {
             Write-Warning $_
