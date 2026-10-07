@@ -5,6 +5,7 @@ param(
     [ValidateRange(1, 2000)][int] $Cycles = 120,
     [ValidateRange(1, 1000)][int] $Frames = 100,
     [ValidateRange(1, 300)][int] $IdleSeconds = 10,
+    [ValidateRange(1, 8)][int] $LifecycleRepeats = 3,
     [ValidateRange(60, 14400)][int] $TimeoutSeconds = 1800
 )
 
@@ -18,6 +19,37 @@ if ($env:OS -ne 'Windows_NT' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
 }
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
+# PagefileUsage is process commitment, not page-file residency. Its OS-maintained
+# high-water mark observes transient peaks between the 500ms process samples.
+if (-not ('FesTermAging.ProcessMemory' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace FesTermAging {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MemoryCounters {
+        public uint cb, PageFaultCount;
+        public UIntPtr PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage,
+            QuotaPagedPoolUsage, QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage,
+            PagefileUsage, PeakPagefileUsage, PrivateUsage;
+    }
+    public static class ProcessMemory {
+        [DllImport("psapi.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetProcessMemoryInfo(
+            IntPtr process, ref MemoryCounters counters, uint size);
+        public static MemoryCounters Read(IntPtr process) {
+            var counters = new MemoryCounters();
+            counters.cb = (uint)Marshal.SizeOf<MemoryCounters>();
+            if (!GetProcessMemoryInfo(process, ref counters, counters.cb))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return counters;
+        }
+    }
+}
+'@
+}
 $head = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source HEAD.' }
 $tree = (& git rev-parse 'HEAD^{tree}').Trim()
@@ -70,9 +102,11 @@ $binding = @{
     schema = 1; source_head = $head; source_tree = $tree; profile = $Profile
     compiler_executable = $artifacts[0]; executable_sha256 = $binaryHash
     cycles = $Cycles; frames = $Frames; idle_seconds = $IdleSeconds
+    lifecycle_repeats = $LifecycleRepeats
+    process_memory_schema = 1; process_memory_method = 'GetProcessMemoryInfo.PagefileUsage/PeakPagefileUsage'
     resource_sample_interval_ms = 500; timeout_seconds = $TimeoutSeconds
     started_utc = [DateTime]::UtcNow.ToString('o')
-    limitations = 'Owned offscreen fixture; background processes allowed. Resources are sampled current process values, not complete GPU allocation accounting or external CPU attribution.'
+    limitations = 'Owned offscreen fixture; background processes allowed. Commitment peak is an OS-maintained process-lifetime high-water mark, not a per-phase peak or complete GPU allocation accounting.'
 }
 $binding | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'source.json')
 $saved = @{}
@@ -80,6 +114,7 @@ $settings = @{
     FESTERM_AGING_OUT = (Join-Path $output 'probe')
     FESTERM_AGING_CYCLES = "$Cycles"; FESTERM_AGING_FRAMES = "$Frames"
     FESTERM_AGING_IDLE_SECONDS = "$IdleSeconds"; FESTERM_DIRECT2D_TIMINGS = '0'
+    FESTERM_AGING_LIFECYCLE_REPEATS = "$LifecycleRepeats"
 }
 $process = $null
 $resources = $null
@@ -107,6 +142,7 @@ try {
         }
         $process.Refresh()
         if ($process.HasExited) { break }
+        $memory = [FesTermAging.ProcessMemory]::Read($process.Handle)
         $threads = @($process.Threads | ForEach-Object {
             @{ id = $_.Id; cpu_ms = $_.TotalProcessorTime.TotalMilliseconds }
         })
@@ -115,11 +151,21 @@ try {
             elapsed_seconds = $clock.Elapsed.TotalSeconds; pid = $process.Id; phase = $phase
             working_set_bytes = $process.WorkingSet64; private_bytes = $process.PrivateMemorySize64
             peak_working_set_bytes = $process.PeakWorkingSet64; handles = $process.HandleCount
+            commitment_bytes = $memory.PagefileUsage.ToUInt64()
+            peak_commitment_bytes = $memory.PeakPagefileUsage.ToUInt64()
             thread_count = $process.Threads.Count; process_cpu_ms = $process.TotalProcessorTime.TotalMilliseconds
             threads = $threads
         }
         $resources.WriteLine(($record | ConvertTo-Json -Depth 4 -Compress))
         $resources.Flush()
+        if ($phase -eq 'complete') {
+            # The test waits for this receipt before exiting, closing the otherwise
+            # unobserved final sampling interval without keeping graphics owners alive.
+            $receiptNext = Join-Path $settings.FESTERM_AGING_OUT 'sampled-next.json'
+            $receipt = Join-Path $settings.FESTERM_AGING_OUT 'sampled.json'
+            $record | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $receiptNext
+            [System.IO.File]::Move($receiptNext, $receipt, $true)
+        }
         Start-Sleep -Milliseconds 500
         $process.Refresh()
     }

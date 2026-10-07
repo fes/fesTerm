@@ -76,6 +76,7 @@ remain active rolling qualification but do not independently keep M6 open.
 | Native local session persistence daemon | Windows, macOS, Linux using signed/packaged builds | Executable installation, detach/reattach replay, newest-client takeover, process independence and cleanup, owner-only local IPC, Windows current-user pipe isolation and Job Object breakaway, and update continuity across compatible helper releases, plus Windows verified-ConPTY parity between an in-process tab and a durable sessiond session and an in-place upgrade while a daemon generation is live | Implementation provisional under ADR-0025; native evidence pending under CP-11 |
 | Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
+| Abrupt Windows test exit (#330) | Required Windows AMD64 CI, original parallel workspace workload | Causal reproduction of `festerm-ui-egui` exit 2173 with root executable/source identity, concurrent-thread context and exit/exception/termination evidence | Runner calibration, bare/debugger heap-policy parity and metadata capture automated without GPU work; [diagnostic scope and limits](windows-test-diagnostics.md). The separate collector-induced syntax budget failure has same-executable causal controls; original exit 2173 remains unresolved. A same-head green rerun and the separate Direct2D repair are not acceptance evidence. |
 
 Accepted window/application teardown now has deterministic document-registry
 evidence for CP-13/CP-15: releasing all remaining owned views, preserving a
@@ -216,6 +217,13 @@ the direct response/default-focus tests supply that proof. Native platform,
 hardware and usability scenarios above remain pending.
 
 ### Terminal interaction, history, and overlays
+
+`HIST-04` now has deterministic actual-step and public height-resize
+cursor/selection evidence using the existing row index, plus linear-oracle
+mutation/affinity and stale-hint/ID-rollover checks. This proves localized
+lookup work, not native latency, process memory or fragmentation. TI-04/TI-05
+near-budget native resize/scroll/input feel and platform/usability evidence
+remain open; their classification is unchanged.
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
@@ -374,6 +382,25 @@ used by the keyboard-routing entrypoint. See the
 
 ### SFTP GUI backlog and transfer history
 
+`SFTP-03` also covers the shared per-worker recursive-planning allowance:
+with owned directory trees, pause one copy at a collision, exhaust admission
+with another, and verify visible failure without disconnecting browsing or
+discarding the existing paused decision. Progress/resume/cancel followed by
+Retry must work. Aggregate limits, actual-owner release, bounded local
+enumeration, real in-process paged SFTP refusal/closure, sparse capacity
+retirement and changed-row snapshot work are automated. Native failure/Retry
+presentation, keyboard/focus and assistive-technology behavior remain pending.
+The 64-MiB metadata proxy does not establish total process/RSS bounds or
+ordinary browsing-snapshot admission.
+
+For remote-to-local name refusal, `SFTP-03` also checks that the failed root
+row has a readable, actionable reason without a collision prompt or cleanup
+notice; an ordinary queued transfer and subsequent browsing must still work.
+Use only owned fixture names and destinations, never real system directories.
+Filename and checked-join safety belong to deterministic backend coverage;
+native failure/Details readability and keyboard/screen-reader delivery remain
+pending on Windows/macOS/Linux.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-03 | With owned files, finish more than 128 GUI transfers, including failures, while another item remains running or collision-paused. Retain the latest 128 finished records by finish order, preserve ongoing decisions, and show the retired-record count. Verify pre-start collision/Skip/failure rows remain visible. Scroll to recent failures and use Retry/Cancel/Clear in wide, narrow and short windows. Saturate the command bridge: navigation must preserve path/history/scroll/loading, a rejected reconnect must preserve connection/spinner state, a rejected drop must not claim success, a rejected Markdown read must preserve its previous request, and a refused collision decision must remain available. With more than 64 pending or paused rows, header Cancel must refuse the whole action when full and retry using one free slot. Close with the event bridge full; owner cancellation and the documented cleanup policy still apply. | Automated storage/admission/order/lifetime; native functional + accessibility/usability pending | Exact 64-command/128-event bounds, 64-event polling with repaint continuation, 256/257 batch admission, failed-history retirement, late completion, active-row preservation, duplicate finish/index consistency, exceptional capacity release, progress identity/barriers, refused navigation/reconnect/drop/Markdown state, queue-recovery navigation, full-event-queue owner cancellation and local-producer receiver retirement are automated. Compositional admission/history and real engine collision-before-start/Skip regressions cover missing-row paths; backend refusal creates no phantom history. A production header click covers whole-action refusal/one-slot retry for 96 rows, real engine cancellation covers 96 paused collisions, and manager-state admission covers 1,024 items across batches plus later-work ordering. Native long-history drawer reachability, collision-decision interaction under saturation, OS drop gestures, short-window/high-contrast notice readability, keyboard and screen-reader delivery remain manual on Windows/macOS/Linux. Rows are bounded and scrollable, not virtualized; queue counts do not prove total payload-byte bounds. |
@@ -463,7 +490,7 @@ latency.
 | CP-03 | Exercise native secret store available/locked/unavailable/failure states; saved-password and saved-private-key flows store only opaque references and expose actionable non-secret feedback. | Native functional + usability | Disposable put/get/update/delete lifecycles are scheduled for Keychain, Credential Manager, and Secret Service; locked/unavailable presentation and saved-profile usability remain manual |
 | CP-04 | Configure/discover/open/close/reopen Serial devices including missing, busy, and permission-denied adapters; history, inspector line settings, and exclusive ownership follow session rules. | Native functional + hardware/permission validation (config parsing, app-layer failure paths, and Linux `socat` loopback are automated) | Linux virtual tests cover ordered bidirectional traffic, bounded shutdown/reopen, disconnect, busy/non-TTY/missing failures; Windows/macOS hardware and native permission states remain manual |
 | CP-05 | In signed packaged builds, review Check for Updates, current/available/failure states, explicit download and install/restart transitions, restart consent with live sessions, signature rejection, and package-managed guidance. Publish a newer release after discovery and again after download: each action must refresh, display and directly select the latest eligible version, verifying new bytes before install. Same-version refresh reuses verified bytes. Offline/withdrawn/older/invalid releases or verification failures must leave sessions running, with a retryable error and no cached-version install. Cancelling restart consent must leave the verified update installable; confirming must install, exit once without a second quit prompt, replace, and relaunch. Developer/incompletely configured builds must expose no network action. Track native release/update evidence in [#62](https://github.com/fes/fesTerm/issues/62). | Native functional + visual + security | State-machine freshness, same-version reuse, fail-closed refresh/verification, live-session consent/cancellation, one-shot authorized close, and eligibility rules automated; signed cross-platform replacement/relaunch and failure evidence pending |
-| CP-06 | Validate the native Markdown viewer against `docs/markdown-viewer-design.md`: More-actions local open/cancel; paste an absolute, home-relative, and folder-relative path into Open File (Ctrl+L/Command+L focuses it); correct an invalid path without retyping; Preview/Source toggle, Find (including offscreen fenced code), outline, local reload/stale states, inert raw HTML/resource policy, explicit bounded local image loads, accessibility/focus, and return-to-prior-surface behavior. From GUI SFTP, open a bounded remote Markdown snapshot tied to the verified host identity and confirm that reload after reconnect is truthfully unsupported. | Native functional + visual + accessibility + security | Repository-owned local/remote fixtures, bounds, identity, picker path resolution/paste/Enter/stale-result handling, and error-state probes are automated. CPU regressions cover 400-fence offscreen code-byte/Find navigation in viewer/shared Preview, wrapped-code geometry/offset, selection, raw Copy payload and keyboard activation; retain human review for native clipboard delivery, readability, focus, picker usability, and screen-reader behavior. Table-cell byte navigation remains a separate unimplemented gap |
+| CP-06 | Validate the native Markdown viewer against `docs/markdown-viewer-design.md`: More-actions local open/cancel; paste an absolute, home-relative, and folder-relative path into Open File (Ctrl+L/Command+L focuses it); correct an invalid path without retyping; Preview/Source toggle, Find (including offscreen fenced code), outline, local reload/stale states, inert raw HTML/resource policy, explicit bounded local image loads, accessibility/focus, and return-to-prior-surface behavior. From GUI SFTP, open a bounded remote Markdown snapshot tied to the verified host identity and confirm that reload after reconnect is truthfully unsupported. | Native functional + visual + accessibility + security | Repository-owned local/remote fixtures, bounds, identity, picker path resolution/paste/Enter/stale-result handling, and error-state probes are automated. CPU regressions cover 400-fence offscreen code-byte/Find navigation in viewer/shared Preview, wrapped-code geometry/offset, selection, raw Copy payload and keyboard activation. Bounded outline preparation additionally compares visible wrapped ink, all response/accessibility identities, unchanged/scroll/width/scale/font/revision controls, cap overflow and offscreen navigation; shared Preview heading-position reuse is structural evidence only. Retain human review for native clipboard delivery, readability, focus, picker usability, and screen-reader behavior. Native latency/GPU Markdown drawing is not qualified by these CPU counters. Table-cell byte navigation remains a separate unimplemented gap |
 | CP-07 | In two live sessions, zoom each to a different size through shortcuts and palette, switch repeatedly, reset one, move across DPI scales, and confirm only the active terminal grid changes while chrome, profile configuration, bottom/history anchoring, and the other session remain stable. | Native functional + visual + usability | Automate point-size/session-state assertions and resize-probe sequence; retain multi-DPI visual review |
 | CP-08 | Enter and exit Focus Mode from the palette with a live session; confirm chrome/footer hide and restore without changing the active session or zoom, the hint is readable, Escape reaches the terminal without exiting, exceptional overlays remain available, and switching to a non-session surface exits safely. | Native functional + visual + usability | Automate state/focus/grid assertions and screenshots; retain native window-control/accessibility review |
 | CP-09 | Open About from Launcher, Settings, and a live session at ordinary/narrow sizes; verify exact version/build/OS/architecture copy text, source link, license disclosure, no session/path/host/settings leakage, installation-appropriate update controls, keyboard reachability, and Close/Escape focus restoration. On each platform, quit normally and relaunch to verify the reason. With two isolated test-owned packaged instances, finish one, forcibly terminate only the other, and relaunch: the abandoned run remains unclean/unknown despite the unrelated clean exit; still-live instances are not classified as failed. | Native functional + visual + accessibility | Automated semantic content, redaction, update eligibility, journal transitions, same-process and concurrent owned-child lifetime locks, killed/abrupt child recovery, active retention/log protection, panic preservation, nonblocking hooks, atomic-write failure and unavailable-diagnostics initialization, narrow geometry, and screenshot. Cross-platform child regressions run in CI; they do not launch packaged GUIs. Retain native packaged teardown/relaunch and About presentation, power-loss/native-fault boundaries, link handoff, and screen-reader review |
@@ -473,6 +500,45 @@ latency.
 | CP-13 | Open a second window from File ▸ New Window, the command palette, and the keyboard binding. A distinctly titled native OS window must appear on the Launcher, render its own content, and leave the first window's tabs, active tab, focus, and scroll position untouched. With both windows open, commit an interface setting, a profile edit, and a keyboard rebinding in one window and confirm each reaches the other without a restart while its focus, scroll offset, and in-progress text entry survive. Closing a later window confirms only its own live sessions and leaves the application running; closing the first window quits with the usual aggregate confirmation. | Native functional + visual | Automated coverage is headless and stops at the Application/Window model (ADR 0032); native multi-viewport window lifecycle, macOS menu-bar ownership, and window chrome still need recorded platform evidence |
 | CP-14 | With two windows open, drag a live session's chip onto the other window's chip row and body, confirming the running shell, its scrollback, and its state survive the move and land where dropped. Drag a chip clear of every window and confirm a new window opens under the pointer owning that tab, sized like the one it left, and that detaching a later window's only tab does nothing. Move a later window's last tab away and confirm that window closes with no confirmation; do the same to the first window and confirm it falls back to the Launcher and keeps the menu bar and quit path. With workspace restore enabled, quit and restart and confirm both windows reopen with their own tabs and positions. Confirm the Launcher, Settings, and Profiles chips cannot be dragged into another window or detached into one. On macOS confirm that dragging a chip in a *later* window drags the chip rather than moving the window itself. On Wayland confirm a cross-window drag degrades to an in-window reorder rather than dropping a tab somewhere unexpected. | Native functional + visual | Automated coverage drives real press/move/release gestures against published window footprints and the Application-level move/detach/collapse and multi-window workspace round trip (ADR 0033); real cross-window pointer capture, native placement of a detached window, and Wayland's geometry refusal still need recorded platform evidence |
 | CP-15 | Validate the native text editor against `docs/text-editor-design.md` and ADR 0034. Create two documents through New File and confirm each is a separate blank, dirty `UNTITLED` editor, Auto-save is unavailable, and the first Save opens Save As. Open one file into two views in two windows; type in one and confirm the other shows the text, the unsaved marker, and a single shared undo history. Change the file underneath a clean view and confirm it adopts; repeat dirty and confirm Conflict offers Compare, Reload, Keep my version, and Save As without losing either version. Replace All, then undo with a toolbar button still focused. Narrow the window until the Find verbs collapse and confirm every action is still reachable. Set a fixed column count and confirm by reading the file on disk that no newline was written. Save As onto a new name and onto an already-open file, confirming the saving view follows the new file, other views keep the original, and one file remains one buffer. Exercise every state with a screen reader and a high-contrast theme, confirming shape and words alone carry it. | Native functional + visual + accessibility | New-file identity and first-save routing, document sharing, freshness/conflict transitions, bounds, Save As rebinding, Find behaviour, bounded body-widget history, view-scoped text-widget teardown, and sibling widget-state survival under repeated open/close are automated; retain human review for readability, caret and focus behaviour, screen-reader wording, conflict comprehension under time pressure, and the honesty of disabled-control explanations |
+
+CP-06 Source preparation: ordinary/candidate CPU checks cover the same owned
+400-section fixture, all live labels/accessibility nodes, Find and offscreen
+byte navigation, wrapping across width/font/scale/theme changes, Unicode/CRLF/
+trailing-space selection/Copy and bounded snapshot-owner release. Cached jobs
+are formatting instructions only; every frame still lays out the labels.
+These preparation counters do not qualify native clipboard/screen-reader
+delivery, input-to-display latency or GPU drawing; those statuses remain pending.
+
+CP-06 outer-frame rendering: Windows DX12 CPU caller comparisons cover actual
+Preview and Source at 430/1180-point widths, 1/1.25x scale and fractional clipping.
+All eight opaque controls execute exactly one shared frame callback and retain
+identical pixels; the two 0.5-opacity controls execute none and remain identical.
+Live accessibility and Source response geometry are also compared. This is
+automated fidelity evidence, not completed Markdown draw timing or native
+clipboard/screen-reader usability; those pending statuses are unchanged.
+
+CP-06/CP-15 saved-local images: open owned local Markdown fixtures in Preview
+and Split, exceed 64 automatic references and explicitly load the next image.
+Across windows, lower **Image memory budget** below admitted usage, check that
+existing images remain and new growth is explained, then increase it and verify
+recovery. First Save/Save As must use the new real parent; remote, untitled and
+terminal-history labels must never grant local image reads. Inspect rooted and
+canonical traversal/symlink refusal, symlinked Markdown filenames, changed
+source-root/image/intermediate names and Windows reparse points. A source that
+cannot be resolved must keep its text Preview and explain image refusal.
+Review keyboard retry after repairing a failed file and screen-reader/refusal
+wording. Shared allowances/workers, actual
+read/header limits, real editor/button routing, stale results, reparse/close,
+settings/save/restart/reset/failed-save and Unix FIFO refusal are automated.
+Deterministic production-route tests cover Unix symlink-file authority,
+final/intermediate symlink races, captured-root rebinding and supported in-root
+aliases. Unprivileged Windows junction tests cover intermediate and root
+acquisition races; portable tests cover visible source-resolution refusal and
+directory-handle release after successful/refused reads. Windows file-symlink
+native presentation still needs an owned fixture on a Developer Mode or
+symlink-privileged machine; the unprivileged junction tests do not claim it.
+Native visual/focus/accessibility and filesystem-permission review remain
+pending; this is not total-RAM/VRAM or long-running RSS acceptance.
 
 CP-15 undo retention: exercise an owned large multiline file with widget
 paste, vi edit and toolbar/colon substitution. A whole change whose undo
@@ -488,6 +554,23 @@ saved/base identity, atomic admission and production refusal routes. Native
 keyboard/paste/IME, caret/focus, narrow-window readability, high contrast and
 screen-reader delivery remain manual/native/usability evidence. Retained
 history bounds do not certify transient peaks, allocator fragmentation or RSS.
+
+CP-15 ordered rewrite: automated 2,000-edit actual-call controls, exact result
+write counts, Unicode/coincident-edit old oracles, in-place replay ownership
+and byte-refusal/redo checks prove localized construction work. Existing
+document/history limits are unchanged; multi-edit undo/redo may own a temporary
+extra bounded result, whereas single/equal-length replay stays in place.
+Native caret/focus/IME, replacement responsiveness and human readability
+remain open; no total-memory, fragmentation or #297 attribution is inferred.
+
+CP-15 vi motion work: ordinary ready/Normal motion and count-prefix full-index
+capacity is automated, with bounded instrumented local scans, frozen Unicode/
+caret/count oracles and mixed-mode/register/recording/repeat churn. Streaming
+repeat diffs equal the former char-array result without those two temporary
+indexes. No persistent text/revision cache or limit increase; operator,
+Insert/Replace, pending and Visual fallbacks remain keystroke-local. Native
+key/IME/caret/focus, perceived responsiveness and readability remain open;
+construction capacities are not total allocator traffic, RSS or fragmentation.
 
 CP-15 vi repeat budget: enable vi keys on an owned fixture and exceed 8,192
 recorded keys in one Insert/Replace change using typing/Backspace churn. All
@@ -719,6 +802,14 @@ nor prove a global daemon RSS or recovery-snapshot peak budget.
 
 ### Rendering performance
 
+`TERM-01` presentation-cache allocation/lifecycle coverage is automated:
+portable tests preserve copied cell values, row revisions, backing reuse and
+dimension-change retirement; the CPU-only system-allocator oracle measures
+steady refresh calls and actual long-text freeing. Existing rendering
+snapshots retain both platform baselines. This internal representation change
+adds no GUI workflow or new native acceptance claim; CP-18's visual/resource/
+latency obligations and #297's multi-day investigation remain open.
+
 Issue #327 and proposed ADR 0044 track the macOS ordinary-row-cache repair.
 Its isolated synthetic profiles use no personal shells, remote accounts,
 clipboard or secrets. Native qualification requires matched binaries, actual
@@ -862,13 +953,91 @@ The bounded non-terminal expansion adds production-widget menu/About/safety/
 picker fixtures to those same opt-in probes and gallery, not to the native CPU
 oracle. Its [reconciled matrix](../validation/windows-warp/surface-matrix.json)
 retains 33 families, all audited state groups and named native prerequisites.
-The initial scaffolding awaits exclusive validation; no new headless evidence
-has been accepted. Even completed offscreen reports cannot qualify About/menu
+Earlier bounded construction/completed-render coverage is retained in #349;
+the source-bound picker/Markdown comparisons below qualify only their selected
+controls, not a rerun of every family on the newer head. Even completed
+offscreen reports cannot qualify About/menu
 idle CPU, input-to-display, native clipboard/link handoff, packaged updates,
 mixed-DPI or platform menus. CP-16/17 budgets and all native/manual checks remain
 unchanged; no new latency budgets are implied.
 
+The #350 picker diagnostic separates CPU preparation/submission, completion
+waiting and readback on the same actual renderer, with submitted geometry and
+temporary payload counts. Exact settled-frame comparison against the original
+renderer and two small scale/readback-layout regressions are automated.
+An explicit eight-scene picker subset leaves omitted variants unmeasured.
+These diagnostics do not automate CP-16/CP-17 input, presentation, mixed-DPI,
+native responsiveness or accessibility acceptance.
+
+The 2026-10-06 release comparison at clean cumulative `5fa487c` preserves all
+eight picker PNGs against `cbdc2aa` and passes forty measured original-renderer
+pixel guards. Each Save As control executes one additional eligible editor
+panel paint, with shared-host completed draw/readback medians 22-34% lower.
+Open File's unchanged route has opposing normal/narrow timing movement, not
+an established gain or regression. See the
+[source-bound scene record](../validation/windows-warp/README.md#2026-10-06-source-bound-picker-and-markdown-observations);
+no native row or latency budget changes.
+
+A separate `textureless-black` opt-in adds same-frame picker backdrop attribution
+to that eight-scene selector on Windows x64. It requires an exact unique black
+translucent full-root untextured rectangle, retains every pixel across six
+balanced ordered pairs and observes the one additional executed callback.
+Invalid or ambiguous candidates fail; the production shader/guards and native
+classifications are unchanged. Clean `90c0ed5` completed all eight actual controls:
+eight preserved PNGs, forty ordinary and ninety-six paired measured pixel guards,
+original alpha/geometry and exactly one additional executed callback passed.
+Six balanced pairs observed 22.8-62.7% lower completed draw/readback medians.
+This establishes a shared-host backdrop-route/batching contribution, not native
+latency, a shipping optimization or native/manual acceptance; see the
+[completed attribution record](../validation/windows-warp/README.md#2026-10-06-completed-same-frame-picker-attribution).
+
+Four opt-in large Markdown WARP controls now use the actual Preview/Source
+viewer at normal/narrow widths, with 400 owned sections/fences and no external
+resources. CPU readiness proves the rendered heading or raw Source marker and
+final section's code. The replay preserves exact original-renderer comparison,
+draw/readback buckets and observed production panel paints; it is not a
+surrogate editor fixture. This automates bounded `MD-04` construction/rendering
+evidence only. Find, real scrolling, native screen-reader delivery, physical
+input-to-photon and CP-06/CP-16/CP-17 evidence remain separate and unmeasured.
+
+The same dated cumulative comparison preserves all four Markdown PNGs against
+pre-optimization `abb4a01`, passes twenty measured original-renderer guards and
+observes exactly one outer-frame panel paint per current draw. Completed
+draw/readback medians are 52-66% lower, but normal-width Source UI construction
+is effectively unchanged. This is combined shared-host offscreen evidence,
+not isolated preparation-cache attribution or native presentation.
+
+The editor's opaque outer frame now uses the same eligible textureless-panel
+helper as existing chrome; layout, child widgets and all ordinary-path guards
+are unchanged. A real-editor regression asserts executed painting and exact
+pixels at narrow/wide sizes and 100%/125% scale, including the opacity fallback.
+This is automated caller/rendering evidence for EDIT-04/09, not native
+Markdown, clipboard, screen-reader or CP-16/17 acceptance.
+
+`TYPE-01`/`TERM-01` glyph-layout retirement has automated survivor, hot-set
+churn, bounded slot, forced-collision, owner-drop and reset checks, alongside
+existing both-platform rendering baselines. The 4,096-entry limit is unchanged;
+tracking adds bounded metadata and avoids wholesale invalidation, not a
+lower-retained-RAM guarantee. No new GUI/native workflow is introduced. NP-05
+appearance/usability and CP-18 native resource/latency obligations remain open.
+
+The CPU semantic fixture test now includes both widths for all 52 bounded
+variants. Chip targets are settled and revealed through the real scrolling
+controls, with unchanged active identity and zero terminal input; first,
+inactive-middle and read-only-last menus retain their required actions.
+This automates fixture reachability, not native chip interaction or completed
+WARP rendering. AS-03, native narrow-window/animation usability and the
+matrix's remaining platform prerequisites stay pending.
+
 ### Experimental Direct2D qualification
+
+`TERM-01` atlas preflight has automated copy-refusal, font-delta, replacement,
+snapshot-owner retirement and recovery evidence. Backend-owned admission
+preserves the existing single-texture/aggregate limits; eligible zero-retention
+controls still capture, and ordinary fallback remains the pixel oracle.
+Proposed ADR 0045 changes ADR 0043's oversized capture ordering and needs
+architectural approval before merge. CP-18 resource/presentation/latency and
+#297 attribution remain open; no native evidence is relabeled.
 
 Native quad preparation has a device-free deterministic allocation control in
 `crates/festerm-windows-direct2d/native/quad_tests.cpp`. It compares the actual
@@ -1229,6 +1398,38 @@ multi-day behavior, native presentation, real persistent-shell reconnect,
 WARP thread-stack attribution and complete GPU resource accounting remain
 manual/native evidence under #297/#282. It never operates installed sessions.
 See `validation/terminal-performance/README.md#bounded-six-session-aging`.
+The additive short whole-owner loop (default three, bounded to eight rounds)
+also drops the reporting instance before each held process-resource window.
+Device-free automated regressions cover six-session backlog retirement and
+stale clipboard completion/cancel after generation retirement; checker tests
+reject incomplete new lifecycle, submission and process-memory declarations.
+New Windows captures require OS-maintained lifetime peak commitment
+(`PeakPagefileUsage`), not only sampled private bytes/peak working set, and a
+final acknowledged process sample. Current caches, temporary CPU pixel-oracle
+arrays and completed host submissions are classified separately; neither these
+nor vacant registry slots count driver allocations or queued/in-flight bytes.
+The implementation has deterministic automated coverage. On 2026-10-06 the
+revised release probe completed all twelve phases and three whole-owner rounds
+at exact clean cumulative `5fa487c`, with byte-identical normalized scenes,
+completed submissions, expired weak repaint owners, dropped reporting
+instances and the final acknowledged sample. The lifetime commitment peak was
+588.672 MiB, versus 586.984 MiB maximum sampled commitment; final commitment
+was 20.328 MiB. Zero public allocated/kept IDs do not erase the held whole-owner
+post-drop observations of 142.543/144.055/148.203 MiB and 24/25/26 threads.
+These remain adverse observations, not a leak diagnosis or complete driver
+retirement. See the
+[short resource record](../validation/terminal-performance/README.md#2026-10-06-cumulative-short-retirement-observations).
+Native device recovery and multi-day attribution remain qualification work;
+no process-resource acceptance cap or native/manual row is closed.
+
+The same source's fresh-build OS-input/lifecycle attempt stopped at initial
+foreground activation before any input or external captures. The existing
+separate-GUI-thread/no-input activation calibration independently failed with
+the same error, despite passing active-RDP/default-desktop preflight. The
+failed receipts are preserved; the owned app and descendants closed normally,
+without forced termination. Native lifecycle, automatic-route CPU observations
+and physical latency remain unqualified in this attempt. No safety guard was
+weakened or failed attempt replaced.
 The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
 normalized pixels, without reproducing the multi-day plateau. Moderate process
 memory growth remains an observation requiring separate attribution; no

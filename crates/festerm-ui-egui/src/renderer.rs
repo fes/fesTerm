@@ -126,10 +126,25 @@ impl Hash for GlyphStyle {
     }
 }
 
-#[derive(Eq, Hash, PartialEq)]
+#[derive(Eq)]
 struct GlyphKey {
     style: GlyphStyle,
     text: String,
+    recency_slot: u32,
+}
+
+// Slot IDs track recency, not glyph identity or the borrowed query hash.
+impl PartialEq for GlyphKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.style == other.style && self.text == other.text
+    }
+}
+
+impl Hash for GlyphKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.style.hash(state);
+        self.text.hash(state);
+    }
 }
 
 #[derive(Hash)]
@@ -151,6 +166,7 @@ impl hashbrown::Equivalent<GlyphKey> for GlyphQuery<'_> {
 #[derive(Default)]
 pub(crate) struct GlyphCache {
     layouts: hashbrown::HashMap<GlyphKey, Arc<egui::Galley>, RandomState>,
+    recency: lru_slab::LruSlab<u64>,
     style_hasher: Option<(GlyphStyle, DefaultHasher)>,
     color_emoji: ColorEmojiCache,
     rows: row_cache::Rows,
@@ -162,9 +178,14 @@ impl GlyphCache {
         self.rows.diagnostics()
     }
 
-    pub(crate) fn clear(&mut self) {
+    fn clear_layouts(&mut self) {
         self.layouts.clear();
+        self.recency = lru_slab::LruSlab::new();
         self.style_hasher = None;
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.clear_layouts();
         self.color_emoji.clear();
         self.rows.clear();
         self.font_revision = None;
@@ -173,8 +194,7 @@ impl GlyphCache {
     fn begin_paint(&mut self, painter: &egui::Painter) {
         let revision = painter.ctx().fonts_mut(|fonts| fonts.image_revision());
         if self.font_revision.as_ref() != Some(&revision) {
-            self.layouts.clear();
-            self.style_hasher = None;
+            self.clear_layouts();
             self.rows.clear();
         }
         self.font_revision = Some(revision);
@@ -183,8 +203,7 @@ impl GlyphCache {
     fn finish_paint(&mut self, painter: &egui::Painter) {
         let revision = painter.ctx().fonts_mut(|fonts| fonts.image_revision());
         if self.font_revision.as_ref() != Some(&revision) {
-            self.layouts.clear();
-            self.style_hasher = None;
+            self.clear_layouts();
             self.rows.clear();
         }
         self.font_revision = Some(revision);
@@ -212,6 +231,20 @@ impl GlyphCache {
         hasher.finish()
     }
 
+    fn retire_lru_layout(&mut self) {
+        let slot = self.recency.lru().expect("layout recency is populated");
+        let hash = *self.recency.peek(slot);
+        let hashbrown::hash_map::RawEntryMut::Occupied(entry) = self
+            .layouts
+            .raw_entry_mut()
+            .from_hash(hash, |key| key.recency_slot == slot)
+        else {
+            panic!("layout recency must identify its owned glyph entry");
+        };
+        entry.remove_entry();
+        self.recency.remove(slot);
+    }
+
     pub(crate) fn layout(
         &mut self,
         painter: &egui::Painter,
@@ -231,15 +264,16 @@ impl GlyphCache {
         };
         let query = GlyphQuery { text, style };
         let hash = self.query_hash(&query);
-        if let Some((_, layout)) = self
+        if let Some((key, layout)) = self
             .layouts
             .raw_entry()
             .from_hash(hash, |key| query.equivalent(key))
         {
+            self.recency.get_mut(key.recency_slot);
             return layout.clone();
         }
         if self.layouts.len() >= GLYPH_CACHE_CAPACITY {
-            self.layouts.clear();
+            self.retire_lru_layout();
         }
 
         let mut job = LayoutJob::default();
@@ -258,10 +292,12 @@ impl GlyphCache {
             },
         );
         let layout = painter.layout_job(job);
+        let recency_slot = self.recency.insert(hash);
         self.layouts.insert(
             GlyphKey {
                 text: text.to_owned(),
                 style,
+                recency_slot,
             },
             layout.clone(),
         );
@@ -735,7 +771,7 @@ pub(crate) fn glyph_runs(
             runs.push(GlyphRun {
                 position,
                 columns,
-                text: cell.text.clone(),
+                text: cell.text.to_string(),
                 foreground,
                 attributes: cell.attributes,
                 selected,
@@ -1444,6 +1480,194 @@ mod tests {
     }
 
     #[test]
+    fn glyph_cache_capacity_crossing_preserves_all_but_the_least_recent_layout() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            for index in 0..GLYPH_CACHE_CAPACITY {
+                let color = Color32::from_rgb(index as u8, (index >> 8) as u8, 0);
+                cache.layout(ui.painter(), "A", Attributes::NONE, color, &font, 20.0);
+            }
+            let styles = [
+                Color32::BLACK,
+                Color32::from_rgb(1, 0, 0),
+                Color32::from_rgb(2, 0, 0),
+            ]
+            .map(|color| {
+                cache
+                    .layouts
+                    .keys()
+                    .find(|key| key.style.foreground == color)
+                    .unwrap()
+                    .style
+            });
+            cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            cache.layout(
+                ui.painter(),
+                "B",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
+            for (style, retained) in styles.into_iter().zip([true, false, true]) {
+                assert_eq!(
+                    cache.layouts.contains_key(&GlyphQuery { text: "A", style }),
+                    retained
+                );
+            }
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn glyph_cache_recency_storage_plateaus_while_hot_layouts_survive_churn() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let capacity = u32::try_from(GLYPH_CACHE_CAPACITY).unwrap();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            for index in 0..GLYPH_CACHE_CAPACITY {
+                let color = Color32::from_rgb(index as u8, (index >> 8) as u8, 0);
+                cache.layout(ui.painter(), "A", Attributes::NONE, color, &font, 20.0);
+            }
+            let hot_styles: Vec<_> = (0..8)
+                .map(|index| {
+                    cache
+                        .layouts
+                        .keys()
+                        .find(|key| key.style.foreground == Color32::from_rgb(index, 0, 0))
+                        .unwrap()
+                        .style
+                })
+                .collect();
+            for index in GLYPH_CACHE_CAPACITY..3 * GLYPH_CACHE_CAPACITY {
+                for (hot, style) in hot_styles.iter().enumerate() {
+                    assert!(cache.layouts.contains_key(&GlyphQuery {
+                        text: "A",
+                        style: *style,
+                    }));
+                    cache.layout(
+                        ui.painter(),
+                        "A",
+                        Attributes::NONE,
+                        Color32::from_rgb(hot as u8, 0, 0),
+                        &font,
+                        20.0,
+                    );
+                }
+                let color = Color32::from_rgb(index as u8, (index >> 8) as u8, 0);
+                cache.layout(ui.painter(), "A", Attributes::NONE, color, &font, 20.0);
+                assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
+                assert_eq!(cache.recency.len(), capacity);
+                assert_eq!(cache.recency.capacity(), capacity);
+            }
+            let slots: std::collections::HashSet<_> =
+                cache.layouts.keys().map(|key| key.recency_slot).collect();
+            assert_eq!(slots.len(), GLYPH_CACHE_CAPACITY);
+            assert!(slots.iter().all(|slot| *slot < capacity));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn glyph_cache_hash_collision_retirement_identifies_the_exact_slot_and_drops_its_owner() {
+        let context = egui::Context::default();
+        crate::install_terminal_fonts(&context);
+        let mut cache = GlyphCache::default();
+        let font = FontSettings::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            let galley = cache.layout(
+                ui.painter(),
+                "A",
+                Attributes::NONE,
+                Color32::BLACK,
+                &font,
+                20.0,
+            );
+            let style = cache.layouts.keys().next().unwrap().style;
+            cache.clear_layouts();
+            let hash = 0;
+            for text in ["older", "newer"] {
+                let recency_slot = cache.recency.insert(hash);
+                let hashbrown::hash_map::RawEntryMut::Vacant(entry) =
+                    cache.layouts.raw_entry_mut().from_hash(hash, |_| false)
+                else {
+                    unreachable!("explicitly unmatched collision fixture");
+                };
+                entry.insert_hashed_nocheck(
+                    hash,
+                    GlyphKey {
+                        text: text.to_owned(),
+                        style,
+                        recency_slot,
+                    },
+                    galley.clone(),
+                );
+            }
+            let older_slot = cache
+                .layouts
+                .keys()
+                .find(|key| key.text == "older")
+                .unwrap()
+                .recency_slot;
+            cache.recency.get_mut(older_slot);
+            let owners = Arc::strong_count(&galley);
+            cache.retire_lru_layout();
+            assert_eq!(Arc::strong_count(&galley), owners - 1);
+            assert_eq!(cache.layouts.len(), 1);
+            assert_eq!(cache.layouts.keys().next().unwrap().text, "older");
+            assert_eq!(cache.recency.len(), 1);
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn glyph_cache_key_identity_and_borrowed_hash_ignore_recency_slots() {
+        let font = FontSettings::default();
+        let style = GlyphStyle {
+            foreground: DEFAULT_FOREGROUND,
+            attributes: Attributes::BOLD.bits(),
+            font_size_bits: font.size_points.to_bits(),
+            layout_width_bits: 20.0_f32.to_bits(),
+            pixels_per_point_bits: 1.0_f32.to_bits(),
+            font_set: font.font_set(),
+        };
+        let first = GlyphKey {
+            style,
+            text: "e\u{301}".to_owned(),
+            recency_slot: 7,
+        };
+        let second = GlyphKey {
+            recency_slot: 42,
+            text: first.text.clone(),
+            style,
+        };
+        assert!(first == second);
+        let mut cache = GlyphCache::default();
+        let query = GlyphQuery {
+            style,
+            text: &first.text,
+        };
+        assert!(query.equivalent(&first));
+        assert!(query.equivalent(&second));
+        let hash = cache.query_hash(&query);
+        assert_eq!(hash, cache.layouts.hasher().hash_one(&first));
+        assert_eq!(hash, cache.layouts.hasher().hash_one(&second));
+    }
+
+    #[test]
     fn glyph_cache_capacity_is_global_across_styles_and_clear_removes_layouts() {
         let context = egui::Context::default();
         crate::install_terminal_fonts(&context);
@@ -1472,9 +1696,11 @@ mod tests {
                 &font,
                 20.0,
             );
-            assert_eq!(cache.layouts.len(), 1);
+            assert_eq!(cache.layouts.len(), GLYPH_CACHE_CAPACITY);
             cache.clear();
             assert!(cache.layouts.is_empty());
+            assert!(cache.recency.is_empty());
+            assert_eq!(cache.recency.capacity(), 0);
             assert!(cache.style_hasher.is_none());
             cache.layout(
                 ui.painter(),
@@ -3223,7 +3449,7 @@ mod tests {
     #[test]
     fn p6_glyph_runs_preserve_terminal_cell_boundaries() {
         let single = |text: &str| RenderedCell {
-            text: text.to_owned(),
+            text: text.into(),
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
@@ -3231,7 +3457,7 @@ mod tests {
             hyperlink: None,
         };
         let wide = RenderedCell {
-            text: "界".to_owned(),
+            text: "界".into(),
             width: CellWidth::Double,
             ..single("")
         };
@@ -4216,7 +4442,7 @@ mod tests {
     #[test]
     fn default_cells_share_the_grid_background_without_individual_paints() {
         let default = RenderedCell {
-            text: String::new(),
+            text: "".into(),
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
