@@ -8,6 +8,8 @@ repository.workspace = true
 description = "A scratch, multi-platform SSH/terminal client."
 
 [dependencies]
+cap-fs-ext = "4.0.3"
+cap-std = "4.0.3"
 directories = "6"
 fs2 = "0.4"
 eframe = "0"

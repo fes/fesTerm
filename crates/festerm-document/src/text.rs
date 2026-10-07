@@ -9,6 +9,12 @@
 use crate::bounds::{DocumentBounds, RefusalReason};
 use crate::undo::UndoHistory;
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEXT_SPLICE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEXT_REWRITE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The line ending a document is written back with.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LineEnding {
@@ -86,13 +92,81 @@ impl TextEdit {
     fn end(&self) -> usize {
         self.start + self.removed.len()
     }
+}
 
-    fn inverse(&self) -> Self {
-        Self {
-            start: self.start,
-            removed: self.inserted.clone(),
-            inserted: self.removed.clone(),
+#[derive(Clone, Copy)]
+pub(crate) enum EditDirection {
+    Forward,
+    Undo,
+}
+
+impl EditDirection {
+    fn parts(self, edit: &TextEdit) -> (&str, &str) {
+        match self {
+            Self::Forward => (&edit.removed, &edit.inserted),
+            Self::Undo => (&edit.inserted, &edit.removed),
         }
+    }
+}
+
+fn rewritten_length(length: usize, edits: &[TextEdit], direction: EditDirection) -> usize {
+    let (mut removed, mut inserted) = (0usize, 0usize);
+    for edit in edits {
+        let (source, replacement) = direction.parts(edit);
+        removed = removed
+            .checked_add(source.len())
+            .expect("validated edit source length");
+        inserted = inserted
+            .checked_add(replacement.len())
+            .expect("validated edit replacement length");
+    }
+    length
+        .checked_sub(removed)
+        .and_then(|kept| kept.checked_add(inserted))
+        .expect("validated edits fit address space")
+}
+
+/// Builds trusted edits whose offsets name the original text, including undo.
+pub(crate) fn rewrite_ordered_edits(
+    text: &str,
+    edits: &[TextEdit],
+    direction: EditDirection,
+) -> String {
+    let mut result = String::with_capacity(rewritten_length(text.len(), edits, direction));
+    let (mut original_cursor, mut source_cursor) = (0usize, 0usize);
+    for edit in edits {
+        let untouched_end = source_cursor + (edit.start - original_cursor);
+        let (source, replacement) = direction.parts(edit);
+        result.push_str(&text[source_cursor..untouched_end]);
+        result.push_str(replacement);
+        #[cfg(test)]
+        TEXT_REWRITE_BYTES.with(|bytes| {
+            bytes.set(bytes.get() + untouched_end - source_cursor + replacement.len())
+        });
+        source_cursor = untouched_end + source.len();
+        original_cursor = edit.end();
+    }
+    result.push_str(&text[source_cursor..]);
+    #[cfg(test)]
+    TEXT_REWRITE_BYTES.with(|bytes| bytes.set(bytes.get() + text.len() - source_cursor));
+    result
+}
+
+fn replay_ordered_edits(text: &mut String, edits: &[TextEdit], direction: EditDirection) {
+    // Keep ordinary single edits and equal-length replacements in place.
+    if edits.len() == 1
+        || edits
+            .iter()
+            .all(|edit| edit.removed.len() == edit.inserted.len())
+    {
+        for edit in edits {
+            let (source, replacement) = direction.parts(edit);
+            #[cfg(test)]
+            TEXT_SPLICE_CALLS.with(|calls| calls.set(calls.get() + 1));
+            text.replace_range(edit.start..edit.start + source.len(), replacement);
+        }
+    } else {
+        *text = rewrite_ordered_edits(text, edits, direction);
     }
 }
 
@@ -410,15 +484,7 @@ impl TextDocument {
         let Some(transaction) = self.undo.step_back() else {
             return false;
         };
-        // Forward order, deliberately: every edit's `start` is in the
-        // coordinates of the text *before* the transaction, so undoing the
-        // earliest one first restores those coordinates for the ones that
-        // follow. Walking backwards would apply each inverse at an offset the
-        // still-applied earlier edits have already moved.
-        for edit in &transaction.edits {
-            let inverse = edit.inverse();
-            splice(&mut self.text, &inverse);
-        }
+        replay_ordered_edits(&mut self.text, &transaction.edits, EditDirection::Undo);
         self.revision = self.revision.wrapping_add(1);
         true
     }
@@ -428,11 +494,7 @@ impl TextDocument {
         let Some(transaction) = self.undo.step_forward() else {
             return false;
         };
-        // Reverse order, for the same reason applying does it: a later edit's
-        // offsets are only valid while the text before it is untouched.
-        for edit in transaction.edits.iter().rev() {
-            splice(&mut self.text, edit);
-        }
+        replay_ordered_edits(&mut self.text, &transaction.edits, EditDirection::Forward);
         self.revision = self.revision.wrapping_add(1);
         true
     }
@@ -492,11 +554,12 @@ impl TextDocument {
         let Some(prepared) = self.undo.prepare(edits, coalescable)? else {
             return Ok(());
         };
-        let mut candidate = self.text.clone();
-        for edit in prepared.edits.iter().rev() {
-            debug_assert!(edit.end() <= candidate.len());
-            splice(&mut candidate, edit);
-        }
+        self.bounds.check_declared_size(rewritten_length(
+            self.text.len(),
+            &prepared.edits,
+            EditDirection::Forward,
+        ))?;
+        let candidate = rewrite_ordered_edits(&self.text, &prepared.edits, EditDirection::Forward);
         self.check_bounds(&candidate)?;
         self.undo.commit(prepared);
         self.text = candidate;
@@ -521,10 +584,6 @@ impl TextDocument {
         }
         Ok(())
     }
-}
-
-fn splice(text: &mut String, edit: &TextEdit) {
-    text.replace_range(edit.start..edit.end(), &edit.inserted);
 }
 
 /// Normalises CRLF and lone CR to LF without changing anything else.
@@ -635,9 +694,203 @@ fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
 #[cfg(test)]
 mod tests {
 
-    /// Undo has to walk the opposite way round from apply, or a transaction
-    /// whose edits change length puts the earlier ones back in the wrong
-    /// place -- the failure a substitution across many lines would hit first.
+    fn large_multi_edit_fixture() -> (TextDocument, Vec<TextEdit>) {
+        let document =
+            TextDocument::from_bytes(&b"ab ".repeat(2_000), DocumentBounds::DEFAULT).unwrap();
+        let edits = (0..2_000)
+            .map(|index| TextEdit {
+                start: index * 3,
+                removed: "ab".to_owned(),
+                inserted: "LONG".to_owned(),
+            })
+            .collect();
+        (document, edits)
+    }
+
+    #[test]
+    fn single_pass_multi_edit_matches_splice_oracle_for_unicode_and_coincident_edits() {
+        let original = "aé界\nz🙂";
+        for seed in 0..32 {
+            let mut edits = Vec::new();
+            for (index, (start, character)) in original.char_indices().enumerate() {
+                if (index + seed) % 3 == 0 {
+                    for inserted in ["+", "Ω"] {
+                        edits.push(TextEdit {
+                            start,
+                            removed: String::new(),
+                            inserted: inserted.to_owned(),
+                        });
+                    }
+                }
+                edits.push(TextEdit {
+                    start,
+                    removed: character.to_string(),
+                    inserted: match (index + seed) % 4 {
+                        0 => character.to_string(),
+                        1 => String::new(),
+                        2 => "LONG\n".to_owned(),
+                        _ => "β".to_owned(),
+                    },
+                });
+            }
+            let mut expected = original.to_owned();
+            for edit in edits.iter().rev() {
+                expected.replace_range(edit.start..edit.end(), &edit.inserted);
+            }
+            assert_eq!(
+                rewrite_ordered_edits(original, &edits, EditDirection::Forward),
+                expected
+            );
+            assert_eq!(
+                rewrite_ordered_edits(&expected, &edits, EditDirection::Undo),
+                original
+            );
+            let mut document =
+                TextDocument::from_bytes(original.as_bytes(), DocumentBounds::DEFAULT).unwrap();
+            document.mark_saved();
+            let revision = document.revision();
+            document.apply_edits(edits).unwrap();
+            assert_eq!(document.text(), expected);
+            assert_eq!(document.revision(), revision + 1);
+            assert!(document.undo());
+            assert_eq!(document.text(), original);
+            assert!(!document.is_dirty());
+            assert!(document.redo());
+            assert_eq!(document.text(), expected);
+            assert!(document.is_dirty());
+        }
+    }
+
+    #[test]
+    fn single_pass_multi_edit_preserves_in_place_single_and_equal_length_replay() {
+        for edits in [
+            vec![TextEdit {
+                start: 1,
+                removed: String::new(),
+                inserted: "LONG".to_owned(),
+            }],
+            vec![
+                TextEdit {
+                    start: 0,
+                    removed: "a".to_owned(),
+                    inserted: "A".to_owned(),
+                },
+                TextEdit {
+                    start: 2,
+                    removed: "c".to_owned(),
+                    inserted: "C".to_owned(),
+                },
+            ],
+        ] {
+            let mut document = TextDocument::from_bytes(b"abcd", DocumentBounds::DEFAULT).unwrap();
+            document.apply_edits(edits).unwrap();
+            let applied = document.text().to_owned();
+            let pointer = document.text.as_ptr();
+            let capacity = document.text.capacity();
+            super::TEXT_REWRITE_BYTES.with(|bytes| bytes.set(0));
+            assert!(document.undo());
+            assert_eq!(document.text(), "abcd");
+            assert_eq!(document.text.as_ptr(), pointer);
+            assert_eq!(document.text.capacity(), capacity);
+            assert!(document.redo());
+            assert_eq!(document.text(), applied);
+            assert_eq!(document.text.as_ptr(), pointer);
+            assert_eq!(document.text.capacity(), capacity);
+            assert_eq!(super::TEXT_REWRITE_BYTES.with(std::cell::Cell::get), 0);
+        }
+    }
+
+    #[test]
+    fn single_pass_multi_edit_byte_refusal_preserves_redo_without_constructing_output() {
+        let mut document =
+            TextDocument::from_bytes(b"abc", DocumentBounds::new(4, 64, 64)).unwrap();
+        document
+            .apply_edits(vec![TextEdit {
+                start: 0,
+                removed: "a".to_owned(),
+                inserted: "A".to_owned(),
+            }])
+            .unwrap();
+        document.mark_saved();
+        assert!(document.undo());
+        let revision = document.revision();
+        let dirty = document.is_dirty();
+        super::TEXT_REWRITE_BYTES.with(|bytes| bytes.set(0));
+        assert_eq!(
+            document.apply_edits(vec![TextEdit {
+                start: 0,
+                removed: "a".to_owned(),
+                inserted: "TOO-LONG".to_owned()
+            }]),
+            Err(EditRefusal::Refused(RefusalReason::TooLarge {
+                bytes: 10,
+                limit: 4
+            }))
+        );
+        assert_eq!(super::TEXT_REWRITE_BYTES.with(std::cell::Cell::get), 0);
+        assert_eq!(document.text(), "abc");
+        assert_eq!(document.revision(), revision);
+        assert_eq!(document.is_dirty(), dirty);
+        assert!(!document.can_undo());
+        assert!(document.can_redo());
+        assert!(document.redo());
+        assert_eq!(document.text(), "Abc");
+        assert!(!document.is_dirty());
+    }
+
+    #[test]
+    fn single_pass_multi_edit_apply_avoids_repeated_splices() {
+        let (mut document, edits) = large_multi_edit_fixture();
+        super::TEXT_SPLICE_CALLS.with(|calls| calls.set(0));
+        super::TEXT_REWRITE_BYTES.with(|bytes| bytes.set(0));
+        assert_eq!(document.apply_edits(edits), Ok(2_000));
+        assert_eq!(document.text(), "LONG ".repeat(2_000));
+        let calls = super::TEXT_SPLICE_CALLS.with(std::cell::Cell::get);
+        println!("multi_edit_apply_splice_calls={calls}");
+        assert!(calls <= 1, "apply made {calls} length-changing splices");
+        assert_eq!(
+            super::TEXT_REWRITE_BYTES.with(std::cell::Cell::get),
+            document.byte_len()
+        );
+    }
+
+    #[test]
+    fn single_pass_multi_edit_undo_avoids_repeated_splices() {
+        let (mut document, edits) = large_multi_edit_fixture();
+        document.apply_edits(edits).unwrap();
+        super::TEXT_SPLICE_CALLS.with(|calls| calls.set(0));
+        super::TEXT_REWRITE_BYTES.with(|bytes| bytes.set(0));
+        assert!(document.undo());
+        assert_eq!(document.text(), "ab ".repeat(2_000));
+        let calls = super::TEXT_SPLICE_CALLS.with(std::cell::Cell::get);
+        println!("multi_edit_undo_splice_calls={calls}");
+        assert!(calls <= 1, "undo made {calls} length-changing splices");
+        assert_eq!(
+            super::TEXT_REWRITE_BYTES.with(std::cell::Cell::get),
+            document.byte_len()
+        );
+    }
+
+    #[test]
+    fn single_pass_multi_edit_redo_avoids_repeated_splices() {
+        let (mut document, edits) = large_multi_edit_fixture();
+        document.apply_edits(edits).unwrap();
+        assert!(document.undo());
+        super::TEXT_SPLICE_CALLS.with(|calls| calls.set(0));
+        super::TEXT_REWRITE_BYTES.with(|bytes| bytes.set(0));
+        assert!(document.redo());
+        assert_eq!(document.text(), "LONG ".repeat(2_000));
+        let calls = super::TEXT_SPLICE_CALLS.with(std::cell::Cell::get);
+        println!("multi_edit_redo_splice_calls={calls}");
+        assert!(calls <= 1, "redo made {calls} length-changing splices");
+        assert_eq!(
+            super::TEXT_REWRITE_BYTES.with(std::cell::Cell::get),
+            document.byte_len()
+        );
+    }
+
+    /// Undo must account for earlier length changes when finding later edits
+    /// in the applied text.
     #[test]
     fn undoing_a_multi_edit_transaction_restores_the_original_exactly() {
         let mut document = TextDocument::from_bytes(b"ab--ab", DocumentBounds::default()).unwrap();

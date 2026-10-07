@@ -109,6 +109,12 @@ or the last-active window, defers while dialogs block activation, and dispatches
 input, upload files, or mutate document buffers. Opening an existing document
 focuses its view without replacing unsaved edits.
 
+`LoadMarkdownLocalImage` routes to either the active standalone viewer or its
+text editor Preview; both use the same bounded image policy. Only a typed saved
+local origin authorizes Preview reads. `SetImageMemoryBudget` changes the shared
+live allowance through the composition root and its normal settings persistence
+path; widgets do not own separate limits, loaders or configuration writes.
+
 ## UI Events vs. Application Commands
 
 Low-level terminal interaction remains separate from application commands.

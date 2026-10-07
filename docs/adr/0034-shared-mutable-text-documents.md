@@ -155,6 +155,15 @@ reading it, writing it, and both. A separate read-only Markdown viewer tab
 remains only for what the editor cannot hold: a remote snapshot or an HTTP
 document with no local file behind it.
 
+Saved-local Preview uses ADR 0030's bounded relative-image loader and shared
+managed-image allowance. The grant is derived from the document's typed local
+origin, not its displayed label; remote, untitled and terminal-history origins
+never authorize local images. First Save and Save As/rebinding replace the
+Preview's source, approvals, image caches and pending receivers. Snapshot
+reparses do the same, and an unavailable parse releases hidden images without
+starting loads for the old snapshot. This does not move image ownership or
+terminal mutation into the document registry.
+
 The alternative — a viewer tab and an editor tab for one file — was what
 fesTerm did, and it made a Markdown file two places that could disagree, each
 with its own outline, find state and scroll, each needing to be told about the
@@ -583,6 +592,12 @@ existing Markdown rendering stays out of scope.
   partial/stale repeat, pure-navigation/yank preservation, next-change recovery,
   and repeated edits as one shared undo transaction. Native keyboard/IME,
   narrow-pane readability and screen-reader delivery remain in `CP-15`.
+- **Saved-local Preview refinement:** `EDIT-18`, `MD-05`, `SET-13` and
+  `EDIT-04` have deterministic production-editor/manual-command,
+  typed-origin denial, first-save/Save As rebinding, shared allowance/worker,
+  explicit-retry, failed-parse and stale-result coverage. ADR 0030 owns the
+  image-policy limits and exclusions. Native image presentation,
+  refusal/recovery comprehension and accessibility remain `CP-06`/`CP-15`.
 - **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
   `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
   admission, churn/clone/clear, validated no-op, stable saved/base-token,
@@ -591,6 +606,32 @@ existing Markdown rendering stays out of scope.
   report content-free refusals. Native input/IME, focus/caret, narrow-pane
   usability and screen-reader delivery remain `CP-15`; transient allocation
   peaks and allocator fragmentation are not certified by these tests.
+- **Ordered rewrite refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07` and `EDIT-13`
+  add `single_pass_multi_edit_apply_avoids_repeated_splices`,
+  `single_pass_multi_edit_undo_avoids_repeated_splices`,
+  `single_pass_multi_edit_redo_avoids_repeated_splices`,
+  `single_pass_multi_edit_vi_builder_avoids_repeated_splices`,
+  `single_pass_multi_edit_matches_splice_oracle_for_unicode_and_coincident_edits`,
+  `single_pass_multi_edit_preserves_in_place_single_and_equal_length_replay`,
+  `single_pass_multi_edit_byte_refusal_preserves_redo_without_constructing_output`.
+  These retain transaction/UTF-8/atomic-refusal semantics and prove one result
+  write rather than repeated length-changing splices. Single/equal-length
+  replay remains in place; multi-edit replay may own a temporary extra bounded
+  result, not a new retained owner. CP-15 native evidence and fragmentation/RSS
+  conclusions remain separate.
+- **Vi motion refinement:** `EDIT-07` adds
+  `vi_local_motion_large_ascii_avoids_full_indexes`,
+  `vi_local_motion_large_unicode_avoids_full_indexes`,
+  `vi_local_motion_repeat_diff_avoids_char_arrays`,
+  `vi_local_motion_matches_indexed_motion_oracle`,
+  `vi_local_motion_engine_churn_matches_indexed_path_and_retires_fallback`,
+  `vi_local_motion_repeat_diff_matches_char_array_oracle` and
+  `vi_local_motion_empty_line_count_remains_bounded`. Actual construction
+  capacities and instrumented local scan bytes cover Normal motions/counts;
+  frozen scalar oracles and mixed-mode/repeat/recording churn preserve UTF-8,
+  caret, action and state semantics. The fallback stays keystroke-local; no
+  revision cache or new retained owner. Native CP-15 responsiveness/IME,
+  fragmentation/RSS and #297 conclusions remain separate.
 - **Native/manual evidence required:** a new manual scenario registered with the
   implementation, covering real watcher behaviour, atomic replacement,
   permission preservation, and remote disconnect/reconnect on each platform.

@@ -72,6 +72,11 @@ pub struct InterfaceSettings {
     /// Retained primary-history payload budget for newly created sessions.
     #[serde(default, skip_serializing_if = "ScrollbackLimitPreference::is_default")]
     scrollback_limit: ScrollbackLimitPreference,
+    #[serde(
+        default,
+        skip_serializing_if = "ImageMemoryBudgetPreference::is_default"
+    )]
+    image_memory_budget: ImageMemoryBudgetPreference,
     /// Whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) temporarily overlays each eligible chip's quick-switch
     /// number in place of its usual status presentation (feature request
@@ -164,6 +169,7 @@ impl InterfaceSettings {
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
         scrollback_limit: ScrollbackLimitPreference::MiB64,
+        image_memory_budget: ImageMemoryBudgetPreference::MiB512,
         quick_switch_overlay: true,
         compact_launcher_grid: true,
         legacy_pulse_new_output_dot: (),
@@ -232,6 +238,11 @@ impl InterfaceSettings {
         scrollback_limit: ScrollbackLimitPreference,
     ) -> Self {
         self.scrollback_limit = scrollback_limit;
+        self
+    }
+
+    pub const fn with_image_memory_budget(mut self, budget: ImageMemoryBudgetPreference) -> Self {
+        self.image_memory_budget = budget;
         self
     }
 
@@ -328,6 +339,10 @@ impl InterfaceSettings {
 
     pub const fn scrollback_limit(&self) -> ScrollbackLimitPreference {
         self.scrollback_limit
+    }
+
+    pub const fn image_memory_budget(&self) -> ImageMemoryBudgetPreference {
+        self.image_memory_budget
     }
 
     pub const fn quick_switch_overlay(&self) -> bool {
@@ -572,6 +587,62 @@ impl Default for InterfaceSettings {
     }
 }
 
+/// Shared managed Markdown-image storage and reservation allowance.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum ImageMemoryBudgetPreference {
+    #[serde(rename = "64-mib")]
+    MiB64,
+    #[serde(rename = "128-mib")]
+    MiB128,
+    #[serde(rename = "256-mib")]
+    MiB256,
+    #[default]
+    #[serde(rename = "512-mib")]
+    MiB512,
+    #[serde(rename = "1024-mib")]
+    MiB1024,
+    #[serde(rename = "2048-mib")]
+    MiB2048,
+}
+
+impl ImageMemoryBudgetPreference {
+    pub const ALL: [Self; 6] = [
+        Self::MiB64,
+        Self::MiB128,
+        Self::MiB256,
+        Self::MiB512,
+        Self::MiB1024,
+        Self::MiB2048,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::MiB64 => "64 MiB",
+            Self::MiB128 => "128 MiB",
+            Self::MiB256 => "256 MiB",
+            Self::MiB512 => "512 MiB",
+            Self::MiB1024 => "1024 MiB",
+            Self::MiB2048 => "2048 MiB",
+        }
+    }
+
+    pub const fn bytes(self) -> u64 {
+        let mib = match self {
+            Self::MiB64 => 64,
+            Self::MiB128 => 128,
+            Self::MiB256 => 256,
+            Self::MiB512 => 512,
+            Self::MiB1024 => 1024,
+            Self::MiB2048 => 2048,
+        };
+        mib * 1024 * 1024
+    }
+
+    const fn is_default(&self) -> bool {
+        matches!(self, Self::MiB512)
+    }
+}
+
 fn default_status_bar_visible() -> bool {
     InterfaceSettings::DEFAULT.status_bar_visible
 }
@@ -722,6 +793,44 @@ mod tests {
             ScrollbackLimitPreference::ALL.map(ScrollbackLimitPreference::bytes),
             [0, 16 * 1024 * 1024, 64 * 1024 * 1024, 256 * 1024 * 1024]
         );
+    }
+
+    #[test]
+    fn image_memory_budget_values_round_trip_without_an_unbounded_escape() {
+        let labels = [
+            "64 MiB", "128 MiB", "256 MiB", "512 MiB", "1024 MiB", "2048 MiB",
+        ];
+        for (budget, label) in ImageMemoryBudgetPreference::ALL.into_iter().zip(labels) {
+            assert_eq!(budget.label(), label);
+            let settings = InterfaceSettings::DEFAULT.with_image_memory_budget(budget);
+            let written = toml::to_string(&settings).unwrap();
+            let read: InterfaceSettings = toml::from_str(&written).unwrap();
+            assert_eq!(read.image_memory_budget(), budget);
+            assert_eq!(
+                budget.bytes(),
+                label.trim_end_matches(" MiB").parse::<u64>().unwrap() * 1024 * 1024
+            );
+        }
+        for invalid in ["disabled", "unlimited", "0-mib", "63-mib", "4096-mib"] {
+            assert!(toml::from_str::<InterfaceSettings>(&format!(
+                "image_memory_budget = '{invalid}'"
+            ))
+            .is_err());
+        }
+        assert!(toml::from_str::<InterfaceSettings>("image_memory_budget = 512").is_err());
+    }
+
+    #[test]
+    fn image_memory_budget_default_is_512_mib_and_is_omitted_from_saved_settings() {
+        let settings: InterfaceSettings = toml::from_str("").unwrap();
+        assert_eq!(
+            settings.image_memory_budget(),
+            ImageMemoryBudgetPreference::MiB512
+        );
+        assert_eq!(settings.image_memory_budget().bytes(), 536_870_912);
+        assert!(!toml::to_string(&settings)
+            .unwrap()
+            .contains("image_memory_budget"));
     }
 }
 
