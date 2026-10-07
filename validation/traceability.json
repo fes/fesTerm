@@ -1668,6 +1668,7 @@
         "staging_parent_trust_excludes_other_well_known_service_owners",
         "security_snapshot_keeps_only_settable_file_attributes",
         "extended_attribute_probe_distinguishes_absent_present_and_failed_queries",
+        "ordinary_temp_file_has_no_extended_attributes",
         "unsupported_windows_security_metadata_maps_to_pre_staging_refusals",
         "security_copy_preserves_an_explicit_mandatory_integrity_label",
         "pathname_substitution_cannot_replace_the_native_created_directory_handle",

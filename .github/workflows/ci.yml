@@ -109,6 +109,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Check native Windows extended-attribute probing
+        if: matrix.os == 'windows-latest'
+        run: cargo test -p festerm-windows-security ordinary_temp_file_has_no_extended_attributes -- --nocapture
       - run: cargo test --workspace
         env:
           FESTERM_REQUIRE_WINDOWS_SYMLINKS: ${{ matrix.os == 'windows-latest' && '1' || '' }}
