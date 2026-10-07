@@ -330,7 +330,7 @@ mod imp {
                 true,
             )
         };
-        match extended_attribute_query_result(result) {
+        match extended_attribute_query_result(result, status.Information) {
             Ok(has_attributes) => Ok(has_attributes),
             Err(status) => Err(io::Error::from_raw_os_error(unsafe {
                 RtlNtStatusToDosError(status) as i32
@@ -338,10 +338,11 @@ mod imp {
         }
     }
 
-    fn extended_attribute_query_result(status: i32) -> Result<bool, i32> {
+    fn extended_attribute_query_result(status: i32, returned: usize) -> Result<bool, i32> {
         match status {
             STATUS_NO_EAS_ON_FILE | STATUS_NO_MORE_EAS => Ok(false),
-            STATUS_SUCCESS | STATUS_BUFFER_OVERFLOW | STATUS_BUFFER_TOO_SMALL => Ok(true),
+            STATUS_SUCCESS => Ok(returned != 0),
+            STATUS_BUFFER_OVERFLOW | STATUS_BUFFER_TOO_SMALL => Ok(true),
             _ => Err(status),
         }
     }
@@ -1704,23 +1705,27 @@ mod imp {
         #[test]
         fn extended_attribute_probe_distinguishes_absent_present_and_failed_queries() {
             assert_eq!(
-                extended_attribute_query_result(STATUS_NO_EAS_ON_FILE),
+                extended_attribute_query_result(STATUS_NO_EAS_ON_FILE, 0),
                 Ok(false)
             );
             assert_eq!(
-                extended_attribute_query_result(STATUS_NO_MORE_EAS),
+                extended_attribute_query_result(STATUS_NO_MORE_EAS, 0),
                 Ok(false)
             );
-            assert_eq!(extended_attribute_query_result(STATUS_SUCCESS), Ok(true));
             assert_eq!(
-                extended_attribute_query_result(STATUS_BUFFER_OVERFLOW),
+                extended_attribute_query_result(STATUS_SUCCESS, 0),
+                Ok(false)
+            );
+            assert_eq!(extended_attribute_query_result(STATUS_SUCCESS, 1), Ok(true));
+            assert_eq!(
+                extended_attribute_query_result(STATUS_BUFFER_OVERFLOW, 0),
                 Ok(true)
             );
             assert_eq!(
-                extended_attribute_query_result(STATUS_BUFFER_TOO_SMALL),
+                extended_attribute_query_result(STATUS_BUFFER_TOO_SMALL, 0),
                 Ok(true)
             );
-            assert!(extended_attribute_query_result(STATUS_INFO_LENGTH_MISMATCH).is_err());
+            assert!(extended_attribute_query_result(STATUS_INFO_LENGTH_MISMATCH, 0).is_err());
         }
 
         fn unsupported_metadata(reason: UnsupportedSecurityMetadata) -> SecurityMetadata {
