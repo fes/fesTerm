@@ -29,6 +29,16 @@ RESOURCE_FIELDS = (
     "working_set_bytes", "private_bytes", "peak_working_set_bytes", "handles", "thread_count",
 )
 COMMITMENT_FIELDS = ("commitment_bytes", "peak_commitment_bytes")
+THREAD_METHODS = (
+    "GetProcessIdOfThread/GetThreadTimes",
+    "GetThreadDescription",
+    "NtQueryInformationThread.ThreadQuerySetWin32StartAddress/Process.Modules",
+)
+THREAD_BOUNDS = {
+    "threads_per_sample": 256, "modules_per_sample": 1024, "label_utf16_units": 256,
+    "total_thread_records": 131072, "resource_log_bytes": 67108864,
+}
+FILETIME_UNIX_OFFSET = 116444736000000000
 
 
 def check_registry_report(registries):
@@ -262,6 +272,243 @@ def window_resources(resources, name, window, fields, require_sample=False):
     }
 
 
+def check_thread_label(label, available_status, empty_status=None):
+    require(
+        type(label) is dict and set(label) == {"status", "value", "reason"},
+        "incomplete thread metadata label",
+    )
+    status, value, reason = label["status"], label["value"], label["reason"]
+    if status == available_status:
+        require(
+            type(value) is str and 0 < len(value.encode("utf-16-le")) // 2 <= THREAD_BOUNDS["label_utf16_units"]
+            and reason is None,
+            "invalid/over-limit thread metadata label",
+        )
+    elif empty_status is not None and status == empty_status:
+        require(value is None and reason is None, "invalid unnamed thread metadata")
+    else:
+        require(status == "unavailable" and value is None, "unsupported thread metadata label status")
+        require(type(reason) is str and 0 < len(reason) <= 256, "missing thread metadata unavailable reason")
+
+
+def thread_identity(thread):
+    creation = thread["ownership"]["creation_filetime_100ns"]
+    return (thread["id"], creation) if creation is not None else None
+
+
+def identity_record(identity):
+    return {"id": identity[0], "creation_filetime_100ns": identity[1]}
+
+
+def check_thread_ownership(binding, resources, windows):
+    declared = "thread_ownership_schema" in binding
+    if not declared:
+        require(
+            not {"thread_ownership_methods", "thread_ownership_bounds"}.intersection(binding)
+            and all(
+                "thread_ownership" not in sample
+                and all("ownership" not in thread for thread in sample.get("threads", []))
+                for sample in resources
+            ),
+            "undeclared thread ownership observations",
+        )
+        return {"available": False, "reason": "historical receipt lacks thread creation identity and metadata"}
+    require(
+        type(binding["thread_ownership_schema"]) is int and binding["thread_ownership_schema"] == 1
+        and binding.get("thread_ownership_methods") == list(THREAD_METHODS),
+        "incomplete/unsupported thread ownership declaration",
+    )
+    timeout = binding.get("timeout_seconds")
+    require(
+        type(timeout) is int and 60 <= timeout <= 14400
+        and type(binding.get("resource_sample_interval_ms")) is int
+        and binding["resource_sample_interval_ms"] == 500,
+        "invalid thread observation timing bounds",
+    )
+    bounds = binding.get("thread_ownership_bounds")
+    require(
+        type(bounds) is dict and bounds == {**THREAD_BOUNDS, "samples": 2 * timeout + 1}
+        and all(type(value) is int for value in bounds.values()),
+        "incomplete/unsupported thread ownership bounds",
+    )
+    require(len(resources) <= bounds["samples"], "thread observation sample count over-limit")
+    previous_end = total_threads = 0
+    identities = {}
+    observed_per_sample = []
+    for sample in resources:
+        envelope = sample.get("thread_ownership")
+        require(
+            type(envelope) is dict
+            and set(envelope) == {"schema", "started_unix_ms", "completed_unix_ms", "module_snapshot"}
+            and type(envelope["schema"]) is int and envelope["schema"] == 1,
+            "incomplete thread observation envelope",
+        )
+        started, completed = envelope["started_unix_ms"], envelope["completed_unix_ms"]
+        require(
+            type(started) is int and type(completed) is int
+            and type(sample["unix_ms"]) is int
+            and previous_end <= started <= completed == sample["unix_ms"],
+            "invalid/reversed thread observation interval",
+        )
+        previous_end = completed
+        modules = envelope["module_snapshot"]
+        require(
+            type(modules) is dict and set(modules) == {"status", "count", "reason"},
+            "incomplete module snapshot",
+        )
+        if modules["status"] == "observed":
+            require(
+                type(modules["count"]) is int and 0 <= modules["count"] <= bounds["modules_per_sample"]
+                and modules["reason"] is None,
+                "invalid/over-limit owned module inventory",
+            )
+        else:
+            require(
+                modules["status"] == "unavailable" and modules["count"] is None
+                and type(modules["reason"]) is str and 0 < len(modules["reason"]) <= 256,
+                "missing module inventory unavailable reason",
+            )
+        threads = sample.get("threads")
+        require(
+            type(threads) is list and 1 <= len(threads) <= bounds["threads_per_sample"]
+            and type(sample["thread_count"]) is int and sample["thread_count"] == len(threads),
+            "incomplete/over-limit owned thread inventory",
+        )
+        total_threads += len(threads)
+        require(total_threads <= bounds["total_thread_records"], "total thread inventory over-limit")
+        seen = set()
+        observed = {}
+        for thread in threads:
+            require(
+                type(thread) is dict and set(thread) == {"id", "cpu_ms", "ownership"},
+                "incomplete owned thread record",
+            )
+            tid = thread.get("id")
+            require(type(tid) is int and 0 < tid <= 0xFFFFFFFF and tid not in seen, "invalid/duplicate owned TID")
+            seen.add(tid)
+            ownership = thread.get("ownership")
+            require(
+                type(ownership) is dict and set(ownership) == {
+                    "status", "reason", "creation_filetime_100ns", "description", "start_address", "start_module",
+                },
+                "incomplete owned thread metadata",
+            )
+            status, reason, creation = ownership["status"], ownership["reason"], ownership["creation_filetime_100ns"]
+            if status == "observed":
+                require(reason is None and creation is not None, "missing observed thread creation identity")
+            else:
+                require(
+                    status in ("raced", "unavailable") and type(reason) is str and 0 < len(reason) <= 256,
+                    "missing thread race/unavailable reason",
+                )
+                require(status != "unavailable" or creation is None, "unavailable thread claims creation identity")
+            identity = thread_identity(thread)
+            if identity is None:
+                require(status != "observed" and thread.get("cpu_ms") is None, "fabricated unknown thread CPU")
+            else:
+                require(
+                    type(creation) is int and 0 < creation <= FILETIME_UNIX_OFFSET + completed * 10000,
+                    "invalid thread creation identity",
+                )
+                cpu = number(thread.get("cpu_ms"), "owned thread CPU")
+                history = identities.setdefault(identity, [])
+                require(not history or cpu >= history[-1]["cpu_ms"], "reversed identity-bound thread CPU")
+                history.append({
+                    "unix_ms": completed, "phase": sample["phase"], "cpu_ms": cpu, "status": status,
+                    "description": ownership["description"], "start_module": ownership["start_module"],
+                })
+            check_thread_label(ownership["description"], "named", "unnamed")
+            check_thread_label(ownership["start_address"], "available")
+            address = ownership["start_address"]
+            if address["status"] == "available":
+                require(
+                    re.fullmatch(r"0x[0-9A-F]{16}", address["value"]) is not None
+                    and int(address["value"], 16) > 0,
+                    "invalid thread start address",
+                )
+            module = ownership["start_module"]
+            require(type(module) is dict, "incomplete thread start module label")
+            if module.get("status") == "unmapped":
+                require(
+                    set(module) == {"status", "value", "reason"} and module["value"] is None
+                    and module["reason"] == "address-not-in-owned-module-snapshot",
+                    "invalid unmapped start module",
+                )
+            else:
+                check_thread_label(module, "mapped")
+            if module["status"] in ("mapped", "unmapped"):
+                require(
+                    address["status"] == "available" and modules["status"] == "observed",
+                    "start module lacks address/owned module snapshot",
+                )
+            if status != "observed":
+                require(
+                    all(ownership[key]["status"] == "unavailable" for key in ("description", "start_address", "start_module")),
+                    "raced/unavailable thread claims metadata",
+                )
+            else:
+                observed[identity] = thread
+        observed_per_sample.append(observed)
+    held = {}
+    previous_ids = None
+    for name, window in sorted(windows.items(), key=lambda item: item[1]["started_unix_ms"]):
+        indices = [
+            index for index, sample in enumerate(resources)
+            if sample["phase"] == name
+            and window["started_unix_ms"] <= sample["thread_ownership"]["started_unix_ms"]
+            and sample["thread_ownership"]["completed_unix_ms"] <= window["completed_unix_ms"]
+        ]
+        require(indices, f"missing complete thread observation interval in {name} held window")
+        current_ids = set().union(*(observed_per_sample[index] for index in indices))
+        threads = []
+        for identity in sorted(current_ids):
+            observations = [observed_per_sample[index][identity] for index in indices if identity in observed_per_sample[index]]
+            threads.append({
+                **identity_record(identity), "sample_count": len(observations),
+                "observed_in_every_sample": len(observations) == len(indices),
+                "first_cpu_ms": observations[0]["cpu_ms"], "last_cpu_ms": observations[-1]["cpu_ms"],
+                "observed_cpu_delta_ms": observations[-1]["cpu_ms"] - observations[0]["cpu_ms"] if len(observations) > 1 else None,
+            })
+        held[name] = {
+            "window": window, "sample_count": len(indices), "threads": threads,
+            "unknown_thread_observations": sum(len(resources[index]["threads"]) - len(observed_per_sample[index]) for index in indices),
+            "boundary_excluded_samples": sum(
+                sample["phase"] == name and window["started_unix_ms"] <= sample["unix_ms"] <= window["completed_unix_ms"]
+                for sample in resources
+            ) - len(indices),
+            "newly_observed_since_previous_window": [identity_record(identity) for identity in sorted(current_ids - previous_ids)] if previous_ids is not None else None,
+            "observed_again_from_previous_window": [identity_record(identity) for identity in sorted(current_ids & previous_ids)] if previous_ids is not None else None,
+            "not_observed_from_previous_window": [identity_record(identity) for identity in sorted(previous_ids - current_ids)] if previous_ids is not None else None,
+        }
+        previous_ids = current_ids
+    return {
+        "available": True, "schema": 1, "held_windows": held,
+        "observation_status_counts": {
+            status: sum(thread["ownership"]["status"] == status for sample in resources for thread in sample["threads"])
+            for status in ("observed", "raced", "unavailable")
+        },
+        "identities": [
+            {
+                **identity_record(identity), "sample_count": len(history),
+                "first_observation": history[0], "last_observation": history[-1],
+                "description_labels": [
+                    json.loads(label) for label in sorted({
+                        json.dumps(observation["description"], sort_keys=True) for observation in history
+                    })
+                ],
+                "start_module_labels": [
+                    json.loads(label) for label in sorted({
+                        json.dumps(observation["start_module"], sort_keys=True) for observation in history
+                    })
+                ],
+            }
+            for identity, history in sorted(identities.items())
+        ],
+        "final_observed_identities": [identity_record(identity) for identity in sorted(observed_per_sample[-1])],
+        "classification": "Sampled identity-bound CPU and description/start-module labels only; not stacks, continuous liveness, private-byte ownership, driver-allocation accounting or a leak/cap verdict.",
+    }
+
+
 def check_lifecycles(records, repeats, idle_seconds):
     require(type(records) is list and len(records) == repeats, "incomplete whole-owner lifecycle observations")
     previous_end = 0
@@ -343,7 +590,10 @@ def validate(directory):
             require(summary["phase"] == name and summary["mode"] == mode, "phase identity mismatch")
             samples = [json.loads(line) for line in (probe / f"{name}.jsonl").read_text().splitlines()]
             phases[name] = check_phase(summary, samples, binding["frames"], binding["idle_seconds"], frame_schema)
-    resources = [json.loads(line) for line in (directory / "resources.jsonl").read_text().splitlines()]
+    resource_path = directory / "resources.jsonl"
+    if "thread_ownership_schema" in binding:
+        require(resource_path.stat().st_size <= THREAD_BOUNDS["resource_log_bytes"], "thread resource log over-limit")
+    resources = [json.loads(line) for line in resource_path.read_text().splitlines()]
     require(resources, "missing process resource observations")
     pids = {sample["pid"] for sample in resources}
     require(pids == {binding["process_id"]}, "mixed process resource observations")
@@ -353,6 +603,10 @@ def validate(directory):
         for field in RESOURCE_FIELDS:
             number(sample[field], field)
     process_memory = check_process_memory(binding, manifest, resources, probe)
+    require(
+        not {"thread_ownership_schema", "thread_ownership_methods", "thread_ownership_bounds"}.intersection(manifest),
+        "thread ownership is a supervisor-only declaration",
+    )
     resource_phases = {}
     fields = RESOURCE_FIELDS + (COMMITMENT_FIELDS if process_memory else ())
     for name in phases:
@@ -374,6 +628,7 @@ def validate(directory):
             " Commitment high-water marks include unsampled transient commitment but are "
             "process-lifetime values: differences show new lifetime highs, not local phase peaks."
         )
+    thread_windows = {}
     registry_path = probe / "registries.json"
     if "registry_schema" in manifest:
         require(type(manifest["registry_schema"]) is int and manifest["registry_schema"] == 1, "unsupported registry schema")
@@ -387,6 +642,7 @@ def validate(directory):
                 record["window"] for record in result["registry_observations"] if record["name"] == name
             )
             result["teardown_resources"][name] = window_resources(resources, name, window, fields)
+            thread_windows[name] = window
         result["limitations"] += (
             " Registry reports count public wgpu IDs/vacant slots, not complete native, "
             "queued/in-flight allocations or GPU bytes; teardown retains the reporting instance."
@@ -426,6 +682,7 @@ def validate(directory):
             result["lifecycle_resources"][name] = window_resources(
                 resources, name, record["window"], fields, require_sample=True,
             )
+            thread_windows[name] = record["window"]
         result["limitations"] += (
             " Repeated whole-owner windows also drop the reporting instance. Temporary oracle "
             "bytes count two CPU RGBA payloads only, not spare capacity/all temporary allocations; completed "
@@ -438,6 +695,12 @@ def validate(directory):
             and not {"lifecycle_repeats", "lifecycle_churn_cycles"}.intersection(manifest),
             "undeclared lifecycle observations",
         )
+    if "thread_ownership_schema" in binding:
+        require(
+            process_memory and "lifecycle_observations" in result,
+            "thread ownership requires current lifecycle/final memory receipts",
+        )
+    result["thread_ownership"] = check_thread_ownership(binding, resources, thread_windows)
     (directory / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 

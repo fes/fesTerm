@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -271,6 +272,163 @@ class SessionAgingTests(unittest.TestCase):
                 with self.subTest(binding=changed_binding, manifest=changed_manifest), self.assertRaises(ValueError):
                     aging.check_process_memory(changed_binding, changed_manifest, resources, probe)
 
+    def thread_binding(self):
+        return {
+            "thread_ownership_schema": 1, "thread_ownership_methods": list(aging.THREAD_METHODS),
+            "thread_ownership_bounds": {**aging.THREAD_BOUNDS, "samples": 121},
+            "timeout_seconds": 60, "resource_sample_interval_ms": 500,
+        }
+
+    def thread_sample(self, phase, started, completed, tid=9, created=500, cpu=10):
+        return {
+            "pid": 7, "phase": phase, "unix_ms": completed, "thread_count": 1,
+            "thread_ownership": {
+                "schema": 1, "started_unix_ms": started, "completed_unix_ms": completed,
+                "module_snapshot": {"status": "observed", "count": 3, "reason": None},
+            },
+            "threads": [{
+                "id": tid, "cpu_ms": cpu,
+                "ownership": {
+                    "status": "observed", "reason": None,
+                    "creation_filetime_100ns": aging.FILETIME_UNIX_OFFSET + created * 10000,
+                    "description": {"status": "named", "value": "fixture worker", "reason": None},
+                    "start_address": {"status": "available", "value": "0x0000000012345678", "reason": None},
+                    "start_module": {"status": "mapped", "value": "owned-fixture.dll", "reason": None},
+                },
+            }],
+        }
+
+    def test_thread_identity_windows_clip_intervals_keep_zero_cpu_and_disambiguate_reused_tids(self):
+        windows = {
+            "lifecycle-0-dropped": {"started_unix_ms": 1000, "completed_unix_ms": 2000},
+            "lifecycle-1-dropped": {"started_unix_ms": 3000, "completed_unix_ms": 4000},
+        }
+        samples = [
+            self.thread_sample("lifecycle-0-dropped", 999, 1001, cpu=1),
+            self.thread_sample("lifecycle-0-dropped", 1100, 1110),
+            self.thread_sample("lifecycle-0-dropped", 1900, 1910),
+            self.thread_sample("lifecycle-0-dropped", 1999, 2001, cpu=999),
+            self.thread_sample("lifecycle-1-dropped", 3100, 3110, created=2500, cpu=0),
+            self.thread_sample("complete", 4100, 4110, created=2500, cpu=0),
+        ]
+        result = aging.check_thread_ownership(self.thread_binding(), samples, windows)
+        first = result["held_windows"]["lifecycle-0-dropped"]
+        second = result["held_windows"]["lifecycle-1-dropped"]
+        self.assertEqual(first["sample_count"], 2)
+        self.assertEqual(first["boundary_excluded_samples"], 1)
+        self.assertEqual(first["threads"][0]["observed_cpu_delta_ms"], 0)
+        self.assertIsNone(second["threads"][0]["observed_cpu_delta_ms"])
+        self.assertEqual(second["newly_observed_since_previous_window"], result["final_observed_identities"])
+        self.assertEqual(second["not_observed_from_previous_window"][0]["id"], 9)
+        self.assertNotEqual(
+            second["not_observed_from_previous_window"][0]["creation_filetime_100ns"],
+            second["newly_observed_since_previous_window"][0]["creation_filetime_100ns"],
+        )
+        self.assertEqual(second["observed_again_from_previous_window"], [])
+        with self.assertRaisesRegex(ValueError, "complete thread observation interval"):
+            aging.check_thread_ownership(self.thread_binding(), samples[:1], {"lifecycle-0-dropped": windows["lifecycle-0-dropped"]})
+
+    def test_thread_metadata_requires_complete_declarations_identity_bounds_and_ordered_cpu(self):
+        binding = self.thread_binding()
+        samples = [
+            self.thread_sample("lifecycle-0-dropped", 1100, 1110),
+            self.thread_sample("complete", 2100, 2110),
+        ]
+        mutations = [
+            lambda declaration, data: declaration.pop("thread_ownership_methods"),
+            lambda declaration, data: declaration.update(thread_ownership_schema=True),
+            lambda declaration, data: declaration["thread_ownership_bounds"].pop("modules_per_sample"),
+            lambda declaration, data: data[0].pop("thread_ownership"),
+            lambda declaration, data: data[0]["thread_ownership"].pop("module_snapshot"),
+            lambda declaration, data: data[0]["thread_ownership"]["module_snapshot"].update(count=1025),
+            lambda declaration, data: data[0]["thread_ownership"].update(started_unix_ms=1111),
+            lambda declaration, data: data[1]["thread_ownership"].update(started_unix_ms=1109),
+            lambda declaration, data: data[0].update(thread_count=2),
+            lambda declaration, data: data[0].update(threads=data[0]["threads"] * 257, thread_count=257),
+            lambda declaration, data: (
+                data[0]["threads"].append(copy.deepcopy(data[0]["threads"][0])),
+                data[0].update(thread_count=2),
+            ),
+            lambda declaration, data: data[0]["threads"][0].pop("cpu_ms"),
+            lambda declaration, data: data[0]["threads"][0]["ownership"].pop("creation_filetime_100ns"),
+            lambda declaration, data: data[0]["threads"][0]["ownership"].update(creation_filetime_100ns=None),
+            lambda declaration, data: data[0]["threads"][0]["ownership"]["description"].update(value="x" * 257),
+            lambda declaration, data: data[0]["threads"][0]["ownership"]["description"].update(value="\U0001f600" * 129),
+            lambda declaration, data: data[0]["threads"][0]["ownership"]["start_address"].update(value="0x0000000000000000"),
+            lambda declaration, data: data[1]["threads"][0].update(cpu_ms=9),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                declaration, data = copy.deepcopy(binding), copy.deepcopy(samples)
+                mutate(declaration, data)
+                with self.assertRaises(ValueError):
+                    aging.check_thread_ownership(declaration, data, {})
+
+    def test_thread_metadata_unavailable_and_raced_observations_keep_reasons_not_zeroes(self):
+        binding = self.thread_binding()
+        sample = self.thread_sample("lifecycle-0-dropped", 1100, 1110)
+        owner = sample["threads"][0]["ownership"]
+        owner["description"] = {"status": "unnamed", "value": None, "reason": None}
+        owner["start_address"] = {"status": "unavailable", "value": None, "reason": "api-unavailable:NtQueryInformationThread"}
+        owner["start_module"] = {"status": "unavailable", "value": None, "reason": "api-unavailable:NtQueryInformationThread"}
+        aging.check_thread_ownership(binding, [sample], {})
+        owner["start_address"] = {"status": "available", "value": "0x0000000012345678", "reason": None}
+        owner["start_module"] = {"status": "unmapped", "value": None, "reason": "address-not-in-owned-module-snapshot"}
+        aging.check_thread_ownership(binding, [sample], {})
+        sample["thread_ownership"]["module_snapshot"] = {
+            "status": "unavailable", "count": None, "reason": "Process.Modules:access-denied",
+        }
+        owner["start_module"] = {"status": "unavailable", "value": None, "reason": "Process.Modules:access-denied"}
+        aging.check_thread_ownership(binding, [sample], {})
+        raced = copy.deepcopy(sample["threads"][0])
+        raced.update(id=10, cpu_ms=None)
+        raced["ownership"].update(status="raced", reason="thread-exited-before-open", creation_filetime_100ns=None)
+        for key in ("description", "start_address", "start_module"):
+            raced["ownership"][key] = {"status": "unavailable", "value": None, "reason": "thread-exited-before-open"}
+        sample["threads"].append(raced)
+        sample["thread_count"] = 2
+        result = aging.check_thread_ownership(binding, [sample], {
+            sample["phase"]: {"started_unix_ms": 1000, "completed_unix_ms": 2000},
+        })
+        self.assertEqual(result["held_windows"][sample["phase"]]["unknown_thread_observations"], 1)
+        self.assertEqual(len(result["final_observed_identities"]), 1)
+        for mutate in [
+            lambda data: data["threads"][1].update(cpu_ms=0),
+            lambda data: data["threads"][1]["ownership"].update(reason=None),
+            lambda data: data["threads"][0]["ownership"]["start_module"].update(reason=None),
+        ]:
+            malformed = copy.deepcopy(sample)
+            mutate(malformed)
+            with self.subTest(mutation=mutate), self.assertRaises(ValueError):
+                aging.check_thread_ownership(binding, [malformed], {})
+
+    def test_historical_thread_counters_are_not_creation_identity_or_metadata_evidence(self):
+        old = {"phase": "complete", "threads": [{"id": 9, "cpu_ms": 0}]}
+        self.assertFalse(aging.check_thread_ownership({}, [old], {})["available"])
+        with self.assertRaisesRegex(ValueError, "undeclared"):
+            aging.check_thread_ownership({}, [self.thread_sample("complete", 1100, 1110)], {})
+        with self.assertRaisesRegex(ValueError, "undeclared"):
+            aging.check_thread_ownership({"thread_ownership_methods": list(aging.THREAD_METHODS)}, [old], {})
+
+    def test_windows_description_copy_is_length_admitted_before_managed_allocation(self):
+        helper = (
+            Path(__file__).resolve().parents[2] / "scripts" / "windows-aging-thread-ownership.ps1"
+        ).read_text()
+        self.assertNotRegex(helper, r"PtrToStringUni\s*\(\s*description\s*\)")
+        self.assertRegex(
+            helper,
+            r"while \(length <= labelLimit && Marshal\.ReadInt16\(description, length \* 2\) != 0\)\s*\+\+length;",
+        )
+        admission = re.search(
+            r"if \(length > labelLimit\) \{(?P<refusal>.*?)\} else \{(?P<copy>.*?)\n\s*\}",
+            helper, re.DOTALL,
+        )
+        self.assertIsNotNone(admission)
+        self.assertNotIn("PtrToStringUni", admission["refusal"])
+        self.assertIn("description-over-limit:at-least:", admission["refusal"])
+        self.assertIn("Marshal.PtrToStringUni(description, length)", admission["copy"])
+        self.assertLess(helper.index("labelLimit < 1 || labelLimit > 256"), helper.index("OpenThread(0x0040"))
+
     def test_complete_source_bound_matrix_keeps_adverse_results(self):
         with self.owned_directory() as temporary:
             root = Path(temporary)
@@ -316,6 +474,7 @@ class SessionAgingTests(unittest.TestCase):
             self.assertEqual(len(result["phases"]), 12)
             self.assertEqual(result["phases"]["churned-active"]["summary"]["process_cpu_ms"], 500)
             self.assertEqual(result["resources"]["rebuilt-idle"]["sample_count"], 0)
+            self.assertFalse(result["thread_ownership"]["available"])
             self.assertNotIn("registry_observations", result)
             registry_records = self.registry_records([
                 "fresh", "churn-1", "churned", *aging.TEARDOWN_POINTS[:2],
@@ -374,6 +533,30 @@ class SessionAgingTests(unittest.TestCase):
             self.assertEqual(result["process_memory"]["lifetime_peak_commitment_bytes"], 12000)
             self.assertEqual(result["lifecycle_resources"]["lifecycle-1-dropped"]["commitment_bytes"]["median"], 9000)
             self.assertEqual(result["lifecycle_observations"], lifecycle_records)
+            owned_resources = copy.deepcopy(resources)
+            for name in aging.TEARDOWN_POINTS:
+                owned_resources.insert(1, {**resources[1], "phase": name})
+            for item in owned_resources:
+                item.update(self.thread_sample(item["phase"], item["unix_ms"], item["unix_ms"]))
+            owned_binding = {**binding, **self.thread_binding()}
+            (root / "source.json").write_text(json.dumps(owned_binding))
+            (root / "resources.jsonl").write_text("".join(json.dumps(item) + "\n" for item in owned_resources))
+            (probe / "sampled.json").write_text(json.dumps(owned_resources[-1]))
+            result = aging.validate(root)
+            self.assertTrue(result["thread_ownership"]["available"])
+            self.assertEqual(len(result["thread_ownership"]["held_windows"]), 6)
+            self.assertEqual(len(result["thread_ownership"]["final_observed_identities"]), 1)
+            incomplete_receipt = copy.deepcopy(owned_resources[-1])
+            incomplete_receipt.pop("thread_ownership")
+            (probe / "sampled.json").write_text(json.dumps(incomplete_receipt))
+            with self.assertRaisesRegex(ValueError, "receipt"):
+                aging.validate(root)
+            (probe / "sampled.json").write_text(json.dumps(owned_resources[-1]))
+            (root / "source.json").write_text(json.dumps(binding))
+            with self.assertRaisesRegex(ValueError, "undeclared thread ownership"):
+                aging.validate(root)
+            (root / "resources.jsonl").write_text("".join(json.dumps(item) + "\n" for item in resources))
+            (probe / "sampled.json").write_text(json.dumps(resources[-1]))
             for change in ({"lifecycle_repeats": 1}, {"lifecycle_schema": True}, {"lifecycle_churn_cycles": 3}):
                 (probe / "manifest.json").write_text(json.dumps({**manifest, **change}))
                 with self.subTest(change=change), self.assertRaisesRegex(ValueError, "lifecycle"):

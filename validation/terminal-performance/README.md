@@ -308,6 +308,77 @@ This automated implementation coverage does not itself claim a completed aging
 run. The cumulative short offscreen execution below is separate evidence;
 native qualification and multi-day capture remain CP-18/#297/#282 work.
 
+### Optional owned-thread identity discriminator
+
+`check-windows-session-aging.ps1 -ThreadOwnership` adds supervisor-only metadata
+to the same explicitly owned offscreen child. It does not change Rust/core,
+renderer, submission, teardown, frame or production scheduling behavior.
+The optional suite forwards `FESTERM_AGING_THREAD_OWNERSHIP=1` only when the
+existing `FESTERM_RUN_SESSION_AGING=1` aging opt-in is also enabled.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-thread-identity -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900 -ThreadOwnership
+```
+
+This command is a pending runtime discriminator, not evidence of an executed
+metadata capture. The parent supervisor must separately authorize its GPU slot;
+it does not permit desktop activation, native input or an automatic retry.
+
+Source receipts declare `thread_ownership_schema=1`, the three exact
+`thread_ownership_methods` and all `thread_ownership_bounds`. Every process
+sample then carries a complete `thread_ownership` envelope: schema, UTC
+start/completion milliseconds and the owned module snapshot's status/count/reason.
+Existing `threads[].cpu_ms` counters are read from the same owned thread handle
+as `GetThreadTimes`' real creation FILETIME. `GetProcessIdOfThread` verifies
+the owned child before any CPU, creation, description or start-address query;
+handles are closed after each read. Matching uses **TID plus creation FILETIME**,
+never TID alone. Names use `GetThreadDescription`; the optional Win32 start
+address uses `NtQueryInformationThread` class 9 and is labeled only against the
+owned child's `Process.Modules` snapshot. No foreign process is inventoried.
+
+Admitted/emitted inventories are at most 256 threads and 1,024 modules per
+sample, with 256 UTF-16 units per retained label,
+131,072 total thread records, 64 MiB of resource JSONL, and at most
+`2 * TimeoutSeconds + 1` samples at the existing 500 ms requested interval.
+Inventory/log overflow fails the supervisor with an explicit over-limit reason
+and preserves the failed run. An over-limit description/module name is instead
+recorded as unavailable with its length or proven lower bound, not truncated.
+Thread descriptions inspect at most 257 native UTF-16 units (514 bytes,
+including the possible terminator) before copying: the successful managed
+`PtrToStringUni(pointer, length)` copy has an explicit admitted length of at
+most 256 units. A longer prefix is refused without a managed description copy
+or an unbounded terminator scan; the full native length is not inferred.
+`GetThreadDescription` itself still allocates an OS-owned native buffer, which
+is released with `LocalFree`. `Process.Threads`/`Process.Modules` and their
+wrapper arrays are materialized before count admission, and module names can
+already exist in managed API snapshots before their label check. These limits
+bound admitted records/retained labels and resource-log bytes, **not total
+native/transient allocations, API collection capacities, allocator overhead or
+driver resources**. Access-denied module
+enumeration, unavailable API/status results, unnamed threads, unmapped start
+addresses and exited/recycled TID races remain explicit. Unknown creation/CPU
+is null, never fabricated zero; unexpected native/enumeration failures remain
+failures, not blanket-caught successful samples.
+
+The checker admits a thread observation to a held teardown/whole-owner window
+only when its **entire sampling interval** lies within that window's existing
+UTC endpoints and its phase agrees. It reports clipped boundary samples,
+identity sets newly/repeatedly/not observed across held windows, final observed
+identities, metadata labels, unknown/raced observations and first-to-last CPU
+deltas. One observation has no delta, not zero work. A zero measured delta with
+two observations is preserved; absence from a sampled set is not proof of exit
+and repeated presence is not continuous-liveness evidence.
+
+Historical undeclared receipts remain valid and explicitly lack this creation/
+metadata evidence. Declared new receipts cannot omit fields, inventories,
+methods, bounds or the final source-bound memory receipt; existing executable
+hash, twelve-phase/frame/timing, exact PNG and lifecycle checks remain in force.
+Descriptions/start modules are **labels, not stacks or private-byte ownership**:
+they do not establish an app-owned causal root, attribute driver allocations,
+prove a leak or accept a resource cap. Actual labeled runtime observations remain
+pending; CP-18/#297/#282 and native qualification are unchanged.
+
 ### 2026-10-06 cumulative short retirement observations
 
 The revised supervisor completed at exact clean
@@ -349,7 +420,14 @@ The held post-drop observations remain adverse rather than being hidden:
 
 Renderer-only destruction retained eight public IDs and approximately
 516-540 MiB commitment; complete fixture/context destruction cleared those IDs.
-The final sample still had 26 threads. These whole-process observations include
+The final sample still had 26 threads. Inspection of the already saved TID/CPU
+samples found TIDs `42692` and `39200` newly present in the second and third
+held rounds respectively; both remain in the final sample, and no TID from the
+previous held round disappears. Every matched first-to-last thread CPU delta
+inside each held round is zero. Those historical samples lack real creation
+identity and names/start modules, so TID recycling and ownership remain unknown.
+No metadata or thread-stack capture is inferred from that inspection.
+These whole-process observations include
 the test harness and do not attribute driver-private bytes or thread stacks.
 Three rounds do not establish long-run boundedness, a leak, complete native
 retirement or an accepted process-resource cap. Reconstruction is not native
