@@ -1678,6 +1678,7 @@
         "unprotected_created_child_is_rejected_before_caller_bytes_can_be_written",
         "exclusive_private_file_blocks_other_readers_after_its_dacl_is_broadened",
         "exclusive_private_file_uses_a_transient_move_and_blocks_later_delete_access",
+        "conditional_publication_follows_the_retained_directory_and_refuses_collisions",
         "captured_file_uses_transient_moves_and_a_final_pathname_lock",
         "unsupported_security_metadata_is_refused_before_application",
         "alternate_data_streams_are_detected_and_refused",

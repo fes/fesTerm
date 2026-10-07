@@ -3,6 +3,26 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Repairing native Windows conditional save publication
+
+The isolated Windows save check in #337 finally separated a publication
+failure from the earlier extended-attribute diagnosis: ordinary handle-relative
+moves were reported as an unsupported filesystem. Native
+`NtSetInformationFile` now submits `FileRenameInformation` with replacement
+disabled against the exact retained destination directory. The aligned buffer
+includes the complete native structure even for a one-character filename.
+
+Reaching final verification exposed two related access-mask errors. EA
+inspection requires EA-read access, and a metadata-only handle does not
+participate in delete-sharing checks. Verification now requests EA-read and
+delete access without delete sharing, while still requesting no payload data
+access. Existing exclusive-payload and captured-original regressions prove
+that the final name is pinned. A new unprivileged native regression renames
+and substitutes the destination directory, publishes a short filename into
+the retained directory, and proves a collision leaves both versions intact.
+Audit-privilege and unsupported-EA refusals remain unchanged; local endpoint
+protection and native crash/power-loss evidence are not bypassed or accepted.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory

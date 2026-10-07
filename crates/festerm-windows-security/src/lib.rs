@@ -22,10 +22,10 @@ mod imp {
     use windows_sys::Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            FileStreamInformation, NtCreateFile, NtQueryEaFile, NtQueryInformationFile,
-            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_FULL_EA_INFORMATION, FILE_NON_DIRECTORY_FILE,
-            FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_STREAM_INFORMATION,
-            FILE_SYNCHRONOUS_IO_NONALERT,
+            FileRenameInformation, FileStreamInformation, NtCreateFile, NtQueryEaFile,
+            NtQueryInformationFile, NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE,
+            FILE_FULL_EA_INFORMATION, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
+            FILE_RENAME_INFORMATION, FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
         },
     };
     use windows_sys::Win32::{
@@ -57,14 +57,14 @@ mod imp {
             TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
-            FileBasicInfo, FileDispositionInfo, FileRenameInfoEx, GetFileInformationByHandle,
+            FileBasicInfo, FileDispositionInfo, GetFileInformationByHandle,
             GetFileInformationByHandleEx, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
             DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED,
             FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
             FILE_DELETE_CHILD, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
-            READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_READ_EA, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE,
+            WRITE_DAC, WRITE_OWNER,
         },
         System::{
             Console::{
@@ -1294,6 +1294,8 @@ mod imp {
 
     /// Opens a pathname for identity and security verification without
     /// requesting data access from an exclusively retained save payload.
+    /// Delete access without delete sharing pins its name; attribute-only
+    /// handles do not participate in delete-sharing checks.
     pub fn open_file_no_reparse_for_verification(
         directory: &File,
         name: &Path,
@@ -1301,7 +1303,7 @@ mod imp {
         open_file_no_reparse_with_access_and_sharing(
             directory,
             name,
-            FILE_READ_ATTRIBUTES | READ_CONTROL,
+            FILE_READ_ATTRIBUTES | FILE_READ_EA | READ_CONTROL | DELETE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
         )
     }
@@ -1315,7 +1317,7 @@ mod imp {
         open_file_no_reparse_with_access_and_sharing(
             directory,
             name,
-            FILE_READ_ATTRIBUTES | READ_CONTROL | ACCESS_SYSTEM_SECURITY,
+            FILE_READ_ATTRIBUTES | FILE_READ_EA | READ_CONTROL | ACCESS_SYSTEM_SECURITY | DELETE,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
         )
     }
@@ -1470,7 +1472,7 @@ mod imp {
             ));
         }
         let target: Vec<u16> = target.as_os_str().encode_wide().collect();
-        let header = mem::offset_of!(FILE_RENAME_INFO, FileName);
+        let header = mem::offset_of!(FILE_RENAME_INFORMATION, FileName);
         let name_bytes = target
             .len()
             .checked_mul(mem::size_of::<u16>())
@@ -1478,11 +1480,13 @@ mod imp {
             .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
         let size = header
             .checked_add(name_bytes as usize)
+            .map(|size| size.max(mem::size_of::<FILE_RENAME_INFORMATION>()))
+            .and_then(|size| u32::try_from(size).ok())
             .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-        let mut storage = vec![0usize; size.div_ceil(mem::size_of::<usize>())];
-        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        let mut storage = vec![0usize; (size as usize).div_ceil(mem::size_of::<usize>())];
+        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
         unsafe {
-            (*information).Anonymous.Flags = 0;
+            (*information).Anonymous.ReplaceIfExists = false;
             (*information).RootDirectory = target_directory.as_raw_handle() as HANDLE;
             (*information).FileNameLength = name_bytes;
             ptr::copy_nonoverlapping(
@@ -1491,16 +1495,19 @@ mod imp {
                 target.len(),
             );
         }
+        let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
         let renamed = unsafe {
-            SetFileInformationByHandle(
+            NtSetInformationFile(
                 source.as_raw_handle() as HANDLE,
-                FileRenameInfoEx,
+                &raw mut status,
                 information.cast(),
-                size as u32,
+                size,
+                FileRenameInformation,
             )
         };
-        if renamed == 0 {
-            let error = io::Error::last_os_error();
+        if renamed != STATUS_SUCCESS {
+            let error =
+                io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(renamed) as i32 });
             if matches!(
                 error.raw_os_error(),
                 Some(code)
@@ -2140,6 +2147,39 @@ mod imp {
             let error = open_file_no_reparse_for_move(&directory_handle, Path::new("published.md"))
                 .unwrap_err();
             assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+        }
+
+        #[test]
+        fn conditional_publication_follows_the_retained_directory_and_refuses_collisions() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let staging =
+                create_current_user_only_directory(&directory_handle, Path::new("stage")).unwrap();
+            let destination =
+                create_current_user_only_directory(&directory_handle, Path::new("destination"))
+                    .unwrap();
+            let retained_path = directory.0.join("retained");
+            fs::rename(directory.0.join("destination"), &retained_path).unwrap();
+            fs::create_dir(directory.0.join("destination")).unwrap();
+            fs::write(directory.0.join("stage/payload"), b"published").unwrap();
+            let mover = open_file_no_reparse_for_move(&staging, Path::new("payload")).unwrap();
+
+            rename_file_noreplace(&mover, &destination, Path::new("x")).unwrap();
+
+            assert_eq!(fs::read(retained_path.join("x")).unwrap(), b"published");
+            assert!(!directory.0.join("destination/x").exists());
+            fs::write(directory.0.join("stage/collision"), b"later").unwrap();
+            let collision =
+                open_file_no_reparse_for_move(&staging, Path::new("collision")).unwrap();
+            let error =
+                rename_file_noreplace(&collision, &destination, Path::new("x")).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+            assert_eq!(fs::read(retained_path.join("x")).unwrap(), b"published");
+            assert_eq!(
+                fs::read(directory.0.join("stage/collision")).unwrap(),
+                b"later"
+            );
+            assert!(!directory.0.join("destination/x").exists());
         }
 
         #[test]

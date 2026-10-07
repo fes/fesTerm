@@ -114,7 +114,11 @@ The editor never resolves a divergence silently.
   publication while the retained payload handle denies every other read/write
   open. A transient identity-checked delete handle publishes it; after that
   handle closes, a non-delete-sharing pathname handle pins the published name
-  through final identity and security verification. The displaced original is
+  through final identity and security verification. Windows no-overwrite moves
+  use native `NtSetInformationFile` with `FileRenameInformation` and
+  `ReplaceIfExists = false`, relative to the retained destination handle.
+  Verification requests EA-read and delete access without delete sharing;
+  metadata-only handles cannot enforce that pathname lock. The displaced original is
   immediately restricted to the current user and also has a separately written
   private byte copy. An NTFS EFS-encrypted target is
   refused before staging because fesTerm cannot yet preserve that encryption;
