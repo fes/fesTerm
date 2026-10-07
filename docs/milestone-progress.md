@@ -88,7 +88,9 @@ refuses before disk mutation, while a clean one contributes its recorded
 generation, or its explicit missing state accepts a confirmed-absent
 destination, and receives the source buffer with undo history intact on
 successful rebind. Final symbolic-link/reparse-point destinations refuse
-without being moved. Crash or power loss in the briefly absent-name window can
+without being moved. Unix refuses non-sticky shared-writable parents and
+permissive extended ACLs before staging while retaining restrictive ACL
+support. Crash or power loss in the briefly absent-name window can
 leave private recovery versions without startup discovery and remains an
 explicit CP-15 native/manual residual.
 

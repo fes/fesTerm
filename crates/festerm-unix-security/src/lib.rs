@@ -19,6 +19,15 @@ mod imp {
         acl: Vec<u8>,
     }
 
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct StagingParentSecurity {
+        uid: u32,
+        gid: u32,
+        mode: u32,
+        #[cfg(target_os = "macos")]
+        acl: Vec<u8>,
+    }
+
     pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
         let metadata = file.metadata()?;
         let mut total = 0usize;
@@ -55,22 +64,38 @@ mod imp {
 
     /// Captures the exact parent security state after refusing directories
     /// where another account can rename a newly created staging entry.
-    pub fn secure_staging_parent(directory: &File) -> io::Result<SecurityMetadata> {
+    pub fn secure_staging_parent(directory: &File) -> io::Result<StagingParentSecurity> {
         let metadata = directory.metadata()?;
         let mode = metadata.mode();
         let shared_writable = mode & 0o022 != 0;
+        #[cfg(target_os = "macos")]
+        let sticky = mode & u32::from(nix::libc::S_ISVTX) != 0;
+        #[cfg(not(target_os = "macos"))]
         let sticky = mode & nix::libc::S_ISVTX != 0;
         #[cfg(target_os = "macos")]
-        let access_list = macos_acl(directory)?;
+        let permissive_acl = macos_acl_has_allow_entry(directory)?;
         #[cfg(not(target_os = "macos"))]
-        let access_list: Vec<u8> = Vec::new();
-        if (shared_writable && !sticky) || !access_list.is_empty() {
+        let permissive_acl = false;
+        if (shared_writable && !sticky) || permissive_acl {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "the destination directory permits staging-name substitution",
             ));
         }
-        security_metadata(directory)
+        Ok(StagingParentSecurity {
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            mode,
+            #[cfg(target_os = "macos")]
+            acl: macos_acl(directory)?,
+        })
+    }
+
+    pub fn staging_parent_matches(
+        directory: &File,
+        expected: &StagingParentSecurity,
+    ) -> io::Result<bool> {
+        Ok(&secure_staging_parent(directory)? == expected)
     }
 
     pub fn make_private(file: &File) -> io::Result<()> {
@@ -431,12 +456,18 @@ mod imp {
         }
         let mut entry = std::ptr::null_mut();
         let has_entry = unsafe { acl_get_entry(acl, 0, &raw mut entry) };
-        if has_entry <= 0 {
+        if has_entry != 0 {
+            let error = io::Error::last_os_error();
             let freed = unsafe { acl_free(acl) };
-            if has_entry == 0 && freed == 0 {
+            if freed == 0
+                && matches!(
+                    error.raw_os_error(),
+                    Some(nix::libc::EINVAL) | Some(nix::libc::ENOENT)
+                )
+            {
                 return Ok(Vec::new());
             }
-            return Err(io::Error::last_os_error());
+            return Err(error);
         }
         let size = unsafe { acl_size(acl) };
         if size < 0 || size as usize > MAX_SECURITY_ATTRIBUTE_BYTES {
@@ -451,6 +482,67 @@ mod imp {
         }
         bytes.truncate(copied as usize);
         Ok(bytes)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn macos_acl_has_allow_entry(file: &File) -> io::Result<bool> {
+        use std::{
+            ffi::c_void,
+            os::fd::{AsRawFd, RawFd},
+        };
+
+        type Acl = *mut c_void;
+        type AclEntry = *mut c_void;
+        const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
+        const ACL_FIRST_ENTRY: i32 = 0;
+        const ACL_NEXT_ENTRY: i32 = -1;
+        const ACL_EXTENDED_ALLOW: i32 = 1;
+        unsafe extern "C" {
+            fn acl_get_fd_np(fd: RawFd, acl_type: i32) -> Acl;
+            fn acl_get_entry(acl: Acl, entry_id: i32, entry: *mut AclEntry) -> i32;
+            fn acl_get_tag_type(entry: AclEntry, tag_type: *mut i32) -> i32;
+            fn acl_free(object: *mut c_void) -> i32;
+        }
+
+        let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED) };
+        if acl.is_null() {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(nix::libc::ENOENT) {
+                return Ok(false);
+            }
+            return Err(error);
+        }
+        let mut entry = std::ptr::null_mut();
+        let mut entry_id = ACL_FIRST_ENTRY;
+        loop {
+            let found = unsafe { acl_get_entry(acl, entry_id, &raw mut entry) };
+            if found != 0 {
+                let error = io::Error::last_os_error();
+                let freed = unsafe { acl_free(acl) };
+                if freed == 0
+                    && matches!(
+                        error.raw_os_error(),
+                        Some(nix::libc::EINVAL) | Some(nix::libc::ENOENT)
+                    )
+                {
+                    return Ok(false);
+                }
+                return Err(error);
+            }
+            let mut tag_type = 0;
+            if unsafe { acl_get_tag_type(entry, &raw mut tag_type) } != 0 {
+                let error = io::Error::last_os_error();
+                let _ = unsafe { acl_free(acl) };
+                return Err(error);
+            }
+            if tag_type == ACL_EXTENDED_ALLOW {
+                if unsafe { acl_free(acl) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                return Ok(true);
+            }
+            entry_id = ACL_NEXT_ENTRY;
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -601,7 +693,7 @@ pub use imp::{
     make_private, make_private_directory, open_directory_read_nofollow,
     open_directory_search_nofollow, open_file_nofollow, preserve_security_metadata,
     rename_noreplace, reopen_directory_read, secure_staging_parent, security_metadata,
-    security_metadata_matches, SecurityMetadata,
+    security_metadata_matches, staging_parent_matches, SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(test)]
@@ -857,16 +949,51 @@ mod tests {
             .read(true)
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .mode(0o640)
             .open(&temporary_path)
             .unwrap();
+        let original_security = security_metadata(&original).unwrap();
+        assert!(!security_metadata_matches(&temporary, &original_security).unwrap());
 
         preserve_security_metadata(&original, &temporary).unwrap();
 
         assert_eq!(acl_lines(&original_path), acl_lines(&temporary_path));
+        assert!(security_metadata_matches(&temporary, &original_security).unwrap());
         assert_ne!(
             temporary.metadata().unwrap().modified().unwrap(),
             old_modified
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn restrictive_parent_acl_is_allowed_but_permissive_acl_is_refused() {
+        use std::process::Command;
+
+        let directory = TemporaryDirectory::new();
+        let status = Command::new("chmod")
+            .args(["+a", "everyone deny delete"])
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(secure_staging_parent(&directory.open()).is_ok());
+
+        let status = Command::new("chmod")
+            .arg("-N")
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = Command::new("chmod")
+            .args(["+a", "everyone allow add_file,delete_child"])
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            secure_staging_parent(&directory.open()).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
         );
     }
 

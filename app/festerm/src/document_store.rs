@@ -1061,10 +1061,14 @@ impl<'a> TemporaryFile<'a> {
                     .try_clone()
                     .map(cap_std::fs::Dir::into_std_file)
                     .map_err(classify_write_error)?;
-                if !festerm_unix_security::security_metadata_matches(&parent, &parent_security)
+                if !festerm_unix_security::staging_parent_matches(&parent, &parent_security)
                     .map_err(classify_write_error)?
                 {
                     drop(staging);
+                    tracing::warn!(
+                        path = %staging_directory.display(),
+                        "save staging was retained after the parent security state changed"
+                    );
                     return Err(SaveFailure::Interrupted);
                 }
             }

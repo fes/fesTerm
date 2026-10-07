@@ -1606,6 +1606,7 @@
         "security_snapshot_detects_xattr_changes_and_private_reset",
         "linux_security_copy_preserves_owner_mode_and_posix_acl",
         "macos_security_copy_preserves_extended_acl",
+        "restrictive_parent_acl_is_allowed_but_permissive_acl_is_refused",
         "private_creation_and_conditional_publication_keep_the_current_user_only_dacl",
         "private_directory_clears_inherited_access",
         "security_snapshot_keeps_only_settable_file_attributes",
