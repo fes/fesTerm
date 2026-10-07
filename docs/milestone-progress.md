@@ -3,6 +3,18 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Testing syntax queries independently of the parse deadline
+
+Windows CI on #354 and #355 found that the syntax-range regression could
+legitimately exhaust the production 40 ms parse budget while parsing its
+400-function fixture, leaving no spans to query. That regression now prepares
+its tree without elapsed-time cancellation through private parse options, so it
+tests range clipping independently of scheduler load. A separate deterministic
+cancel callback proves that abandonment clears old highlights, reports
+`ParseFailed`, does not retry the same revision and recovers on the next one.
+Production parsing retains its time and size bounds; no assertion is weakened
+and no product highlighting behavior is added.
+
 ## Routing the editor surface through eligible panel painting
 
 The first bounded #351 replay completed all eight picker controls with exact
