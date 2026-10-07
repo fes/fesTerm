@@ -3064,6 +3064,116 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RootDownloadIo {
+        files: HashMap<SftpPath, Vec<u8>>,
+        directories: HashMap<SftpPath, Vec<SftpDirectoryItem>>,
+        metadata_queries: Vec<SftpPath>,
+        mutations: Vec<(&'static str, SftpPath)>,
+    }
+
+    struct RootDownloadBackend {
+        io: Arc<Mutex<RootDownloadIo>>,
+    }
+
+    // All paths, including escaped drive/UNC paths, stay in memory even on the vulnerable worker.
+    impl TransferBackend for RootDownloadBackend {
+        fn metadata<'a>(
+            &'a mut self,
+            path: &'a SftpPath,
+        ) -> BackendFuture<'a, Option<SftpPathMetadata>> {
+            Box::pin(async move {
+                let mut io = self.io.lock().unwrap();
+                io.metadata_queries.push(path.clone());
+                let (file_type, size) = if io.directories.contains_key(path) {
+                    (SftpEntryType::Directory, None)
+                } else if let Some(bytes) = io.files.get(path) {
+                    (SftpEntryType::File, Some(bytes.len() as u64))
+                } else {
+                    return Ok(None);
+                };
+                Ok(Some(SftpPathMetadata {
+                    path: path.clone(),
+                    file_type,
+                    size,
+                    modified_at: None,
+                    permissions: None,
+                }))
+            })
+        }
+
+        fn read_directory<'a>(
+            &'a mut self,
+            path: &'a SftpPath,
+            budget: &'a SharedPlanningBudget,
+        ) -> DirectoryFuture<'a> {
+            Box::pin(async move {
+                let io = self.io.lock().unwrap();
+                let mut entries = PlanningQueue::new(budget);
+                for entry in io.directories.get(path).expect("directory fixture exists") {
+                    let reservation = budget
+                        .entry(entry.name.capacity(), path_memory_proxy_bytes(&entry.path))?;
+                    entries.push_back(Budgeted {
+                        value: entry.clone(),
+                        reservation,
+                    })?;
+                }
+                Ok(entries)
+            })
+        }
+
+        fn create_directory<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()> {
+            Box::pin(async move {
+                let mut io = self.io.lock().unwrap();
+                io.mutations.push(("create directory", path.clone()));
+                io.directories.insert(path.clone(), Vec::new());
+                Ok(())
+            })
+        }
+
+        fn remove_file<'a>(&'a mut self, path: &'a SftpPath) -> BackendFuture<'a, ()> {
+            Box::pin(async move {
+                let mut io = self.io.lock().unwrap();
+                io.mutations.push(("remove file", path.clone()));
+                io.files.remove(path);
+                Ok(())
+            })
+        }
+
+        fn rename<'a>(
+            &'a mut self,
+            source: &'a SftpPath,
+            destination: &'a SftpPath,
+        ) -> BackendFuture<'a, ()> {
+            Box::pin(async move {
+                let mut io = self.io.lock().unwrap();
+                io.mutations.push(("rename file", destination.clone()));
+                let bytes = io.files.remove(source).expect("copied temporary exists");
+                io.files.insert(destination.clone(), bytes);
+                Ok(())
+            })
+        }
+
+        fn copy_file<'a>(
+            &'a mut self,
+            source: &'a SftpPath,
+            destination: &'a SftpPath,
+            on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
+        ) -> CopyFuture<'a> {
+            Box::pin(async move {
+                let bytes = {
+                    let mut io = self.io.lock().unwrap();
+                    io.mutations.push(("copy file", destination.clone()));
+                    let bytes = io.files.get(source).expect("remote fixture exists").clone();
+                    io.files.insert(destination.clone(), bytes.clone());
+                    bytes.len() as u64
+                };
+                on_progress(bytes).map_err(|_| CopyFileError::Cancelled)?;
+                Ok(bytes)
+            })
+        }
+    }
+
     struct SlowEnumerationBackend {
         source: SftpPath,
         enumeration_started: Option<oneshot::Sender<()>>,
@@ -4776,6 +4886,194 @@ mod tests {
         );
 
         stdfs::remove_dir_all(root).expect("could not clean merge fixtures");
+    }
+
+    fn assert_top_level_download_root_rejected(name: &str, file_type: SftpEntryType) {
+        let root = unique_test_directory("top-level-root-admission");
+        let selected_directory = SftpPath::local(root.join("downloads"));
+        let source = SftpPath::remote(format!("/remote/{name}"));
+        let safe_source = SftpPath::remote("/remote/ordinary-root");
+        let follow_up_source = SftpPath::remote("/remote/after.txt");
+        let safe_destination = selected_directory.join_child("ordinary-root");
+        let safe_file = if file_type == SftpEntryType::Directory {
+            safe_destination.join_child("child.txt")
+        } else {
+            safe_destination.clone()
+        };
+        let follow_up_file = selected_directory.join_child("after.txt");
+        let sentinel = SftpPath::local(root.join("outside-sentinel.txt"));
+        let outside_directory = SftpPath::local(root.join("outside-folder"));
+        let directory_sentinel = outside_directory.join_child("child.txt");
+        let mut fixture = RootDownloadIo::default();
+        fixture
+            .directories
+            .insert(selected_directory.clone(), Vec::new());
+        fixture
+            .directories
+            .insert(outside_directory.clone(), Vec::new());
+        fixture
+            .files
+            .insert(sentinel.clone(), b"unchanged".to_vec());
+        fixture
+            .files
+            .insert(directory_sentinel.clone(), b"unchanged child".to_vec());
+        fixture
+            .files
+            .insert(follow_up_source.clone(), b"after rejection".to_vec());
+        for path in [&source, &safe_source] {
+            if file_type == SftpEntryType::Directory {
+                let child = path.join_child("child.txt");
+                fixture
+                    .files
+                    .insert(child.clone(), b"ordinary bytes".to_vec());
+                fixture.directories.insert(
+                    path.clone(),
+                    vec![SftpDirectoryItem {
+                        name: "child.txt".to_owned(),
+                        path: child,
+                        file_type: SftpEntryType::File,
+                        size: Some(14),
+                        modified_at: None,
+                        permissions: None,
+                    }],
+                );
+            } else {
+                fixture
+                    .files
+                    .insert(path.clone(), b"ordinary bytes".to_vec());
+            }
+        }
+        let io = Arc::new(Mutex::new(fixture));
+        let (events, follow_up_events) = test_runtime().block_on(async {
+            let (commands, mut receiver, _snapshot) = spawn_worker(RootDownloadBackend {
+                io: Arc::clone(&io),
+            })
+            .await;
+            let batch = queue_batch(
+                &commands,
+                vec![
+                    SftpTransferRequest::new(source.clone(), selected_directory.clone()).unwrap(),
+                    SftpTransferRequest::new(safe_source, selected_directory.clone()).unwrap(),
+                ],
+            );
+            let events = tokio::time::timeout(
+                Duration::from_secs(3),
+                collect_until_batch_finished(&mut receiver, batch.batch_id),
+            )
+            .await
+            .expect("root refusal must not stall other admitted work");
+            let follow_up = queue_numbered_batch(
+                &commands,
+                3,
+                SftpTransferRequest::new(follow_up_source, selected_directory.clone()).unwrap(),
+            );
+            let follow_up_events = tokio::time::timeout(
+                Duration::from_secs(3),
+                collect_until_batch_finished(&mut receiver, follow_up.batch_id),
+            )
+            .await
+            .expect("worker must remain available after root refusal");
+            (events, follow_up_events)
+        });
+
+        let io = io.lock().unwrap();
+        assert_eq!(io.files.get(&sentinel).unwrap(), b"unchanged");
+        assert_eq!(
+            io.files.get(&directory_sentinel).unwrap(),
+            b"unchanged child"
+        );
+        assert!(io.directories.contains_key(&outside_directory));
+        assert_eq!(io.files.get(&safe_file).unwrap(), b"ordinary bytes");
+        assert_eq!(io.files.get(&follow_up_file).unwrap(), b"after rejection");
+        assert!(
+            io.metadata_queries.contains(&selected_directory),
+            "the controls must normalize into an existing local directory"
+        );
+        let mut expected_mutations = Vec::new();
+        if file_type == SftpEntryType::Directory {
+            expected_mutations.push(("create directory", safe_destination));
+        }
+        expected_mutations.extend([
+            (
+                "copy file",
+                safe_file.parent_directory().join_child(&format!(
+                    "{}{}",
+                    safe_file.file_name().unwrap(),
+                    TEMP_SUFFIX
+                )),
+            ),
+            ("rename file", safe_file),
+            (
+                "copy file",
+                selected_directory.join_child("after.txt.festerm-part"),
+            ),
+            ("rename file", follow_up_file),
+        ]);
+        assert_eq!(
+            io.mutations, expected_mutations,
+            "forbidden top-level {file_type:?} root {name:?} reached local mutation before rejection"
+        );
+        assert!(matches!(
+            events.first(),
+            Some(SftpTransferEvent::BatchQueued { transfer_ids, .. })
+                if transfer_ids == &[SftpTransferId(1), SftpTransferId(2)]
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SftpTransferEvent::ItemFailed { transfer_id, reason, .. }
+                if *transfer_id == SftpTransferId(1)
+                    && (reason.contains("not safe") || reason.contains("escaped"))
+        )), "unsafe {file_type:?} root {name:?} must emit an observable path-safety failure: {events:?}");
+        assert!(!events.iter().any(|event| match event {
+            SftpTransferEvent::ItemStarted { transfer_id, .. }
+            | SftpTransferEvent::ItemCompleted { transfer_id, .. } => {
+                *transfer_id == SftpTransferId(1)
+            }
+            SftpTransferEvent::Collision(collision) => collision.transfer_id == SftpTransferId(1),
+            _ => false,
+        }));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SftpTransferEvent::ItemCompleted { transfer_id, bytes_transferred: 14, .. }
+                if *transfer_id == SftpTransferId(2)
+        )));
+        assert!(follow_up_events.iter().any(|event| matches!(
+            event,
+            SftpTransferEvent::ItemCompleted { transfer_id, bytes_transferred: 15, .. }
+                if *transfer_id == SftpTransferId(3)
+        )));
+    }
+
+    #[test]
+    fn top_level_download_file_root_rejects_relative_backslash_before_local_io() {
+        assert_top_level_download_root_rejected(r"..\escaped-root", SftpEntryType::File);
+    }
+
+    #[test]
+    fn top_level_download_directory_root_rejects_relative_backslash_before_local_io() {
+        assert_top_level_download_root_rejected(r"..\escaped-root", SftpEntryType::Directory);
+    }
+
+    #[test]
+    fn top_level_download_file_root_rejects_drive_and_unc_before_local_io() {
+        for name in [
+            r"C:\escaped-root",
+            "C:escaped-root",
+            r"\\server\share\escaped-root",
+        ] {
+            assert_top_level_download_root_rejected(name, SftpEntryType::File);
+        }
+    }
+
+    #[test]
+    fn top_level_download_directory_root_rejects_drive_and_unc_before_local_io() {
+        for name in [
+            r"C:\escaped-root",
+            "C:escaped-root",
+            r"\\server\share\escaped-root",
+        ] {
+            assert_top_level_download_root_rejected(name, SftpEntryType::Directory);
+        }
     }
 
     #[test]
