@@ -1038,6 +1038,16 @@ or native-latency evidence. The
 [complete Source record](../validation/windows-warp/README.md#2026-10-06-bounded-source-geometry-observations)
 retains the adverse observations; CP-06/CP-16/CP-17 classifications stay unchanged.
 
+Six subsequent alternating source-frozen process pairs preserve 24 matched
+encoded PNGs and 240 measured pixel guards with identical submitted work.
+The earlier large adverse Source drawing movement is not consistently
+reproduced: normal/narrow candidate drawing is slower in two/one of six pairs.
+All samples, the adverse Preview construction observations and the invalid
+first launcher attempt remain in the
+[balanced Source record](../validation/windows-warp/README.md#2026-10-06-balanced-source-controls).
+This is additional automated offscreen evidence, not native/manual acceptance
+or proof of a host cause; existing classifications and budgets are unchanged.
+
 The editor's opaque outer frame now uses the same eligible textureless-panel
 helper as existing chrome; layout, child widgets and all ordinary-path guards
 are unchanged. A real-editor regression asserts executed painting and exact

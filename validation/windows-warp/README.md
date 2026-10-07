@@ -167,6 +167,56 @@ callsite/layout/capacity observations, not global allocator, total-font or RSS
 accounting. Full traversal, Preview work, native scrolling/Find/presentation,
 physical latency, resource caps and broader platform evidence remain open.
 
+### 2026-10-06 balanced Source controls
+
+Six contemporaneous source-frozen process pairs alternate three before/after
+and three after/before orders. Before is exact clean
+`5fa487c635b4b43f0aed8017d85d42d9f142f565`, release executable SHA256
+`8fbaf53b6d1982ac8e85afdb7455f81dfefb0be70d6051b0581ea08a113d390c`;
+after is exact clean `a295d6596664362e86b31cf7dc56421d22bac432`, executable
+`8818649d835fc4a34d9fc123e8abf225925d3b327268602f577844e457738a44`.
+Each archived executable runs the existing exact ignored replay above with
+`markdown-controls`, its matching source held unchanged in the same physical
+fixture worktree, fresh output and the preserved current reference directory.
+The new production picker route is outside this Markdown-only comparison.
+
+All twelve processes complete with actual exit zero, source/binary/cleanliness
+checks before and after execution, and captured stdout/stderr. All four viewer
+controls in every pair preserve the exact encoded PNG: 24 cross-source
+comparisons and 240 measured original-renderer guards across both sources.
+Common submitted geometry/payload counts and the existing one-panel callback
+are identical. Adapter/format/scale remain Windows x64 DX12 CPU
+`Microsoft Basic Render Driver`, driver `10.0.26100.9278`, `Rgba8Unorm`, scale 2.
+No other owned build/probe runs in this slot; other shared-host activity is
+not controlled.
+
+| Actual viewer | Pooled before UI median (ms) | Pooled after UI median (ms) | Before completed draw/readback median (ms) | After median (ms) | After drawing slower in matched pairs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Preview normal | 12.902 | 15.460 | 342.924 | 338.484 | 4 / 6 |
+| Preview narrow | 11.594 | 12.423 | 76.284 | 76.747 | 2 / 6 |
+| Source normal | 6.028 | 4.263 | 463.637 | 468.603 | 2 / 6 |
+| Source narrow | 4.210 | 2.913 | 106.215 | 105.428 | 1 / 6 |
+
+Each pooled UI median covers 120 retained samples per source/scene; each pooled
+completed median covers 30, using `sorted[(len - 1) * percentile / 100]`.
+All six per-pair medians, orders and raw vectors remain available; pooled
+medians are not medians of the six pair medians. Source construction medians
+are 29.3%/30.8% lower, but individual reversals and adverse Preview construction
+remain. Normal Source pooled drawing is 1.1% higher despite four faster
+pair medians, illustrating why aggregate and paired observations both matter.
+The earlier large Source drawing increase is not consistently reproduced.
+These results do not establish its cause, a strict drawing-regression repair,
+isolated GPU timing, a quiet host or native latency/resource acceptance.
+
+An earlier coordinator attempted direct PowerShell invocation of the archived
+Windows-subsystem release tests. The launcher returned before process
+completion, and no complete reports existed at independent verification.
+That attempt is invalid and retained. The corrected driver uses `Start-Process`
+with separate stdout/stderr capture, a 240-second owned-process deadline,
+explicit completion/actual exit status, immutable executable hashes and
+source restoration. Successful launch is never substituted for completion.
+The existing source-bound observations above are not overwritten or relabeled.
+
 ### Optional same-frame black-backdrop attribution
 
 After reserving the exclusive runtime slot, set

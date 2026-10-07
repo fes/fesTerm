@@ -3,6 +3,28 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Rechecking Source drawing with balanced contemporaneous controls
+
+The first Source comparison had lower construction medians but higher drawing
+medians, including a large narrow-width increase. Six alternating source-frozen
+`5fa487c`/`a295d65` process pairs now retain every raw sample, all 24 matched
+encoded PNGs, 240 measured pixel guards and identical submitted geometry/payload.
+Both paths still execute the same single outer-panel callback.
+
+Pooled normal/narrow Source construction medians are 6.028/4.210 to
+4.263/2.913 ms. Drawing moves 463.637 to 468.603 ms normally and 106.215 to
+105.428 ms narrowly, with the candidate slower in only two/one of six matched
+pairs. The earlier large adverse drawing shift is not consistently reproduced;
+this neither proves a host cause nor accepts a drawing gain. Preview construction
+also has adverse pooled observations, preserved in the
+[balanced record](../validation/windows-warp/README.md#2026-10-06-balanced-source-controls).
+
+The first coordinator attempt incorrectly treated a Windows-subsystem launch
+return as child completion. It produced no complete reports and is retained as
+invalid, not a measurement. Explicit bounded owned-process waiting and captured
+exit status repair the diagnostic driver; no product behavior changed.
+Native latency, resource acceptance and the remaining Preview work stay open.
+
 ## Qualifying the default picker backdrop after the Source successor
 
 The narrowly owned Open File/Save As route now has actual cumulative application
