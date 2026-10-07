@@ -37,9 +37,18 @@ The bounded picker selector requires one complete unique shadow/frame pair
 and refuses simultaneous backdrop attribution. Six balanced ordered pairs
 require every original-renderer pixel and one additional executed callback,
 with original fill, stroke, rounding, blur and geometry recorded. Shared
-attribution mechanics retain the earlier backdrop oracle. This is a prepared
-whole-frame route/batching discriminator, not isolated shadow/shader timing,
-production enablement or native/resource acceptance.
+attribution mechanics retain the earlier backdrop oracle.
+
+Clean cumulative `2056b48` now completes all eight actual normal/narrow
+ready/error picker controls. Eight encoded predecessor PNGs, forty ordinary
+and ninety-six balanced paired pixel guards pass; the converted frame executes
+exactly one additional callback. Completed drawing/readback medians are
+53.0-68.5% lower, with all 48 converted draws faster than their paired ordinary
+draws. The same binary also requalifies all eight legacy backdrop controls.
+The [source-bound record](../validation/windows-warp/README.md#2026-10-06-opaque-picker-frame-observations)
+retains samples, original geometry and the shared-host limits. This motivates
+a separately qualified owned production route; it does not enable that route
+or isolate shadow/shader instructions, native latency or resource retirement.
 
 ## Qualifying the default picker backdrop after the Source successor
 

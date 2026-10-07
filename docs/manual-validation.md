@@ -1016,10 +1016,15 @@ separate. No native/manual classification or accepted budget changes.
 A further explicitly opted-in picker-frame diagnostic retains the current
 default backdrop and converts only one unique complete opaque frame plus its
 original black shadow. Full-frame pixel and actual callback/order controls
-cover the prepared two-scale path; selection/geometry rejection is device-free.
+cover the two-scale path; selection/geometry rejection is device-free.
 It records unchanged fill/stroke/rounding/blur and requires six balanced pairs,
-without accepting native latency or removing a visual effect. Actual eight-
-picker qualification remains separate; no manual classification changes.
+without accepting native latency or removing a visual effect. Clean `2056b48`
+now passes all eight actual picker controls with eight encoded predecessor
+PNGs, forty ordinary and ninety-six paired guards: drawing/readback medians
+are 53.0-68.5% lower and all 48 converted draws are faster within their pairs.
+The same binary preserves all eight legacy backdrop controls and their
+forty/ninety-six guards. These are shared-host whole-frame route observations,
+not production enablement or native acceptance; no manual classification changes.
 
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external

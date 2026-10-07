@@ -349,6 +349,65 @@ opaque-frame guards, shaders and renderer ownership remain unchanged.
 Native interaction, screen-reader, mixed-DPI/hardware, physical latency,
 device/driver retirement, resource caps and multi-day qualification stay open.
 
+### 2026-10-06 opaque picker-frame observations
+
+Clean cumulative `2056b48e7f41598f3a0e48aff4e5133d97264e8e`, tree
+`99763cbd476990ded55cc7c5b84e1ac89254d5f4`, ordinarily composes the frame
+diagnostic after #365 and the preceding bounded Source/default-backdrop fixes.
+The exact archived release executable has SHA-256
+`006e7dea88f2a796679c0e4c60bec01c75fba80ec41543dc5be133e5b32ea0e2`.
+The replay used Windows x64 DX12 CPU `Microsoft Basic Render Driver`,
+`Rgba8Unorm`, scale 2 and the same physical cumulative picker fixture path.
+Explicit bounded owned-process waiting retained actual exit 0, stable source
+and binary, and the complete 67.05-second execution.
+
+All eight actual ready/error normal/narrow pickers preserve the default
+predecessor's encoded PNG bytes. Forty ordinary and ninety-six paired measured
+original-renderer pixel guards pass. Six pairs per scene alternate three
+ordinary-first and three converted-first draws; every converted draw executes
+exactly one additional callback (Open normal 5 to 6, Open narrow 3 to 4, Save As
+4 to 5). The ordinary default backdrop remains converted in both arms. All
+48 converted draws are faster within their pairs:
+
+| Actual picker | Ordinary median ms | Converted frame median ms | Reduction |
+| --- | ---: | ---: | ---: |
+| Open File ready | 552.351 | 206.397 | 62.6% |
+| Open File ready narrow | 307.869 | 144.807 | 53.0% |
+| Open File error | 545.380 | 190.383 | 65.1% |
+| Open File error narrow | 298.463 | 135.824 | 54.5% |
+| Save As ready | 690.796 | 238.464 | 65.5% |
+| Save As ready narrow | 301.157 | 127.549 | 57.6% |
+| Save As error | 656.524 | 207.043 | 68.5% |
+| Save As error narrow | 282.875 | 110.349 | 61.0% |
+
+All raw vectors, seven finite completion buckets, original fill/stroke/
+rounding/blur, viewport/physical dimensions and submitted payload counts remain
+in the reports. Independent checking also requires exact removal of the
+attributed white-UV geometry from ordinary mesh counters, preserved image/
+padded-readback bytes and the original sorted-percentile convention.
+The same unchanged source and executable then complete the earlier actual
+eight-picker backdrop attribution in 101.66 seconds, retaining eight reference
+PNGs, forty ordinary and ninety-six paired guards and its original schema.
+
+Private artifacts are `followup-picker-frame-attribution-warp-v1` (archived
+binary, completion receipt, reports/PNGs and `verified-frame-summary.json`) and
+`followup-picker-frame-legacy-backdrop-warp-v1` (completion receipt and
+`verified-backdrop-summary.json`), under the existing session artifact root.
+The independent frame and legacy verifiers run after actual child completion.
+The first focused-test launcher attempt lacked the actual Python interpreter
+on PATH and selected the Windows Store alias; it is retained as a failed
+launcher, not passing tests. The unchanged-source corrected attempt passes all
+six frame/backdrop admission and two-scale pixel controls; scoped Clippy passes.
+
+These are one shared-host same-frame route/batching observations, not isolated
+shadow cost, shader-instruction attribution or GPU timestamps. Callback
+construction is excluded from drawing; no construction tradeoff is accepted
+from this timing alone. The shadow and dimming are not removed. Production
+frame routing is unchanged; a shipping owned-frame route still needs its own
+live Modal/fallback, pixels, construction and default-path qualification.
+Native presentation, physical latency and total/driver-private memory remain
+open.
+
 ### Optional same-frame opaque picker-frame attribution
 
 Set `FESTERM_WARP_UI_SCENES=picker-controls` and
