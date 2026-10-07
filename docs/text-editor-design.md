@@ -117,6 +117,15 @@ The history limit covers retained allocations, not candidate text, staged
 allocation overlap, undo/redo scratch, per-view text/layout, allocator overhead
 or process RSS. Reducing those separate transient costs remains distinct work.
 
+Length-changing multi-edit construction now emits the result in one ordered
+pass rather than repeatedly shifting suffixes. Apply and vi scratch use the
+same borrowed-span helper; inverse construction accounts for changed offsets
+without cloning inverse strings. Byte admission precedes result allocation,
+with existing line checks before commit. Single/equal-length undo/redo keeps
+its in-place path; multi-edit replay can briefly own an extra result bounded
+by the document limit (4 MiB by default), released/replaced within that call.
+It adds no long-lived owner and does not certify total peaks or fragmentation.
+
 Auto-save runs one debounce per document and is coalesced by construction,
 because a write is only considered once the content has stopped changing.
 Failures are not retried on a timer: the document stays dirty, keeps its error,
@@ -162,6 +171,24 @@ The shared Markdown Preview uses the same code-byte navigation as the viewer:
 the selected code row forwards its vertical target after the horizontal child
 closes. This keeps offscreen code reachable without changing per-view scroll,
 selection, source positions, or the original horizontal wrapping/targeting.
+
+Saved-local Preview and Split also use the viewer's bounded relative-image
+loader. The source is the real `DocumentOrigin::Local` path, never the origin
+label or a fallback filename. Remote, untitled and terminal-history documents
+cannot read local images, even when their labels resemble local paths. First
+Save and Save As/rebinding discard old image state and use the new real parent;
+reparses discard snapshot-specific caches and receivers, with running work
+remaining charged until it actually ends. Failed parsing releases hidden images
+and starts no loads for the retained old snapshot.
+
+The Settings **Image memory budget** is shared by all panes/windows (512 MiB
+default), with four actual manual/automatic workers globally and 64 automatic
+references per snapshot. Saturation preserves admitted images and visibly
+refuses new growth; temporary refusals recover after sufficient capacity
+returns or the budget increases. Failed images can be explicitly retried.
+Canonical directory confinement, byte/header limits and managed-allowance
+exclusions follow [ADR 0030](adr/0030-native-markdown-viewer.md); this is not
+a total-process memory claim.
 
 **Syntax highlighting** is on by default and colours source by what it means —
 keyword, string, comment, type — from the same engine and the same palette the
@@ -260,6 +287,17 @@ Completed/abandoned sequences release recording capacity above a small
 and replay borrows its keys rather than cloning another key array. The repeat
 budget does not bound document, register, undo, or replay scratch-text storage;
 those have separate ownership and size policies.
+
+Ordinary ready/Normal `h/l/j/k`, word, line-boundary and `G` motions plus
+count prefixes now borrow the current UTF-8 text without full-document
+character/offset indexes. Byte and indexed word coordinates share one
+algorithm; an empty-line fixed point does not repeat identical work for a
+large count. The final dot-repeat diff streams common prefix/suffix characters
+and copies only changed payloads. Operator/pending, Insert/Replace and Visual
+paths retain their keystroke-local indexes; long word/count/line jumps can
+still scan the text they actually cross. No persistent text/index cache is
+added: an in-place edit can preserve both address and length without preserving
+content. Document, register and recording limits and vi fidelity are unchanged.
 
 The `:` commands are all fesTerm-routed, which is the whole point of them.
 `:w` dispatches Save and reports success only once the durable replacement
