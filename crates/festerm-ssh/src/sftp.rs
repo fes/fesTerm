@@ -1090,12 +1090,20 @@ impl SftpSession {
     ) -> Result<PathBuf, SftpSessionError> {
         let basename = remote_file_name(remote_source)?.to_owned();
         match destination {
-            None => Ok(join_path_segment(&self.local_working_directory, &basename)),
+            None => join_remote_name_to_local_directory(
+                &self.local_working_directory,
+                &basename,
+                "resolve download destination",
+            ),
             Some(destination) => {
                 let mut candidate = resolve_local_path(&self.local_working_directory, destination)?;
                 if let Ok(metadata) = fs::metadata(&candidate).await {
                     if metadata.is_dir() {
-                        candidate = join_path_segment(&candidate, &basename);
+                        candidate = join_remote_name_to_local_directory(
+                            &candidate,
+                            &basename,
+                            "resolve download destination",
+                        )?;
                     }
                 }
                 Ok(candidate)
@@ -1805,6 +1813,71 @@ pub(crate) fn local_file_name(path: &Path) -> Result<&str, SftpSessionError> {
 
 pub(crate) fn join_path_segment(base: &Path, segment: &str) -> PathBuf {
     normalize_local_path(base.join(segment))
+}
+
+pub(crate) fn validate_remote_local_file_name(
+    name: &str,
+    operation: &'static str,
+) -> Result<(), SftpSessionError> {
+    // A Unix basename must not acquire path, stream, or device semantics locally.
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ');
+    let reserved_device = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"]
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+        || (stem.get(..3).is_some_and(|prefix| {
+            prefix.eq_ignore_ascii_case("COM") || prefix.eq_ignore_ascii_case("LPT")
+        }) && stem.get(3..).is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        }));
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name.ends_with(['.', ' '])
+        || name.chars().any(|character| {
+            character <= '\u{1f}'
+                || matches!(
+                    character,
+                    '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*'
+                )
+        })
+        || reserved_device
+    {
+        return Err(SftpSessionError::LocalOperationFailed {
+            operation,
+            path: name.to_owned(),
+            reason: "remote file name is not safe for a local destination; rename the remote entry or specify a safe local filename for a single-file download".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn join_remote_name_to_local_directory(
+    directory: &Path,
+    name: &str,
+    operation: &'static str,
+) -> Result<PathBuf, SftpSessionError> {
+    validate_remote_local_file_name(name, operation)?;
+    let directory = normalize_local_path(directory.to_path_buf());
+    let candidate = join_path_segment(&directory, name);
+    if candidate.parent() == Some(directory.as_path())
+        && candidate.file_name() == Some(std::ffi::OsStr::new(name))
+    {
+        return Ok(candidate);
+    }
+    Err(SftpSessionError::LocalOperationFailed {
+        operation,
+        path: display_path(&candidate),
+        reason: format!(
+            "resolved destination escaped the requested local directory {}",
+            display_path(&directory)
+        ),
+    })
 }
 
 pub(crate) fn join_remote_path(base: &str, segment: &str) -> String {
