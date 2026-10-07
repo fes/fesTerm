@@ -540,12 +540,42 @@ fn local_path_field(
 
 #[cfg(test)]
 pub(super) fn install_executable_fixture(context: &egui::Context) -> std::path::PathBuf {
-    struct FixtureBackend(std::path::PathBuf);
+    install_executable_fixture_with_release(context, None)
+}
+
+#[cfg(test)]
+pub(super) fn install_paused_executable_fixture(
+    context: &egui::Context,
+) -> (std::path::PathBuf, std::sync::mpsc::SyncSender<()>) {
+    let (release, receiver) = std::sync::mpsc::sync_channel(1);
+    (
+        install_executable_fixture_with_release(context, Some(receiver)),
+        release,
+    )
+}
+
+#[cfg(test)]
+fn install_executable_fixture_with_release(
+    context: &egui::Context,
+    release: Option<std::sync::mpsc::Receiver<()>>,
+) -> std::path::PathBuf {
+    struct FixtureBackend {
+        path: std::path::PathBuf,
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
     impl SearchBackend for FixtureBackend {
         fn search(&self, request: &SearchRequest) -> festerm_pty::PathSearchResult {
             let suggestions = if request.kind == SearchKind::Executable && request.query == "cargo"
             {
-                vec![self.0.clone()]
+                if let Some(release) = self
+                    .release
+                    .lock()
+                    .expect("fixture release lock is not poisoned")
+                    .take()
+                {
+                    release.recv().expect("fixture search must be released");
+                }
+                vec![self.path.clone()]
             } else {
                 Vec::new()
             };
@@ -556,7 +586,10 @@ pub(super) fn install_executable_fixture(context: &egui::Context) -> std::path::
         .expect("test executable has an absolute path")
         .with_file_name(if cfg!(windows) { "cargo.exe" } else { "cargo" });
     let service = PathAutocompleteService::new(
-        Arc::new(FixtureBackend(path.clone())),
+        Arc::new(FixtureBackend {
+            path: path.clone(),
+            release: Mutex::new(release),
+        }),
         Arc::new(spawn_worker),
     )
     .expect("fixture worker starts");

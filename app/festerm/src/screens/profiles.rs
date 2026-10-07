@@ -2198,11 +2198,15 @@ mod tests {
         // four-step budget and abort the test for a reason that has nothing
         // to do with what it is asserting.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut previous_rect = None;
         loop {
             harness.step();
-            if harness.query_by_label(label).is_some() {
+            // The first suggestion frame can still be sizing the popup.
+            let rect = harness.query_by_label(label).map(|node| node.rect());
+            if rect.is_some() && rect == previous_rect {
                 return;
             }
+            previous_rect = rect;
             assert!(
                 std::time::Instant::now() < deadline,
                 "timed out waiting for suggestion {label:?}"
@@ -2219,8 +2223,8 @@ mod tests {
         // which used to hide the dropdown out from under the click before
         // the suggestion ever received it.
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
-        let expected_path =
-            super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
+        let (expected_path, release) =
+            super::super::path_autocomplete::install_paused_executable_fixture(&harness.ctx);
         harness.run_ok();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
@@ -2230,6 +2234,11 @@ mod tests {
         harness.run_ok();
 
         let expected_label = expected_path.display().to_string();
+        assert!(harness.query_by_label("Searching…").is_some());
+        assert!(harness.query_by_label(&expected_label).is_none());
+        release
+            .send(())
+            .expect("fixture search must still be alive");
         wait_for_suggestion(&mut harness, &expected_label);
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
