@@ -305,13 +305,13 @@ mod imp {
 
     fn file_has_extended_attributes(file: &File) -> io::Result<bool> {
         let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
-        let mut probe = [0u8; 1];
+        let mut probe = [0u32; 2];
         let result = unsafe {
             NtQueryEaFile(
                 file.as_raw_handle() as HANDLE,
                 &raw mut status,
                 probe.as_mut_ptr().cast(),
-                probe.len() as u32,
+                mem::size_of_val(&probe) as u32,
                 false,
                 ptr::null(),
                 0,
