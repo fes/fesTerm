@@ -152,6 +152,7 @@ pub(crate) enum QuitConfirmationPurpose {
     /// wording and leaves every other window running.
     CloseWindow,
     InstallUpdate,
+    RestartAfterUpdate,
 }
 
 /// Aggregate confirmation shown once, for the whole application, before an

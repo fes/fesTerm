@@ -1565,6 +1565,32 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_recovery_close_keeps_the_secondary_window_alive() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        application.window_mut(1).queue_recovery_notice_for_test(
+            std::path::PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+        let mut output = context.run_ui(input, |ui| {
+            application.window_mut(1).frame_logic(ui.ctx());
+        });
+        output.textures_delta.clear();
+
+        application.close_finished_windows(&context);
+
+        assert_eq!(application.window_count(), 2);
+        assert!(!application.window_mut(1).window_close_accepted());
+    }
+
+    #[test]
     fn accepted_window_close_releases_its_last_document_views() {
         let (mut application, context) = application();
         application.open_window(&context, None);

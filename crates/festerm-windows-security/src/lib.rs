@@ -113,7 +113,12 @@ mod imp {
                 .previous
                 .as_ref()
                 .map_or(ptr::null_mut(), |token| token.as_raw_handle());
-            let _ = unsafe { SetThreadToken(ptr::null(), previous) };
+            if unsafe { SetThreadToken(ptr::null(), previous) } == 0 {
+                tracing::error!(
+                    error = %io::Error::last_os_error(),
+                    "the saving thread's prior Windows security token could not be restored"
+                );
+            }
         }
     }
 
@@ -1180,7 +1185,7 @@ mod imp {
         open_file_no_reparse_with_access(
             directory,
             name,
-            GENERIC_READ | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER | ACCESS_SYSTEM_SECURITY,
+            GENERIC_READ | READ_CONTROL | ACCESS_SYSTEM_SECURITY,
         )
     }
 

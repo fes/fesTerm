@@ -126,11 +126,10 @@ terminal.
 
 - **Save** writes to the document's existing origin after generation
   revalidation (§5). When it is unavailable it is disabled *and* states why.
-- **Save As…** writes to a chosen local or remote destination without silently
-  overwriting. The destination is chosen in a modal picker that reuses the SFTP
-  file-browser pattern — a `This host (local)` / `<host> (remote)` switch, a
-  breadcrumb path with up/home/refresh, a Name/Size/Modified listing, and a file
-  name field — so one control covers both origins and neither is privileged. An
+- **Save As…** writes to a chosen local destination without silently
+  overwriting. The modal picker reuses the SFTP file-browser pattern, but this
+  release leaves its `<host> (remote)` option visibly disabled and performs no
+  remote listing or write; only `This host (local)` is selectable. An
   existing target is stated in words before the fact ("A file with this name
   already exists here. Saving will replace it.") and still requires the explicit
   Save press. That press records a typed destination expectation: either the
@@ -286,7 +285,10 @@ replacement also refuses before staging when `SeSecurityPrivilege` is
 unavailable, because the target's audit SACL cannot then be captured and
 reproduced exactly. The privilege is enabled only on a duplicated
 impersonation token installed on the saving thread and never on the
-process-wide token. Save As to an absent destination remains available. A new Save As target keeps
+process-wide token. Standard and UAC-filtered Windows accounts commonly lack
+this privilege, so their existing-target Save attempts refuse safely rather
+than weakening metadata preservation; Save As to an absent destination remains
+available. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
 an owner-only staging directory on the destination filesystem. Unix verifies
 the prepared inode through both its handle and staging name; Windows relies on
@@ -449,6 +451,11 @@ is raised by the close attempt itself, whichever route triggered it: the chip's
 close affordance, the window close, application quit, or vi's `:q`. Auto-save is
 not crash recovery — journals or drafts would need their own decision about
 storage, privacy, cleanup, and remote content.
+
+A cancelled native window close never marks that window as accepted for
+teardown. Update installation and the post-install restart both run the same
+dirty-document, manual-recovery, and live-session checks; installation or
+restart waits rather than setting a quit bypass before those checks complete.
 
 Because the control sits with the document, it is presented in the command bar
 beside Save rather than beside the per-view `Edit | Preview | Split` toggle.

@@ -507,11 +507,13 @@ mod imp {
 
         type Acl = *mut c_void;
         type AclEntry = *mut c_void;
+        type AclFlagset = *mut c_void;
         type AclPermset = *mut c_void;
         const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
         const ACL_FIRST_ENTRY: i32 = 0;
         const ACL_NEXT_ENTRY: i32 = -1;
         const ACL_EXTENDED_ALLOW: i32 = 1;
+        const ACL_ENTRY_ONLY_INHERIT: i32 = 1 << 8;
         const ACL_ADD_FILE: i32 = 1 << 2;
         const ACL_DELETE: i32 = 1 << 4;
         const ACL_DELETE_CHILD: i32 = 1 << 6;
@@ -520,6 +522,8 @@ mod imp {
         unsafe extern "C" {
             fn acl_get_fd_np(fd: RawFd, acl_type: i32) -> Acl;
             fn acl_get_entry(acl: Acl, entry_id: i32, entry: *mut AclEntry) -> i32;
+            fn acl_get_flag_np(flagset: AclFlagset, flag: i32) -> i32;
+            fn acl_get_flagset_np(entry: AclEntry, flagset: *mut AclFlagset) -> i32;
             fn acl_get_qualifier(entry: AclEntry) -> *mut c_void;
             fn acl_get_tag_type(entry: AclEntry, tag_type: *mut i32) -> i32;
             fn acl_get_permset(entry: AclEntry, permset: *mut AclPermset) -> i32;
@@ -558,6 +562,24 @@ mod imp {
                 let error = io::Error::last_os_error();
                 let _ = unsafe { acl_free(acl) };
                 return Err(error);
+            }
+            let mut flagset = std::ptr::null_mut();
+            if unsafe { acl_get_flagset_np(entry, &raw mut flagset) } != 0 {
+                let error = io::Error::last_os_error();
+                let _ = unsafe { acl_free(acl) };
+                return Err(error);
+            }
+            match unsafe { acl_get_flag_np(flagset, ACL_ENTRY_ONLY_INHERIT) } {
+                1 => {
+                    entry_id = ACL_NEXT_ENTRY;
+                    continue;
+                }
+                0 => {}
+                _ => {
+                    let error = io::Error::last_os_error();
+                    let _ = unsafe { acl_free(acl) };
+                    return Err(error);
+                }
             }
             let mut permset = std::ptr::null_mut();
             if unsafe { acl_get_permset(entry, &raw mut permset) } != 0 {
@@ -1097,6 +1119,25 @@ mod tests {
                 std::io::ErrorKind::Unsupported
             );
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn inherit_only_parent_acl_does_not_grant_directory_substitution() {
+        use std::process::Command;
+
+        let directory = TemporaryDirectory::new();
+        let status = Command::new("chmod")
+            .args([
+                "+a",
+                "everyone allow add_file,file_inherit,directory_inherit,only_inherit",
+            ])
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        assert!(secure_staging_parent(&directory.open()).is_ok());
     }
 
     #[test]

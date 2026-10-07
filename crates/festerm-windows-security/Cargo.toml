@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Narrow Windows current-user object security support for fesTerm."
 
 [target.'cfg(windows)'.dependencies]
+tracing = "0.1"
 windows-sys = { version = "0.61", features = [
     "Wdk_Foundation",
     "Wdk_Storage_FileSystem",

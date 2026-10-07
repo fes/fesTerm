@@ -119,12 +119,12 @@ impl FesTermApp {
     /// Split from `logic()`'s real `ctx.input` read so tests can drive it
     /// directly without needing a way to fabricate a genuine close-request
     /// input event on a headless `egui::Context`.
-    pub(super) fn evaluate_close_request(&mut self, context: &egui::Context) {
+    pub(super) fn evaluate_close_request(&mut self, context: &egui::Context) -> bool {
         if self.native_smoke.is_some() {
             // Native smoke owns the window lifecycle and writes its result
             // before requesting deterministic teardown. Interactive quit
             // confirmation must not cancel that automation-owned close.
-            return;
+            return true;
         }
         if self
             .overlays
@@ -134,20 +134,15 @@ impl FesTermApp {
             || self.state.has_recovery_notices()
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            return;
+            return false;
         }
         if self.quit_confirmed {
             // Already deliberately confirmed: let the follow-up close proceed.
-            return;
+            return true;
         }
-        if let Some(pending) = self.overlays.pending_quit {
-            // A second close while the ordinary Quit dialog is showing is the
-            // platform's follow-up teardown request. An update-consent dialog
-            // has not authorized quitting, so preserve the sessions instead.
-            if pending.purpose == QuitConfirmationPurpose::InstallUpdate {
-                context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            }
-            return;
+        if self.overlays.pending_quit.is_some() {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            return false;
         }
         // Unsaved text goes first: a session's scrollback can be reproduced,
         // a document's unsaved changes cannot. Each dirty document is asked
@@ -161,12 +156,12 @@ impl FesTermApp {
             };
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request_document_close(tab, AfterDocumentClose::ResumeClose(purpose));
-            return;
+            return false;
         }
         let counts = self.state.live_session_counts();
         if counts.total() == 0 {
             // Nothing would be lost: let the close proceed untouched.
-            return;
+            return true;
         }
         // Closing an additional window (ADR 0033) ends that window's own
         // sessions and nothing else, which is the very action the
@@ -177,7 +172,7 @@ impl FesTermApp {
         // preference was ever asked about.
         let purpose = if self.role == crate::app::WindowRole::Secondary {
             if !self.state.confirm_session_close() {
-                return;
+                return true;
             }
             QuitConfirmationPurpose::CloseWindow
         } else {
@@ -189,9 +184,26 @@ impl FesTermApp {
             cancel_focus_requested: false,
             purpose,
         });
+        false
     }
 
     pub(super) fn request_update_install(&mut self) {
+        if self.state.has_recovery_notices()
+            || self
+                .overlays
+                .open_refusal
+                .as_ref()
+                .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement)
+        {
+            return;
+        }
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            self.request_document_close(
+                tab,
+                AfterDocumentClose::ResumeClose(QuitConfirmationPurpose::InstallUpdate),
+            );
+            return;
+        }
         let counts = self.state.live_session_counts();
         if counts.total() == 0 {
             self.update_restart_authorized = true;
@@ -203,6 +215,44 @@ impl FesTermApp {
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::InstallUpdate,
         });
+    }
+
+    pub(super) fn request_update_restart(&mut self, context: &egui::Context) {
+        if self.overlays.pending_document_close.is_some()
+            || self.overlays.pending_quit.is_some()
+            || self.state.has_recovery_notices()
+            || self
+                .overlays
+                .open_refusal
+                .as_ref()
+                .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement)
+        {
+            return;
+        }
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            self.request_document_close(
+                tab,
+                AfterDocumentClose::ResumeClose(QuitConfirmationPurpose::RestartAfterUpdate),
+            );
+            return;
+        }
+        let counts = self.state.live_session_counts();
+        if counts.total() == 0 {
+            self.finish_update_restart(context);
+            return;
+        }
+        self.overlays.pending_quit = Some(PendingQuitConfirmation {
+            counts,
+            cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::RestartAfterUpdate,
+        });
+    }
+
+    fn finish_update_restart(&mut self, context: &egui::Context) {
+        self.update_exit_requested = true;
+        self.quit_confirmed = true;
+        crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::UpdateRestart);
+        context.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     pub(super) fn show_close_confirmation(&mut self, context: &egui::Context, escape: bool) {
@@ -556,10 +606,16 @@ impl FesTermApp {
             self.request_document_close(tab, AfterDocumentClose::ResumeClose(purpose));
             return;
         }
-        // Re-requesting the close rather than confirming it here: the session
-        // confirmation this interrupted has still not been asked, and the
-        // close request is the one place that decides whether it needs to be.
-        context.send_viewport_cmd(egui::ViewportCommand::Close);
+        match purpose {
+            QuitConfirmationPurpose::InstallUpdate => self.request_update_install(),
+            QuitConfirmationPurpose::RestartAfterUpdate => self.request_update_restart(context),
+            QuitConfirmationPurpose::Quit | QuitConfirmationPurpose::CloseWindow => {
+                // Re-requesting the close rather than confirming it here: the
+                // session confirmation this interrupted has still not been
+                // asked, and the close request decides whether it is needed.
+                context.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
     }
 
     /// Renders the one aggregate confirmation for closing the window while
@@ -574,7 +630,13 @@ impl FesTermApp {
         }
         let counts = self.state.live_session_counts();
         if counts.total() == 0 {
-            self.overlays.pending_quit = None;
+            let purpose = self
+                .overlays
+                .pending_quit
+                .take()
+                .expect("checked above")
+                .purpose;
+            self.confirm_quit_purpose(purpose, context);
             return;
         }
         if let Some(pending) = self.overlays.pending_quit.as_mut() {
@@ -604,6 +666,11 @@ impl FesTermApp {
                         "The update will close every session after installation succeeds.",
                         "Install and Restart",
                     ),
+                    QuitConfirmationPurpose::RestartAfterUpdate => (
+                        "Restart fesTerm to finish updating?",
+                        "The installed update will close every session.",
+                        "Restart fesTerm",
+                    ),
                 };
                 confirmation_body(ui, |ui| {
                     ui.heading(heading);
@@ -632,20 +699,27 @@ impl FesTermApp {
             self.overlays.pending_quit = None;
         } else if confirm {
             self.overlays.pending_quit = None;
-            match pending.purpose {
-                QuitConfirmationPurpose::Quit | QuitConfirmationPurpose::CloseWindow => {
-                    self.quit_confirmed = true;
-                    if pending.purpose == QuitConfirmationPurpose::Quit {
-                        crate::diagnostics::record_exit_intent(
-                            crate::diagnostics::ExitIntent::UserQuit,
-                        );
-                    }
-                    context.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.confirm_quit_purpose(pending.purpose, context);
+        }
+    }
+
+    fn confirm_quit_purpose(&mut self, purpose: QuitConfirmationPurpose, context: &egui::Context) {
+        match purpose {
+            QuitConfirmationPurpose::Quit | QuitConfirmationPurpose::CloseWindow => {
+                self.quit_confirmed = true;
+                if purpose == QuitConfirmationPurpose::Quit {
+                    crate::diagnostics::record_exit_intent(
+                        crate::diagnostics::ExitIntent::UserQuit,
+                    );
                 }
-                QuitConfirmationPurpose::InstallUpdate => {
-                    self.update_restart_authorized = true;
-                    self.updates.begin_install();
-                }
+                context.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            QuitConfirmationPurpose::InstallUpdate => {
+                self.update_restart_authorized = true;
+                self.updates.begin_install();
+            }
+            QuitConfirmationPurpose::RestartAfterUpdate => {
+                self.finish_update_restart(context);
             }
         }
     }

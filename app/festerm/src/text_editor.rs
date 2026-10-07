@@ -1511,8 +1511,23 @@ impl TextEditorTab {
         if let Some(open) = registry.get(self.document) {
             let source = saved_local_preview_source(open);
             if source != self.local_preview_source {
+                let same_location = matches!(
+                    (&self.local_preview_source, &source),
+                    (Ok(Some(previous)), Ok(Some(current)))
+                        if previous.source == current.source
+                            && previous.parent_identity == current.parent_identity
+                );
+                if same_location {
+                    if let (Some(preview), Ok(Some(current))) = (&mut self.preview, &source) {
+                        preview.rebind_saved_local_authority(
+                            current.generation,
+                            current.parent_identity,
+                        );
+                    }
+                } else {
+                    self.preview = None;
+                }
                 self.local_preview_source = source;
-                self.preview = None;
             }
             if open.text().text() != self.buffer {
                 self.buffer = open.text().text().to_owned();
@@ -3467,6 +3482,33 @@ mod tests {
         editor.rebind(history, &documents);
         assert!(editor.local_preview_source.as_ref().unwrap().is_none());
         assert!(editor.preview.is_none());
+    }
+
+    #[test]
+    fn saving_markdown_rebinds_preview_authority_without_resetting_the_pane() {
+        let directory = TemporaryDirectory::new("preview-save-authority");
+        let path = directory.file("readme.md", "# Heading\n");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+        let mut editor = TextEditorTab::new(id, &documents);
+        let context = egui::Context::default();
+        let mut output =
+            context.run_ui(Default::default(), |ui| editor.show_preview_pane(ui, 400.0));
+        output.textures_delta.clear();
+        assert!(editor.preview.is_some());
+        editor.buffer.push_str("\nMore text.\n");
+        editor.commit_buffer_for_test(&documents);
+
+        assert_eq!(
+            documents.borrow_mut().save(id),
+            Some(festerm_document::SaveOutcome::Saved)
+        );
+        editor.adopt_external_edits(&documents);
+
+        assert!(
+            editor.preview.is_some(),
+            "a generation-only authority update must preserve Preview state"
+        );
     }
 
     #[cfg(unix)]

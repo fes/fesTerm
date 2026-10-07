@@ -895,10 +895,12 @@ The accepted shape is:
 - **Presentation never edits.** Line numbers and fixed columns are per-view and
   change nothing on disk; fixed columns wraps visually at the chosen column and
   never inserts a line break.
-- **Save As.** One picker covers local and remote destinations, reuses the SFTP
-  file-browser pattern, states an existing target in words before the explicit
-  Save press, and binds to an already-open document rather than creating a
-  second buffer for one file. It stays available whenever Save cannot run.
+- **Save As.** The picker reuses the SFTP file-browser pattern for local
+  destinations. Its remote option remains visibly disabled in this release and
+  performs no remote listing or write. It states an existing target in words
+  before the explicit Save press and binds to an already-open document rather
+  than creating a second buffer for one file. It stays available whenever Save
+  cannot run.
 - **Closing.** Only the final view of a dirty document prompts. The prompt names
   the file and its origin, defaults to Save, treats Escape as Cancel, and makes
   Discard an explicit press that Return never triggers.

@@ -5467,11 +5467,11 @@ impl FesTermApp {
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
         if context.input(|i| i.viewport().close_requested()) {
-            self.evaluate_close_request(context);
+            let accepted = self.evaluate_close_request(context);
             // Nothing cancelled the close, so this window really is going
             // away. The primary window's teardown is eframe's; a secondary
             // window's is the composition root's.
-            if self.overlays.pending_quit.is_none() {
+            if accepted {
                 self.window_close_accepted = true;
                 if self.role == WindowRole::Primary && self.native_smoke.is_none() {
                     crate::diagnostics::record_exit_intent(
@@ -5590,10 +5590,7 @@ impl FesTermApp {
             && self.update_restart_authorized
             && !self.update_exit_requested
         {
-            self.update_exit_requested = true;
-            self.quit_confirmed = true;
-            crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::UpdateRestart);
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            self.request_update_restart(ui.ctx());
         }
         if self.updates.status().is_busy() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
@@ -6495,6 +6492,15 @@ impl FesTermApp {
     #[cfg(test)]
     pub(crate) fn documents_for_test(&self) -> &SharedDocuments {
         self.state.documents()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_recovery_notice_for_test(
+        &mut self,
+        path: std::path::PathBuf,
+        error: festerm_document::SaveError,
+    ) {
+        self.state.queue_recovery_notice_for_test(path, error);
     }
 
     /// Lets the screenshot gallery arrange a real application state -- an
@@ -9511,6 +9517,33 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_recovery_close_never_marks_the_window_as_accepted() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+
+        let mut output = context.run_ui(input, |ui| app.frame_logic(ui.ctx()));
+
+        assert!(!app.window_close_accepted);
+        assert!(output
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose)));
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn window_close_waits_for_explicit_recovery_notice_acknowledgement() {
         let context = egui::Context::default();
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
@@ -10185,7 +10218,7 @@ mod tests {
         let mut harness = editor_harness(app);
         type_into_editor(&mut harness, "typed");
 
-        harness.state_mut().evaluate_close_request(&context);
+        assert!(!harness.state_mut().evaluate_close_request(&context));
         harness.run();
 
         let pending = harness
@@ -12837,6 +12870,36 @@ mod tests {
     }
 
     #[test]
+    fn update_install_asks_about_dirty_documents_before_starting() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        harness.state_mut().updates = UpdateController::ready_to_install_for_test();
+
+        harness.state_mut().request_update_install();
+
+        let pending = harness
+            .state()
+            .overlays
+            .pending_document_close
+            .as_ref()
+            .expect("dirty text must be resolved before update installation");
+        assert_eq!(
+            pending.then,
+            crate::overlay_state::AfterDocumentClose::ResumeClose(
+                QuitConfirmationPurpose::InstallUpdate
+            )
+        );
+        assert!(matches!(
+            harness.state().updates.status(),
+            UpdateStatus::ReadyToInstall(_)
+        ));
+        assert!(!harness.state().update_restart_authorized);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn cancelling_update_restart_consent_keeps_the_update_installable() {
         let context = egui::Context::default();
         let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
@@ -12860,7 +12923,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_update_restart_installs_then_closes_without_reprompting() {
+    fn confirmed_update_install_rechecks_sessions_before_restart() {
         let context = egui::Context::default();
         let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
         app.updates = UpdateController::ready_to_install_for_test();
@@ -12877,9 +12940,83 @@ mod tests {
         harness.step();
 
         assert!(harness.state().update_restart_authorized);
+        assert!(!harness.state().update_exit_requested);
+        assert!(harness
+            .state()
+            .overlays
+            .pending_quit
+            .is_some_and(|pending| {
+                pending.purpose == QuitConfirmationPurpose::RestartAfterUpdate
+            }));
+
+        harness.get_by_label("Restart fesTerm").click();
+        harness.step();
+
         assert!(harness.state().update_exit_requested);
         assert!(harness.state().quit_confirmed);
         assert!(harness.state().overlays.pending_quit.is_none());
+    }
+
+    #[test]
+    fn installed_update_rechecks_dirty_documents_before_restart() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        harness.state_mut().updates = UpdateController::installed_for_test();
+        harness.state_mut().update_restart_authorized = true;
+
+        harness.step();
+
+        let pending = harness
+            .state()
+            .overlays
+            .pending_document_close
+            .as_ref()
+            .expect("new dirty text must block an installed update restart");
+        assert_eq!(
+            pending.then,
+            crate::overlay_state::AfterDocumentClose::ResumeClose(
+                QuitConfirmationPurpose::RestartAfterUpdate
+            )
+        );
+        assert!(!harness.state().update_exit_requested);
+        assert!(!harness.state().quit_confirmed);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn installed_update_waits_for_recovery_acknowledgement_before_restart() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.updates = UpdateController::installed_for_test();
+        app.update_restart_authorized = true;
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+        let context = egui::Context::default();
+
+        let mut first_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        first_frame.textures_delta.clear();
+        let mut recovery_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+
+        assert!(!app.update_exit_requested);
+        assert!(!app.quit_confirmed);
+        assert!(app
+            .overlays
+            .open_refusal
+            .as_ref()
+            .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement));
+        assert!(recovery_frame
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .all(|command| !matches!(command, egui::ViewportCommand::Close)));
+        recovery_frame.textures_delta.clear();
     }
 
     #[test]

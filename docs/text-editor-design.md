@@ -140,7 +140,9 @@ The editor never resolves a divergence silently.
   displaced original. Replacing an existing Windows target refuses before
   staging if `SeSecurityPrivilege` is unavailable, because its audit SACL
   cannot otherwise be preserved; Save As to an absent destination remains
-  available. A successful rollback is identity-checked and
+  available. Standard and UAC-filtered Windows accounts commonly lack that
+  privilege, so this refusal is an expected safe default rather than silent
+  metadata degradation. A successful rollback is identity-checked and
   non-delete-locked through private-staging cleanup; an ambiguous rollback
   retains recovery instead. A late or ambiguous change
   is never deleted by pathname rollback: every recoverable version remains in
@@ -308,12 +310,13 @@ Save As is offered in every state, including — especially — the states in wh
 Save itself is disabled: a conflict, an unavailable source, an offline origin,
 lost permissions. It is the escape hatch for all of them.
 
-The destination sheet browses with the same widget the SFTP panes use, so one
-control covers both origins and neither is privileged. An existing target is
-stated in words before the fact — "A file with this name already exists here.
-Saving will replace it." — and a single Save press is still all it takes. It is
-a statement, not a second confirmation. Choosing a **directory** is different:
-that is refused, because a directory cannot be replaced by a document.
+The destination sheet browses local files with the same widget the SFTP panes
+use. Its remote option remains visible but disabled in this release and starts
+no remote listing or write. An existing target is stated in words before the
+fact — "A file with this name already exists here. Saving will replace it." —
+and a single Save press is still all it takes. It is a statement, not a second
+confirmation. Choosing a **directory** is different: that is refused, because a
+directory cannot be replaced by a document.
 
 The Save press records whether the destination was absent or the exact
 generation then present. A later appearance, disappearance, or generation

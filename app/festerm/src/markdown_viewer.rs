@@ -3853,6 +3853,15 @@ impl MarkdownPreviewPane {
         pane
     }
 
+    pub(crate) fn rebind_saved_local_authority(
+        &mut self,
+        generation: Generation,
+        parent_identity: DirectoryIdentity,
+    ) {
+        self.source_generation = Some(generation);
+        self.source_parent_identity = Some(parent_identity);
+    }
+
     pub(crate) fn with_unavailable_local_images(
         source: MarkdownSource,
         text: &str,
