@@ -405,6 +405,15 @@ stateDiagram-v2
 
 ## D2. GUI SFTP file manager lifecycle
 
+For `SFTPG-02/03/08`, the shared backend admits every remote-derived local
+basename, including selected file and directory roots, before joining it to
+the requested directory and checks immediate-child containment. Unsafe names
+fail visibly before any collision, enumeration or destination write; no partial
+cleanup is needed and unrelated queued work remains usable. Exact requested
+local paths retain their semantics. Text-mode `get` (`SSH-09`) uses the same
+check for default/existing-directory targets. See
+[remote-to-local name admission](sftp-ui-design.md#remote-to-local-name-admission).
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `SFTPG-01` | `GuiSftpAuth → GuiSftpReady` | Authenticate a GUI SFTP destination with a fresh password/private key or a saved profile's opaque native-store credential; when the presented host key is new or changed, resolve the inline trust prompt first, then browse either pane. | Host trust is resolved before GUI SFTP sends or loads credentials, matching SSH/text SFTP ordering. A first-seen host offers Reject / Accept Once / Accept and Remember; a changed key requires the deliberate changed-key warning flow; one accepted fingerprint is reused across the paired browsing and transfer-worker SSH connections so one launch does not double-prompt. Two panes keep independent sort/filter/selection state, directories render factual Name/Size/Modified/Type metadata, folders sort before files by default, and the configured pane order swaps visuals only. Entering a folder starts at the top; Back, Up, and ancestor breadcrumbs restore scroll only while retracing the active stack, while re-entered popped folders start at the top. Filters remain active across navigation. A refused remote command leaves path/history/scroll/loading unchanged, and navigation recovers when admission becomes available. | Navigate, refresh, change folders, or close without affecting any sibling shell tab. | P,H,N,U; partial |

@@ -22,10 +22,10 @@ use tokio::{
 };
 
 use crate::sftp::{
-    display_path, join_path_segment, join_remote_path, local_error,
-    read_local_directory_for_planning, read_local_directory_snapshot, read_local_path_metadata,
-    remote_file_name, SftpEntryType, SftpSession, SftpSessionError,
-    SFTP_CANCELLATION_CLEANUP_TIMEOUT,
+    display_path, join_path_segment, join_remote_name_to_local_directory, join_remote_path,
+    local_error, read_local_directory_for_planning, read_local_directory_snapshot,
+    read_local_path_metadata, remote_file_name, validate_remote_local_file_name, SftpEntryType,
+    SftpSession, SftpSessionError, SFTP_CANCELLATION_CLEANUP_TIMEOUT,
 };
 use crate::sftp_planning::{Budgeted, PlanningQueue, PlanningReservation, SharedPlanningBudget};
 
@@ -1798,7 +1798,7 @@ impl WorkerState {
                 if matches!(source_directory, SftpPath::Remote(_))
                     && matches!(&destination_root, SftpPath::Local(_))
                 {
-                    validate_remote_directory_entry_name(&entry.name)?;
+                    validate_remote_local_file_name(&entry.name, "plan recursive download")?;
                 }
                 reservation.grow(
                     0,
@@ -1809,7 +1809,16 @@ impl WorkerState {
                             .saturating_mul(12),
                     ),
                 )?;
-                let child_destination = destination_directory.join_child(&entry.name);
+                let child_destination = match (&source_directory, &destination_directory) {
+                    (SftpPath::Remote(_), SftpPath::Local(directory)) => {
+                        SftpPath::local(join_remote_name_to_local_directory(
+                            directory,
+                            &entry.name,
+                            "plan recursive download",
+                        )?)
+                    }
+                    _ => destination_directory.join_child(&entry.name),
+                };
                 ensure_local_child_within_root(&destination_root, &child_destination)?;
                 if entry.file_type == SftpEntryType::Directory {
                     let pair_reservation = budget.reserve(
@@ -2699,21 +2708,17 @@ async fn normalize_requested_destination<B: TransferBackend>(
 ) -> Result<SftpPath, SftpSessionError> {
     if let Some(metadata) = backend.metadata(destination).await? {
         if metadata.file_type == SftpEntryType::Directory {
+            if let (SftpPath::Remote(_), SftpPath::Local(directory)) = (source, destination) {
+                return Ok(SftpPath::local(join_remote_name_to_local_directory(
+                    directory,
+                    &source.file_name()?,
+                    "resolve download destination",
+                )?));
+            }
             return Ok(destination.join_child(&source.file_name()?));
         }
     }
     Ok(destination.clone())
-}
-
-fn validate_remote_directory_entry_name(name: &str) -> Result<(), SftpSessionError> {
-    if name.is_empty() || matches!(name, "." | "..") || name.contains('/') || name.contains('\\') {
-        return Err(SftpSessionError::LocalOperationFailed {
-            operation: "plan recursive download",
-            path: name.to_owned(),
-            reason: "remote directory entry name is not safe for a local destination".to_owned(),
-        });
-    }
-    Ok(())
 }
 
 fn ensure_local_child_within_root(
