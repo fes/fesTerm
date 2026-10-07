@@ -404,7 +404,6 @@ impl DocumentSyntax {
         let range = clamp_to_char_boundaries(text, range);
         if self.parsed_revision != Some(revision) {
             self.reparse(text, revision);
-            self.cached_range = None;
         }
         if self.cached_range.as_ref() != Some(&range) {
             self.spans = self.query_range(text, &range);
@@ -414,6 +413,16 @@ impl DocumentSyntax {
     }
 
     fn reparse(&mut self, text: &str, revision: u64) {
+        self.reparse_with_options(text, revision, None);
+    }
+
+    fn reparse_with_options(
+        &mut self,
+        text: &str,
+        revision: u64,
+        options: Option<tree_sitter::ParseOptions<'_>>,
+    ) {
+        self.cached_range = None;
         if self.language.is_none() {
             return;
         }
@@ -449,12 +458,14 @@ impl DocumentSyntax {
                 std::ops::ControlFlow::Continue(())
             }
         };
-        let options = tree_sitter::ParseOptions::new().progress_callback(&mut give_up);
-        let parsed = parser.parse_with_options(
-            &mut |byte, _| text.get(byte..).unwrap_or(""),
-            old_tree,
-            Some(options),
-        );
+        let mut input = |byte, _| text.get(byte..).unwrap_or("");
+        let parsed = match options {
+            Some(options) => parser.parse_with_options(&mut input, old_tree, Some(options)),
+            None => {
+                let options = tree_sitter::ParseOptions::new().progress_callback(&mut give_up);
+                parser.parse_with_options(&mut input, old_tree, Some(options))
+            }
+        };
         match parsed {
             Some(tree) => {
                 self.tree = Some(tree);
@@ -681,6 +692,8 @@ mod tests {
             text.push_str(&format!("fn f{index}() {{ let x = {index}; }}\n"));
         }
         let mut syntax = DocumentSyntax::new("wide.rs", &text);
+        // Range correctness must not depend on winning the production time budget.
+        syntax.reparse_with_options(&text, 1, Some(tree_sitter::ParseOptions::new()));
         let window = 0..text.len() / 10;
         let spans = syntax.spans(&text, 1, window.clone()).to_vec();
         assert!(!spans.is_empty());
@@ -695,6 +708,34 @@ mod tests {
             all > spans.len(),
             "the whole file has more spans than one window of it"
         );
+    }
+
+    #[test]
+    fn an_abandoned_parse_clears_old_spans_and_recovers_on_the_next_revision() {
+        let text = "fn main() { let x = 1; }\n".repeat(400);
+        let mut syntax = DocumentSyntax::new("wide.rs", &text);
+        syntax.reparse_with_options(&text, 1, Some(tree_sitter::ParseOptions::new()));
+        assert!(!syntax.spans(&text, 1, 0..text.len()).is_empty());
+
+        let mut canceled = false;
+        let mut give_up = |_state: &tree_sitter::ParseState| {
+            canceled = true;
+            std::ops::ControlFlow::Break(())
+        };
+        let options = tree_sitter::ParseOptions::new().progress_callback(&mut give_up);
+        syntax.reparse_with_options(&text, 2, Some(options));
+        assert!(canceled, "the parse reached its cancellation callback");
+        assert_eq!(syntax.status(), SyntaxStatus::ParseFailed);
+        assert!(syntax.tree.is_none());
+        assert!(syntax.parsed_text.is_empty());
+        assert!(syntax.spans(&text, 2, 0..text.len()).is_empty());
+        assert!(syntax.is_current(2));
+        assert_eq!(syntax.status(), SyntaxStatus::ParseFailed);
+
+        syntax.reparse_with_options(&text, 3, Some(tree_sitter::ParseOptions::new()));
+        assert!(syntax.status().is_highlighted());
+        assert!(!syntax.spans(&text, 3, 0..text.len()).is_empty());
+        assert!(syntax.is_current(3));
     }
 
     #[test]

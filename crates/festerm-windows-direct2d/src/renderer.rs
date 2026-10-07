@@ -13,6 +13,8 @@ use egui::{
 };
 use windows_core::Interface;
 
+use crate::texture_limits::{texture_dimensions_supported, MAX_TEXTURE_PIXELS};
+
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct Color([u8; 4]);
@@ -184,8 +186,6 @@ const MAX_FRAME_INDICES: usize = 6_000_000;
 const MAX_MESH_VERTICES: usize = 1_000_000;
 const MAX_MESH_INDICES: usize = 3_000_000;
 const MAX_TEXTURE_BYTES: usize = 96 * 1024 * 1024;
-const MAX_TEXTURE_DIMENSION: usize = 8_192;
-const MAX_TEXTURE_PIXELS: usize = 16_777_216;
 const MAX_SURFACE_DIMENSION: u32 = 4_096;
 const MAX_RETAINED_TEXTURE_UPLOAD_PIXELS: usize = MAX_TEXTURE_PIXELS;
 const MAX_RETAINED_FRAME_VERTICES: usize = MAX_FRAME_VERTICES;
@@ -377,13 +377,7 @@ impl Renderer {
                 }
             }
             let [w, h] = image.size;
-            if w == 0
-                || h == 0
-                || w > MAX_TEXTURE_DIMENSION
-                || h > MAX_TEXTURE_DIMENSION
-                || w * h > MAX_TEXTURE_PIXELS
-                || image.pixels.len() != w * h
-            {
+            if !texture_dimensions_supported([w, h]) || image.pixels.len() != w * h {
                 return Err(Error::unsupported("invalid texture dimensions"));
             }
             self.texture_upload.clear();

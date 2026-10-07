@@ -507,6 +507,13 @@ pub(crate) struct PanelTestProbe(Option<Arc<PanelRenderer>>);
 
 #[cfg(test)]
 impl PanelTestProbe {
+    pub(crate) fn existing_paints(context: &egui::Context) -> Option<usize> {
+        context.data(|data| {
+            data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())
+                .map(|renderer| renderer.paints.load(std::sync::atomic::Ordering::Relaxed))
+        })
+    }
+
     pub(crate) fn install(context: &egui::Context, state: &egui_wgpu::RenderState) -> Self {
         // Exercise geometry on CI adapters too; production install retains its adapter guards.
         let renderer = PanelRenderer::new(state, egui_wgpu::RendererOptions::default().dithering);

@@ -1,5 +1,32 @@
 # Terminal TUI performance
 
+## CPU presentation-cache allocation oracle
+
+Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.
+Both global opt-in suite runners also invoke it. This standalone, single-thread
+benchmark uses `stats_alloc` over Rust's system allocator; its global allocator
+exists only in the benchmark executable, not the application or unit tests.
+It emits one JSON object per case with allocations, reallocations,
+deallocations and requested-byte counts. No GUI, PTY, GPU or installed
+configuration is used.
+
+The fixture warms an 80-by-24 cache before observing 4,096 one-row refreshes
+and 256 alternating same-dimension viewport refreshes. `--check` requires
+exactly two allocations per update (returned row IDs and shared revision token)
+and zero reallocations. A long-grapheme-to-ASCII case must actually free the old
+heap payload and returned row vector, with no cell/backing allocation.
+
+| Case | Legacy allocation calls | Inline/reused allocation calls | Legacy/new requested bytes |
+| --- | --- | --- | --- |
+| 4,096 dirty-row refreshes | 339,968 | 8,192 | 18,874,368 / 196,608 |
+| 256 viewport refreshes | 498,688 | 512 | 28,270,592 / 53,248 |
+
+These source-pinned Windows observations concern only CPU presentation copying.
+The same oracle is portable and counts Rust allocation requests, not allocator
+usable size, native allocations, fragmentation, RSS, GPU retirement, full-frame
+CPU or multi-day growth. Existing Criterion `interaction_rendering` benchmarks
+remain the timing surface; this oracle has no wall-clock acceptance threshold.
+
 ## Automatic WARP composition rollout
 
 PR #281 consolidates the stacked follow-on and reviewed shipping main. At the
@@ -32,6 +59,119 @@ scores, noisy/failed intervals and hashes remain unchanged.
 This validation separates a genuinely quiet populated terminal from an active
 TUI. A working Copilot session with status updates is not an idle workload.
 It does not change production rendering or impose a frame-rate cap.
+
+## Backend-owned atlas capture admission
+
+C5 in #320 moves supported native-backend atlas admission after tessellation
+but before cloning atlas pixels or the texture inventory. The compiled
+legacy-order control installed the admission seam while preserving the old
+finish order: explicit refusal still copied 262,144 bytes and called the
+factory. The candidate's refused-frame regression records zero bytes at the
+actual snapshot-copy site (including discarded/uncached copies), zero factory
+calls and unchanged ordinary shapes. A positive eligible zero-retention
+control validates that counter and still copies matching pixels.
+
+Portable predicate tests retain the existing positive-dimension, 8,192-side,
+16,777,216-pixel single-texture limits; aggregate validation remains 96 MiB.
+Other regressions cover post-tessellation dimensions/font deltas, replacement
+hook isolation and actual old snapshot-owner retirement through repeated
+refusal/recovery. Windows native framebuffer/fallback tests remain the pixel
+oracle; a small app status test preserves backend availability, first failure
+and refusal/resumption episodes.
+
+This is a metadata-refusal mechanism control, not a large native-atlas stress
+run, native CPU/frame-time, total-memory/fragmentation, GPU-owner retirement
+or #297-causality measurement. Proposed ADR 0045 amends accepted ADR 0043's
+oversized temporary-copy ordering only if approved; architectural owner review
+is required before merge. Existing CP-18 native/manual prerequisites remain.
+
+```sh
+cargo test --locked -p festerm-ui-egui -p festerm-windows-direct2d --lib
+cargo test --locked -p festerm direct2d -- --nocapture
+```
+
+## Indexed resize-anchor work
+
+C3 in #320 reuses the existing bounded physical-row index to capture logical
+anchors and a transient identity-checked index hint to resolve them before
+resize splits or evicts history. Wrapped offsets use equivalent binary
+row-boundary lookup. The hint is not serialized or retained as a cache;
+stale hints retain the former ID-based fallback, without assuming numeric
+line IDs remain sorted across rollover.
+
+| Deterministic capture/resolution case | Compiled legacy steps | Candidate steps |
+| --- | --- | --- |
+| Tail anchor in 16,384 retained logical lines | 32,769 | 16 |
+| Tail anchor in one 8,192-row wrapped line | 8,194 | 16 |
+
+Test-only counters observe actual visited line/index/boundary checks, not
+elapsed-time proxies. Independent old linear oracles compare empty-row
+affinity, width reflow, splitting, eviction, clear and stale-ID outcomes.
+Forty public height-only resizes with over 8,000 retained lines preserve
+cursor and two selection endpoints within 128 anchor steps each.
+
+```sh
+cargo test --locked -p festerm-core --lib anchor -- --nocapture
+```
+
+These are anchor-stage work reductions. Width reflow and deliberate debug
+history-invariant audits remain linear, and mutation-invalidated hints can
+take the legacy fallback outside the normal resize capture/resolution window.
+No native CPU/input/resize latency, total-memory/fragmentation or #297-cause
+claim follows; TI-04/TI-05 native near-budget behavior remains open.
+
+## Single-pass document multi-edit construction
+
+C2 in #320 shares one borrowed-span result builder across document apply and
+vi scratch, with equivalent inverse construction for length-changing
+multi-edit undo/redo. Each compiled old-path control made 2,000 splices for
+2,000 replacements; all four candidate paths make zero. Actual write-site
+byte counters match one result length for apply/undo/redo. These are operation
+and construction-byte observations, not CPU, elapsed time or allocated-byte
+measurements.
+
+Old splice oracles cover Unicode, adjacent/coincident insertions, deletions
+and no-ops. A byte-bound refusal constructs no output and preserves redo,
+saved/dirty identity and revision. Existing line, metadata, stale, order,
+UTF-8, shared-view and production refusal tests remain required.
+
+Single edits and equal-length replay keep in-place undo/redo; pointer and
+capacity checks guard that path. Length-changing multi-edit replay can
+temporarily own an extra result bounded by the existing document limit
+(4 MiB by default), then drops the replaced buffer. No retained owner or
+limit change; no total-peak/RSS/fragmentation or #297-causality claim.
+CP-15 native responsiveness, caret/focus/IME and usability remain open.
+
+```sh
+cargo test --locked -p festerm-document --lib single_pass_multi_edit -- --nocapture
+## Borrowed ordinary vi motion construction
+
+C1 in #320 removes full-document character/offset vector construction from
+ready/Normal motion and count-prefix keys. Compiled old-path controls over
+128 keys construct cumulative final capacities of 603,982,848 bytes on a
+393,216-byte ASCII document and 402,655,232 bytes on a 524,288-byte Unicode
+document. Candidate full-index capacity is zero; instrumented motion-scan
+byte visits total 1,206/1,945, below the 16,384-visit guard. Dot-repeat's
+final diff removes two character arrays totaling 2,097,168 capacity bytes in
+the old control; candidate index capacity is zero.
+
+These count final constructed capacities and instrumented byte/character
+scan spans, not all reallocations/allocator-call bytes, machine loads, time,
+peak/retained RSS or fragmentation. Keys/recording and changed diff payloads
+still have their ordinary owners; operator/pending, Insert/Replace and Visual
+still use keystroke-local indexed fallback. Long counted word/line jumps can
+scan what they cross. A trillion-count empty-line fixed point is bounded.
+
+Seven deterministic regressions cover 53 ASCII/Unicode fixtures, byte/split/
+out-of-range carets, counts, frozen word and existing indexed line oracles,
+mixed-mode/register/recording/repeat churn, positive fallback instrumentation,
+and independent old char-array diff equivalence. No revision/text cache or
+limit increase; CP-15 native responsiveness/IME/usability and #297 attribution
+remain separate.
+
+```sh
+cargo test --locked -p festerm-document --lib vi_local_motion -- --nocapture
+```
 
 ## Bounded six-session aging
 
@@ -116,6 +256,55 @@ not texture payload or GPU allocation size. Even zero public IDs after context
 teardown does not establish complete driver/native resource retirement. The
 checker preserves retained IDs and adverse memory observations rather than
 asserting an unapproved process/GPU budget.
+
+New captures also use `GetProcessMemoryInfo`'s `PagefileUsage` and
+`PeakPagefileUsage` for current commitment and the **OS-maintained
+process-lifetime commitment high-water mark**. These are committed bytes, not
+page-file residency or peak working set. A transient commitment spike between
+500ms observations remains visible in the high-water mark. The summary compares
+that mark with the largest sampled current commitment, without inventing a
+per-phase peak: a later high-water increase establishes a new lifetime maximum
+but does not measure every phase's own maximum. Before exit, the test waits up to
+20 seconds for a source-bound supervisor receipt of its final `complete`
+resource sample. Missing counters, mismatched declarations, reversed/lowered
+lifetime peaks or an absent/non-final receipt invalidate a new capture.
+
+`-LifecycleRepeats` (default three, bounded to 1–8) adds short repeated
+**create → two six-tab DPI/zoom churn cycles → normalize → drop** rounds to
+the same optional probe, after the original twelve phases and four teardown
+windows. Each round compares and saves the exact normalized PNG, completes
+submitted work, records live/drained public registries, and drops the app,
+egui context, fake transports, renderer **and reporting instance** before a
+separately clock-bounded `-IdleSeconds` resource window. A weak repaint-owner
+observation must expire. At least one process sample must land inside each
+whole-owner window; unsampled windows are not evidence of zero residency.
+Current/post-drop process commitment, private bytes, handles and threads remain
+observations, including adverse surviving values. No whole-process cap is added.
+
+Resource classifications stay deliberately narrow:
+
+- prefix texture/signature and atlas sizes are **current retained cache** values,
+  not allocation peaks;
+- `wgpu_submission_completed` records the existing explicit host submission wait,
+  not a count of driver-private queued or in-flight bytes;
+- `temporary_oracle_rgba_bytes` counts only the raw payload lengths of the two
+  temporary CPU RGBA arrays alive together during exact pixel comparison; they
+  are dropped before resource windows and do not include spare capacity, PNG
+  decoder/encoder, readback, native or all scratch allocations;
+- public registry IDs/vacant slots are still not driver allocations;
+- lifetime process commitment includes the entire test process, not just the
+  renderer.
+
+Historical receipts without these additive declarations remain valid and
+explicitly lack this evidence. Declared frame/process/lifecycle schemas require
+their complete counters, oracles, records and receipts; undeclared new artifacts
+are rejected. Device-free Rust regressions cover retirement with all six output
+queues backlogged, stale clipboard completion/cancellation across lifecycle
+generations, and final-receipt identity. The Python checker tests include
+transient commitment, missing owners/windows/receipts and exact PNG rejection.
+This automated implementation coverage does not claim a completed native aging
+run; exclusive-runtime cumulative/native qualification and multi-day capture
+remain separate CP-18/#297/#282 work.
 
 ### 2026-10-04 source-bound observations
 
@@ -254,6 +443,18 @@ dark theme, not the native application's bundled-font installation. It
 measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
 There is no timing threshold in ordinary CI.
+
+For a bounded diagnostic of the original twelve document/list controls and
+their fenced-loading, syntax-construction and Find-model probes, explicitly
+set `FESTERM_SURFACE_PROFILE_SCENES=original-controls`. This retains their
+existing order, workloads, ownership checks and measurement boundaries but
+does not run the appended 52-state chrome/menu/picker matrix. The report records
+`scene_set` and `expanded_matrix_status`; aggregate optional runners also
+record the successful scene set. Omitted selection or `all` preserves the full
+probe. Empty, unknown and composite selections fail before creating output or
+claiming shared inputs. Remove the variable before attempting full-matrix
+qualification. A controls-only result never qualifies omitted variants or
+native/WARP behavior.
 
 ### Owned physical fixture workspace policy
 
@@ -2216,6 +2417,28 @@ not only damaged cells, and egui-wgpu still composes the window. The data
 supports investigating incremental rendering; it is not evidence of an idle
 repaint loop. These are the benchmark-only PR #264 measurements, before the
 retained renderer.
+
+## Glyph-layout retirement oracle
+
+Run `cargo test --locked -p festerm-ui-egui --lib glyph_cache_ -- --nocapture`.
+These ordinary portable tests also run in the workspace suite; no opt-in
+native window, GPU, accounts or configuration is required.
+
+At the unchanged 4,096-layout limit, one miss must retire exactly the
+least-recently-used entry and preserve 4,095 others, including a just-touched
+hot key. The compiled former implementation instead reduced the inventory
+to one. Further churn combines 8,192 new keys with 65,536 hits across eight
+hot styles, requiring both occupied count and slot capacity to remain 4,096.
+Forced-collision retirement identifies the exact slot and drops one actual
+cache `Arc` owner; equality/hash checks prove slot IDs do not change text/style
+identity or borrowed cached-hash lookup. Explicit reset drops slot backing.
+
+LRU tracking adds bounded metadata and keeps the warm cache at its existing
+limit after saturation instead of periodically discarding it. It stores no
+duplicate text-key inventory and adds no array scan to a hit. This is a
+cache-survival/work-shape oracle, not allocation-request totals, lower retained
+bytes, native CPU, RSS, GPU retirement, frame latency or multi-day acceptance.
+Existing font/atlas reset and both-platform snapshot tests protect rendering.
 
 ## Retained-rendering regression coverage
 

@@ -3,6 +3,11 @@ use std::{collections::VecDeque, mem::size_of};
 use crate::{cell::CellWidth, screen::ScreenRow, Cell};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ANCHOR_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Default retained primary-screen payload budget: 64 MiB per terminal.
 pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -74,6 +79,8 @@ pub struct LogicalLine {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct LogicalAnchor {
     line_id: u64,
+    #[serde(skip)]
+    line_index_hint: usize,
     offset: usize,
     end_boundary: bool,
     trimmed_offset_at_capture: usize,
@@ -165,6 +172,7 @@ impl LogicalLine {
         let row_len = end.saturating_sub(start);
         LogicalAnchor {
             line_id: self.id,
+            line_index_hint: 0,
             offset: self.trimmed_offset + start + column.min(row_len),
             end_boundary: column >= row_len,
             trimmed_offset_at_capture: self.trimmed_offset,
@@ -185,15 +193,16 @@ impl LogicalLine {
         let offset = offset.min(self.cells.len());
         let row = self
             .row_ends
-            .iter()
-            .position(|&end| {
+            .partition_point(|&end| {
+                #[cfg(test)]
+                ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(steps.get() + 1));
                 if end_boundary {
-                    offset <= end
+                    end < offset
                 } else {
-                    offset < end
+                    end <= offset
                 }
             })
-            .unwrap_or_else(|| self.row_ends.len().saturating_sub(1));
+            .min(self.row_ends.len().saturating_sub(1));
         let start = row
             .checked_sub(1)
             .and_then(|previous| self.row_ends.get(previous).copied())
@@ -576,6 +585,8 @@ impl Scrollback {
         let (mut low, mut high) = (0usize, self.line_row_starts.len());
         while low < high {
             let mid = low + (high - low) / 2;
+            #[cfg(test)]
+            ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(steps.get() + 1));
             if self.line_row_starts[mid] <= target {
                 low = mid + 1;
             } else {
@@ -615,16 +626,20 @@ impl Scrollback {
     /// `absolute_row` is out of range.
     pub(crate) fn line_and_offset_at(
         &self,
-        mut absolute_row: usize,
+        absolute_row: usize,
         column: usize,
     ) -> Option<LogicalAnchor> {
-        for line in &self.lines {
-            if absolute_row < line.physical_rows {
-                return Some(line.anchor_for_row(absolute_row, column));
-            }
-            absolute_row -= line.physical_rows;
-        }
-        None
+        let target = self
+            .content_row_origin
+            .checked_add(u64::try_from(absolute_row).ok()?)?;
+        let index = self.line_index_for_absolute_row(target)?;
+        let row = usize::try_from(target - self.line_row_starts[index]).ok()?;
+        let line = &self.lines[index];
+        (row < line.physical_rows).then(|| {
+            let mut anchor = line.anchor_for_row(row, column);
+            anchor.line_index_hint = index;
+            anchor
+        })
     }
 
     /// Resolves a stable logical anchor back into a (column, absolute row)
@@ -632,21 +647,36 @@ impl Scrollback {
     /// boundaries of the line it names. Returns `None` if the line no
     /// longer exists (for example, evicted during reflow).
     pub(crate) fn resolve_anchor(&self, anchor: LogicalAnchor) -> Option<(usize, usize)> {
-        let mut absolute_row = 0;
-        for line in &self.lines {
-            if line.id == anchor.line_id {
-                if anchor.end_boundary
-                    && line.trimmed_offset > anchor.trimmed_offset_at_capture
-                    && anchor.offset <= line.trimmed_offset
-                {
-                    return None;
-                }
-                let (row, column) = line.locate_offset(anchor.offset, anchor.end_boundary)?;
-                return Some((column, absolute_row + row));
-            }
-            absolute_row += line.physical_rows;
+        // Resize preserves line order until its anchors have been resolved.
+        // Mutation can invalidate the hint; identity remains authoritative.
+        let index = self
+            .lines
+            .get(anchor.line_index_hint)
+            .filter(|line| {
+                #[cfg(test)]
+                ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(steps.get() + 1));
+                line.id == anchor.line_id
+            })
+            .map(|_| anchor.line_index_hint)
+            .or_else(|| {
+                self.lines.iter().position(|line| {
+                    #[cfg(test)]
+                    ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(steps.get() + 1));
+                    line.id == anchor.line_id
+                })
+            })?;
+        let line = &self.lines[index];
+        if anchor.end_boundary
+            && line.trimmed_offset > anchor.trimmed_offset_at_capture
+            && anchor.offset <= line.trimmed_offset
+        {
+            return None;
         }
-        None
+        let (row, column) = line.locate_offset(anchor.offset, anchor.end_boundary)?;
+        let absolute_row =
+            usize::try_from(self.line_row_starts[index].checked_sub(self.content_row_origin)?)
+                .ok()?;
+        Some((column, absolute_row + row))
     }
 
     /// Removes and returns up to the trailing `rows` physical rows of
@@ -979,6 +1009,181 @@ fn compact_line_charge(
 mod tests {
     use super::Scrollback;
     use crate::{cell::blank_cell, screen::ScreenRow};
+
+    fn linear_anchor_at(
+        scrollback: &Scrollback,
+        mut row: usize,
+        column: usize,
+    ) -> Option<super::LogicalAnchor> {
+        for (index, line) in scrollback.lines.iter().enumerate() {
+            if row < line.physical_rows {
+                let mut anchor = line.anchor_for_row(row, column);
+                anchor.line_index_hint = index;
+                return Some(anchor);
+            }
+            row -= line.physical_rows;
+        }
+        None
+    }
+
+    fn linear_resolve_anchor(
+        scrollback: &Scrollback,
+        anchor: super::LogicalAnchor,
+    ) -> Option<(usize, usize)> {
+        let mut absolute_row = 0;
+        for line in &scrollback.lines {
+            if line.id == anchor.line_id {
+                if anchor.end_boundary
+                    && line.trimmed_offset > anchor.trimmed_offset_at_capture
+                    && anchor.offset <= line.trimmed_offset
+                {
+                    return None;
+                }
+                let offset = anchor
+                    .offset
+                    .checked_sub(line.trimmed_offset)?
+                    .min(line.cells.len());
+                let row = line
+                    .row_ends
+                    .iter()
+                    .position(|&end| {
+                        if anchor.end_boundary {
+                            offset <= end
+                        } else {
+                            offset < end
+                        }
+                    })
+                    .unwrap_or_else(|| line.row_ends.len().saturating_sub(1));
+                let start = row
+                    .checked_sub(1)
+                    .and_then(|previous| line.row_ends.get(previous))
+                    .copied()
+                    .unwrap_or(0);
+                return Some((offset - start, absolute_row + row));
+            }
+            absolute_row += line.physical_rows;
+        }
+        None
+    }
+
+    #[test]
+    fn indexed_history_anchors_match_linear_oracle_across_layout_mutations() {
+        let mut scrollback = Scrollback::new(usize::MAX);
+        for _ in 0..40 {
+            for (cells, soft_wrapped) in [(0, true), (4, true), (0, true), (2, false)] {
+                scrollback.push_row(ScreenRow {
+                    cells: vec![blank_cell(); cells],
+                    soft_wrapped,
+                });
+            }
+        }
+        let mut anchors = Vec::new();
+        for row in 0..scrollback.total_physical_rows() + 2 {
+            for column in [0, 1, 2, 4, 8] {
+                let actual = scrollback.line_and_offset_at(row, column);
+                assert_eq!(actual, linear_anchor_at(&scrollback, row, column));
+                if let Some(anchor) = actual {
+                    anchors.push(anchor);
+                }
+            }
+        }
+        assert!(scrollback.line_and_offset_at(usize::MAX, 0).is_none());
+        for columns in [3, 1, 8] {
+            scrollback.reflow(columns);
+            for &anchor in &anchors {
+                assert_eq!(
+                    scrollback.resolve_anchor(anchor),
+                    linear_resolve_anchor(&scrollback, anchor)
+                );
+            }
+        }
+        scrollback.split_off_tail(7);
+        scrollback.set_limit_bytes(scrollback.charged_bytes / 2);
+        for &anchor in &anchors {
+            assert_eq!(
+                scrollback.resolve_anchor(anchor),
+                linear_resolve_anchor(&scrollback, anchor)
+            );
+        }
+        scrollback.clear();
+        for &anchor in &anchors {
+            assert_eq!(scrollback.resolve_anchor(anchor), None);
+        }
+    }
+
+    #[test]
+    fn history_anchor_hint_revalidates_identity_after_eviction_and_id_rollover() {
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.next_id = u64::MAX - 2;
+        for _ in 0..16 {
+            scrollback.push_row(ScreenRow {
+                cells: vec![blank_cell(); 2],
+                soft_wrapped: false,
+            });
+        }
+        let removed = scrollback.line_and_offset_at(0, 1).unwrap();
+        let kept = scrollback.line_and_offset_at(14, 1).unwrap();
+        scrollback.set_limit_bytes(scrollback.lines[0].charged_bytes * 8);
+        assert!(scrollback.lines.len() < kept.line_index_hint);
+        assert_eq!(scrollback.resolve_anchor(removed), None);
+        assert_eq!(
+            scrollback.resolve_anchor(kept),
+            linear_resolve_anchor(&scrollback, kept)
+        );
+        let fresh = scrollback.line_and_offset_at(0, 1).unwrap();
+        scrollback.push_row(ScreenRow {
+            cells: vec![blank_cell(); 2],
+            soft_wrapped: false,
+        });
+        assert_ne!(scrollback.lines[0].id, fresh.line_id);
+        assert_eq!(scrollback.resolve_anchor(fresh), None);
+        assert_eq!(
+            scrollback.resolve_anchor(kept),
+            linear_resolve_anchor(&scrollback, kept)
+        );
+    }
+
+    #[test]
+    fn large_history_anchor_lookup_avoids_full_line_walks() {
+        let rows = 16_384;
+        let mut scrollback = Scrollback::new(usize::MAX);
+        for _ in 0..rows {
+            scrollback.push_row(ScreenRow {
+                cells: vec![blank_cell(); 1],
+                soft_wrapped: false,
+            });
+        }
+        super::ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(0));
+        let anchor = scrollback.line_and_offset_at(rows - 1, 0).unwrap();
+        assert_eq!(scrollback.resolve_anchor(anchor), Some((0, rows - 1)));
+        let work = super::ANCHOR_LOOKUP_STEPS.with(std::cell::Cell::get);
+        println!("retained_lines={rows} anchor_lookup_steps={work}");
+        assert!(
+            work <= 32,
+            "anchor lookup walked {work} steps for {rows} lines"
+        );
+    }
+
+    #[test]
+    fn wrapped_anchor_lookup_avoids_full_row_boundary_walks() {
+        let rows = 8_192;
+        let mut scrollback = Scrollback::new(usize::MAX);
+        for _ in 0..rows {
+            scrollback.push_row(ScreenRow {
+                cells: vec![blank_cell(); 1],
+                soft_wrapped: true,
+            });
+        }
+        super::ANCHOR_LOOKUP_STEPS.with(|steps| steps.set(0));
+        let anchor = scrollback.line_and_offset_at(rows - 1, 0).unwrap();
+        assert_eq!(scrollback.resolve_anchor(anchor), Some((0, rows - 1)));
+        let work = super::ANCHOR_LOOKUP_STEPS.with(std::cell::Cell::get);
+        println!("wrapped_rows={rows} anchor_lookup_steps={work}");
+        assert!(
+            work <= 32,
+            "anchor lookup walked {work} steps for {rows} wrapped rows"
+        );
+    }
 
     #[test]
     fn fully_trimmed_open_line_rejects_stale_anchor_after_recreation() {

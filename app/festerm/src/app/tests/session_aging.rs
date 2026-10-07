@@ -16,6 +16,7 @@ const SESSION_COUNT: usize = 6;
 const CADENCE: Duration = Duration::from_millis(100);
 const MAX_IDLE_FRAMES: usize = 10_000;
 const REGISTRY_INTERVAL: usize = 20;
+const LIFECYCLE_CHURN_CYCLES: usize = 2;
 
 fn bounded_setting(value: Option<&str>, default: usize, maximum: usize) -> Result<usize, String> {
     match value {
@@ -252,6 +253,15 @@ fn observe_teardown(
     assert!(instance.poll_all(true), "teardown work must complete");
     let registries = resource_snapshot(instance);
     phase_marker(directory, name);
+    let window = held_window(seconds);
+    observations.push(serde_json::json!({
+        "name": name,
+        "registries": registries,
+        "window": window,
+    }));
+}
+
+fn held_window(seconds: usize) -> serde_json::Value {
     let unix_ms = || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -261,15 +271,100 @@ fn observe_teardown(
     let started_unix_ms = unix_ms();
     let started = Instant::now();
     thread::sleep(Duration::from_secs(seconds as u64));
-    observations.push(serde_json::json!({
-        "name": name,
-        "registries": registries,
-        "window": {
-            "started_unix_ms": started_unix_ms,
-            "completed_unix_ms": unix_ms(),
-            "wall_seconds": started.elapsed().as_secs_f64(),
-        },
-    }));
+    serde_json::json!({
+        "started_unix_ms": started_unix_ms,
+        "completed_unix_ms": unix_ms(),
+        "wall_seconds": started.elapsed().as_secs_f64(),
+    })
+}
+
+fn churn_cycle(fixture: &mut Fixture, renderer: &mut Renderer, cycle: usize) {
+    let enlarged = cycle.is_multiple_of(2);
+    for (tab, _) in fixture.sessions.clone() {
+        fixture
+            .app
+            .state
+            .dispatch(AppCommand::ActivateTab(tab), &fixture.context);
+        fixture.app.zoom_active_session(
+            if enlarged {
+                ZoomCommand::In
+            } else {
+                ZoomCommand::Reset
+            },
+            &fixture.context,
+        );
+        fixture.feed("all", cycle);
+        fixture.draw(renderer, if enlarged { 1.25 } else { 2.0 });
+    }
+}
+
+fn lifecycle_round(
+    directory: &std::path::Path,
+    index: usize,
+    idle_seconds: usize,
+) -> serde_json::Value {
+    phase_marker(directory, &format!("lifecycle-{index}-create"));
+    let mut fixture = Fixture::new();
+    let repaint_owner = Arc::downgrade(&fixture.requests);
+    let mut renderer = Renderer::new(&fixture.context);
+    for cycle in 0..LIFECYCLE_CHURN_CYCLES {
+        churn_cycle(&mut fixture, &mut renderer, cycle);
+    }
+    fixture.normalize(&mut renderer);
+    let temporary_oracle_rgba_bytes = {
+        let actual = renderer.image();
+        let reference = image::open(directory.join("fresh-normalized.png"))
+            .unwrap()
+            .into_rgba8();
+        assert!(
+            actual == reference,
+            "whole-owner rebuild must preserve exact pixels"
+        );
+        actual
+            .save(directory.join(format!("lifecycle-{index}-normalized.png")))
+            .unwrap();
+        actual.as_raw().len() + reference.as_raw().len()
+    };
+    let instance = renderer.instance();
+    let live_registries = resource_snapshot(&instance);
+    drop(renderer);
+    drop(fixture);
+    assert!(repaint_owner.upgrade().is_none(), "repaint owner leaked");
+    assert!(instance.poll_all(true), "retired owner work must complete");
+    let drained_registries = resource_snapshot(&instance);
+    drop(instance);
+    phase_marker(directory, &format!("lifecycle-{index}-dropped"));
+    let window = held_window(idle_seconds);
+    serde_json::json!({
+        "index": index, "churn_cycles": LIFECYCLE_CHURN_CYCLES,
+        "churn_submitted_frames": LIFECYCLE_CHURN_CYCLES * SESSION_COUNT,
+        "live_registries": live_registries, "drained_registries": drained_registries,
+        "reporting_instance_dropped": true, "repaint_owner_released": true,
+        "wgpu_submission_completed": true,
+        "temporary_oracle_rgba_bytes": temporary_oracle_rgba_bytes, "window": window,
+    })
+}
+
+fn complete_sample_receipt(record: &serde_json::Value, pid: u32) -> bool {
+    record["pid"].as_u64() == Some(u64::from(pid)) && record["phase"].as_str() == Some("complete")
+}
+
+fn wait_for_complete_sample(directory: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(bytes) = std::fs::read(directory.join("sampled.json")) {
+            if let Ok(record) = serde_json::from_slice(&bytes) {
+                if complete_sample_receipt(&record, std::process::id()) {
+                    return;
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "supervisor did not capture final process commitment"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn measured_phase(
@@ -484,6 +579,75 @@ fn aging_fake_transports_do_not_retain_resize_history() {
 }
 
 #[test]
+fn aging_fixture_drop_releases_repaint_owner_with_six_backlogged_sessions() {
+    for _ in 0..4 {
+        let mut fixture = Fixture::new();
+        let owner = Arc::downgrade(&fixture.requests);
+        for step in 0..=crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME {
+            fixture.feed("all", step);
+        }
+        fixture.app.pump_all_sessions(&fixture.context);
+        assert!(fixture
+            .sessions
+            .iter()
+            .all(|(_, transport)| transport.pending_events_for_test() == 1));
+        drop(fixture);
+        assert!(
+            owner.upgrade().is_none(),
+            "queued output must not pin the retired egui owner"
+        );
+    }
+}
+
+#[test]
+fn aging_six_session_generation_retirement_refuses_stale_clipboard_completion() {
+    use festerm_ui_egui::EncodedInputSink;
+    let mut fixture = Fixture::new();
+    for (tab, transport) in &fixture.sessions {
+        let controller = &mut fixture.app.state.session_tab_mut(*tab).unwrap().controller;
+        assert!(controller.begin_clipboard_input(71));
+        controller.record_encoded_input(b"retired-input");
+        assert!(transport.sent().is_empty());
+        controller.advance_lifecycle_generation();
+        assert!(!controller.prepare_clipboard_input(71));
+        assert_eq!(
+            controller.take_clipboard_discarded_bytes(),
+            b"retired-input".len()
+        );
+        assert!(controller.begin_clipboard_input(72));
+        controller.record_encoded_input(b"cancelled-input");
+        controller.cancel_clipboard_input(71, "stale-cancel");
+        assert!(controller.clipboard_input_pending(72));
+        controller.flush_pending_writes();
+        assert!(transport.sent().is_empty());
+        controller.cancel_clipboard_input(72, "current-cancel");
+        assert_eq!(
+            controller.take_clipboard_discarded_bytes(),
+            b"cancelled-input".len()
+        );
+        controller.record_encoded_input(b"recovered-input");
+        controller.flush_pending_writes();
+        assert_eq!(transport.sent(), [b"recovered-input".to_vec()]);
+    }
+}
+
+#[test]
+fn aging_complete_sample_receipt_rejects_other_processes_and_early_phases() {
+    assert!(complete_sample_receipt(
+        &serde_json::json!({"pid": 7, "phase": "complete"}),
+        7
+    ));
+    for record in [
+        serde_json::json!({"pid": 8, "phase": "complete"}),
+        serde_json::json!({"pid": 7, "phase": "rebuilt-fixture-dropped"}),
+        serde_json::json!({"pid": "7", "phase": "complete"}),
+        serde_json::json!({}),
+    ] {
+        assert!(!complete_sample_receipt(&record, 7));
+    }
+}
+
+#[test]
 #[ignore = "optional bounded six-session aging discriminator; not multi-day/native presentation evidence"]
 fn profile_six_session_aging() {
     assert_eq!(
@@ -502,6 +666,7 @@ fn profile_six_session_aging() {
     let cycles = setting("FESTERM_AGING_CYCLES", 120, 2000);
     let frames = setting("FESTERM_AGING_FRAMES", 100, 1000);
     let idle_seconds = setting("FESTERM_AGING_IDLE_SECONDS", 10, 300);
+    let lifecycle_repeats = setting("FESTERM_AGING_LIFECYCLE_REPEATS", 3, 8);
     let directory =
         PathBuf::from(std::env::var_os("FESTERM_AGING_OUT").expect("set FESTERM_AGING_OUT"));
     assert!(!directory.exists(), "use a fresh evidence directory");
@@ -520,22 +685,7 @@ fn profile_six_session_aging() {
     observe_registry(&mut registries, &renderer.instance(), "fresh");
     phase_marker(&directory, "churn");
     for cycle in 0..cycles {
-        for (tab, _) in fixture.sessions.clone() {
-            fixture
-                .app
-                .state
-                .dispatch(AppCommand::ActivateTab(tab), &fixture.context);
-            fixture.app.zoom_active_session(
-                if cycle % 2 == 0 {
-                    ZoomCommand::In
-                } else {
-                    ZoomCommand::Reset
-                },
-                &fixture.context,
-            );
-            fixture.feed("all", cycle);
-            fixture.draw(&mut renderer, if cycle % 2 == 0 { 1.25 } else { 2.0 });
-        }
+        churn_cycle(&mut fixture, &mut renderer, cycle);
         if (cycle + 1) % REGISTRY_INTERVAL == 0 || cycle + 1 == cycles {
             observe_registry(
                 &mut registries,
@@ -603,6 +753,15 @@ fn profile_six_session_aging() {
         "rebuilt-fixture-dropped",
         idle_seconds,
     );
+    drop(rebuilt_instance);
+    let lifecycles = (0..lifecycle_repeats)
+        .map(|index| lifecycle_round(&directory, index, idle_seconds))
+        .collect::<Vec<_>>();
+    std::fs::write(
+        directory.join("lifecycles.json"),
+        serde_json::to_vec_pretty(&lifecycles).unwrap(),
+    )
+    .unwrap();
     phase_marker(&directory, "validating-pixels");
     std::fs::write(
         directory.join("registries.json"),
@@ -621,6 +780,7 @@ fn profile_six_session_aging() {
             "{state} normalization must preserve every pixel"
         );
     }
+    drop(reference);
     std::fs::write(
         directory.join("manifest.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -629,6 +789,9 @@ fn profile_six_session_aging() {
             "idle_seconds": idle_seconds, "physical_size": PHYSICAL_SIZE,
             "measurement_scale": 2.0, "churn_scales": [1.25, 2.0],
             "registry_schema": 1, "registry_interval": REGISTRY_INTERVAL,
+            "frame_resource_schema": 1, "process_memory_schema": 1,
+            "lifecycle_schema": 1, "lifecycle_repeats": lifecycle_repeats,
+            "lifecycle_churn_cycles": LIFECYCLE_CHURN_CYCLES,
             "states": ["fresh", "churned", "rebuilt"],
             "modes": ["frozen", "active", "background", "idle"],
             "normalized_pixels_equal": true, "installed_sessions_accessed": false,
@@ -637,4 +800,5 @@ fn profile_six_session_aging() {
         })).unwrap(),
     ).unwrap();
     phase_marker(&directory, "complete");
+    wait_for_complete_sample(&directory);
 }

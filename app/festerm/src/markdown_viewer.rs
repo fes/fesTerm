@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver, TryRecvError},
@@ -22,7 +23,12 @@ use festerm_markdown::{
     TaskState, TextBlock, TextMatch,
 };
 use festerm_ui_egui::{icon, icon::Icon, theme};
+use image::ImageDecoder;
 
+use crate::markdown_images::{
+    DecodedImage, ImageLoadFailure, ImageMemoryBudget, ImageReservation, ImageRetry, ImageWorker,
+    MAX_CONCURRENT_IMAGE_LOADS, RETAINED_IMAGE_OVERHEAD,
+};
 use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
@@ -34,10 +40,9 @@ const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 /// pathological document cannot turn one open into unbounded filesystem
 /// work.
 const MAX_AUTOMATIC_IMAGE_LOADS: usize = 64;
-/// How many automatic image loads may be in flight at once. Each load owns a
-/// thread, so this caps the burst a large document creates; the rest start as
-/// earlier ones finish.
-const MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS: usize = 4;
+/// Per-view pending results are bounded as well as the shared running workers.
+const MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS: usize = MAX_CONCURRENT_IMAGE_LOADS;
+const IMAGE_READ_RESERVATION: u64 = 2 * (MAX_IMAGE_BYTES + 1) + 16 * 1024;
 const OUTLINE_WIDTH: f32 = 216.0;
 /// Narrower than this and the outline is hidden for the frame: the reading
 /// column matters more than the navigation aid on a cramped window.
@@ -293,6 +298,8 @@ impl MarkdownViewerErrorState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResourceApprovalState {
     approved: HashSet<usize>,
+    local_image_reads_blocked: bool,
+    local_image_block_reason: Option<String>,
 }
 
 impl ResourceApprovalState {
@@ -415,12 +422,14 @@ impl MarkdownFindState {
 }
 
 struct LoadedImage {
+    // Release the texture handle before its reservation's retirement check.
     texture: egui::TextureHandle,
     size: [usize; 2],
+    _reservation: ImageReservation,
 }
 
 struct PendingImageLoad {
-    receiver: Receiver<Result<egui::ColorImage, String>>,
+    receiver: Receiver<Result<DecodedImage, ImageLoadFailure>>,
 }
 
 pub struct MarkdownViewerTab {
@@ -444,6 +453,8 @@ pub struct MarkdownViewerTab {
     /// budget is spent once per document and cannot be replenished by, say,
     /// an image that fails to decode.
     automatic_image_loads: usize,
+    automatic_image_references: HashSet<usize>,
+    image_retries: BTreeMap<usize, ImageRetry>,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
@@ -489,6 +500,8 @@ impl MarkdownViewerTab {
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
             automatic_image_loads: 0,
+            automatic_image_references: HashSet::new(),
+            image_retries: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
@@ -543,6 +556,8 @@ impl MarkdownViewerTab {
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
             automatic_image_loads: 0,
+            automatic_image_references: HashSet::new(),
+            image_retries: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
@@ -767,6 +782,8 @@ impl MarkdownViewerTab {
                 self.pending_image_loads.clear();
                 self.image_errors.clear();
                 self.automatic_image_loads = 0;
+                self.automatic_image_references.clear();
+                self.image_retries.clear();
                 self.outline_keyboard_focus = false;
                 if let Some(document) = &self.document {
                     self.find.restore_for_reload(document);
@@ -831,57 +848,171 @@ impl MarkdownViewerTab {
     }
 
     pub fn load_local_image(&mut self, reference_index: usize, context: &egui::Context) {
+        self.image_state()
+            .try_load_local_image(reference_index, context, false);
+    }
+
+    fn start_automatic_image_loads(&mut self, context: &egui::Context) {
+        self.image_state().start_automatic_image_loads(context);
+    }
+
+    fn poll_background_work(&mut self, context: &egui::Context) {
+        self.image_state().poll_background_work(context);
+    }
+
+    fn image_state(&mut self) -> MarkdownImageState<'_> {
+        MarkdownImageState {
+            source: &self.source,
+            document: self.document.as_ref(),
+            texture_label: &self.title,
+            resource_approvals: &mut self.resource_approvals,
+            loaded_images: &mut self.loaded_images,
+            pending_image_loads: &mut self.pending_image_loads,
+            image_errors: &mut self.image_errors,
+            automatic_image_loads: &mut self.automatic_image_loads,
+            automatic_image_references: &mut self.automatic_image_references,
+            image_retries: &mut self.image_retries,
+        }
+    }
+}
+
+struct MarkdownImageState<'a> {
+    source: &'a MarkdownSource,
+    document: Option<&'a MarkdownDocument>,
+    texture_label: &'a str,
+    resource_approvals: &'a mut ResourceApprovalState,
+    loaded_images: &'a mut BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &'a mut BTreeMap<usize, PendingImageLoad>,
+    image_errors: &'a mut BTreeMap<usize, String>,
+    automatic_image_loads: &'a mut usize,
+    automatic_image_references: &'a mut HashSet<usize>,
+    image_retries: &'a mut BTreeMap<usize, ImageRetry>,
+}
+
+impl MarkdownImageState<'_> {
+    fn try_load_local_image(
+        &mut self,
+        reference_index: usize,
+        context: &egui::Context,
+        automatic: bool,
+    ) -> bool {
         if self.loaded_images.contains_key(&reference_index)
             || self.pending_image_loads.contains_key(&reference_index)
         {
-            return;
+            return false;
         }
-        let Some(document) = &self.document else {
-            return;
+        let Some(document) = self.document else {
+            return false;
         };
         let Some(reference) = document.resource_references().get(reference_index) else {
-            return;
+            return false;
         };
-        let Some(local) = local_document_source(&self.source) else {
+        if self.resource_approvals.local_image_reads_blocked {
+            self.image_errors.insert(
+                reference_index,
+                "Only saved local Markdown documents can load local images.".to_owned(),
+            );
+            return false;
+        }
+        let Some(local) = local_document_source(self.source) else {
             self.image_errors.insert(
                 reference_index,
                 "Only local Markdown documents can load local images.".to_owned(),
             );
-            return;
+            return false;
         };
         if reference.kind() != ResourceReferenceKind::Image {
-            return;
+            return false;
         }
         if reference.class() != ResourceReferenceClass::LocalRelative {
             self.image_errors.insert(
                 reference_index,
                 resource_placeholder_action(reference.class()).to_owned(),
             );
-            return;
+            return false;
         }
+        if self.pending_image_loads.len() >= MAX_CONCURRENT_IMAGE_LOADS {
+            self.image_errors
+                .insert(reference_index, ImageLoadFailure::Busy.message().to_owned());
+            self.image_retries
+                .insert(reference_index, ImageRetry::PendingQueue);
+            return false;
+        }
+        let budget = ImageMemoryBudget::for_context(context, Default::default());
+        let worker = match budget.start_worker(context) {
+            Ok(worker) => worker,
+            Err(error) => {
+                self.record_image_failure(reference_index, error);
+                return false;
+            }
+        };
+        let captured_bytes = reference.target().len() as u64
+            + local.path().as_os_str().as_encoded_bytes().len() as u64;
+        let mut admission_bytes = IMAGE_READ_RESERVATION + captured_bytes;
+        if automatic {
+            if let Some(ImageRetry::Memory(required)) = self.image_retries.get(&reference_index) {
+                admission_bytes = admission_bytes.max(*required);
+            }
+        }
+        let scratch = match budget.reserve(admission_bytes, Some(context)) {
+            Ok(scratch) => scratch,
+            Err(error) => {
+                drop(worker);
+                self.record_image_failure(reference_index, error);
+                return false;
+            }
+        };
         let markdown_path = local.path().clone();
         let target = reference.target().to_owned();
-        let repaint = context.clone();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        if thread::Builder::new()
-            .name(format!("festerm-markdown-image-{reference_index}"))
-            .spawn(move || {
-                let _ = sender.send(read_local_image(&markdown_path, &target));
-                repaint.request_repaint();
-            })
-            .is_ok()
-        {
-            self.resource_approvals.approve(reference_index);
-            self.image_errors.remove(&reference_index);
-            self.pending_image_loads
-                .insert(reference_index, PendingImageLoad { receiver });
-        } else {
-            self.resource_approvals.approve(reference_index);
-            self.image_errors.insert(
-                reference_index,
-                "A background image loader could not be started.".to_owned(),
-            );
+        let texture_side = context.input(|input| input.max_texture_side);
+        match spawn_image_worker(
+            budget,
+            worker,
+            scratch,
+            context.clone(),
+            move |scratch, _, budget| {
+                read_local_image_with_budget(&markdown_path, &target, budget, scratch, texture_side)
+            },
+            |work| {
+                thread::Builder::new()
+                    .name(format!("festerm-markdown-image-{reference_index}"))
+                    .spawn(work)
+            },
+        ) {
+            Ok(receiver) => {
+                self.resource_approvals.approve(reference_index);
+                self.image_errors.remove(&reference_index);
+                self.image_retries.remove(&reference_index);
+                self.pending_image_loads
+                    .insert(reference_index, PendingImageLoad { receiver });
+                true
+            }
+            Err(_) => {
+                self.resource_approvals.approve(reference_index);
+                self.image_errors.insert(
+                    reference_index,
+                    "A background image loader could not be started.".to_owned(),
+                );
+                self.image_retries.remove(&reference_index);
+                false
+            }
         }
+    }
+
+    fn record_image_failure(&mut self, index: usize, error: ImageLoadFailure) {
+        let retry = match &error {
+            ImageLoadFailure::Budget { required_bytes, .. } => {
+                Some(ImageRetry::Memory(*required_bytes))
+            }
+            ImageLoadFailure::Busy => Some(ImageRetry::Workers),
+            ImageLoadFailure::Permanent(_) => None,
+        };
+        if let Some(retry) = retry {
+            self.image_retries.insert(index, retry);
+        } else {
+            self.image_retries.remove(&index);
+        }
+        self.image_errors.insert(index, error.message().to_owned());
     }
 
     /// Starts loading the local images a local document references, without
@@ -900,17 +1031,19 @@ impl MarkdownViewerTab {
     /// A document whose images are all placeholders is not a readable
     /// document, which is the behaviour this restores.
     fn start_automatic_image_loads(&mut self, context: &egui::Context) {
-        if local_document_source(&self.source).is_none() {
+        if self.resource_approvals.local_image_reads_blocked
+            || local_document_source(self.source).is_none()
+        {
             return;
         }
-        let Some(document) = &self.document else {
+        let Some(document) = self.document else {
             return;
         };
+        let (available, workers) =
+            ImageMemoryBudget::for_context(context, Default::default()).availability();
         let mut candidates = Vec::new();
+        let mut new_references = 0;
         for (index, reference) in document.resource_references().iter().enumerate() {
-            if self.automatic_image_loads + candidates.len() >= MAX_AUTOMATIC_IMAGE_LOADS {
-                break;
-            }
             if self.pending_image_loads.len() + candidates.len()
                 >= MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS
             {
@@ -926,28 +1059,51 @@ impl MarkdownViewerTab {
             // would be re-read from disk on every single frame.
             if self.loaded_images.contains_key(&index)
                 || self.pending_image_loads.contains_key(&index)
-                || self.image_errors.contains_key(&index)
             {
                 continue;
+            }
+            if self.image_errors.contains_key(&index) {
+                match self.image_retries.get(&index) {
+                    Some(ImageRetry::Memory(required)) if available >= *required => {}
+                    Some(ImageRetry::Workers) if workers < MAX_CONCURRENT_IMAGE_LOADS => {}
+                    Some(ImageRetry::PendingQueue) => {}
+                    _ => continue,
+                }
+            }
+            if !self.automatic_image_references.contains(&index) {
+                if *self.automatic_image_loads + new_references >= MAX_AUTOMATIC_IMAGE_LOADS {
+                    continue;
+                }
+                new_references += 1;
             }
             candidates.push(index);
         }
         for index in candidates {
-            self.automatic_image_loads += 1;
-            self.load_local_image(index, context);
+            if self.try_load_local_image(index, context, true)
+                && self.automatic_image_references.insert(index)
+            {
+                *self.automatic_image_loads += 1;
+            }
         }
     }
 
     fn poll_background_work(&mut self, context: &egui::Context) {
         let mut finished = Vec::new();
-        for (&reference_index, pending) in &self.pending_image_loads {
+        for (&reference_index, pending) in self.pending_image_loads.iter() {
             match pending.receiver.try_recv() {
                 Ok(result) => {
                     match result {
-                        Ok(image) => {
+                        Ok(mut image) => {
+                            let pixels = Arc::new(image.pixels);
+                            image
+                                .reservation
+                                .track_texture_pixels(Arc::downgrade(&pixels));
                             let texture = context.load_texture(
-                                format!("markdown-image-{}-{}", self.title, reference_index),
-                                image,
+                                format!(
+                                    "markdown-image-{}-{}",
+                                    self.texture_label, reference_index
+                                ),
+                                egui::ImageData::Color(pixels),
                                 egui::TextureOptions::LINEAR,
                             );
                             self.loaded_images.insert(
@@ -955,12 +1111,21 @@ impl MarkdownViewerTab {
                                 LoadedImage {
                                     size: texture.size(),
                                     texture,
+                                    _reservation: image.reservation,
                                 },
                             );
                             self.image_errors.remove(&reference_index);
+                            self.image_retries.remove(&reference_index);
                         }
-                        Err(message) => {
-                            self.image_errors.insert(reference_index, message);
+                        Err(error) => {
+                            if let ImageLoadFailure::Budget { required_bytes, .. } = &error {
+                                self.image_retries
+                                    .insert(reference_index, ImageRetry::Memory(*required_bytes));
+                            } else {
+                                self.image_retries.remove(&reference_index);
+                            }
+                            self.image_errors
+                                .insert(reference_index, error.message().to_owned());
                         }
                     }
                     finished.push(reference_index);
@@ -971,6 +1136,7 @@ impl MarkdownViewerTab {
                         reference_index,
                         "The background image loader stopped unexpectedly.".to_owned(),
                     );
+                    self.image_retries.remove(&reference_index);
                     finished.push(reference_index);
                 }
             }
@@ -979,7 +1145,9 @@ impl MarkdownViewerTab {
             self.pending_image_loads.remove(&reference_index);
         }
     }
+}
 
+impl MarkdownViewerTab {
     fn move_outline_selection(&mut self, delta: isize) {
         let Some(document) = self.document.as_ref() else {
             return;
@@ -2391,17 +2559,125 @@ fn map_local_io_error(error: std::io::Error) -> MarkdownViewerLoadFailure {
     })
 }
 
+#[cfg(test)]
 fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorImage, String> {
-    let Some(parent) = markdown_path.parent() else {
-        return Err("The Markdown file has no parent directory for relative resources.".to_owned());
+    let context = egui::Context::default();
+    let budget = ImageMemoryBudget::for_context(&context, Default::default());
+    let mut scratch = budget.reserve(IMAGE_READ_RESERVATION, None).unwrap();
+    read_local_image_with_budget(
+        markdown_path,
+        target,
+        &budget,
+        &mut scratch,
+        MAX_IMAGE_PIXELS as usize,
+    )
+    .map(|image| image.pixels)
+    .map_err(|error| error.message().to_owned())
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_LOCAL_IMAGE_OPEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[inline]
+fn before_local_image_open() {
+    #[cfg(test)]
+    BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[inline]
+fn before_local_image_directory_open() {
+    #[cfg(test)]
+    BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+fn open_canonical_image_directory(parent: &Path) -> std::io::Result<cap_std::fs::Dir> {
+    use cap_fs_ext::DirExt;
+    use std::io;
+
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The Markdown resource directory must be a canonical absolute path.",
+        )
     };
+    if !parent.is_absolute() {
+        return Err(invalid());
+    }
+    let root = parent.ancestors().last().ok_or_else(invalid)?;
+    let relative = parent.strip_prefix(root).map_err(|_| invalid())?;
+    let mut directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // The source's canonical parent is the grant. Following a newly inserted
+    // alias while acquiring it would silently grant a different directory.
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(invalid());
+        };
+        directory = directory.open_dir_nofollow(name)?;
+    }
+    Ok(directory)
+}
+
+fn read_local_image_with_budget(
+    markdown_path: &Path,
+    target: &str,
+    budget: &ImageMemoryBudget,
+    scratch: &mut ImageReservation,
+    texture_side: usize,
+) -> Result<DecodedImage, ImageLoadFailure> {
+    let permanent = |message: &str| ImageLoadFailure::Permanent(message.to_owned());
+    let Some(parent) = markdown_path.parent() else {
+        return Err(permanent(
+            "The Markdown file has no parent directory for relative resources.",
+        ));
+    };
+    if Path::new(target).has_root() || Path::new(target).is_absolute() {
+        return Err(permanent(
+            "Only relative local image paths can be loaded here.",
+        ));
+    }
+    before_local_image_directory_open();
+    let directory = open_canonical_image_directory(parent)
+        .map_err(|_| permanent("The Markdown image directory could not be opened safely."))?;
     let candidate = parent.join(target);
     let canonical = fs::canonicalize(&candidate)
-        .map_err(|_| "The requested local image could not be found.".to_owned())?;
-    let metadata = fs::metadata(&canonical)
-        .map_err(|_| "The requested local image could not be read.".to_owned())?;
+        .map_err(|_| permanent("The requested local image could not be found."))?;
+    let relative = canonical
+        .strip_prefix(parent)
+        .map_err(|_| permanent("Local images must remain inside the Markdown file's directory."))?;
+    before_local_image_open();
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK);
+    }
+    // Pathname admission is not an authority: resolve again beneath the
+    // captured directory handle, including intermediate symlinks/reparse points.
+    let file = directory
+        .open_with(relative, &options)
+        .map_err(|_| permanent("The requested local image could not be read."))?;
+    drop(directory);
+    let metadata = file
+        .metadata()
+        .map_err(|_| permanent("The requested local image could not be read."))?;
     if !metadata.is_file() {
-        return Err("The requested local image is not a regular file.".to_owned());
+        return Err(permanent(
+            "The requested local image is not a regular file.",
+        ));
     }
     let extension = canonical
         .extension()
@@ -2409,27 +2685,141 @@ fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorIma
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
     if extension == "svg" {
-        return Err("SVG images remain blocked in the Markdown viewer.".to_owned());
-    }
-    if metadata.len() > MAX_IMAGE_BYTES {
-        return Err(format!(
-            "Local images must not exceed {} bytes.",
-            MAX_IMAGE_BYTES
+        return Err(permanent(
+            "SVG images remain blocked in the Markdown viewer.",
         ));
     }
-    let bytes = fs::read(&canonical)
-        .map_err(|_| "The requested local image could not be read.".to_owned())?;
-    let decoded = image::load_from_memory(&bytes)
-        .map_err(|_| "Only bounded local raster images can be loaded here.".to_owned())?
-        .to_rgba8();
-    let (width, height) = decoded.dimensions();
-    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
-        return Err("The requested local image exceeds the raster-area limit.".to_owned());
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err(ImageLoadFailure::Permanent(format!(
+            "Local images must not exceed {} bytes.",
+            MAX_IMAGE_BYTES
+        )));
     }
-    Ok(egui::ColorImage::from_rgba_unmultiplied(
-        [width as usize, height as usize],
-        decoded.as_raw(),
-    ))
+    let bytes = read_bounded_image_bytes(file)?;
+    let mut reader = image::ImageReader::new(Cursor::new(bytes.as_slice()))
+        .with_guessed_format()
+        .map_err(|_| permanent("Only bounded local raster images can be loaded here."))?;
+    let mut limits = image::Limits::default();
+    let axis_limit = u32::try_from(texture_side.min(MAX_IMAGE_PIXELS as usize))
+        .map_err(|_| permanent("The local image texture limit is unavailable."))?;
+    limits.max_image_width = Some(axis_limit);
+    limits.max_image_height = Some(axis_limit);
+    // This decoder hint is non-strict; only dimensions and our own
+    // reservations provide a hard application-managed admission boundary.
+    limits.max_alloc = Some(budget.limit());
+    reader.limits(limits);
+    let decoder = reader.into_decoder().map_err(|_| {
+        permanent("Only bounded local raster images within the texture limits can be loaded here.")
+    })?;
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return Err(permanent(
+            "The requested local image exceeds the raster-area limit.",
+        ));
+    }
+    let rgba_bytes = u64::from(width) * u64::from(height) * 4;
+    let captured_bytes =
+        target.len() as u64 + markdown_path.as_os_str().as_encoded_bytes().len() as u64;
+    let retained_bytes = RETAINED_IMAGE_OVERHEAD + 2 * rgba_bytes;
+    scratch.resize(
+        IMAGE_READ_RESERVATION
+            + captured_bytes
+            + decoder.total_bytes()
+            + rgba_bytes
+            + retained_bytes,
+    )?;
+    let reservation = scratch.split(retained_bytes);
+    let decoded = image::DynamicImage::from_decoder(decoder)
+        .map_err(|_| permanent("Only bounded local raster images can be loaded here."))?
+        .into_rgba8();
+    if decoded.dimensions() != (width, height) {
+        return Err(permanent(
+            "The local image dimensions changed during decoding.",
+        ));
+    }
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact((u64::from(width) * u64::from(height)) as usize)
+        .map_err(|_| permanent("Local image pixel storage could not be allocated."))?;
+    pixels.extend(
+        decoded
+            .as_raw()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|rgba| egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])),
+    );
+    let pixels = egui::ColorImage::new([width as usize, height as usize], pixels);
+    Ok(DecodedImage {
+        pixels,
+        reservation,
+    })
+}
+
+fn read_bounded_image_bytes(mut reader: impl Read) -> Result<Vec<u8>, ImageLoadFailure> {
+    let limit = MAX_IMAGE_BYTES as usize;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let remaining = (limit + 1 - bytes.len()).min(chunk.len());
+        let read = match reader.read(&mut chunk[..remaining]) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => {
+                return Err(ImageLoadFailure::Permanent(
+                    "The requested local image could not be read.".to_owned(),
+                ))
+            }
+        };
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if bytes.len() + read > limit {
+            return Err(ImageLoadFailure::Permanent(format!(
+                "Local images must not exceed {} bytes.",
+                MAX_IMAGE_BYTES
+            )));
+        }
+        let needed = bytes.len() + read;
+        if needed > bytes.capacity() {
+            let capacity = needed.max(bytes.capacity().saturating_mul(2)).min(limit);
+            bytes
+                .try_reserve_exact(capacity - bytes.len())
+                .map_err(|_| {
+                    ImageLoadFailure::Permanent(
+                        "Local image input storage could not be allocated.".to_owned(),
+                    )
+                })?;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn spawn_image_worker(
+    budget: ImageMemoryBudget,
+    worker: ImageWorker,
+    mut scratch: ImageReservation,
+    context: egui::Context,
+    read: impl FnOnce(
+            &mut ImageReservation,
+            &egui::Context,
+            &ImageMemoryBudget,
+        ) -> Result<DecodedImage, ImageLoadFailure>
+        + Send
+        + 'static,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>,
+) -> std::io::Result<Receiver<Result<DecodedImage, ImageLoadFailure>>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let viewport = context.viewport_id();
+    spawn(Box::new(move || {
+        let result = read(&mut scratch, &context, &budget);
+        drop(scratch);
+        drop(worker);
+        let _ = sender.send(result);
+        context.request_repaint_of(viewport);
+        crate::markdown_images::wake_image_viewports(&context);
+    }))?;
+    Ok(receiver)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2819,12 +3209,23 @@ fn render_image(
                                     .color(theme::TEXT_SECONDARY),
                             );
                         } else {
+                            let blocked_local = reference.class()
+                                == ResourceReferenceClass::LocalRelative
+                                && approvals.local_image_reads_blocked;
                             ui.label(
-                                RichText::new(resource_placeholder_action(reference.class()))
-                                    .small(),
+                                RichText::new(if blocked_local {
+                                    approvals.local_image_block_reason.as_deref().unwrap_or(
+                                        "Local images require a saved local Markdown document.",
+                                    )
+                                } else {
+                                    resource_placeholder_action(reference.class())
+                                })
+                                .small(),
                             );
                             if reference.class() == ResourceReferenceClass::LocalRelative
-                                && !approvals.is_approved(image.reference_index())
+                                && !blocked_local
+                                && (!approvals.is_approved(image.reference_index())
+                                    || image_errors.contains_key(&image.reference_index()))
                                 && ui.small_button("Load local image").clicked()
                             {
                                 ui.ctx().memory_mut(|memory| {
@@ -3359,6 +3760,9 @@ pub(crate) struct MarkdownPreviewPane {
     loaded_images: BTreeMap<usize, LoadedImage>,
     pending_image_loads: BTreeMap<usize, PendingImageLoad>,
     image_errors: BTreeMap<usize, String>,
+    automatic_image_loads: usize,
+    automatic_image_references: HashSet<usize>,
+    image_retries: BTreeMap<usize, ImageRetry>,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
@@ -3387,10 +3791,16 @@ impl MarkdownPreviewPane {
             pending_text: None,
             outline_selected: None,
             find: MarkdownFindState::default(),
-            resource_approvals: ResourceApprovalState::default(),
+            resource_approvals: ResourceApprovalState {
+                local_image_reads_blocked: true,
+                ..Default::default()
+            },
             loaded_images: BTreeMap::new(),
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
+            automatic_image_loads: 0,
+            automatic_image_references: HashSet::new(),
+            image_retries: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
@@ -3402,6 +3812,44 @@ impl MarkdownPreviewPane {
         };
         pane.parse(text.to_owned());
         pane
+    }
+
+    pub(crate) fn for_saved_local_source(source: LocalMarkdownSource, text: &str) -> Self {
+        let mut pane = Self::new(MarkdownSource::from(source), text);
+        pane.resource_approvals.local_image_reads_blocked = false;
+        pane
+    }
+
+    pub(crate) fn with_unavailable_local_images(
+        source: MarkdownSource,
+        text: &str,
+        reason: &str,
+    ) -> Self {
+        let mut pane = Self::new(source, text);
+        pane.resource_approvals.local_image_block_reason = Some(reason.to_owned());
+        pane
+    }
+
+    pub(crate) fn load_local_image(&mut self, index: usize, context: &egui::Context) {
+        if self.error.is_none() {
+            self.image_state()
+                .try_load_local_image(index, context, false);
+        }
+    }
+
+    fn image_state(&mut self) -> MarkdownImageState<'_> {
+        MarkdownImageState {
+            source: &self.source,
+            document: self.document.as_ref(),
+            texture_label: "editor-preview",
+            resource_approvals: &mut self.resource_approvals,
+            loaded_images: &mut self.loaded_images,
+            pending_image_loads: &mut self.pending_image_loads,
+            image_errors: &mut self.image_errors,
+            automatic_image_loads: &mut self.automatic_image_loads,
+            automatic_image_references: &mut self.automatic_image_references,
+            image_retries: &mut self.image_retries,
+        }
     }
 
     /// Takes this frame's text. Parsing is deferred until typing settles, and
@@ -3433,7 +3881,19 @@ impl MarkdownPreviewPane {
         &self.parsed
     }
 
+    #[cfg(test)]
+    pub(crate) fn image_loaded_for_test(&self, index: usize) -> bool {
+        self.loaded_images.contains_key(&index)
+    }
+
     fn parse(&mut self, text: String) {
+        self.resource_approvals.clear();
+        self.loaded_images.clear();
+        self.pending_image_loads.clear();
+        self.image_errors.clear();
+        self.automatic_image_loads = 0;
+        self.automatic_image_references.clear();
+        self.image_retries.clear();
         let bytes = text.as_bytes();
         match MarkdownLoader::default().load(
             self.source.clone(),
@@ -3447,10 +3907,6 @@ impl MarkdownPreviewPane {
                 self.outline_selected = document.headings().first().map(|_| 0);
                 self.document = Some(document);
                 self.error = None;
-                self.resource_approvals.clear();
-                self.loaded_images.clear();
-                self.pending_image_loads.clear();
-                self.image_errors.clear();
             }
             Err(error) => {
                 // The text stays editable whatever the preview makes of it,
@@ -3484,6 +3940,8 @@ impl MarkdownPreviewPane {
             });
             return;
         }
+        self.image_state().poll_background_work(ui.ctx());
+        self.image_state().start_automatic_image_loads(ui.ctx());
         let Some(document) = self.document.take() else {
             return;
         };
@@ -5314,6 +5772,820 @@ mod tests {
         image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 255]))
             .save(path)
             .expect("test PNG should be writable");
+    }
+
+    #[cfg(windows)]
+    fn image_test_junction(link: &Path, target: &Path) {
+        let command = format!(
+            "New-Item -ItemType Junction -Path '{}' -Target '{}' -ErrorAction Stop | Out-Null",
+            link.display().to_string().replace('\'', "''"),
+            target.display().to_string().replace('\'', "''"),
+        );
+        let created = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+    }
+
+    fn pump_preview_images(
+        pane: &mut MarkdownPreviewPane,
+        context: &egui::Context,
+        predicate: impl Fn(&MarkdownPreviewPane) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            pane.image_state().poll_background_work(context);
+            pane.image_state().start_automatic_image_loads(context);
+            if predicate(pane) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
+    #[test]
+    fn image_budget_saved_local_preview_shares_viewer_bytes_and_recovers_after_a_limit_increase() {
+        let directory = image_test_directory("preview-shared-bytes");
+        write_test_png(&directory.join("image.png"), 1536, 1536);
+        let markdown = directory.join("readme.md");
+        let body = "![Image](image.png)\n";
+        fs::write(&markdown, body).unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(
+            &context,
+            festerm_config::ImageMemoryBudgetPreference::MiB64,
+        );
+        let mut viewer = MarkdownViewerTab::open_local(markdown.clone());
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 1536 * 1536 * 4;
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(markdown).unwrap(),
+            body,
+        );
+        assert!(pump_preview_images(&mut preview, &context, |pane| !pane
+            .image_errors
+            .is_empty()));
+        assert!(preview.image_errors[&0].contains("Image memory budget exhausted"));
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        let generation = budget.generation();
+        for _ in 0..32 {
+            preview.image_state().start_automatic_image_loads(&context);
+        }
+        assert_eq!(budget.generation(), generation);
+        budget.set_preference(festerm_config::ImageMemoryBudgetPreference::MiB128);
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(preview.automatic_image_loads, 1);
+        assert_eq!(budget.usage_for_test(), (2 * retained, 0));
+        preview.parse("# Replaced\n".to_owned());
+        assert!(preview.loaded_images.is_empty());
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(!preview.resource_approvals.is_approved(0));
+        assert!(preview.image_retries.is_empty());
+        assert_eq!(preview.automatic_image_loads, 0);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        drop(viewer);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_preview_and_viewer_share_worker_slots() {
+        let directory = image_test_directory("preview-shared-workers");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let markdown = directory.join("readme.md");
+        let body = "![Image](image.png)\n";
+        fs::write(&markdown, body).unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let workers: Vec<_> = (0..MAX_CONCURRENT_IMAGE_LOADS)
+            .map(|_| budget.start_worker(&context).unwrap())
+            .collect();
+        let mut viewer = MarkdownViewerTab::open_local(markdown.clone());
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(markdown).unwrap(),
+            body,
+        );
+        viewer.load_local_image(0, &context);
+        preview.load_local_image(0, &context);
+        assert!(viewer.pending_image_loads.is_empty());
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(viewer.image_errors[&0].contains("Four image loads"));
+        assert!(preview.image_errors[&0].contains("Four image loads"));
+        drop(workers);
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        drop(preview);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_preview_failed_image_can_be_explicitly_retried_without_automatic_retry() {
+        use egui_kittest::kittest::Queryable;
+        let directory = image_test_directory("preview-manual-retry");
+        let source = LocalMarkdownSource::new(directory.join("readme.md")).unwrap();
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, pane: &mut MarkdownPreviewPane| {
+                pane.show(ui);
+                for command in take_viewer_commands(ui.ctx()) {
+                    if let AppCommand::LoadMarkdownLocalImage { reference_index } = command {
+                        pane.load_local_image(reference_index, ui.ctx());
+                    }
+                }
+            },
+            MarkdownPreviewPane::for_saved_local_source(source, "![Image](image.png)\n"),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while harness.state().image_errors.is_empty() {
+            harness.step();
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        write_test_png(&directory.join("image.png"), 2, 2);
+        for _ in 0..8 {
+            harness.step();
+        }
+        assert!(harness.state().loaded_images.is_empty());
+        assert!(harness.state().pending_image_loads.is_empty());
+        harness.get_by_label("Load local image").click();
+        while harness.state().loaded_images.is_empty() {
+            harness.step();
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(harness.state().automatic_image_loads, 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_failed_preview_parse_releases_images_without_reloading_the_hidden_snapshot() {
+        let directory = image_test_directory("preview-parse-failure");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(directory.join("readme.md")).unwrap(),
+            "![Image](image.png)\n",
+        );
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        preview.parse("x".repeat(festerm_markdown::MAX_SOURCE_BYTES + 1));
+        assert!(preview.error.is_some());
+        assert!(preview.loaded_images.is_empty());
+        preview.load_local_image(0, &context);
+        let mut output = context.run_ui(Default::default(), |ui| preview.show(ui));
+        output.textures_delta.clear();
+        assert!(preview.pending_image_loads.is_empty());
+        assert_eq!(preview.automatic_image_loads, 0);
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_local_paths_cannot_escape_the_opened_markdown_directory() {
+        let directory = image_test_directory("image-directory-grant");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        fs::create_dir(directory.join("docs")).unwrap();
+        let source = directory.join("docs").join("readme.md");
+        let target = Path::new("..").join("image.png");
+        assert!(read_local_image(&source, target.to_str().unwrap())
+            .unwrap_err()
+            .contains("inside the Markdown file's directory"));
+        assert!(
+            read_local_image(&source, directory.join("image.png").to_str().unwrap())
+                .unwrap_err()
+                .contains("Only relative")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_final_symlink_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("final-image-rebinding");
+        let outside = image_test_directory("final-image-outside");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("image.png");
+        let escaped = outside.join("image.png");
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::remove_file(&replaced).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "image.png");
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "an opened image must remain beneath its authorized directory after final-name rebinding"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_intermediate_symlink_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("intermediate-image-rebinding");
+        let outside = image_test_directory("intermediate-image-outside");
+        fs::create_dir(directory.join("images")).unwrap();
+        write_test_png(&directory.join("images").join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("images");
+        let retained = directory.join("retained-images");
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, retained).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "images/image.png");
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "an opened image must remain beneath its authorized directory after component rebinding"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn image_budget_intermediate_junction_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("junction-image-rebinding");
+        let outside = image_test_directory("junction-image-outside");
+        fs::create_dir(directory.join("images")).unwrap();
+        write_test_png(&directory.join("images").join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("images");
+        let retained = directory.join("retained-images");
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, retained).unwrap();
+                image_test_junction(&replaced, &escaped);
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "images\\image.png");
+        fs::remove_dir(directory.join("images")).unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "a Windows reparse point must not redirect an admitted image outside its captured root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_captured_root_survives_directory_name_rebinding() {
+        let directory = image_test_directory("captured-image-root");
+        let outside = image_test_directory("captured-image-outside");
+        let retained = image_test_directory("captured-image-retained");
+        fs::remove_dir(&retained).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.clone();
+        let moved = retained.clone();
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, moved).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let image = read_local_image(&directory.join("readme.md"), "image.png").unwrap();
+        fs::remove_file(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert_eq!(
+            image.size,
+            [2, 2],
+            "only the captured authorized root may supply bytes"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_in_root_relative_and_absolute_symlink_aliases_remain_readable() {
+        let directory = image_test_directory("allowed-image-symlinks");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        std::os::unix::fs::symlink("image.png", directory.join("relative.png")).unwrap();
+        std::os::unix::fs::symlink(directory.join("image.png"), directory.join("absolute.png"))
+            .unwrap();
+        for alias in ["relative.png", "absolute.png"] {
+            let image = read_local_image(&directory.join("readme.md"), alias).unwrap();
+            assert_eq!(image.size, [2, 2]);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_image_reads_release_directory_handles_on_success_and_refusal() {
+        let directory = image_test_directory("image-directory-handle-lifetime");
+        let moved = image_test_directory("image-directory-handle-moved");
+        fs::remove_dir(&moved).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        fs::write(directory.join("image.svg"), "<svg/>").unwrap();
+        assert!(read_local_image(&directory.join("readme.md"), "image.png").is_ok());
+        for target in ["missing.png", "image.svg", "../outside.png"] {
+            assert!(read_local_image(&directory.join("readme.md"), target).is_err());
+        }
+        fs::rename(&directory, &moved).expect("no finished image read may retain a directory lock");
+        fs::remove_dir_all(moved).unwrap();
+    }
+
+    #[test]
+    fn image_budget_root_acquisition_refuses_a_rebound_canonical_source_parent() {
+        let directory = image_test_directory("image-root-acquisition");
+        let outside = image_test_directory("image-root-acquisition-outside");
+        let retained = image_test_directory("image-root-acquisition-retained");
+        fs::remove_dir(&retained).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.clone();
+        let moved = retained.clone();
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, moved).unwrap();
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&escaped, &replaced).unwrap();
+                #[cfg(windows)]
+                image_test_junction(&replaced, &escaped);
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "image.png");
+        #[cfg(unix)]
+        fs::remove_file(directory).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "root acquisition must not reinterpret the granted canonical parent through a new alias"
+        );
+    }
+
+    #[test]
+    fn image_budget_preview_reparse_cannot_adopt_an_old_workers_result() {
+        let directory = image_test_directory("preview-stale-worker");
+        write_test_png(&directory.join("old.png"), 2, 2);
+        write_test_png(&directory.join("new.png"), 4, 4);
+        let markdown = directory.join("readme.md");
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(markdown.clone()).unwrap(),
+            "![Old](old.png)\n",
+        );
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
+        let worker = budget.start_worker(&context).unwrap();
+        let scratch = budget
+            .reserve(IMAGE_READ_RESERVATION, Some(&context))
+            .unwrap();
+        let receiver = spawn_image_worker(
+            budget.clone(),
+            worker,
+            scratch,
+            context.clone(),
+            move |scratch, _, budget| {
+                release_receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                let result =
+                    read_local_image_with_budget(&markdown, "old.png", budget, scratch, 4096);
+                finished_sender.send(()).unwrap();
+                result
+            },
+            |work| thread::Builder::new().spawn(work),
+        )
+        .unwrap();
+        preview
+            .pending_image_loads
+            .insert(0, PendingImageLoad { receiver });
+        preview.parse("![New](new.png)\n".to_owned());
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(preview.loaded_images[&0].size, [4, 4]);
+        release_sender.send(()).unwrap();
+        finished_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 4 * 4 * 4;
+        while budget.usage_for_test() != (retained, 0) {
+            assert!(
+                Instant::now() < deadline,
+                "the discarded old result must release its real owners"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        preview.image_state().poll_background_work(&context);
+        assert_eq!(preview.loaded_images[&0].size, [4, 4]);
+        drop(preview);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_local_fifo_is_rejected_without_waiting_for_a_writer() {
+        let directory = image_test_directory("image-fifo");
+        let status = std::process::Command::new("mkfifo")
+            .arg(directory.join("image.png"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "the owned FIFO fixture must be created");
+        let markdown = directory.join("readme.md");
+        let (sender, receiver) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            sender
+                .send(read_local_image(&markdown, "image.png"))
+                .unwrap()
+        });
+        let result = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a special file must not pin an image worker waiting for a writer");
+        assert!(result.unwrap_err().contains("not a regular file"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_manual_admission_obeys_the_same_pending_limit_as_automatic_loads() {
+        let directory = image_test_directory("manual-admission");
+        let mut body = String::new();
+        for index in 0..8 {
+            write_test_png(&directory.join(format!("image-{index}.png")), 2, 2);
+            body.push_str(&format!("![Image {index}](image-{index}.png)\n\n"));
+        }
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, body).unwrap();
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        for index in 0..8 {
+            viewer.load_local_image(index, &context);
+        }
+        assert!(
+            viewer.pending_image_loads.len() <= MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS,
+            "manual admission retained {} pending loads, above the shared limit",
+            viewer.pending_image_loads.len()
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_rejects_oversized_raster_header_before_trying_to_expand_its_pixels() {
+        let directory = image_test_directory("predecode-area");
+        let path = directory.join("oversized.png");
+        write_test_png(&path, 1, 1);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[16..20].copy_from_slice(&4097u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&4097u32.to_be_bytes());
+        let mut crc = u32::MAX;
+        for byte in &bytes[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        fs::write(&path, bytes).unwrap();
+        let refusal = read_local_image(&directory.join("readme.md"), "oversized.png")
+            .expect_err("oversized header must be refused before pixel decoding");
+        assert_eq!(
+            refusal,
+            "The requested local image exceeds the raster-area limit."
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_actual_read_is_bounded_even_without_relying_on_metadata() {
+        struct GrowingReader {
+            read: usize,
+            interrupted: bool,
+        }
+        impl Read for GrowingReader {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                if !self.interrupted {
+                    self.interrupted = true;
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                output.fill(0);
+                self.read += output.len();
+                Ok(output.len())
+            }
+        }
+        let mut reader = GrowingReader {
+            read: 0,
+            interrupted: false,
+        };
+        let error = read_bounded_image_bytes(&mut reader).unwrap_err();
+        assert!(error.message().contains("must not exceed"));
+        assert_eq!(reader.read, MAX_IMAGE_BYTES as usize + 1);
+        let exact = vec![0u8; MAX_IMAGE_BYTES as usize];
+        let admitted = read_bounded_image_bytes(Cursor::new(&exact)).unwrap();
+        assert_eq!(admitted, exact);
+        assert_eq!(admitted.capacity(), MAX_IMAGE_BYTES as usize);
+    }
+
+    #[test]
+    fn image_budget_two_viewers_share_storage_and_retry_only_after_external_capacity_changes() {
+        let directory = image_test_directory("shared-budget");
+        write_test_png(&directory.join("image.png"), 1536, 1536);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(
+            &context,
+            festerm_config::ImageMemoryBudgetPreference::MiB64,
+        );
+        let mut first = MarkdownViewerTab::open_local(markdown.clone());
+        let mut second = MarkdownViewerTab::open_local(markdown);
+        assert!(pump_image_loads(&mut first, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 1536 * 1536 * 4;
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        assert!(pump_image_loads(&mut second, &context, |viewer| !viewer
+            .image_errors
+            .is_empty()));
+        assert!(second.image_errors[&0].contains("Image memory budget exhausted"));
+        assert_eq!(second.automatic_image_loads, 1);
+        let generation = budget.generation();
+        for _ in 0..32 {
+            second.poll_background_work(&context);
+            second.start_automatic_image_loads(&context);
+        }
+        assert_eq!(
+            budget.generation(),
+            generation,
+            "a refused reference must not retry its own released scratch storage"
+        );
+        assert!(second.pending_image_loads.is_empty());
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        assert_eq!(first.loaded_images.len(), 1);
+        budget.set_preference(festerm_config::ImageMemoryBudgetPreference::MiB128);
+        assert!(pump_image_loads(&mut second, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(
+            second.automatic_image_loads, 1,
+            "retrying the same reference must not spend another automatic admission"
+        );
+        assert_eq!(budget.usage_for_test(), (2 * retained, 0));
+        drop(first);
+        budget.generation();
+        assert_eq!(
+            budget.usage_for_test(),
+            (2 * retained, 0),
+            "the real egui upload delta still owns these pixels"
+        );
+        let mut delta = context.tex_manager().write().take_delta();
+        assert!(!delta.set.is_empty());
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (2 * retained, 0));
+        delta.clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        drop(second);
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_decoded_result_outlives_its_viewer_without_releasing_its_storage_early() {
+        let directory = image_test_directory("queued-result");
+        write_test_png(&directory.join("image.png"), 16, 16);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        viewer.load_local_image(0, &context);
+        let decoded = viewer.pending_image_loads[&0]
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 16 * 16 * 4;
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        assert!(
+            viewer.loaded_images.is_empty(),
+            "a hidden viewer has not uploaded its queued result"
+        );
+        drop(viewer);
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        drop(decoded);
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_closed_viewer_keeps_a_running_worker_charged_until_that_worker_finishes() {
+        let directory = image_test_directory("active-drop");
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "# Closed viewer\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let worker = budget.start_worker(&context).unwrap();
+        let scratch = budget.reserve(100, Some(&context)).unwrap();
+        let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let receiver = spawn_image_worker(
+            budget.clone(),
+            worker,
+            scratch,
+            context.clone(),
+            move |_, _, _| {
+                entered_sender.send(()).unwrap();
+                release_receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                Err(ImageLoadFailure::Permanent(
+                    "Controlled worker failure.".to_owned(),
+                ))
+            },
+            |work| thread::Builder::new().spawn(work),
+        )
+        .unwrap();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        viewer
+            .pending_image_loads
+            .insert(0, PendingImageLoad { receiver });
+        entered_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        drop(viewer);
+        assert_eq!(budget.usage_for_test(), (100, 1));
+        release_sender.send(()).unwrap();
+        for _ in 0..500 {
+            if budget.usage_for_test() == (0, 0) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_failed_spawn_releases_both_the_worker_and_its_reservation() {
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let worker = budget.start_worker(&context).unwrap();
+        let scratch = budget.reserve(100, Some(&context)).unwrap();
+        let failure = spawn_image_worker(
+            budget.clone(),
+            worker,
+            scratch,
+            context,
+            |_, _, _| panic!("the failed spawner must never execute the loader"),
+            |work| {
+                drop(work);
+                Err(std::io::Error::other("Controlled thread-spawn failure."))
+            },
+        );
+        assert!(failure.is_err());
+        assert_eq!(budget.usage_for_test(), (0, 0));
+    }
+
+    #[test]
+    fn image_budget_manual_and_automatic_admission_share_one_running_worker_limit() {
+        let directory = image_test_directory("shared-workers");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut releases = Vec::new();
+        let mut results = Vec::new();
+        for _ in 0..MAX_CONCURRENT_IMAGE_LOADS {
+            let (release_sender, release_receiver) = mpsc::sync_channel(1);
+            releases.push(release_sender);
+            let worker = budget.start_worker(&context).unwrap();
+            let scratch = budget.reserve(100, Some(&context)).unwrap();
+            results.push(
+                spawn_image_worker(
+                    budget.clone(),
+                    worker,
+                    scratch,
+                    context.clone(),
+                    move |_, _, _| {
+                        release_receiver
+                            .recv_timeout(Duration::from_secs(5))
+                            .unwrap();
+                        Err(ImageLoadFailure::Permanent(
+                            "Controlled completed load.".to_owned(),
+                        ))
+                    },
+                    |work| thread::Builder::new().spawn(work),
+                )
+                .unwrap(),
+            );
+        }
+        let mut manual = MarkdownViewerTab::open_local(markdown.clone());
+        let mut automatic = MarkdownViewerTab::open_local(markdown);
+        manual.load_local_image(0, &context);
+        automatic.start_automatic_image_loads(&context);
+        assert!(manual.pending_image_loads.is_empty());
+        assert!(automatic.pending_image_loads.is_empty());
+        assert_eq!(automatic.automatic_image_loads, 0);
+        assert!(manual.image_errors[&0].contains("Four image loads"));
+        assert!(automatic.image_errors[&0].contains("Four image loads"));
+        assert_eq!(budget.usage_for_test(), (400, MAX_CONCURRENT_IMAGE_LOADS));
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for result in results {
+            assert!(result
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .is_err());
+        }
+        assert!(pump_image_loads(&mut automatic, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(automatic.automatic_image_loads, 1);
+        drop(manual);
+        drop(automatic);
+        let mut delta = context.tex_manager().write().take_delta();
+        delta.clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_refused_images_do_not_retry_each_others_released_scratch_storage() {
+        let directory = image_test_directory("refusal-progress");
+        write_test_png(&directory.join("image.png"), 2048, 2048);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![One](image.png)\n\n![Two](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(
+            &context,
+            festerm_config::ImageMemoryBudgetPreference::MiB64,
+        );
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .image_errors
+            .len()
+            == 2));
+        for _ in 0..64 {
+            viewer.poll_background_work(&context);
+            viewer.start_automatic_image_loads(&context);
+        }
+        assert!(viewer.pending_image_loads.is_empty());
+        assert_eq!(viewer.automatic_image_loads, 2);
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        budget.set_preference(festerm_config::ImageMemoryBudgetPreference::MiB128);
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 2));
+        assert_eq!(viewer.automatic_image_loads, 2);
+        drop(viewer);
+        let mut delta = context.tex_manager().write().take_delta();
+        delta.clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
     }
 
     /// Drives the viewer's per-frame background work until `condition` holds,
