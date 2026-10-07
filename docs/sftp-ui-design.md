@@ -49,6 +49,32 @@ Transfers are always **copies**, never moves. Selection remains after starting s
 
 Refresh the affected destination directory after each committed item while preserving selection and scroll position where possible. Partial files use a temporary sibling name and are renamed only after successful completion where the backend supports it; a canceled/failed temporary is cleaned up when safe and otherwise reported explicitly.
 
+### Remote-to-local name admission
+
+Remote names are untrusted even when they identify the selected top-level
+file or directory, not just a recursively enumerated child. Before deriving
+a local destination from a remote basename, `festerm-ssh` requires one safe
+filename and verifies that the joined path is an immediate child of the
+requested local directory. GUI buttons, shortcuts, cross-pane drops and Retry
+share this transfer-manager check; text-mode `get` uses the same backend helper
+for its default or existing-directory destination. Widgets do not implement
+their own filename policy.
+
+The policy is deliberately portable: it rejects empty/dot names, either path
+separator, drive/stream colons, Windows-invalid characters and control bytes,
+trailing dots/spaces and reserved Windows device names (including extensions).
+It rejects rather than sanitizes; ordinary Unicode filenames remain unchanged.
+An explicitly requested exact local path is not derived from the remote name
+and retains its existing semantics, so a single-file download may choose a
+safe local name instead. Recursive descendants still require admission.
+
+A name refusal becomes an actionable existing SFTP operation error before
+collision handling, recursive enumeration or destination writes. It produces
+no partial output and does not disconnect browsing or stop unrelated queued
+items. This is lexical path admission, not a new claim of race-free filesystem
+containment against local ancestor replacement; the existing collision,
+commit and owner-cleanup policies still apply.
+
 ### Bounded GUI backlog and history
 
 Each GUI SFTP tab admits at most **64 pending commands** and retains at most
