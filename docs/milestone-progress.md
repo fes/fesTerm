@@ -4867,3 +4867,23 @@ measured source/binary and need their own CI. External PR review remains
 required, and native input, mixed-DPI and physical presentation/latency gates
 are unchanged. No merge, deployment, live-app restart or personal-state change
 is implied by this owner-approved performance decision.
+
+### Separating surviving thread identity from resource ownership
+
+The short six-session retirement capture drained all public wgpu allocated/kept
+IDs and released the weak repaint owner, yet whole-owner windows retained
+24/25/26 threads. Reading its existing TID/CPU records showed one additional
+TID in each later round, both still present at completion, with zero matched
+first-to-last held-window CPU deltas. Those records could not rule out TID
+recycling or identify an application-owned root; surviving process commitment
+still included harness, allocator and driver activity.
+
+An explicitly opt-in Windows supervisor discriminator now pins each sampled
+owned-child thread handle, pairs the TID with its real creation FILETIME, and
+records bounded description/start-module labels alongside the existing CPU
+counter. Complete sampling intervals must fit inside the already held UTC
+windows. Unknown/raced metadata and over-limit inventories remain visible,
+historical receipts remain valid without claiming new evidence, and core/GPU
+lifecycle behavior is unchanged. Labeled runtime collection remains pending
+parent authorization. These labels are not stacks or private-byte attribution;
+no causal repair, leak diagnosis or resource-cap acceptance follows from them.
