@@ -1013,6 +1013,14 @@ ninety-six paired guards. See the
 native input/presentation, hardware/mixed-DPI and resource evidence remain
 separate. No native/manual classification or accepted budget changes.
 
+A further explicitly opted-in picker-frame diagnostic retains the current
+default backdrop and converts only one unique complete opaque frame plus its
+original black shadow. Full-frame pixel and actual callback/order controls
+cover the prepared two-scale path; selection/geometry rejection is device-free.
+It records unchanged fill/stroke/rounding/blur and requires six balanced pairs,
+without accepting native latency or removing a visual effect. Actual eight-
+picker qualification remains separate; no manual classification changes.
+
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external
 resources. CPU readiness proves the rendered heading or raw Source marker and

@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Separating the remaining picker frame route from its backdrop
+
+The default backdrop improvement still leaves substantial completed WARP
+drawing cost. A second explicitly opted-in diagnostic isolates the existing
+opaque modal frame and its original black shadow as one exact white-UV mesh,
+using the already installed panel pipeline. The ordinary default backdrop and
+every other frozen shape remain unchanged; neither shadow nor dimming is removed.
+
+The bounded picker selector requires one complete unique shadow/frame pair
+and refuses simultaneous backdrop attribution. Six balanced ordered pairs
+require every original-renderer pixel and one additional executed callback,
+with original fill, stroke, rounding, blur and geometry recorded. Shared
+attribution mechanics retain the earlier backdrop oracle. This is a prepared
+whole-frame route/batching discriminator, not isolated shadow/shader timing,
+production enablement or native/resource acceptance.
+
 ## Qualifying the default picker backdrop after the Source successor
 
 The narrowly owned Open File/Save As route now has actual cumulative application
