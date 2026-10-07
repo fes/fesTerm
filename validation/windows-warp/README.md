@@ -493,6 +493,68 @@ The small two-scale complete-frame regression and device-free option/matcher
 controls are distinct from the actual eight-picker execution requirement.
 Historical backdrop fields/oracles remain available through shared mechanics.
 
+### 2026-10-06 default owned picker-frame observations
+
+The narrow production component `85cac236` and append-only GPU fixture repair
+`7b92fa4a` are ordinarily composed after #367 at clean
+`b262aa43aacfeb69d53f92a5c4a2583ee938045f`, tree
+`6b01ce8aa0c92f07665af200e76bc1f8f62ddca7`. Exact archived release executable
+SHA-256 is `5f05979652fc4b95b23d024fac07867f77442f13e6aaf4161efa0c9811bf0a9b`.
+Before controls are clean `f51c88f`/`945daa0a…`, the already qualified Preview
+composition with the old production frame. Both use the same physical fixture
+path, Windows x64 DX12 CPU `Microsoft Basic Render Driver`, `Rgba8Unorm`,
+scale 2 and the actual ready/error normal/narrow Open File/Save As models.
+
+Default before/after executions complete in 35.40/17.27 seconds, actual exit 0
+with stable source/hash and explicit bounded owned-process waiting. All eight
+encoded PNGs equal both the immediate before and preserved original frame
+reference; eighty before/after measured original-renderer guards pass.
+Every after draw executes exactly one additional frame callback: Open normal
+5 to 6, Open narrow 3 to 4, Save As 4 to 5. Exactly the original 216 vertices
+and 1068 indices move out of ordinary mesh counters; target/image/readback
+payloads remain unchanged.
+
+| Actual picker | UI before ms | UI after ms | Draw/readback before ms | Draw/readback after ms | Drawing reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Open File ready | 1.120 | 1.135 | 652.171 | 200.684 | 69.2% |
+| Open File ready narrow | 0.627 | 0.601 | 290.791 | 134.776 | 53.7% |
+| Open File error | 0.579 | 0.644 | 648.002 | 189.754 | 70.7% |
+| Open File error narrow | 0.510 | 0.533 | 284.642 | 126.756 | 55.5% |
+| Save As ready | 0.674 | 0.769 | 722.509 | 238.744 | 67.0% |
+| Save As ready narrow | 0.690 | 0.738 | 312.513 | 125.063 | 60.0% |
+| Save As error | 0.519 | 0.580 | 708.354 | 209.942 | 70.4% |
+| Save As error narrow | 0.748 | 0.617 | 300.635 | 111.470 | 62.9% |
+
+Six construction medians are higher by 0.015-0.096 ms; two are lower by
+0.026/0.131 ms. All twenty UI/tessellation and five completed-draw vectors per
+scene remain, along with seven completion buckets and percentiles. This
+shared-host default comparison is not contemporaneously balanced or an
+all-metrics/native speedup.
+
+The same exact source/binary additionally completes frame attribution in
+65.95 seconds and legacy backdrop attribution in 105.27 seconds. Each preserves
+eight encoded PNGs, forty ordinary and ninety-six six-pair measured guards.
+The frame arm keeps the current backdrop and adds exactly one callback; all
+48 converted draws are faster (51.2-68.6% lower scene medians). Legacy explicitly
+keeps both original shapes and the historical schema/batching/callback oracle.
+Both retain original fill, stroke, rounding, shadow and blur.
+
+All four release two-scale production/backdrop/frame/legacy regressions pass
+at `b262aa4` in 11.89 seconds. The first cumulative `8966` run had three passing
+controls and one failed new fixture: reused RenderState ownership was refused.
+Its full failure and archived `55f24677…` executable remain; the append-only
+fresh-state repair retains all 56 arms, pixels, responses and fallback guards.
+No production predicate or assertion was weakened.
+
+Private artifacts are `fleet-v5-frame-default-before-v1`,
+`fleet-v5-frame-default-after-v1` (`verified-frame-production-summary.json`),
+`fleet-v5-frame-attribution-after-v1` (`verified-frame-summary.json`),
+`fleet-v5-frame-legacy-after-v1` (`verified-backdrop-summary.json`), both frame
+binary archives and `fleet-v5-frame-gpu-controls-v1/v2`, under the session root.
+These are completed default-route and same-frame/batching observations, not
+isolated shadow/shader instructions, GPU timestamps, native presentation,
+physical latency, hardware/mixed-DPI or total/driver-private memory acceptance.
+
 ### Prepared owned picker-frame production successor
 
 The production successor opts in only through the existing Open File/Save As
@@ -538,17 +600,12 @@ are unchanged. No production code or renderer guard is changed by this repair.
 This small correctness test is not an actual eight-picker or performance replay.
 
 The `2056b48`/`006e7dea…` eight-scene record above remains the measured diagnostic
-predecessor. This successor still has **no actual default-path timing
-measurement**; the focused GPU correctness result does not substitute for it.
-After ordinary composition into the coordinator's cumulative source, acquire
-the exclusive runtime slot, run the two-scale production/backdrop and diagnostic
-regressions, then execute the actual default eight ready/error normal/narrow
-pickers with both attribution options unset and fresh output. Compare the
-preserved predecessor PNGs and forty ordinary pixel guards; require one extra
-executed frame callback in every default draw. Retain UI construction/preparation
-tradeoffs, all completed draw/readback samples and their separate scopes.
-Execute both frame and legacy backdrop attribution on that exact source/binary
-with separate fresh outputs, then run full gates. Native presentation, physical
+predecessor; the separate `b262aa4` record now qualifies actual default execution
+and both retained same-binary oracles. For fresh reruns acquire the exclusive
+runtime slot, preserve all two-scale live/fallback controls, default eight
+encoded PNGs/ordinary pixel guards and one extra executed frame callback.
+Retain construction tradeoffs and all draw samples; use separate fresh outputs
+for frame and legacy diagnostics and run full gates. Native presentation, physical
 latency, hardware/mixed-DPI, accessibility and total/driver-private memory remain
 separate; no new manual acceptance or ADR boundary is claimed.
 

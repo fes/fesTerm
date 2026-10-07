@@ -1049,7 +1049,7 @@ The same binary preserves all eight legacy backdrop controls and their
 forty/ninety-six guards. These are shared-host whole-frame route observations,
 not production enablement or native acceptance; no manual classification changes.
 
-The separate production successor now prepares conversion of only the owned
+The separate production successor now converts only the owned
 Open File/Save As complete opaque frame and original shadow on the installed
 eligible panel renderer. Device-free controls cover normal/narrow same-call
 selection, ambiguous/clipped refusal, independent test-only frame/backdrop
@@ -1058,11 +1058,14 @@ response, callback and frame/context/other-modal fallback regression now passes
 on explicit DX12 CPU rendering. The first parent run failed because the test
 reused an already-used RenderState; fresh ownership for each comparison arm
 repairs that fixture without changing production or weakening any guard.
-Actual cumulative default eight-picker
-PNGs, construction tradeoff, completed draws and both legacy diagnostic oracles
-must still be qualified by the coordinator before publication. The measured
-`2056b48` result above remains diagnostic predecessor evidence, not a measured
-production successor. CP-06/CP-15/CP-16/CP-17 and native/hardware/mixed-DPI,
+Clean cumulative `b262aa4` now passes all four release GPU controls and the
+actual eight default pickers: eight encoded predecessor PNGs, eighty combined
+before/after measured guards and one additional executed frame callback.
+Drawing/readback observations are 53.7-70.7% lower, while six UI construction
+medians rise by 0.015-0.096 ms and two fall. Both same-binary frame/legacy
+diagnostics retain eight PNGs and forty ordinary/ninety-six paired guards each.
+The `2056b48` result remains separate diagnostic predecessor evidence.
+CP-06/CP-15/CP-16/CP-17 and native/hardware/mixed-DPI,
 physical latency, accessibility and resource acceptance remain unchanged.
 
 Four opt-in large Markdown WARP controls now use the actual Preview/Source

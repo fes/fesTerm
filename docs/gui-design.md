@@ -3170,11 +3170,12 @@ and original black shadow. The ordinary live Modal still owns sizing, content,
 IDs, focus, input and responses. Fill, stroke, rounding, shadow blur and the
 existing backdrop/dimming remain unchanged. Unsupported, clipped, ambiguous,
 translucent, shadowless or ineligible frames retain ordinary painting; no other
-modal is opted in. This production successor is prepared, not yet qualified by
-its actual default eight-picker replay or native interaction. The two-scale
+modal is opted in. The cumulative production successor now preserves all
+eight actual default picker PNGs and measured guards; native interaction remains
+separate. The two-scale
 pixel/response/callback regression passes after giving every comparison arm
-its own fresh test RenderState; this is correctness evidence, not the actual
-default eight-picker or native qualification. See
+its own fresh test RenderState; this is correctness evidence distinct from the
+actual default-path execution and native qualification. See
 the [qualification boundary](../validation/windows-warp/README.md#prepared-owned-picker-frame-production-successor).
 
 ## Future Populated Launcher Example

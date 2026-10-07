@@ -26,7 +26,7 @@ An unchanged Source implementation and matching pixels/geometry do not
 establish a host cause or explain those timing movements. Native/platform
 and total-resource acceptance remain separate.
 
-## Preparing a narrowly owned production picker frame
+## Qualifying a narrowly owned production picker frame
 
 The completed `2056b48` diagnostic attributes the whole opaque picker frame,
 original black shadow and their batching together; it does not isolate shadow
@@ -50,9 +50,21 @@ across independent original/candidate contexts, which egui-kittest rejects.
 Every comparison arm now creates its own fresh state; the exact regression
 passes with all pixels, live responses, callback counts and fallbacks intact.
 This changes only the fixture, not the production route or its guards.
-The coordinator still owns actual cumulative default eight-picker pixels,
-construction/callback tradeoffs, frame/legacy diagnostics and full/native gates.
-No predecessor measurement is relabeled as a production result or new acceptance.
+Clean cumulative `b262aa4`, after #367 and the append-only fixture repair,
+now passes all four release GPU controls and all eight actual default picker
+controls. Eight encoded predecessor PNGs and eighty before/after measured
+guards preserve the original frame, shadow and dimming, with one additional
+executed callback. Default completed draw/readback medians are 53.7-70.7%
+lower; six construction medians are higher by 0.015-0.096 ms and two are lower.
+This retains the preparation tradeoff rather than claiming every metric wins.
+
+Both same-binary diagnostic oracles also pass: each has eight unchanged PNGs,
+forty ordinary and ninety-six balanced paired guards. The frame discriminator
+keeps its optimized backdrop and is faster in all 48 pairs; legacy backdrop
+retains its original shapes and schema. The
+[default-path record](../validation/windows-warp/README.md#2026-10-06-default-owned-picker-frame-observations)
+separates actual production execution from the predecessor diagnostic and
+shared-host/native/resource limits.
 
 ## Rechecking Source drawing with balanced contemporaneous controls
 
