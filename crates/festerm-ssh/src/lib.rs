@@ -5,6 +5,7 @@ mod openssh_config;
 mod port_forward;
 mod sftp;
 mod sftp_input;
+mod sftp_planning;
 mod sftp_transfer;
 
 use std::{

@@ -3,6 +3,230 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Routing the editor surface through eligible panel painting
+
+The first bounded #351 replay completed all eight picker controls with exact
+reference pixels. Median completed drawing ranged from 0.40 to 1.54 seconds;
+completion waiting dominated, while readback waiting was 2-11 ms and image
+copying 6-28 ms. That narrows #350's combined bucket without attributing an
+individual paint operation or claiming native latency.
+
+The Save As controls also revealed that the underlying editor's large opaque
+outer frame still bypassed the existing textureless-panel helper. That frame
+now uses the shared helper without changing its geometry, children, widgets,
+colors or application commands. The established format, adapter, opacity,
+viewport and transform guards retain ordinary painting where necessary.
+A real-editor test checks executed painting and exact reference pixels at
+both widths and scales, plus opacity fallback. Matched release measurements
+and native evidence remain separate from this caller-level regression.
+
+## Separating picker rendering from readback
+
+The full WARP replay found sub-millisecond picker construction alongside a
+roughly 0.4-1.6-second combined draw/wait/readback bucket. #350 deliberately
+did not blame shadows, fills or blending from that combined measurement.
+The replay now keeps CPU tessellation, callback preparation/encoding,
+submission, draw wait, readback setup/wait and image-copy samples separate,
+with submitted geometry and temporary payload counts. Exact pixels are
+checked against the original renderer on the same settled frame.
+
+A strict small/error picker subset makes bounded follow-up runs possible
+without dropping the complete default matrix. Reports state the selected
+set; the narrower run cannot qualify omitted variants or native presentation.
+The addition is diagnostic, not a production rendering optimization or a
+claimed cause of multi-day growth.
+
+## Reusing the existing opaque-frame path at the real Markdown caller
+
+The completed picker draw evidence prompted a narrowly coupled rendering check:
+the standalone Markdown viewer still painted an ordinary opaque
+`SURFACE_WINDOW` outer frame. It now passes only that frame through the existing
+`software_background::show_frame`; the shader, adapter/format policy, guards,
+ordinary fallback and all nested Preview/Source widgets remain unchanged.
+
+The regression renders the real viewer, not a substitute panel, against its
+ordinary route on Windows DX12 CPU `Rgba8Unorm`. Four narrow/wide and 1/1.25x
+scale controls in each mode, with fractional clipping and Find open, retain
+exact pixels and execute exactly one outer-frame callback. Each mode's
+0.5-opacity control retains exact pixels and executes none. Accessibility,
+Source response geometry and navigation/outline state remain identical.
+These are fidelity/caller checks, not performance measurements: #348 remains
+open, and the parent-owned real Markdown workload must independently attribute
+completed draw and native latency.
+
+## Reusing bounded Markdown Source formatting without retaining text layouts
+
+After the Outline-first candidate, #348 still had an expensive Source path:
+every forced frame rebuilt source spans, syntax-role vectors and Find-colored
+jobs for every line even though unchanged frames did not reparse the document.
+The next slice reuses only unwrapped formatting instructions and source spans,
+not galleys, row geometry or atlas UVs. Every selectable label, its identity,
+wrapping, active font/scale layout, accessibility and Copy behavior remains live.
+
+Each loaded viewer owns at most 8192 jobs and 4 MiB of their actual text/section
+capacities; metadata is separately bounded by the entry count. Snapshot and
+Find-query changes clear the owner. Moving Find refreshes affected cached lines,
+while long queries and entry/payload overflow use the ordinary path without
+truncating the result set or dropping content. The same owned 400-section
+fixture is compared against compiled ordinary preparation. On Windows its 4800
+live lines remained visited on every pass, but warm unchanged/scrolled and
+width/font/scale/theme controls rebuilt zero jobs versus 4800, and zero job text
+bytes versus 66,470. The cold snapshot retained 2,537,670 charged payload bytes
+(2,539,780 with Find); syntax-budget outcomes are shared with the ordinary oracle.
+Moving a two-line CRLF Find refreshes all four old/new rows. Entry overflow
+retained exactly 8192 jobs with 1,114,112 charged bytes and kept the extra line;
+an over-budget 4 MiB line and a 4097-byte query fell back without lost text.
+Dependency/revision and Unicode/CRLF/selection/Copy checks compare full clipped
+shapes and complete live
+accessibility/response identities, not just counts.
+
+This is Source preparation reuse, not full #348 remediation. The full Source
+label/layout loop (including egui's job clones), Preview block traversal and
+separate editor outline remain follow-ups. Native latency,
+clipboard/accessibility delivery and real Markdown
+GPU workload qualification remain separate parent-controlled evidence; no
+fragmentation, leak or #297 causality is inferred.
+
+## Reducing unchanged Markdown outline preparation without virtualizing content
+
+The #348 forced-frame diagnostic found that constructing a 400-section Preview
+cost much more CPU time than tessellating it. It did not measure native latency
+or Markdown GPU drawing. Full variable-height Preview virtualization would risk
+Find, selection and offscreen code navigation, so the first implementation
+targets the standalone outline and unused heading-position allocations.
+
+The viewer now retains only exact row height/ink geometry for at most 4096
+headings, keyed to the loaded snapshot and actual wrap/font/scale dependencies.
+Offscreen rows skip repeated text preparation but retain every live response
+and accessibility node; visible and uncached rows prepare normally. No atlas
+galley is retained. The shared Preview clears and reuses its heading-position
+vector, while the viewer stops collecting positions it never consumes.
+Co-located old-control/candidate tests enforce at most 32 text layouts on warm
+64/400/2000-heading, 216-by-480-point unchanged and scrolled controls, plus less
+than half the ordinary heading-text bytes submitted for layout. They compare
+visible ink, all response/accessibility identities, wrapping, dependency
+invalidation, cap overflow and offscreen keyboard navigation.
+
+The isolated Windows run prepared 17/18/17 layouts for the 400-heading
+top/1100-point/8000-point controls, versus 400 each in the ordinary path, and
+submitted 466/424/425 heading-text bytes versus 10,634. The 64- and 2000-heading
+controls also prepared 17–18 layouts. Width/scale/font/text-option/revision
+changes first prepared all 400 rows and then returned to 9–15 visible layouts.
+A 3000-to-4112-heading replacement retained exactly 4096 geometry slots
+(98,304 bytes on this target), with 33 layouts including every uncached row;
+the old and candidate keyboard paths reached the tail on the same frame.
+These are layout-preparation counters, not measurements of total allocations
+or end-to-end time.
+
+This is an Outline-first preparation/allocation slice, not a fix for full
+Preview block traversal or Source line construction. The editor's separate
+outline, native accessibility/usability and cumulative GPU/native qualification
+remain follow-ups; these counters establish neither #297 causality nor
+fragmentation, leak or native performance conclusions.
+
+## Bounding image ownership and connecting saved-local Preview
+
+Review of #337 caught two filesystem-authority flaws alongside the memory
+repair: a symlinked Markdown filename granted its lexical parent, and a path
+could be rebound after containment checks but before opening. Three compiled
+old-path controls reproduced those failures. A further control showed that
+recanonicalizing the saved parent while acquiring a directory handle could
+still redirect the grant.
+
+Preview now resolves the complete saved file identity and reports resolution
+failure without losing readable text. Image reads acquire that canonical parent
+through a component-by-component no-follow directory walk, then use the
+`cap-std` sandboxed directory-handle resolver for the final file. Actual handle
+metadata and bounded reading follow, with no pathname reopen. Supported
+in-root aliases remain usable, and directory handles live only through file
+acquisition, including refusals. Nine new deterministic regressions cover real
+editor routing, Unix symlinks, unprivileged Windows junctions, root acquisition,
+compatibility, visible refusal and handle retirement. Native visual and
+Windows file-symlink presentation remain separate evidence; this repair does
+not establish total-memory or fragmentation conclusions.
+
+The allocation/lifecycle audit in #320 found that per-image limits left
+combined images unbounded, manual loads bypassed the four-worker cap, and
+decoder expansion began before raster dimensions were rejected. The review
+also uncovered a routing gap: ordinary local Markdown opens in the shared
+editor, whose Preview never invoked the standalone loader. Connecting only
+saved-local Preview was explicitly approved; displayed labels and fallback
+paths must not grant filesystem access.
+
+Both surfaces now borrow one admission/poll/retry implementation and share a
+512 MiB managed allowance plus four actual running workers. A bounded Settings
+choice applies live and survives save failures without an unsaved broadcast.
+Whole-load reservation happens atomically before owned expansion, and actual
+reading probes at most one byte beyond 8 MiB. Directory-handle confinement
+rejects rooted/traversal/symlink escapes, and nonblocking Unix opens keep FIFOs
+from pinning a worker waiting for a writer.
+
+Reservations follow actual worker, decoded-result, texture and CPU-upload
+owners through close/reparse/rebinding; a rotating 128-entry retirement scan
+avoids an unbounded reclamation walk. Permanent failures need an explicit
+retry; sparse ledgers release exceptional backing capacity with at most
+128 retained entries copied. Temporary refusals wait for their whole required
+allowance rather than retrying one another's released scratch storage.
+Existing admissions survive saturation or lowering.
+
+Deterministic regressions exercise real editor Preview and its image button,
+shared bytes/workers, first Save/Save As and nonlocal origins, stale results,
+failed parsing, retirement and Settings persistence/reset. CP-06/CP-15 retain
+native visual/accessibility evidence. Decoder-private memory, native renderer
+and GPU retirement, allocator fragmentation and total RSS are outside this
+allowance; the repair does not establish #297's multi-day growth cause.
+## Admitting selected remote roots before deriving local destinations
+
+PR #338's security review found that recursive download children were checked
+but the selected root basename was joined directly to the local directory.
+A Unix remote filename containing Windows path syntax could therefore select
+an unintended local destination before any collision existed.
+
+The existing child policy now lives in a shared `festerm-ssh` helper, extended
+to reject drive/stream syntax and platform filename aliases as well as either
+separator. Selected file and directory roots, recursive children and text-mode
+`get`'s derived destinations validate before joining and verify immediate-child
+containment. Ordinary Unicode names and explicit local target paths keep their
+semantics. Invalid roots fail through the existing actionable operation error,
+with no output to clean up and without stopping other queued work. GUI entry
+points continue to share the transfer-manager boundary; planning reservations,
+collision decisions and owner cancellation retain their contracts. Native
+refusal readability and accessibility remain `SFTP-03` evidence; this does not
+claim race-free containment against a local filesystem replacement.
+
+## Sharing recursive-copy metadata without evicting paused work
+
+The #320 audit found that each recursive SFTP copy had its own 65,536-item /
+64-MiB planning ceiling. Many collision-paused copies could multiply that
+allowance, and the planner received a complete directory before checking it.
+The pinned SFTP convenience API also rebuilt all previously collected entries
+after every page. A compiled pre-repair control demonstrated that a second
+copy was admitted while another paused plan had already consumed the shared
+item allowance.
+
+The owner approved those same limits shared per worker, including enumeration
+scratch, and a narrow pinned-library getter needed for real paged access.
+Rows now transfer actual-owner reservations into units; copy, collision,
+resume and cancellation preserve the charge until the owned data retires.
+Container capacity and overlapping growth remain charged. Sparse retirement
+moves at most 128 entries, frees the old backing before rebuilding, and keeps
+a slot for collision requeue. Full admission refuses new planning visibly
+without stealing another plan or rolling back copied files.
+
+Local enumeration checks each retained row. Remote planning reads one page
+at a time over the same authenticated subsystem, retains no repeatedly copied
+whole-directory library result, and closes or requests closure of its cursor.
+Controlled real-protocol tests cover refusal before the next page, ordered
+rows, cancellation and combined planning/close errors. Snapshot publication
+also reuses unchanged request allocations: 4,096 single-item updates in a
+1,000-item inventory touch one row each, rather than reconstructing and
+sorting every request after every unit.
+
+These are deterministic managed-metadata/work-shape results, not RSS or
+fragmentation measurements or a #297 causal finding. Protocol-private decode,
+ordinary browsing snapshots, other request/event/view storage and native
+SFTP-03 refusal/retry/accessibility qualification remain separate. This
+preserves the existing transport and application-command ownership boundary.
 ## Removing redundant recovery wire-buffer overlap
 
 The #320 lifecycle audit found that persistent-session recovery serialized a
@@ -27,6 +251,174 @@ The mirror, sanitized clone, decoded state and allocator/private transport
 costs remain. Pre-sizing initializes the destination, so this is no CPU
 improvement claim. Native signed-package/visual recovery remains CP-11, and
 this does not identify #297's multi-day growth cause.
+## Removing presentation-cell allocation churn
+
+The allocation review in #320 found work left before the painted-row cache:
+presentation copies still owned a heap `String` per ordinary cell, every dirty
+row replaced its vector, and scrolling recreated row storage at unchanged
+dimensions. A compiled dirty-row backing regression failed against the old
+implementation. A CPU-only system-allocator probe measured 339,968 allocation
+calls for 4,096 one-row refreshes and 498,688 calls for 256 viewport refreshes.
+
+Presentation now uses the core's existing inline `CompactString` representation
+and reuses row backing at unchanged dimensions. Dimension changes still retire
+old capacity, and replacing exceptional long text drops its heap payload
+instead of keeping a high-water string buffer. Shaping runs remain ordinary
+owned strings; values, Unicode/continuations, styles, hyperlinks, selection and
+shared revision-token semantics are unchanged.
+
+The same fixtures now make 8,192 and 512 allocation calls respectively: only
+the update-row vector and shared revision token allocate. There are no
+reallocations. A separate long-to-short control observes the actual old payload
+being freed. Six portable regressions, existing rendering tests and the
+opt-in allocation oracle protect the change. These are copy-stage allocation
+counts/requested bytes, not total retained RAM, allocator fragmentation,
+whole-frame CPU or evidence for #297.
+## Retiring glyph layouts without discarding the warm cache
+
+The #320 review found that one new text/style key at the 4,096-layout limit
+cleared every glyph layout. A compiled production-route control confirmed
+4,096 entries became one. Even mostly repeated output could then rebuild
+thousands of unchanged layouts after a small style change.
+
+The same limit now retires one least-recently-used layout. The already-locked
+`lru-slab` implementation supplies constant-time indexed recency links; the
+cache stores hashes and slot IDs, not a second owned text-key inventory.
+Recorded hash plus exact slot identifies a victim even under collisions.
+Borrowed randomized/prehashed lookup remains unchanged, and recency IDs are
+explicitly excluded from glyph identity. Manual and font/atlas resets still
+clear affected layouts and release recency storage.
+
+Four new regressions cover survivors, key/hash equivalence, forced-collision
+owner retirement and 8,192 insertions interleaved with 65,536 hot hits at a
+fixed 4,096-slot plateau. Existing clear and both-platform rendering checks
+remain the correctness oracle. This adds bounded bookkeeping and deliberately
+keeps a saturated cache warm; it does not promise lower retained RAM, native
+CPU gains, GPU retirement or an explanation for #297.
+## Rejecting unsupported atlases before copying their pixels
+
+C5 in #320 found that the native capture path copied every non-cacheable
+atlas before the backend refused it. A compiled legacy-order control, with
+the new installation seam but unchanged finish logic, copied 262,144 bytes
+despite explicit metadata refusal. Larger real atlases repeat the same work.
+
+The backend now supplies metadata-only admission after tessellation and before
+texture/atlas copying. Its shared dimension predicate retains the existing
+8,192-side and 16,777,216-pixel limits; aggregate validation remains 96 MiB.
+Refusal leaves ordinary shapes intact, releases the current cached snapshot,
+and uses existing once-per-episode reporting and native-success recovery.
+Hook identity is checked again after admission, so a retired callback cannot
+capture or clear a replacement painter's state. Eligible zero-retention
+controls keep their intentional copies.
+
+Four UI regressions plus portable bounds and Windows status checks cover
+these routes alongside existing atlas/font-delta and framebuffer tests.
+Proposed ADR 0045 records the ordering amendment to accepted ADR 0043 and
+requires architectural review before merge. The saved work is atlas copying,
+not a promise about total heap/RSS, frame-time/native CPU, GPU retirement
+or #297's cause; CP-18 remains open.
+## Reusing the history index for resize anchors
+
+C3 in #320 found that height-only resize avoided cloning and reflowing
+history but still walked every logical line to capture and resolve each
+cursor or selection anchor. Wrapped offsets separately searched all row ends.
+Compiled old-algorithm controls recorded 32,769 steps for a tail anchor in
+16,384 lines and 8,194 for one line with 8,192 wrapped rows.
+
+Anchor capture now reuses the existing row-origin binary index. A temporary
+line-index hint is checked against stable identity during resolution before
+resize splits or evicts content; invalid hints keep the former ID-based
+fallback. Binary row-boundary lookup retains end affinity, including repeated
+boundaries from empty rows. Both controls now take 16 steps. Independent linear
+oracles check layout mutations and ID rollover, while forty public height-only
+resizes preserve cursor/selection positions against more than 8,000 lines.
+
+No persistent map, history budget or recovery field was added. Width reflow
+still walks logical content, debug invariant auditing remains intentional,
+and stale-hint fallback can still be linear outside the resize fast path.
+These are lookup-work results, not whole-process memory, fragmentation,
+native latency or #297-causality evidence; native TI-04/TI-05 remain open.
+## Constructing multi-edit results without repeated suffix shifts
+
+C2 in #320 found repeated length-changing splices in document apply, undo,
+redo and vi repeat's scratch builder. Compiled old-path controls performed
+2,000 splices each for one 2,000-edit transaction; undo also cloned inverse
+payloads. A shared borrowed-span constructor now writes the result once,
+tracking original and applied coordinates for inverse edits without signed
+offset tricks. All four controls now make zero splices; write-site counters
+match one result length.
+
+Byte admission precedes draft construction while existing prepared-undo and
+line-bound checks preserve atomic refusal, redo and saved/revision state.
+Unicode, coincident insertions, deletions and no-ops match the old splice
+oracle. Single edits and equal-length multi-edit undo/redo remain in place,
+with pointer/capacity proof, avoiding a full-document-copy regression for
+ordinary undo. Length-changing multi-edit replay deliberately trades temporary
+ownership of one extra bounded result for linear construction; it drops the
+replaced buffer immediately and adds no retained owner.
+
+Document/history limits and shared-view semantics are unchanged. CP-15
+native responsiveness/caret/IME/readability, total-memory/fragmentation and
+#297 attribution remain separate from these deterministic work results.
+## Borrowing current text instead of indexing it for every vi motion
+
+C1 in #320 found that even a Normal-mode motion or count prefix built complete
+character and byte-offset arrays, then line motions walked large prefixes.
+Compiled old-path controls over 128 keys on 384-KiB ASCII and 512-KiB Unicode
+documents summed 603,982,848 and 402,655,232 bytes of constructed final index
+capacity. These arrays died each keystroke: this was repeated construction
+work, not proof of a retained leak. Dot-repeat's final diff separately built
+two whole-document character arrays, totaling 2,097,168 bytes in its control.
+
+Ready/Normal motions and count prefixes now borrow UTF-8 boundaries and local
+line scans; word motions share one algorithm between byte and indexed
+coordinates. The same controls construct zero full-index capacity, with
+1,206/1,945 instrumented motion-scan byte visits. An unchanged empty-line
+target stops a counted word loop instead of repeating identical work.
+Repeat's final diff streams common character prefixes/suffixes, retaining
+only changed payloads rather than two temporary character arrays.
+
+Frozen scalar/indexed oracles cover Unicode and caret/count boundaries;
+mixed-mode/operator/visual/repeat/recording churn preserves action and state.
+No persistent cache is inferred from text address/length, which an in-place
+edit can preserve. Existing operator/pending, Insert/Replace and Visual
+fallbacks remain keystroke-local. Ownership, limits and fidelity are unchanged;
+these localized construction/scan results do not certify allocator traffic,
+peak/retained RAM, fragmentation, native responsiveness or #297 causality.
+## Isolating original construction controls without passing an omitted matrix
+
+The allocation review's separate Markdown investigation reached a validation
+blocker in the optional expanded surface profile: the inactive middle chip's
+narrow context-menu fixture failed its required Close session assertion.
+The original twelve controls had already run, but their report was serialized
+only after the expanded matrix, so that failed attempt yielded no retained
+Markdown timing report.
+
+The production UI and failing fixture guard remain unchanged. An explicit
+`original-controls` selector now allows those original document/list controls
+and model probes to complete independently, preserving their order and
+physical-input checks. Reports and aggregate runner results name the subset;
+the default still attempts the full matrix, and invalid selections fail before
+claiming inputs. This diagnostic seam neither fixes nor qualifies the omitted
+chip fixture, measures completed WARP rendering, or establishes a cause of
+native or multi-day CPU growth.
+## Revealing a real inactive chip instead of clicking its old coordinates
+
+The optional expanded profile failed its narrow inactive-middle chip menu
+guard (#346). The chip was initially visible, but the active chip's scroll
+reveal continued after the fixture's fixed three settling frames. A compiled
+CPU reproduction showed the target move from a visible pre-click rectangle
+to a different position while the secondary-click events were delivered.
+The menu never opened; extra fixed frames would merely move the race.
+
+Fixture preparation now waits for observed bounds to stop moving within a
+bounded frame budget, then uses the real scrolling controls to place the
+intended target's center inside the actual viewport. It does not activate
+the target, disable production animations, substitute another chip or weaken
+the required Close/Move assertions. First/middle/read-only-last regressions
+cover both widths, and the existing semantic batch now exercises all 52
+variants rather than normal width only. Completed drawing and native
+interaction/usability remain separate evidence.
 
 ## Bounding actual undo storage without discarding a refused change
 
@@ -61,6 +453,7 @@ the model and widget/vi/Find/substitution routes. Native input, focus/caret,
 narrow-pane and accessibility evidence remains CP-15. This bounds retained
 history, not candidate/staged/undo scratch, view allocation, allocator
 fragmentation or RSS, and does not establish #297's multi-day growth cause.
+
 ## Bounding live forwarding inventory without evicting tunnels
 
 The #320 allocation/lifecycle audit found that each requested SSH mapping
@@ -183,6 +576,45 @@ Aggregate directory/plan
 bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.
+
+## Keeping a native observer from changing syntax budgets
+
+The new Windows collector correctly preserved a cumulative gate's Rust failure,
+but it also caused that failure: a 400-function syntax fixture exceeded its
+unchanged 40 ms parse budget under the debugger. Controls used the exact same
+retained executable, not a rebuilt or weakened test. Bare full and exact scopes
+passed, while the original collector failed both. Event-service measurements
+found no pause inside the failing test's work, pointing away from symbol/stack
+processing.
+
+Windows implicitly enabled extra heap validation for debugger-created processes.
+An owned native fixture measured flag mask 0 for bare execution, 0x70 under the
+original collector and 0 after the correction. Setting `_NO_DEBUG_HEAP=1` for
+the debuggee alone restored the original collector's full and exact syntax
+results. The runner now clones the native Unicode environment block, retaining
+hidden drive entries and surrogate pairs, and overrides only this debugger
+default. No parent environment, registry, syntax semantics, deadlines, test
+assertions or concurrency settings change. The failed gate remains retained;
+the fixed controls are causal evidence for collector interference, not a
+closure of the separate unexplained #330 exit 2173.
+
+## Retaining actionable Windows test-exit evidence
+
+The original #330 Windows UI-test exit 2173 left only snapshot images, while a
+same-head rerun passed without explaining the failure. Required Windows Cargo
+tests now use a root-process-only native debugger runner that preserves their
+parallel execution and original status, while retaining bounded, content-free
+exit/exception/termination, thread-stack, executable/source and module identity
+metadata. Non-GPU calibration proves both the controlled 2173 exit and native
+fault/timeout paths before the workspace tests run. No raw dumps, ordinary logs,
+user journals or WER registry changes are involved.
+
+The earlier CDB calibration fixture is reused, but its replay/quit behavior is
+not an acceptable substitute for original test-status propagation. Missing
+tools and diagnostic failures remain explicit nonzero outcomes, not green
+fallbacks. The new evidence can support the next causal investigation; it does
+not identify the cause of 2173 or relabel the separate Direct2D lifetime repair.
+See [the runner's privacy boundary and limitations](windows-test-diagnostics.md).
 
 ## Retiring imported Direct2D targets before teardown
 
@@ -460,6 +892,26 @@ not every GPU allocation or a demonstrated leak. Exact normalized images, zero
 idle demand and narrow native damage still held; no multi-day CPU plateau was
 reproduced. See the
 [complete source-bound resource record](../validation/terminal-performance/README.md#optimized-public-registry-and-teardown-follow-up).
+
+## Closing the short resource probe's observation gaps
+
+The first retirement snapshots deliberately kept a reporting instance alive,
+and sampled private bytes could miss a brief commitment spike. The same optional
+six-session probe now adds a small bounded whole-owner create/churn/drop loop,
+including destruction of that last instance before held process observations.
+Each rebuilt owner must reproduce the exact normalized PNG; no production
+renderer, session cadence or ownership policy changes.
+
+Windows' OS-maintained process commitment high-water mark preserves transient
+peaks between samples, and a bounded final-sample acknowledgment prevents the
+last interval from silently disappearing on exit. Live cache values, temporary
+CPU comparison arrays, completed host submissions and public registry IDs are
+reported as different evidence, not renamed into total GPU/in-flight bytes.
+Device-free tests exercise six backlogged queues retiring together and stale
+clipboard completion/cancellation across generations. Historical receipts
+remain readable; incomplete new declarations are rejected. This is substantive
+diagnostic coverage before longer capture, not a new memory cap, a leak verdict
+or a claim of native/cumulative qualification.
 
 ## Painting the palette shadow without the atlas texture
 

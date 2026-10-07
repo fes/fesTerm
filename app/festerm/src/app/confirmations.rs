@@ -862,7 +862,7 @@ impl FesTermApp {
         let Some(pending) = self.overlays.pending_settings_reset.as_ref().cloned() else {
             return;
         };
-        if self.state.interface_settings() == InterfaceSettings::DEFAULT {
+        if self.current_interface_settings() == InterfaceSettings::DEFAULT {
             self.cancel_settings_reset_confirmation();
             return;
         }
@@ -904,6 +904,9 @@ impl FesTermApp {
             self.overlays.pending_settings_reset = None;
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.image_budget
+                .set_preference(InterfaceSettings::DEFAULT.image_memory_budget());
+            crate::markdown_images::wake_image_viewports(context);
             self.reinstall_terminal_font(context);
             self.persist_interface_settings();
             self.updates
