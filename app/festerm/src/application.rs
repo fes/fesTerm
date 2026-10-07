@@ -216,7 +216,7 @@ impl FesTermApplication {
     fn open_external_document(&mut self, path: PathBuf, context: &egui::Context) {
         let index = self
             .windows
-            .iter()
+            .iter_mut()
             .position(|window| window.app.has_local_document(&path))
             .or_else(|| self.window_index(self.last_active_window))
             .unwrap_or(0);

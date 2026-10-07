@@ -1610,6 +1610,8 @@
         "recovery_notices_wait_for_the_visible_modal_and_then_arrive_in_order",
         "opening_a_symlink_alias_reuses_the_loaded_source_authority",
         "opening_a_hard_link_alias_reuses_the_loaded_file_identity",
+        "retargeted_cached_symlink_alias_does_not_reopen_the_old_document",
+        "stale_source_generation_cannot_establish_a_new_hard_link_alias",
         "save_as_revalidates_an_old_alias_key_after_rebinding_the_destination",
         "queued_remote_refusals_are_delivered_without_overwriting_each_other",
         "remote_refusal_queue_is_bounded_and_keeps_the_newest_in_order",

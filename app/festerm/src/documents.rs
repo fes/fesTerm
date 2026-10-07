@@ -258,7 +258,7 @@ impl DocumentRegistry {
         let origin = LocalOrigin::new(path)
             .map(DocumentOrigin::Local)
             .map_err(OpenFailure::Origin)?;
-        if let Some(id) = self.by_key.get(&origin.key()).copied() {
+        if let Some(id) = self.current_keyed_local(&origin) {
             self.retain(id);
             return Ok(id);
         }
@@ -269,6 +269,12 @@ impl DocumentRegistry {
             .iter()
             .filter(|(_, document)| {
                 document.source_authority.as_ref() == Some(&loaded.source_authority)
+                    && document.generation.is_some_and(|generation| {
+                        document_store::source_authority_is_current(
+                            document.source_authority.as_ref().expect("checked above"),
+                            generation,
+                        )
+                    })
             })
             .map(|(id, _)| *id)
             .min()
@@ -284,6 +290,34 @@ impl DocumentRegistry {
             Some(loaded.source_authority),
             loaded.read_only,
         ))
+    }
+
+    fn current_keyed_local(&mut self, origin: &DocumentOrigin) -> Option<DocumentId> {
+        let key = origin.key();
+        let id = self.by_key.get(&key).copied()?;
+        let document = self.documents.get(&id)?;
+        if document.origin.key() == key {
+            return Some(id);
+        }
+        let authority = document.source_authority.clone();
+        let generation = document.generation;
+        let path = match origin {
+            DocumentOrigin::Local(origin) => origin.path(),
+            _ => return None,
+        };
+        let current = document_store::resolve_source_authority(path).ok();
+        let valid = authority.as_ref() == current.as_ref()
+            && authority
+                .zip(generation)
+                .is_some_and(|(authority, generation)| {
+                    document_store::source_authority_is_current(&authority, generation)
+                });
+        if valid {
+            Some(id)
+        } else {
+            self.by_key.remove(&key);
+            None
+        }
     }
 
     /// Adds a document whose bytes were fetched by something other than the
@@ -457,6 +491,11 @@ impl DocumentRegistry {
     pub(crate) fn find_local(&self, path: &Path) -> Option<DocumentId> {
         let origin = LocalOrigin::new(path).ok().map(DocumentOrigin::Local)?;
         self.by_key.get(&origin.key()).copied()
+    }
+
+    pub(crate) fn find_current_local(&mut self, path: &Path) -> Option<DocumentId> {
+        let origin = LocalOrigin::new(path).ok().map(DocumentOrigin::Local)?;
+        self.current_keyed_local(&origin)
     }
 
     /// Every open document, for callers that must act on all of them.
@@ -1124,6 +1163,48 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(registry.len(), 1);
         assert_eq!(registry.get(first).unwrap().views(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retargeted_cached_symlink_alias_does_not_reopen_the_old_document() {
+        let directory = TemporaryDirectory::new("retargeted-cached-alias");
+        let first_path = directory.file("first.md", "first\n");
+        let second_path = directory.file("second.md", "second\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&first_path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&first_path).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), first);
+        fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(&second_path, &alias).unwrap();
+        assert_eq!(registry.find_current_local(&alias), None);
+        assert_eq!(registry.find_local(&alias), None);
+
+        let reopened = registry.open_local(&alias).unwrap();
+
+        assert_ne!(reopened, first);
+        assert_eq!(registry.get(reopened).unwrap().text().text(), "second\n");
+    }
+
+    #[test]
+    fn stale_source_generation_cannot_establish_a_new_hard_link_alias() {
+        let directory = TemporaryDirectory::new("stale-hard-link-alias");
+        let path = directory.file("notes.md", "before\n");
+        let alias = directory.path.join("alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let stale = registry.open_local(&path).unwrap();
+        fs::write(&path, "after with a different size\n").unwrap();
+        let current = registry.open_local(&alias).unwrap();
+
+        assert_ne!(current, stale);
+        assert_eq!(
+            registry.get(current).unwrap().text().text(),
+            "after with a different size\n"
+        );
     }
 
     #[test]

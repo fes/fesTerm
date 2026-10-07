@@ -477,7 +477,9 @@ latency.
 CP-15 parent/notice additions: open one file through symlink and hard-link
 aliases and confirm every spelling reuses one document; after Save As rebinding,
 retarget an old alias and confirm it is revalidated rather than returning the
-old document. On macOS, separately grant another account
+old document. Repeat while the original generation is stale and confirm it
+cannot establish a new alias; verify retained identity handles prevent deleted
+file identifiers from being recycled into equivalence. On macOS, separately grant another account
 child mutation, ACL mutation, and ownership-change rights and confirm every
 case refuses before staging. On Windows, confirm an untrusted parent owner or
 a DACL granting an unprivileged principal child deletion, DACL mutation,

@@ -5427,7 +5427,7 @@ impl FesTermApp {
             || self.state.has_pending_open_refusal()
     }
 
-    pub(crate) fn has_local_document(&self, path: &std::path::Path) -> bool {
+    pub(crate) fn has_local_document(&mut self, path: &std::path::Path) -> bool {
         self.state.local_document_tab(path).is_some()
     }
 

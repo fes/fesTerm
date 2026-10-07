@@ -3963,12 +3963,11 @@ impl AppState {
     /// Opens a file in the editor. A second view of a file that is already
     /// open shares its document rather than reading the file again, and a tab
     /// already showing that document is raised instead of duplicated.
-    pub(crate) fn local_document_tab(&self, path: &Path) -> Option<TabId> {
-        self.documents.borrow().find_local(path).and_then(|id| {
-            self.tabs.iter().find_map(|tab| match &tab.content {
-                TabContent::TextEditor(editor) if editor.document() == id => Some(tab.id),
-                _ => None,
-            })
+    pub(crate) fn local_document_tab(&mut self, path: &Path) -> Option<TabId> {
+        let document = self.documents.borrow_mut().find_current_local(path)?;
+        self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::TextEditor(editor) if editor.document() == document => Some(tab.id),
+            _ => None,
         })
     }
 

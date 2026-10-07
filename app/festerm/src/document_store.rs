@@ -19,6 +19,7 @@ use std::fs::Metadata;
 use std::fs::{self, File};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 #[cfg(test)]
 use std::{
@@ -234,6 +235,26 @@ struct FileIdentity {
     file: u64,
 }
 
+#[derive(Clone, Debug)]
+struct RetainedFileIdentity {
+    identity: FileIdentity,
+    _handle: Arc<File>,
+}
+
+fn retain_file_identity(
+    file: &File,
+    identity: Option<FileIdentity>,
+) -> Result<Option<RetainedFileIdentity>, std::io::Error> {
+    identity
+        .map(|identity| {
+            file.try_clone().map(|handle| RetainedFileIdentity {
+                identity,
+                _handle: Arc::new(handle),
+            })
+        })
+        .transpose()
+}
+
 /// The stable filesystem identity of the directory that supplied a local file.
 ///
 /// Directory timestamps and sizes change when an image beside a Markdown file
@@ -274,13 +295,13 @@ impl DirectoryIdentity {
 pub(crate) struct LocalSourceAuthority {
     canonical_path: PathBuf,
     parent_identity: DirectoryIdentity,
-    file_identity: Option<FileIdentity>,
+    retained_identity: Option<RetainedFileIdentity>,
 }
 
 impl PartialEq for LocalSourceAuthority {
     fn eq(&self, other: &Self) -> bool {
-        match (self.file_identity, other.file_identity) {
-            (Some(left), Some(right)) => left == right,
+        match (&self.retained_identity, &other.retained_identity) {
+            (Some(left), Some(right)) => left.identity == right.identity,
             _ => {
                 self.canonical_path == other.canonical_path
                     && self.parent_identity == other.parent_identity
@@ -554,7 +575,8 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
     if generation != before {
         return Err(LoadFailure::Unreadable);
     }
-    source_authority.file_identity = generation.identity;
+    source_authority.retained_identity =
+        retain_file_identity(&file, generation.identity).map_err(classify_read_error)?;
     let document = TextDocument::from_bytes(&bytes, bounds).map_err(LoadFailure::Refused)?;
 
     Ok(LoadedDocument {
@@ -563,6 +585,15 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
         source_authority,
         read_only: metadata.permissions().readonly(),
     })
+}
+
+pub(crate) fn resolve_source_authority(path: &Path) -> Result<LocalSourceAuthority, LoadFailure> {
+    let canonical_path = fs::canonicalize(path).map_err(classify_read_error)?;
+    let (authority, file) = open_canonical_source(&canonical_path).map_err(classify_read_error)?;
+    if !file.metadata().map_err(classify_read_error)?.is_file() {
+        return Err(LoadFailure::NotAFile);
+    }
+    Ok(authority)
 }
 
 pub(crate) fn open_canonical_directory(parent: &Path) -> Result<cap_std::fs::Dir, std::io::Error> {
@@ -663,12 +694,12 @@ fn open_canonical_source(
     let directory = open_canonical_directory(parent)?;
     let parent_identity = DirectoryIdentity::from_directory(&directory)?;
     let file = open_canonical_file(&directory, canonical_path)?;
-    let file_identity = Generation::from_file(&file)?.identity;
+    let retained_identity = retain_file_identity(&file, Generation::from_file(&file)?.identity)?;
     Ok((
         LocalSourceAuthority {
             canonical_path: canonical_path.to_path_buf(),
             parent_identity,
-            file_identity,
+            retained_identity,
         },
         file,
     ))
@@ -702,7 +733,9 @@ pub(crate) fn observe_destination(path: &Path) -> Result<ConfirmedDestination, S
     let mut save_directory = source_authority_for_save(path, parent)?;
     let expectation = match open_original_file(&save_directory.directory, &save_directory.target)? {
         Some(original) => {
-            save_directory.source_authority.file_identity = original.generation.identity;
+            save_directory.source_authority.retained_identity =
+                retain_file_identity(&original.file, original.generation.identity)
+                    .map_err(classify_write_error)?;
             DestinationExpectation::Existing(original.generation)
         }
         None => DestinationExpectation::Absent,
@@ -872,7 +905,15 @@ pub fn save(
     let generation = publication?;
 
     let mut source_authority = save_directory.source_authority;
-    source_authority.file_identity = generation.identity;
+    source_authority.retained_identity =
+        open_named_file(&save_directory.directory, &save_directory.target)
+            .ok()
+            .filter(|file| generation.matches_file(file))
+            .and_then(|file| {
+                retain_file_identity(&file, generation.identity)
+                    .ok()
+                    .flatten()
+            });
     Ok(SavedDocument {
         generation,
         source_authority,
@@ -979,7 +1020,7 @@ fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory
         source_authority: LocalSourceAuthority {
             canonical_path: canonical_parent.join(file_name),
             parent_identity,
-            file_identity: None,
+            retained_identity: None,
         },
         target,
     })

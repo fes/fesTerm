@@ -69,9 +69,14 @@ ADR 0032 already threads through every window, keyed by a canonical
 
 - **Local:** the resolved file identity where the platform reports one (device
   plus inode on Unix; Windows document generations use a native handle query
-  for volume serial and file index, as does retained directory authority),
-  falling back to the canonicalized path. Symlinks resolve to their target, so a file reached by
-  two paths is one document. Path comparison respects the volume's case
+  for volume serial and file index, as does retained directory authority).
+  The registry retains an identity handle while using that identifier so an
+  unlinked object cannot lend a recycled identifier to a different file.
+  Where no stable identifier exists, identity falls back to the canonicalized
+  path. Symlinks resolve to their target, so a file reached by
+  two paths is one document. A cached secondary alias is re-resolved before
+  reuse, while the primary origin remains the stable document path described
+  below. Path comparison respects the volume's case
   sensitivity rather than assuming the platform's default.
 - **Remote:** the existing `HostIdentity` of the authenticated SFTP origin plus
   the normalized absolute remote path. A remote path is never canonicalized
