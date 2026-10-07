@@ -192,7 +192,11 @@ container storage share actual-owner reservations. A row transfers its
 reservation into its unit; progress/cancellation releases metadata without
 evicting another admitted plan. New planning that cannot fit fails explicitly
 before destination materialization. Per-item path/collision projection is
-conservative, not a process-memory measurement.
+conservative, includes the longest Keep Both suffix and a collision requeue
+slot before admission, and does not request new path credit while resolving a
+previously admitted collision. Replacement queues charge allocator-reported
+capacity before the old allocation retires. This is not a process-memory
+measurement.
 
 Local enumeration checks admission before retaining rows; remote enumeration
 uses the existing subsystem's paged protocol client and never first collects
@@ -200,6 +204,8 @@ the whole directory. The owner approved a narrowly vendored `russh-sftp` 2.3.0
 getter because its convenience API eagerly collects and repeatedly recopies
 all prior pages. Its license/provenance and exact patch are recorded in
 `vendor/russh-sftp/PATCHES.md`; no second SSH/SFTP connection is introduced.
+Eight consecutive protocol replies without a usable entry fail as non-progress
+rather than keeping the worker alive indefinitely.
 The decoded current reply is charged before conversion, but protocol-private
 pre-decode allocations remain outside the bound. Ordinary browsing snapshots,
 queued request/event/public-snapshot payloads and allocator/private-I/O
@@ -501,14 +507,21 @@ core transfer workflow.
   `failed_and_overflowing_growth_never_changes_shared_accounting`,
   `planning_data_drops_before_its_credit_and_outlives_a_removed_queue`,
   `planning_queue_refuses_storage_before_allocation_and_preserves_admitted_rows`,
+  `planning_queue_replacement_charges_actual_capacity_before_retiring_old_storage`,
   `sparse_planning_queue_retires_backing_and_keeps_a_collision_requeue_slot`,
+  `keep_both_resolution_uses_admitted_envelope_after_budget_saturates`,
   `local_planning_refuses_oversized_enumeration_and_returns_sorted_rows`,
   `remote_planning_refuses_before_another_page_and_closes_the_directory`,
+  `remote_planning_refuses_repeated_empty_pages_and_closes_the_directory`,
   `remote_planning_returns_sorted_budgeted_rows_without_recollecting_pages`,
   `remote_planning_reports_close_failure_without_losing_the_planning_error`,
   `canceled_remote_planning_closes_its_open_handle_without_closing_the_session`,
   `transfer_snapshot_updates_only_affected_rows_and_preserves_request_allocations`,
   and `transfer_snapshot_keeps_batch_order_and_updates_resolved_collision`.
+  Portable-name coverage includes
+  `remote_local_name_admission_covers_windows_alias_families_and_near_misses`;
+  backend event saturation is covered by
+  `progress_saturation_coalesces_without_losing_terminal_events`.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and

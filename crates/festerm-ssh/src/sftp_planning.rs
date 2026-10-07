@@ -6,7 +6,8 @@ use std::{
 
 use crate::sftp_transfer::{
     path_memory_proxy_bytes, SftpDirectoryItem, SftpPath, TransferPlanningLimit,
-    TransferPlanningLimits, TransferWorkError, TRANSFER_PLAN_ITEM_OVERHEAD_BYTES,
+    TransferPlanningLimits, TransferWorkError, MAX_KEEP_BOTH_SUFFIX_BYTES,
+    TRANSFER_PLAN_ITEM_OVERHEAD_BYTES,
 };
 
 #[derive(Clone)]
@@ -50,7 +51,8 @@ impl SharedPlanningBudget {
             1,
             TRANSFER_PLAN_ITEM_OVERHEAD_BYTES
                 .saturating_add(path_memory_proxy_bytes(source).saturating_mul(2))
-                .saturating_add(path_memory_proxy_bytes(destination).saturating_mul(6)),
+                .saturating_add(path_memory_proxy_bytes(destination).saturating_mul(6))
+                .saturating_add(MAX_KEEP_BOTH_SUFFIX_BYTES.saturating_mul(2)),
         )
     }
 
@@ -162,15 +164,18 @@ impl<T> PlanningQueue<T> {
             .storage
             .budget
             .reserve(0, capacity.saturating_mul(size_of::<Budgeted<T>>()))?;
-        self.values.reserve_exact(capacity - self.values.len());
-        let actual_bytes = self
-            .values
+        let mut replacement_values = VecDeque::with_capacity(capacity);
+        let actual_bytes = replacement_values
             .capacity()
             .saturating_mul(size_of::<Budgeted<T>>());
         if actual_bytes > replacement.bytes {
             replacement.grow(0, actual_bytes - replacement.bytes)?;
         }
-        self.storage = replacement;
+        replacement_values.append(&mut self.values);
+        let old_values = std::mem::replace(&mut self.values, replacement_values);
+        let old_storage = std::mem::replace(&mut self.storage, replacement);
+        drop(old_values);
+        drop(old_storage);
         Ok(())
     }
 
@@ -184,6 +189,10 @@ impl<T> PlanningQueue<T> {
         self.ensure_capacity()?;
         self.values.push_front(value);
         Ok(())
+    }
+
+    pub(crate) fn reserve_requeue_slot(&mut self) -> Result<(), TransferWorkError> {
+        self.ensure_capacity()
     }
 
     pub(crate) fn pop_front(&mut self) -> Option<Budgeted<T>> {
@@ -364,6 +373,26 @@ mod tests {
             })
             .is_err());
         assert_eq!(queue.values.capacity(), 0);
+        assert_eq!(budget.usage(), (0, 0));
+    }
+
+    #[test]
+    fn planning_queue_replacement_charges_actual_capacity_before_retiring_old_storage() {
+        let budget = test_budget(10, usize::MAX);
+        let mut queue = PlanningQueue::new(&budget);
+        for value in 0..5 {
+            queue
+                .push_back(Budgeted {
+                    value,
+                    reservation: budget.reserve(1, 1).unwrap(),
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            budget.usage(),
+            (5, 5 + queue.values.capacity() * size_of::<Budgeted<u64>>())
+        );
+        drop(queue);
         assert_eq!(budget.usage(), (0, 0));
     }
 

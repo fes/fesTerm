@@ -7,6 +7,8 @@ source and package provenance are retained.
 The crates.io archive SHA-256 is
 `9ed8949eca4163c18a8f59ff96d32cf61e9c13b9735e21ef32b3907f4aafa1a9`.
 It was verified before extraction.
+The vendored text files are normalized to LF line endings; use a
+line-ending-insensitive comparison when checking the extracted archive.
 
 The only source change adds `SftpSession::raw_session`, returning a clone of
 the existing `Arc<RawSftpSession>`. fesTerm uses its existing `opendir`,

@@ -46,6 +46,7 @@ Not supported in this first pass: reget, reput, symlink, chown, shell escapes,
 recursive -r transfers, and globbing/wildcard expansion.";
 
 const TRANSFER_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_REMOTE_DIRECTORY_NO_PROGRESS_PAGES: usize = 8;
 pub const SFTP_CANCELLATION_CLEANUP_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(2);
 
@@ -404,6 +405,7 @@ impl Drop for RemotePlanningDirectory {
                 if let Err(error) = session.close(handle).await {
                     tracing::warn!(
                         target: "festerm::sftp",
+                        error = %error,
                         "Cancelled SFTP directory enumeration could not close its handle"
                     );
                     eprintln!("fesTerm: SFTP directory close failed: {error}");
@@ -1204,6 +1206,7 @@ impl SftpSession {
         };
         let result = async {
             let mut entries = PlanningQueue::new(budget);
+            let mut no_progress_pages = 0_usize;
             loop {
                 let page = match directory
                     .session
@@ -1231,6 +1234,25 @@ impl SftpSession {
                     },
                 );
                 let _page_reservation = budget.reserve(0, page_bytes)?;
+                if page
+                    .files
+                    .iter()
+                    .all(|file| matches!(file.filename.as_str(), "." | ".."))
+                {
+                    no_progress_pages += 1;
+                    if no_progress_pages >= MAX_REMOTE_DIRECTORY_NO_PROGRESS_PAGES {
+                        return Err(SftpSessionError::RemoteOperationFailed {
+                            operation: "read directory",
+                            path: path.to_owned(),
+                            reason: format!(
+                                "server returned {no_progress_pages} consecutive pages without a directory entry"
+                            ),
+                        }
+                        .into());
+                    }
+                    continue;
+                }
+                no_progress_pages = 0;
                 for file in page.files {
                     if matches!(file.filename.as_str(), "." | "..") {
                         continue;
@@ -2313,6 +2335,31 @@ mod tests {
     }
 
     #[test]
+    fn remote_planning_refuses_repeated_empty_pages_and_closes_the_directory() {
+        test_runtime().block_on(async {
+            let budget = planning_budget(10, 1024 * 1024);
+            let (handler, reads, closes) = paged_server(usize::MAX, 0);
+            let (mut session, server) = directory_session(handler).await;
+            let error = match session
+                .remote_directory_for_planning("/source", &budget)
+                .await
+            {
+                Ok(_) => panic!("a server cannot keep planning alive with empty pages"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("without a directory entry"));
+            assert_eq!(
+                reads.load(Ordering::Acquire),
+                MAX_REMOTE_DIRECTORY_NO_PROGRESS_PAGES
+            );
+            assert_eq!(closes.load(Ordering::Acquire), 1);
+            assert_eq!(budget.usage(), (0, 0));
+            session.close().await.unwrap();
+            server.abort();
+        });
+    }
+
+    #[test]
     fn remote_planning_returns_sorted_budgeted_rows_without_recollecting_pages() {
         test_runtime().block_on(async {
             let budget = planning_budget(6, 1024 * 1024);
@@ -2411,6 +2458,7 @@ mod tests {
         for index in (0..5).rev() {
             stdfs::write(root.join(format!("row-{index}.txt")), b"row").unwrap();
         }
+
         test_runtime().block_on(async {
             for (items, bytes) in [(2, 1024 * 1024), (100, 1)] {
                 let budget = planning_budget(items, bytes);
@@ -2434,6 +2482,60 @@ mod tests {
             assert_eq!(budget.usage(), (0, 0));
         });
         stdfs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn remote_local_name_admission_covers_windows_alias_families_and_near_misses() {
+        for name in [
+            "CON",
+            "prn.txt",
+            "AUX.log",
+            "nul",
+            "CONIN$",
+            "conout$.txt",
+            "COM1",
+            "com9.log",
+            "LPT1",
+            "lpt9.log",
+            "COM¹.txt",
+            "COM².txt",
+            "COM³.txt",
+            "LPT¹.txt",
+            "LPT².txt",
+            "LPT³.txt",
+            "name.",
+            "name ",
+            "stream:name",
+            "question?",
+            "star*",
+            "left<",
+            "right>",
+            "quote\"",
+            "pipe|",
+            "forward/slash",
+            "back\\slash",
+            "control\u{1f}",
+        ] {
+            assert!(
+                validate_remote_local_file_name(name, "test name admission").is_err(),
+                "{name:?} must be refused"
+            );
+        }
+        for name in [
+            "COM0",
+            "COM10",
+            "LPT0",
+            "LPT10",
+            "company.txt",
+            "conduit.txt",
+            "auxiliary.txt",
+            "ordinary-é.txt",
+        ] {
+            assert!(
+                validate_remote_local_file_name(name, "test name admission").is_ok(),
+                "{name:?} must remain admissible"
+            );
+        }
     }
 
     struct EmptySftpServer;

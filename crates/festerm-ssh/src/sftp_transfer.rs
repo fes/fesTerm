@@ -37,6 +37,7 @@ const MAX_TRANSFER_BATCH_ITEMS: usize = 256;
 const MAX_QUEUED_TRANSFER_ITEMS: usize = 1_024;
 const MAX_TRANSFER_PLAN_ITEMS: usize = 65_536;
 const MAX_TRANSFER_PLAN_MEMORY_PROXY_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_KEEP_BOTH_SUFFIX_BYTES: usize = " (copy 4294967295)".len();
 // Covers container/node bookkeeping beyond the source, destination, and name text.
 pub(crate) const TRANSFER_PLAN_ITEM_OVERHEAD_BYTES: usize = 512;
 
@@ -1659,13 +1660,15 @@ impl WorkerState {
             }
         } else if let Some(destination_metadata) = destination_metadata {
             let allowed = allowed_decisions_for(source.file_type, destination_metadata.file_type);
+            let mut remaining_units = PlanningQueue::new(&budget);
+            remaining_units.reserve_requeue_slot()?;
             if let Some(decision) = self.batch_default_for(batch_id, &allowed) {
                 self.apply_file_decision(
                     transfer_id,
                     FileDecisionContext {
                         source,
                         destination,
-                        remaining_units: PlanningQueue::new(&budget),
+                        remaining_units,
                         whole_item: true,
                         reservation,
                     },
@@ -1690,7 +1693,7 @@ impl WorkerState {
                         collision: collision.clone(),
                         source,
                         destination,
-                        remaining_units: PlanningQueue::new(&budget),
+                        remaining_units,
                         whole_item: true,
                     },
                     reservation,
@@ -1918,7 +1921,7 @@ impl WorkerState {
         event_sender: &Sender<SftpTransferEvent>,
         planning_limits: TransferPlanningLimits,
     ) -> Result<(), TransferWorkError> {
-        let mut reservation = context.reservation;
+        let reservation = context.reservation;
         let source = context.source;
         let destination = context.destination;
         let decision = context.decision;
@@ -1930,7 +1933,6 @@ impl WorkerState {
                 let target = self
                     .first_available_keep_both_destination(backend, &destination)
                     .await?;
-                reservation.grow(0, path_memory_proxy_bytes(&target))?;
                 let mut control = PlanningControl {
                     transfer_id,
                     command_receiver,
@@ -2103,7 +2105,7 @@ impl WorkerState {
         backend: &mut B,
         event_sender: &Sender<SftpTransferEvent>,
     ) -> Result<(), TransferWorkError> {
-        let mut reservation = context.reservation;
+        let reservation = context.reservation;
         let source = context.source;
         let destination = context.destination;
         let mut remaining_units = context.remaining_units;
@@ -2128,7 +2130,6 @@ impl WorkerState {
                 let target = self
                     .first_available_keep_both_destination(backend, &destination)
                     .await?;
-                reservation.grow(0, path_memory_proxy_bytes(&target))?;
                 remaining_units.push_front(Budgeted {
                     value: TransferUnit::CopyFile {
                         source,
@@ -3485,6 +3486,89 @@ mod tests {
                 assert_eq!(stdfs::read(&final_path).unwrap(), b"late collision");
             }
         }
+    }
+
+    #[test]
+    fn keep_both_resolution_uses_admitted_envelope_after_budget_saturates() {
+        let root = unique_test_directory("keep-both-admitted-envelope");
+        let source = root.join("source.bin");
+        let destination = root.join("destination");
+        recreate_directory(&destination);
+        stdfs::write(&source, b"new contents").unwrap();
+        let destination_path = destination.join("source.bin");
+        stdfs::write(&destination_path, b"old contents").unwrap();
+
+        test_runtime().block_on(async {
+            const LIMIT: usize = 1024 * 1024;
+            let budget = SharedPlanningBudget::new(TransferPlanningLimits {
+                max_items: 1,
+                max_memory_proxy_bytes: LIMIT,
+            });
+            let source_metadata = read_local_path_metadata(&source).await.unwrap().unwrap();
+            let destination_file = SftpPath::remote(display_path(&destination_path));
+            let reservation = budget
+                .unit(&source_metadata.path, &destination_file)
+                .unwrap();
+            let mut remaining_units = PlanningQueue::new(&budget);
+            remaining_units.reserve_requeue_slot().unwrap();
+            let used = budget.usage().1;
+            let saturation = budget.reserve(0, LIMIT - used).unwrap();
+            let request =
+                SftpTransferRequest::new(source_metadata.path.clone(), destination_file.clone())
+                    .unwrap();
+            let mut state = WorkerState::default();
+            state.items.insert(
+                SftpTransferId(1),
+                TransferItem {
+                    batch_id: SftpTransferBatchId(1),
+                    id: SftpTransferId(1),
+                    direction: request.direction(),
+                    request,
+                    state: SftpTransferState::AwaitingCollision(SftpCollisionId(1)),
+                    bytes_transferred: 0,
+                    total_bytes: source_metadata.size,
+                    destination: Some(destination_file.clone()),
+                    started: false,
+                    cancel_requested: false,
+                    skipped_conflicts: 0,
+                    root_state: TransferRootState::Pending,
+                    pending_resolution: None,
+                    active_collision: Some(SftpCollisionId(1)),
+                },
+            );
+            let (event_sender, _events) = channel(1);
+            state
+                .apply_file_decision(
+                    SftpTransferId(1),
+                    FileDecisionContext {
+                        source: source_metadata,
+                        destination: destination_file,
+                        remaining_units,
+                        whole_item: true,
+                        reservation,
+                    },
+                    SftpCollisionDecision::KeepBoth,
+                    &mut TestBackend::default(),
+                    &event_sender,
+                )
+                .await
+                .expect("Keep Both must use its admitted path and queue envelope");
+            assert_eq!(budget.usage().1, LIMIT);
+            let item = state.items.get(&SftpTransferId(1)).unwrap();
+            assert_eq!(
+                item.destination,
+                Some(SftpPath::remote(display_path(
+                    &destination.join("source (copy).bin")
+                )))
+            );
+            assert!(matches!(item.root_state, TransferRootState::Ready(_)));
+            drop(state);
+            drop(saturation);
+            assert_eq!(budget.usage(), (0, 0));
+        });
+
+        assert_eq!(stdfs::read(destination_path).unwrap(), b"old contents");
+        stdfs::remove_dir_all(root).unwrap();
     }
 
     #[test]

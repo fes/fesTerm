@@ -142,19 +142,25 @@ enumerated row transfers its item reservation into its planned unit, rather
 than being counted twice. Capacity, old/new container overlap during growth,
 directory-stack paths and each decoded remote page are also charged. The
 metadata proxy includes a 512-byte per-item overhead, owned text capacities
-and a conservative destination/collision expansion envelope; it is not an
-allocator/RSS measurement. Units release their credits after their data
-retires, including in-flight copies and paused decisions. Exceptional empty
-slots remain charged until their allocation retires; sparse queues copy at
-most 128 live entries into fixed staging, free the old allocation before
-rebuilding, and keep a slot for requeuing a collision.
+and a conservative destination/collision expansion envelope, including the
+longest Keep Both suffix and a collision requeue slot. Resolving an admitted
+collision therefore does not request new path credit after earlier files may
+have committed. It is not an allocator/RSS measurement. Units release their
+credits after their data retires, including in-flight copies and paused
+decisions. Replacement queues charge their allocator-reported capacity before
+retiring the old allocation. Exceptional empty slots remain charged until
+their allocation retires; sparse queues copy at most 128 live entries into
+fixed staging, free the old allocation before rebuilding, and keep a slot for
+requeuing a collision.
 
 Local enumeration admits each row before retaining it. Remote planning reads
 one protocol page at a time over the same authenticated subsystem, checks
 admission before growing the application-owned collection, and closes its
 directory handle on completion/refusal or requests closure on cancellation.
 It does not use the library's eager, repeatedly recopied whole-directory
-listing. Sorting the bounded planning rows is heap-free. The pinned
+listing. Eight consecutive replies containing no usable directory entry are
+refused as a non-progressing server instead of keeping planning alive
+indefinitely. Sorting the bounded planning rows is heap-free. The pinned
 `russh-sftp` patch exposes only its existing paged client; provenance is in
 `vendor/russh-sftp/PATCHES.md`.
 
