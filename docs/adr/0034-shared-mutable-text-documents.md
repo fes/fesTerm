@@ -240,7 +240,9 @@ security labels remain in place and must already match the verified source
 snapshot. Windows applies and verifies the captured owner,
 group, DACL and attributes on the prepared file while its retained handle
 denies every other read or write open until publication completes and the
-handle closes. An individually NTFS EFS-encrypted target is refused before
+final pathname identity, published security snapshot, and retained-original
+security snapshot are verified; only then does the payload handle close. An
+individually NTFS EFS-encrypted target is refused before
 staging or writing because basic attribute restoration cannot reproduce its
 encryption. A target with any NTFS alternate data stream, including
 `Zone.Identifier` Mark-of-the-Web, is likewise refused before staging until
@@ -261,7 +263,8 @@ generation and retained-original generation are validated after publication.
 Unix owner/group/mode/ACL/xattr
 snapshots and Windows owner/group/DACL/attribute snapshots are revalidated
 against a no-follow opening of the current target immediately before
-publication and against the published target afterward. A mismatch never triggers an unconditional second
+publication and against both the exact retained payload and retained original
+afterward. A mismatch never triggers an unconditional second
 pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error. This

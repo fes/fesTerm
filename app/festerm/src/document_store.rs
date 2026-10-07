@@ -1696,9 +1696,11 @@ fn publish_temporary(
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
-    temporary.close_file();
     after_save_replacement();
-    let published_file = match open_named_file(directory, target) {
+    let published_file = match festerm_windows_security::open_file_no_reparse_for_verification(
+        &directory_handle,
+        target,
+    ) {
         Ok(file) => file,
         Err(error) => {
             tracing::error!(%error, "the replaced Windows save target could not be reopened");
@@ -1719,8 +1721,19 @@ fn publish_temporary(
             return Err(temporary.recovery_required());
         }
     };
+    let retained_payload = match temporary.file.as_ref().and_then(|file| {
+        Generation::from_file(file)
+            .ok()
+            .map(|generation| (file, generation))
+    }) {
+        Some(payload) => payload,
+        None => {
+            tracing::error!("the retained Windows save payload could not be identified");
+            return Err(temporary.recovery_required());
+        }
+    };
     let published_security_matches = match festerm_windows_security::security_metadata_matches(
-        &published_file,
+        retained_payload.0,
         security_metadata,
     ) {
         Ok(matches) => matches,
@@ -1729,9 +1742,21 @@ fn publish_temporary(
             return Err(temporary.recovery_required());
         }
     };
+    let original_security_matches = match festerm_windows_security::security_metadata_matches(
+        &original_file,
+        security_metadata,
+    ) {
+        Ok(matches) => matches,
+        Err(error) => {
+            tracing::error!(%error, "the retained Windows original metadata could not be verified");
+            return Err(temporary.recovery_required());
+        }
+    };
     if published != temporary_generation
+        || retained_payload.1 != temporary_generation
         || retained_original != original_generation
         || !published_security_matches
+        || !original_security_matches
     {
         return Err(temporary.recovery_required());
     }

@@ -51,8 +51,8 @@ mod imp {
             FileBasicInfo, FileRenameInfoEx, GetFileInformationByHandle,
             SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS,
             FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL,
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_RENAME_INFO, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, SYNCHRONIZE,
         },
         System::{
             Console::{
@@ -752,6 +752,15 @@ mod imp {
         open_file_no_reparse_with_access(directory, name, GENERIC_READ | DELETE)
     }
 
+    /// Opens a pathname for identity and security verification without
+    /// requesting data access from an exclusively retained save payload.
+    pub fn open_file_no_reparse_for_verification(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        open_file_no_reparse_with_access(directory, name, FILE_READ_ATTRIBUTES | READ_CONTROL)
+    }
+
     fn open_file_no_reparse_with_access(
         directory: &File,
         name: &Path,
@@ -1199,6 +1208,33 @@ mod imp {
         }
 
         #[test]
+        fn exclusive_private_file_allows_identity_and_security_verification() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let staging_handle =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+            let staged =
+                create_current_user_only_file_exclusive(&staging_handle, Path::new("payload"))
+                    .unwrap();
+            let expected = security_metadata(&staged).unwrap();
+
+            let verification =
+                open_file_no_reparse_for_verification(&staging_handle, Path::new("payload"))
+                    .unwrap();
+
+            assert_eq!(
+                file_information(&verification).unwrap().nFileIndexHigh,
+                file_information(&staged).unwrap().nFileIndexHigh
+            );
+            assert_eq!(
+                file_information(&verification).unwrap().nFileIndexLow,
+                file_information(&staged).unwrap().nFileIndexLow
+            );
+            assert!(security_metadata_matches(&verification, &expected).unwrap());
+        }
+
+        #[test]
         fn private_creation_and_conditional_publication_keep_the_current_user_only_dacl() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
@@ -1319,7 +1355,7 @@ mod imp {
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     create_current_user_only_file_exclusive, disable_std_handle_inheritance, open_file_no_reparse,
-    open_file_no_reparse_for_rename, rename_file_noreplace, restrict_default_dacl_to_current_user,
-    restrict_to_current_user, security_metadata, security_metadata_matches, DefaultDaclGuard,
-    SecurityMetadata,
+    open_file_no_reparse_for_rename, open_file_no_reparse_for_verification, rename_file_noreplace,
+    restrict_default_dacl_to_current_user, restrict_to_current_user, security_metadata,
+    security_metadata_matches, DefaultDaclGuard, SecurityMetadata,
 };

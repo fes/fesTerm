@@ -1615,6 +1615,7 @@
         "unprotected_created_directory_is_rejected_before_child_creation",
         "unprotected_created_child_is_rejected_before_caller_bytes_can_be_written",
         "exclusive_private_file_blocks_other_readers_after_its_dacl_is_broadened",
+        "exclusive_private_file_allows_identity_and_security_verification",
         "encrypted_security_metadata_is_refused_instead_of_applied_as_plaintext",
         "alternate_data_streams_are_detected_and_refused",
         "saving_into_a_file_that_changed_first_conflicts_and_writes_nothing",
