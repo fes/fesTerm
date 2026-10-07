@@ -62,6 +62,57 @@ runner result, and changes no semantic guard or WARP replay selection.
 Unset the selector (or use `all`) for the full construction matrix.
 No missing variant or native row gains coverage from the controls-only result.
 
+### 2026-10-06 balanced live Preview controls
+
+The qualified frame-local Preview preparation leaf `d055061` is ordinarily
+composed after #366 at clean `f51c88fdee80d10599f2ba2d3bbae9671de4a172`, tree
+`d7c640a202b290f1b75aa480d8854d90898cebb3`. Its archived release executable
+SHA-256 is `945daa0a3ace0ba54426ebcb165ac985235647a1b3ee227c529396a5d9c394e7`.
+The immediate clean before source is
+`46eb139ab4ab6a33781b1fa5ba3720d571b42845`, tree
+`33c631411cb7b5c717d662820a3e99ef365667fa`, archived executable SHA-256
+`006e7dea88f2a796679c0e4c60bec01c75fba80ec41543dc5be133e5b32ea0e2`.
+The earlier Source bounds and current picker diagnostics remain in both.
+
+Six alternating process pairs (three before-first, three after-first) use
+Windows x64 DX12 CPU `Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2,
+the same physical cumulative fixture path and all four actual 400-section
+Markdown controls. Every child has explicit bounded completion waiting,
+actual exit 0 and stable source/tree/hash. Both agents released all owned
+build/test commands before the timing slot. The branch is restored normally.
+
+All 24 paired encoded PNG comparisons and 240 measured original-renderer
+pixel guards pass. Submitted geometry, callback count and target/image/
+padded-readback payloads match exactly; one existing panel executes in every
+draw. Each source/scene has 120 UI and thirty completed-draw samples, pooled
+with `sorted[(len - 1) * percentile / 100]`, not a median of pair medians.
+
+| Actual viewer | Pooled UI before ms | Pooled UI after ms | Pooled draw/readback before ms | Pooled draw/readback after ms | After draw slower pairs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Preview | 14.100 | 12.872 | 344.216 | 319.671 | 2/6 |
+| Preview narrow | 11.590 | 11.177 | 74.903 | 74.234 | 2/6 |
+| Source | 4.417 | 4.396 | 303.626 | 451.110 | 4/6 |
+| Source narrow | 3.367 | 3.074 | 100.286 | 104.343 | 3/6 |
+
+Preview pooled UI observations are 8.7/3.6% lower, alongside the separate
+deterministic 1600-to-403 preparation/layout-request control (802 with Find
+highlighting every `Item`). Two normal and three narrow UI pair medians are
+adverse. Source drawing has large adverse movement despite unchanged Source
+implementation and identical frozen output/work. That is retained evidence,
+not a strict regression repair, universal speedup or demonstrated host cause.
+Seven completion buckets, ordered samples and all pair-level reversals remain.
+
+Private artifacts under the session root are `fleet-v5-baseline-binary`,
+`fleet-v5-preview-binary` and `fleet-v5-balanced-preview-controls-v1`
+(twelve source/hash/exit receipts, 48 scene reports/PNGs and
+`verified-balanced-summary.json`). The existing independent pair/campaign
+verifiers retain all source, pixel, order, callback, payload and percentile
+guards. The first prepared coordinator AST check rejected misplaced multiline
+PowerShell operators before any runtime; the repaired coordinator parses and
+all twelve actual runs complete. No failed attempt is treated as measurements.
+Shared-host comparisons do not accept isolated GPU timestamps, native
+input/presentation/physical latency, font/process memory or resource retirement.
+
 ### 2026-10-06 source-bound picker and Markdown observations
 
 The actual release replay compared clean cumulative

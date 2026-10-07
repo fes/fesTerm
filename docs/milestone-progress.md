@@ -3,6 +3,29 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Measuring live Preview preparation without hiding the Source control
+
+The frame-local table-cell successor is now ordinarily composed after the
+picker-frame diagnostic at clean `f51c88f`. Six alternating source-frozen
+`46eb139`/`f51c88f` process pairs render the actual four 400-section Markdown
+controls, retaining 24 exact encoded PNG comparisons, 240 measured pixel
+guards, identical submitted geometry/payload and the same single panel.
+
+Pooled normal/narrow Preview construction medians move from 14.100/11.590 to
+12.872/11.177 ms, observations 8.7/3.6% lower. Completed draw/readback medians
+move 344.216/74.903 to 319.671/74.234 ms, but two pairs at each width are
+slower. These observations supplement the deterministic 1600-to-403 job
+reduction; they are not a strict native or all-metrics speedup.
+
+The unchanged Source rendering controls have adverse pooled drawing:
+303.626 to 451.110 ms normally and 100.286 to 104.343 ms narrowly, slower
+in four/three pairs. Source construction moves 4.417/3.367 to 4.396/3.074 ms.
+All raw samples and reversals remain in the
+[balanced Preview record](../validation/windows-warp/README.md#2026-10-06-balanced-live-preview-controls).
+An unchanged Source implementation and matching pixels/geometry do not
+establish a host cause or explain those timing movements. Native/platform
+and total-resource acceptance remain separate.
+
 ## Rechecking Source drawing with balanced contemporaneous controls
 
 The first Source comparison had lower construction medians but higher drawing

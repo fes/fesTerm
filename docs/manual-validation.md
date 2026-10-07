@@ -506,6 +506,16 @@ separate from the payload; these counters establish neither total UI speed,
 native clipboard/screen-reader delivery nor GPU drawing. No native scenario
 or capability status is advanced, and table-cell byte navigation remains open.
 
+Actual cumulative `46eb139`/`f51c88f` now adds six balanced process pairs:
+all four 400-section Markdown controls preserve 24 encoded PNG comparisons,
+240 measured original-renderer guards and identical submitted work. Pooled
+Preview construction observations are 8.7/3.6% lower at normal/narrow widths;
+two drawing pairs at each width are adverse. Unchanged Source has higher
+pooled drawing medians (303.626 to 451.110 ms and 100.286 to 104.343 ms),
+retained rather than dismissed as a proven host cause. The source-bound WARP
+record separates this shared-host execution from the CPU mechanism and all
+native/manual/resource gates.
+
 CP-06 Source preparation: ordinary/candidate CPU checks cover the same owned
 400-section fixture, all live labels/accessibility nodes, Find and offscreen
 byte navigation, wrapping across width/font/scale/theme changes, Unicode/CRLF/
