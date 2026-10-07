@@ -1079,16 +1079,24 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        let status = Command::new("chmod")
-            .args(["+a", "everyone allow add_file,delete_child"])
-            .arg(&directory.0)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        assert_eq!(
-            secure_staging_parent(&directory.open()).unwrap_err().kind(),
-            std::io::ErrorKind::Unsupported
-        );
+        for permissions in ["add_file,delete_child", "writesecurity", "chown"] {
+            let status = Command::new("chmod")
+                .arg("-N")
+                .arg(&directory.0)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let status = Command::new("chmod")
+                .args(["+a", &format!("everyone allow {permissions}")])
+                .arg(&directory.0)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            assert_eq!(
+                secure_staging_parent(&directory.open()).unwrap_err().kind(),
+                std::io::ErrorKind::Unsupported
+            );
+        }
     }
 
     #[test]

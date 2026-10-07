@@ -125,6 +125,7 @@ impl SaveAsPicker {
     }
 
     fn load(&mut self, path: SftpPath) {
+        self.refresh_notice = None;
         self.pane.loading = true;
         self.pane.error = None;
         self.pane.details = None;
@@ -920,6 +921,25 @@ mod tests {
             }
             other => panic!("expected refreshed Save, got {}", describe(other)),
         }
+    }
+
+    #[test]
+    fn stale_destination_notice_clears_when_navigating_to_another_folder() {
+        let directory = TemporaryDirectory::new("stale-notice-navigation");
+        let mut harness = harness_for(&directory, "");
+
+        type_name(&mut harness, "winner.md");
+        directory.file("winner.md", "newer\n");
+        harness.get_by_label("Save").click();
+        harness.run();
+        settle(&mut harness);
+        assert!(harness.state().0.pane.error.is_some());
+
+        harness.state_mut().0.navigate_up();
+        settle(&mut harness);
+
+        assert!(harness.state().0.pane.error.is_none());
+        assert!(harness.state().0.refresh_notice.is_none());
     }
 
     #[test]

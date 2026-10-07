@@ -123,6 +123,13 @@ fn after_save_replacement() {
     });
 }
 
+#[cfg(test)]
+pub(crate) fn set_after_save_replacement_hook(hook: impl FnOnce() + 'static) {
+    AFTER_SAVE_REPLACEMENT.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
 fn after_target_capture() {
     #[cfg(test)]
     AFTER_TARGET_CAPTURE.with(|slot| {
@@ -263,11 +270,26 @@ impl DirectoryIdentity {
 }
 
 /// The path and parent identity that supplied one loaded local document.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct LocalSourceAuthority {
     canonical_path: PathBuf,
     parent_identity: DirectoryIdentity,
+    file_identity: Option<FileIdentity>,
 }
+
+impl PartialEq for LocalSourceAuthority {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.file_identity, other.file_identity) {
+            (Some(left), Some(right)) => left == right,
+            _ => {
+                self.canonical_path == other.canonical_path
+                    && self.parent_identity == other.parent_identity
+            }
+        }
+    }
+}
+
+impl Eq for LocalSourceAuthority {}
 
 impl LocalSourceAuthority {
     pub(crate) fn canonical_path(&self) -> &Path {
@@ -508,7 +530,7 @@ impl SaveFailure {
 /// Reads a file into an editable document.
 pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadFailure> {
     let canonical_path = fs::canonicalize(path).map_err(classify_read_error)?;
-    let (source_authority, mut file) =
+    let (mut source_authority, mut file) =
         open_canonical_source(&canonical_path).map_err(classify_read_error)?;
     let metadata = file.metadata().map_err(classify_read_error)?;
     if !metadata.is_file() {
@@ -532,6 +554,7 @@ pub fn load(path: &Path, bounds: DocumentBounds) -> Result<LoadedDocument, LoadF
     if generation != before {
         return Err(LoadFailure::Unreadable);
     }
+    source_authority.file_identity = generation.identity;
     let document = TextDocument::from_bytes(&bytes, bounds).map_err(LoadFailure::Refused)?;
 
     Ok(LoadedDocument {
@@ -640,10 +663,12 @@ fn open_canonical_source(
     let directory = open_canonical_directory(parent)?;
     let parent_identity = DirectoryIdentity::from_directory(&directory)?;
     let file = open_canonical_file(&directory, canonical_path)?;
+    let file_identity = Generation::from_file(&file)?.identity;
     Ok((
         LocalSourceAuthority {
             canonical_path: canonical_path.to_path_buf(),
             parent_identity,
+            file_identity,
         },
         file,
     ))
@@ -674,9 +699,12 @@ pub fn freshness(path: &Path, known: Generation) -> Freshness {
 /// Observes the exact Save As destination at confirmation time.
 pub(crate) fn observe_destination(path: &Path) -> Result<ConfirmedDestination, SaveFailure> {
     let parent = parent_directory(path)?;
-    let save_directory = source_authority_for_save(path, parent)?;
+    let mut save_directory = source_authority_for_save(path, parent)?;
     let expectation = match open_original_file(&save_directory.directory, &save_directory.target)? {
-        Some(original) => DestinationExpectation::Existing(original.generation),
+        Some(original) => {
+            save_directory.source_authority.file_identity = original.generation.identity;
+            DestinationExpectation::Existing(original.generation)
+        }
         None => DestinationExpectation::Absent,
     };
     Ok(ConfirmedDestination {
@@ -843,9 +871,11 @@ pub fn save(
     sync_directory(&save_directory.directory);
     let generation = publication?;
 
+    let mut source_authority = save_directory.source_authority;
+    source_authority.file_identity = generation.identity;
     Ok(SavedDocument {
         generation,
-        source_authority: save_directory.source_authority,
+        source_authority,
         read_only,
     })
 }
@@ -949,6 +979,7 @@ fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory
         source_authority: LocalSourceAuthority {
             canonical_path: canonical_parent.join(file_name),
             parent_identity,
+            file_identity: None,
         },
         target,
     })
@@ -1096,13 +1127,9 @@ impl<'a> TemporaryFile<'a> {
                 .try_clone()
                 .map(cap_std::fs::Dir::into_std_file)
                 .map_err(classify_write_error)?;
-            festerm_windows_security::secure_staging_parent(&parent).map_err(|error| {
-                if error.kind() == std::io::ErrorKind::Unsupported {
-                    SaveFailure::UnsafeDestinationFolder
-                } else {
-                    classify_write_error(error)
-                }
-            })?
+            festerm_windows_security::secure_staging_parent(&parent)
+                .map_err(classify_write_error)?
+                .ok_or(SaveFailure::UnsafeDestinationFolder)?
         };
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
             let staging_directory = temporary_directory_path()?;
@@ -1117,7 +1144,6 @@ impl<'a> TemporaryFile<'a> {
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => return Err(classify_write_error(error)),
                 }
-                after_staging_directory_create();
             }
             #[cfg(windows)]
             let staging = {
@@ -1153,6 +1179,7 @@ impl<'a> TemporaryFile<'a> {
                     return Err(classify_write_error(error));
                 }
             };
+            after_staging_directory_create();
             #[cfg(windows)]
             {
                 let parent = match directory.try_clone().map(cap_std::fs::Dir::into_std_file) {
@@ -2227,6 +2254,51 @@ mod tests {
         fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
         assert!(failure.detail().contains("folder"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    fn grant_everyone_full_control(path: &Path) {
+        let status = process::Command::new("icacls")
+            .arg(path)
+            .args(["/grant", "*S-1-1-0:(OI)(CI)F"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn saving_refuses_an_unsafe_windows_parent_before_staging() {
+        let directory = TemporaryDirectory::new("unsafe-windows-parent");
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        grant_everyone_full_control(&directory.path);
+
+        let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+        assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_parent_security_change_after_staging_refuses_and_cleans_staging() {
+        let directory = TemporaryDirectory::new("windows-parent-security-change");
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let parent = directory.path.clone();
+        AFTER_STAGING_DIRECTORY_CREATE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                grant_everyone_full_control(&parent);
+            }));
+        });
+
+        let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+        assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
         assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }

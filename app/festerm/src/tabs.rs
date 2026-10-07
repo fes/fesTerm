@@ -12,6 +12,7 @@
 //! routes session output through the single-writer `Terminal` +
 //! `SessionController` pair defined in `session_controller.rs`.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -19,6 +20,8 @@ use std::sync::{
     Arc,
 };
 use std::thread::JoinHandle;
+
+const MAX_PENDING_OPEN_REFUSAL_NOTICES: usize = 16;
 
 use eframe::egui;
 use festerm_config::{
@@ -2582,7 +2585,7 @@ pub struct AppState {
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
     open_refusal: Option<(PathBuf, OpenFailure)>,
-    pending_open_refusal_notice: Option<crate::overlay_state::OpenRefusalNotice>,
+    pending_open_refusal_notices: VecDeque<crate::overlay_state::OpenRefusalNotice>,
     sftp_cleanup_sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>,
     sftp_cleanup_receiver: Receiver<crate::overlay_state::OpenRefusalNotice>,
     pending_terminal_path_opens: Vec<PendingTerminalPathOpen>,
@@ -2679,7 +2682,7 @@ impl AppState {
             save_as_requested: false,
             history_snapshot_refusal: None,
             open_refusal: None,
-            pending_open_refusal_notice: None,
+            pending_open_refusal_notices: VecDeque::new(),
             sftp_cleanup_sender,
             sftp_cleanup_receiver,
             pending_terminal_path_opens: Vec::new(),
@@ -3971,7 +3974,7 @@ impl AppState {
 
     pub(crate) fn has_pending_open_refusal(&self) -> bool {
         self.open_refusal.is_some()
-            || self.pending_open_refusal_notice.is_some()
+            || !self.pending_open_refusal_notices.is_empty()
             || self.documents.borrow().has_recovery_notices()
     }
 
@@ -4187,7 +4190,7 @@ impl AppState {
                     |requestor| requestor.transport_generation(),
                 );
                 if generation != request.lifecycle_generation {
-                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
@@ -4200,7 +4203,7 @@ impl AppState {
                     return;
                 }
                 let Some(requestor) = session.live_remote_file_requestor() else {
-                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
@@ -4215,18 +4218,20 @@ impl AppState {
                 let request = match bind_live_remote_request(requestor, request) {
                     Ok(request) => request,
                     Err(notice) => {
-                        self.pending_open_refusal_notice = Some(notice);
+                        self.queue_open_refusal_notice(notice);
                         return;
                     }
                 };
                 let display_path = request.request.display_path.clone();
                 if self.pending_terminal_path_opens.len() >= 4 {
-                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
                         name: "remote path".to_owned(),
                         path: display_path,
                         headline: "Too many remote files are opening".to_owned(),
-                        detail: "Wait for an existing file request to finish before opening another.".to_owned(),
+                        detail:
+                            "Wait for an existing file request to finish before opening another."
+                                .to_owned(),
                     });
                     return;
                 }
@@ -4246,19 +4251,16 @@ impl AppState {
                             handle: Some(handle),
                         }),
                     Err(error) => {
-                        self.pending_open_refusal_notice =
-                            Some(crate::overlay_state::OpenRefusalNotice {
-                                title: None,
-                                name: Path::new(&display_path)
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| display_path.clone()),
-                                path: display_path,
-                                headline: "This remote path could not be opened".to_owned(),
-                                detail: format!(
-                                    "The background SFTP worker could not start: {error}"
-                                ),
-                            });
+                        self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                            title: None,
+                            name: Path::new(&display_path)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| display_path.clone()),
+                            path: display_path,
+                            headline: "This remote path could not be opened".to_owned(),
+                            detail: format!("The background SFTP worker could not start: {error}"),
+                        });
                     }
                 }
             }
@@ -4281,7 +4283,7 @@ impl AppState {
                     if let Some(handle) = pending.handle.take() {
                         let _ = handle.join();
                     }
-                    self.pending_open_refusal_notice = Some(notice);
+                    self.queue_open_refusal_notice(notice);
                 }
                 Err(TryRecvError::Empty) => {
                     index += 1;
@@ -4291,15 +4293,14 @@ impl AppState {
                     if let Some(handle) = pending.handle.take() {
                         let _ = handle.join();
                     }
-                    self.pending_open_refusal_notice =
-                        Some(crate::overlay_state::OpenRefusalNotice {
-                            title: None,
-                            name: "remote path".to_owned(),
-                            path: "remote path".to_owned(),
-                            headline: "This remote path could not be opened".to_owned(),
-                            detail: "The background SFTP worker stopped before returning a result."
-                                .to_owned(),
-                        });
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        name: "remote path".to_owned(),
+                        path: "remote path".to_owned(),
+                        headline: "This remote path could not be opened".to_owned(),
+                        detail: "The background SFTP worker stopped before returning a result."
+                            .to_owned(),
+                    });
                 }
             }
         }
@@ -4340,8 +4341,15 @@ impl AppState {
         self.open_refusal.take()
     }
 
+    fn queue_open_refusal_notice(&mut self, notice: crate::overlay_state::OpenRefusalNotice) {
+        if self.pending_open_refusal_notices.len() == MAX_PENDING_OPEN_REFUSAL_NOTICES {
+            self.pending_open_refusal_notices.pop_front();
+        }
+        self.pending_open_refusal_notices.push_back(notice);
+    }
+
     pub fn take_open_refusal_notice(&mut self) -> Option<crate::overlay_state::OpenRefusalNotice> {
-        self.pending_open_refusal_notice.take().or_else(|| {
+        self.pending_open_refusal_notices.pop_front().or_else(|| {
             self.documents
                 .borrow_mut()
                 .take_recovery_notice()
@@ -7334,6 +7342,46 @@ mod tests {
         assert_eq!(first_notice.path, first.display().to_string());
         let second_notice = state.take_open_refusal_notice().expect("second notice");
         assert_eq!(second_notice.path, second.display().to_string());
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
+    fn queued_remote_refusals_are_delivered_without_overwriting_each_other() {
+        let mut state = AppState::for_test();
+        for index in 1..=3 {
+            state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                title: None,
+                name: format!("remote-{index}.md"),
+                path: format!("host:/remote-{index}.md"),
+                headline: format!("Refusal {index}"),
+                detail: format!("detail {index}"),
+            });
+        }
+
+        for index in 1..=3 {
+            let notice = state.take_open_refusal_notice().expect("queued refusal");
+            assert_eq!(notice.headline, format!("Refusal {index}"));
+        }
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
+    fn remote_refusal_queue_is_bounded_and_keeps_the_newest_in_order() {
+        let mut state = AppState::for_test();
+        for index in 0..=MAX_PENDING_OPEN_REFUSAL_NOTICES {
+            state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                title: None,
+                name: format!("remote-{index}.md"),
+                path: format!("host:/remote-{index}.md"),
+                headline: format!("Refusal {index}"),
+                detail: format!("detail {index}"),
+            });
+        }
+
+        for index in 1..=MAX_PENDING_OPEN_REFUSAL_NOTICES {
+            let notice = state.take_open_refusal_notice().expect("bounded refusal");
+            assert_eq!(notice.headline, format!("Refusal {index}"));
+        }
         assert!(state.take_open_refusal_notice().is_none());
     }
 

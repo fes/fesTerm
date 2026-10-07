@@ -39,7 +39,8 @@ mod imp {
             AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
             CreateWellKnownSid, EqualSid, GetAce, GetAclInformation, GetKernelObjectSecurity,
-            GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl,
+            GetLengthSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
+            GetSecurityDescriptorOwner, GetTokenInformation, InitializeAcl,
             InitializeSecurityDescriptor, SetKernelObjectSecurity, SetSecurityDescriptorControl,
             SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, SetTokenInformation,
             TokenDefaultDacl, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
@@ -385,7 +386,7 @@ mod imp {
             || (unsafe { EqualSid(sid, administrators.as_ptr().cast_mut().cast()) }) != 0
     }
 
-    fn staging_parent_is_safe(directory: &File) -> io::Result<bool> {
+    fn staging_parent_security(directory: &File) -> io::Result<Option<StagingParentSecurity>> {
         const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
         const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
         const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
@@ -402,115 +403,115 @@ mod imp {
         let system = well_known_sid(WinLocalSystemSid)?;
         let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
 
+        let descriptor = security_descriptor(
+            directory,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        )?;
         let mut owner = ptr::null_mut();
-        let mut dacl = ptr::null_mut();
-        let mut descriptor = ptr::null_mut();
-        let status = unsafe {
-            GetSecurityInfo(
-                directory.as_raw_handle(),
-                SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        let mut owner_defaulted = 0;
+        if unsafe {
+            GetSecurityDescriptorOwner(
+                descriptor.as_ptr().cast_mut().cast(),
                 &raw mut owner,
-                ptr::null_mut(),
-                &raw mut dacl,
-                ptr::null_mut(),
-                &raw mut descriptor,
+                &raw mut owner_defaulted,
             )
-        };
-        if status != ERROR_SUCCESS {
-            return Err(io::Error::from_raw_os_error(status as i32));
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
         }
-        let result = (|| {
-            if owner.is_null()
-                || dacl.is_null()
-                || !trusted_parent_sid(owner, user.User.Sid, &system, &administrators)
-            {
-                return Ok(false);
-            }
-            let mut information = ACL_SIZE_INFORMATION::default();
-            if unsafe {
-                GetAclInformation(
-                    dacl,
-                    (&raw mut information).cast(),
-                    mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
-                    AclSizeInformation,
-                )
-            } == 0
-            {
+        let mut dacl = ptr::null_mut();
+        let mut dacl_present = 0;
+        let mut dacl_defaulted = 0;
+        if unsafe {
+            GetSecurityDescriptorDacl(
+                descriptor.as_ptr().cast_mut().cast(),
+                &raw mut dacl_present,
+                &raw mut dacl,
+                &raw mut dacl_defaulted,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        if owner.is_null()
+            || dacl_present == 0
+            || dacl.is_null()
+            || !trusted_parent_sid(owner, user.User.Sid, &system, &administrators)
+        {
+            return Ok(None);
+        }
+        let mut information = ACL_SIZE_INFORMATION::default();
+        if unsafe {
+            GetAclInformation(
+                dacl,
+                (&raw mut information).cast(),
+                mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        for index in 0..information.AceCount {
+            let mut ace = ptr::null_mut();
+            if unsafe { GetAce(dacl, index, &raw mut ace) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            for index in 0..information.AceCount {
-                let mut ace = ptr::null_mut();
-                if unsafe { GetAce(dacl, index, &raw mut ace) } == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                let header = unsafe { &*ace.cast::<ACE_HEADER>() };
-                if header.AceFlags & INHERIT_ONLY_ACE as u8 != 0
-                    || ![
-                        0,
-                        ACCESS_ALLOWED_OBJECT_ACE_TYPE,
-                        ACCESS_ALLOWED_CALLBACK_ACE_TYPE,
-                        ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE,
-                    ]
-                    .contains(&header.AceType)
-                    || usize::from(header.AceSize)
-                        < mem::size_of::<ACE_HEADER>() + mem::size_of::<u32>()
-                {
-                    continue;
-                }
-                let mask = unsafe {
-                    *ace.cast::<u8>()
-                        .add(mem::size_of::<ACE_HEADER>())
-                        .cast::<u32>()
-                };
-                if mask & DANGEROUS == 0 {
-                    continue;
-                }
-                if header.AceType != 0
-                    || usize::from(header.AceSize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
-                {
-                    return Ok(false);
-                }
-                let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-                if !trusted_parent_sid(
-                    (&raw const allowed.SidStart).cast_mut().cast(),
-                    user.User.Sid,
-                    &system,
-                    &administrators,
-                ) {
-                    return Ok(false);
-                }
+            let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+            if header.AceFlags & INHERIT_ONLY_ACE as u8 != 0
+                || ![
+                    0,
+                    ACCESS_ALLOWED_OBJECT_ACE_TYPE,
+                    ACCESS_ALLOWED_CALLBACK_ACE_TYPE,
+                    ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE,
+                ]
+                .contains(&header.AceType)
+                || usize::from(header.AceSize)
+                    < mem::size_of::<ACE_HEADER>() + mem::size_of::<u32>()
+            {
+                continue;
             }
-            Ok(true)
-        })();
-        let freed = unsafe { LocalFree(descriptor) };
-        if freed.is_null() {
-            result
-        } else {
-            Err(io::Error::last_os_error())
+            let mask = unsafe {
+                *ace.cast::<u8>()
+                    .add(mem::size_of::<ACE_HEADER>())
+                    .cast::<u32>()
+            };
+            if mask & DANGEROUS == 0 {
+                continue;
+            }
+            if header.AceType != 0
+                || usize::from(header.AceSize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
+            {
+                return Ok(None);
+            }
+            let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+            if !trusted_parent_sid(
+                (&raw const allowed.SidStart).cast_mut().cast(),
+                user.User.Sid,
+                &system,
+                &administrators,
+            ) {
+                return Ok(None);
+            }
         }
+
+        Ok(Some(StagingParentSecurity { descriptor }))
     }
 
-    pub fn secure_staging_parent(directory: &File) -> io::Result<StagingParentSecurity> {
-        if !staging_parent_is_safe(directory)? {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "the destination directory permits staging-name substitution",
-            ));
-        }
-        Ok(StagingParentSecurity {
-            descriptor: security_descriptor(
-                directory,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            )?,
-        })
+    /// Returns the coherent owner/DACL snapshot when the parent is trusted,
+    /// or `None` when its current access policy permits untrusted mutation.
+    pub fn secure_staging_parent(directory: &File) -> io::Result<Option<StagingParentSecurity>> {
+        staging_parent_security(directory)
     }
 
     pub fn staging_parent_matches(
         directory: &File,
         expected: &StagingParentSecurity,
     ) -> io::Result<bool> {
-        Ok(&secure_staging_parent(directory)? == expected)
+        Ok(secure_staging_parent(directory)?
+            .as_ref()
+            .is_some_and(|current| current == expected))
     }
 
     /// Snapshots access-control metadata and file attributes through an open handle.
@@ -1672,14 +1673,11 @@ mod imp {
         fn staging_parent_rejects_a_dacl_that_allows_child_substitution() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
-            assert!(secure_staging_parent(&directory_handle).is_ok());
+            assert!(secure_staging_parent(&directory_handle).unwrap().is_some());
 
             make_unprotected(&directory_handle);
 
-            assert_eq!(
-                secure_staging_parent(&directory_handle).unwrap_err().kind(),
-                io::ErrorKind::Unsupported
-            );
+            assert!(secure_staging_parent(&directory_handle).unwrap().is_none());
         }
 
         fn make_unprotected(file: &File) {

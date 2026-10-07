@@ -264,9 +264,15 @@ impl DocumentRegistry {
         }
 
         let loaded = document_store::load(path, self.bounds).map_err(OpenFailure::Load)?;
-        if let Some(existing) = self.documents.iter().find_map(|(id, document)| {
-            (document.source_authority.as_ref() == Some(&loaded.source_authority)).then_some(*id)
-        }) {
+        if let Some(existing) = self
+            .documents
+            .iter()
+            .filter(|(_, document)| {
+                document.source_authority.as_ref() == Some(&loaded.source_authority)
+            })
+            .map(|(id, _)| *id)
+            .min()
+        {
             self.by_key.insert(origin.key(), existing);
             self.retain(existing);
             return Ok(existing);
@@ -737,6 +743,7 @@ impl DocumentRegistry {
             // may already name a different parent.
             let mut reloaded = text;
             reloaded.mark_saved();
+            self.by_key.retain(|_, document| *document != existing);
             self.by_key.insert(origin.key(), existing);
             if let Some(document) = self.documents.get_mut(&existing) {
                 document.syntax = DocumentSyntax::new(origin.file_name(), reloaded.text());
@@ -1104,6 +1111,22 @@ mod tests {
     }
 
     #[test]
+    fn opening_a_hard_link_alias_reuses_the_loaded_file_identity() {
+        let directory = TemporaryDirectory::new("hard-link-alias");
+        let path = directory.file("notes.md", "alpha\n");
+        let alias = directory.path.join("alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&path).unwrap();
+        let second = registry.open_local(&alias).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(first).unwrap().views(), 2);
+    }
+
+    #[test]
     fn highlighting_is_read_only_over_the_document_it_describes() {
         let directory = TemporaryDirectory::new("syntax-read-only");
         let path = directory.file("main.rs", "fn main() { let x = 1; }\n");
@@ -1354,6 +1377,37 @@ mod tests {
             registry.get(existing).unwrap().text().text(),
             "alpha\n",
             "the source edit remains undoable after the view rebinds"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_revalidates_an_old_alias_key_after_rebinding_the_destination() {
+        let directory = TemporaryDirectory::new("save-as-rekey-alias");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.file("destination.md", "destination\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&destination, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        let destination_id = registry.open_local(&alias).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(destination_id));
+
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, "unrelated\n").unwrap();
+        let unrelated = registry.open_local(&alias).unwrap();
+
+        assert_ne!(unrelated, destination_id);
+        assert_eq!(
+            registry.get(unrelated).unwrap().text().text(),
+            "unrelated\n"
         );
     }
 
@@ -1741,18 +1795,42 @@ mod tests {
     fn manual_recovery_notice_survives_polling_and_names_the_recovery_directory() {
         let directory = TemporaryDirectory::new("manual-recovery");
         let path = directory.file("notes.md", "alpha\n");
-        let recovery = directory.path.join(".festerm-save-recovery.stage");
         let mut registry = DocumentRegistry::new();
         let id = registry.open_local(&path).unwrap();
         type_into(&mut registry, id, "mine\n");
-        let error = SaveError::new(
-            "Saving needs manual recovery",
-            format!("Recover retained versions from {}.", recovery.display()),
-        );
-        let document = registry.get_mut(id).unwrap();
-        document.recovery_path = Some(recovery.clone());
-        document.recovery_error = Some(error);
-        fs::write(&path, "theirs\n").unwrap();
+        #[cfg(not(windows))]
+        {
+            let target = path.clone();
+            let replacement = directory.path.join("replacement.md");
+            document_store::set_after_save_replacement_hook(move || {
+                fs::write(&replacement, "later\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = path.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+
+        assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
+        let recovery = registry
+            .get(id)
+            .unwrap()
+            .recovery_path
+            .clone()
+            .expect("exact retained recovery path");
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(&path, permissions).unwrap();
+        }
 
         assert!(registry.poll(Instant::now() + POLL_INTERVAL).is_empty());
         assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
@@ -1765,7 +1843,6 @@ mod tests {
             .contains(&recovery.display().to_string()));
         assert_eq!(document.status().severity(), Severity::Blocking);
         assert!(!document.status().can_save());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
         assert!(registry.release(id));
         let (retained_path, retained_error) =
             registry.take_recovery_notice().expect("application notice");

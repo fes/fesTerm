@@ -6279,7 +6279,7 @@ impl FesTermApp {
         }
 
         self.state.update_pending_terminal_path_opens(ui.ctx());
-        if self.overlays.open_refusal.is_none() {
+        if self.overlays.open_refusal.is_none() && !self.overlays.blocks_terminal_input() {
             let notice = self
                 .state
                 .take_open_refusal()
@@ -6778,7 +6778,7 @@ mod tests {
     #[test]
     fn recovery_notices_wait_for_the_visible_modal_and_then_arrive_in_order() {
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
-        app.report_document_activation_error("Existing detail".to_owned());
+        app.overlays.about_open = true;
         app.state.queue_recovery_notice_for_test(
             PathBuf::from("/tmp/.festerm-save-first.stage"),
             festerm_document::SaveError::new("First recovery", "first detail"),
@@ -6789,17 +6789,10 @@ mod tests {
         );
         let mut harness = editor_harness(app);
 
-        assert_eq!(
-            harness
-                .state()
-                .overlays
-                .open_refusal
-                .as_ref()
-                .map(|notice| notice.headline.as_str()),
-            Some("The document request could not be accepted")
-        );
+        assert!(harness.state().overlays.about_open);
+        assert!(harness.state().overlays.open_refusal.is_none());
 
-        harness.state_mut().overlays.open_refusal = None;
+        harness.state_mut().overlays.about_open = false;
         harness.run();
         assert_eq!(
             harness
@@ -6809,6 +6802,15 @@ mod tests {
                 .as_ref()
                 .map(|notice| (notice.title.as_deref(), notice.headline.as_str())),
             Some((Some("Saving needs manual recovery"), "First recovery"))
+        );
+        assert_eq!(
+            harness
+                .state()
+                .overlays
+                .open_refusal
+                .as_ref()
+                .map(|notice| notice.path.as_str()),
+            Some("/tmp/.festerm-save-first.stage")
         );
 
         harness.state_mut().overlays.open_refusal = None;
