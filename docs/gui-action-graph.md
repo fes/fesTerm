@@ -757,6 +757,22 @@ Source readiness and the last of 400 owned code sections. The replay keeps
 same-frame original-renderer pixel guards and separate draw/readback buckets;
 it does not cover Find, native input/presentation, scrolling or usability.
 
+For `EDIT-04` and `MD-04`, only the owned Save As/Open File Modal frame may
+join the existing default backdrop on the installed eligible panel renderer.
+One unique complete opaque frame and its original black shadow must retain
+fill/stroke/rounding/blur, clipping and every live Modal/widget ID, response
+and input. New same-layer shapes matching the actual owned frame rectangle
+are the only candidates; preceding or nested non-owned frames,
+ambiguous/clipped frames, ordinary other modals and unsupported/ineligible
+contexts keep their fallback. Device-free selection, context-control and
+live no-renderer response regressions cover that boundary. The authored
+two-scale framebuffer regression and actual cumulative default eight-picker
+qualification remain unexecuted for this successor. Frame attribution disables
+only owned frame conversion, leaving the default backdrop live; historical
+backdrop attribution disables both owned conversions to retain its original
+schema/geometry and one-additional-callback oracle. These test-only controls
+are not production environment switches or new native acceptance.
+
 Code-byte navigation regressions for `MD-04` and `EDIT-09` render all 400
 fences, prove the tail is initially outside the viewport, then require its
 selected row to be visible through viewer Find and the shared editor Preview.

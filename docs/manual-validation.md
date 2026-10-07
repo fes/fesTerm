@@ -1049,6 +1049,19 @@ The same binary preserves all eight legacy backdrop controls and their
 forty/ninety-six guards. These are shared-host whole-frame route observations,
 not production enablement or native acceptance; no manual classification changes.
 
+The separate production successor now prepares conversion of only the owned
+Open File/Save As complete opaque frame and original shadow on the installed
+eligible panel renderer. Device-free controls cover normal/narrow same-call
+selection, ambiguous/clipped refusal, independent test-only frame/backdrop
+controls and live no-renderer Modal input/responses. Its two-scale pixel,
+response, callback and frame/context/other-modal fallback regression is authored
+but **not executed** in this component. Actual cumulative default eight-picker
+PNGs, construction tradeoff, completed draws and both legacy diagnostic oracles
+must still be qualified by the coordinator before publication. The measured
+`2056b48` result above remains diagnostic predecessor evidence, not a measured
+production successor. CP-06/CP-15/CP-16/CP-17 and native/hardware/mixed-DPI,
+physical latency, accessibility and resource acceptance remain unchanged.
+
 Four opt-in large Markdown WARP controls now use the actual Preview/Source
 viewer at normal/narrow widths, with 400 owned sections/fences and no external
 resources. CPU readiness proves the rendered heading or raw Source marker and
