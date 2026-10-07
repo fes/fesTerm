@@ -349,6 +349,36 @@ opaque-frame guards, shaders and renderer ownership remain unchanged.
 Native interaction, screen-reader, mixed-DPI/hardware, physical latency,
 device/driver retirement, resource caps and multi-day qualification stay open.
 
+### Optional same-frame opaque picker-frame attribution
+
+Set `FESTERM_WARP_UI_SCENES=picker-controls` and
+`FESTERM_WARP_UI_PICKER_FRAME=textureless-frame` after acquiring the exclusive
+runtime slot, then use the existing exact release replay and fresh output.
+The backdrop-attribution option must be unset: the current default optimized
+backdrop stays live, and simultaneous options fail before creating evidence.
+Other selectors, values and non-Windows-x64 requests fail explicitly.
+Unset this option for the unchanged default replay; production reads no new
+environment variable.
+
+Each frozen actual picker must have exactly one complete opaque frame and
+untextured black shadow pair, with finite positive geometry, an opaque frame
+inside the zero-origin root viewport and its complete frame clipping coverage.
+The existing palette-frame structural predicate is shared, not independently
+reimplemented. Missing, clipped, unsupported or ambiguous candidates fail.
+Original fill, stroke, rounding, shadow alpha/blur and tessellated white-UV
+geometry remain; neither shadow nor dimming is omitted.
+
+`frame-attribution.json` supplements the ordinary report. Six balanced ordered
+pairs require exact original-renderer pixels and one additional executed panel
+callback, preserving the seven completion buckets, geometry/payload counts
+and source/adapter/format/scale identity. Callback construction is outside
+timed drawing. This is targeted whole-frame route/batching attribution for the
+combined shadow/frame geometry, not isolated shadow cost or GPU timestamps,
+a production optimization, native presentation or a total-resource claim.
+The small two-scale complete-frame regression and device-free option/matcher
+controls are distinct from the actual eight-picker execution requirement.
+Historical backdrop fields/oracles remain available through shared mechanics.
+
 ### Gallery capture and shared fixture identity
 
 Gallery generation uses
