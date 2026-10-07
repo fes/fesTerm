@@ -23,8 +23,9 @@ mod imp {
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
             FileStreamInformation, NtCreateFile, NtQueryEaFile, NtQueryInformationFile,
-            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-            FILE_OPEN_REPARSE_POINT, FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_FULL_EA_INFORMATION, FILE_NON_DIRECTORY_FILE,
+            FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_STREAM_INFORMATION,
+            FILE_SYNCHRONOUS_IO_NONALERT,
         },
     };
     use windows_sys::Win32::{
@@ -250,6 +251,16 @@ mod imp {
     const FILE_ATTRIBUTE_NO_SCRUB_DATA_FLAG: u32 = 0x0002_0000;
     const UNSUPPORTED_INTEGRITY_ATTRIBUTES: u32 =
         FILE_ATTRIBUTE_INTEGRITY_STREAM_FLAG | FILE_ATTRIBUTE_NO_SCRUB_DATA_FLAG;
+    type ExtendedAttributeProbe = [u32; 4];
+    const _: () = {
+        assert!(
+            mem::size_of::<ExtendedAttributeProbe>() >= mem::size_of::<FILE_FULL_EA_INFORMATION>()
+        );
+        assert!(
+            mem::align_of::<ExtendedAttributeProbe>()
+                >= mem::align_of::<FILE_FULL_EA_INFORMATION>()
+        );
+    };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum UnsupportedSecurityMetadata {
@@ -305,7 +316,7 @@ mod imp {
 
     fn file_has_extended_attributes(file: &File) -> io::Result<bool> {
         let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
-        let mut probe = [0u32; 4];
+        let mut probe = ExtendedAttributeProbe::default();
         let result = unsafe {
             NtQueryEaFile(
                 file.as_raw_handle() as HANDLE,
@@ -1692,12 +1703,6 @@ mod imp {
 
         #[test]
         fn extended_attribute_probe_distinguishes_absent_present_and_failed_queries() {
-            assert!(
-                mem::size_of::<[u32; 4]>()
-                    >= mem::size_of::<
-                        windows_sys::Wdk::Storage::FileSystem::FILE_FULL_EA_INFORMATION,
-                    >()
-            );
             assert_eq!(
                 extended_attribute_query_result(STATUS_NO_EAS_ON_FILE),
                 Ok(false)
