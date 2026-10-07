@@ -493,7 +493,7 @@ impl SaveFailure {
                 "Nothing was written. A mount point, junction, or reparse point redirected the destination to another disk. Choose a regular destination on the intended disk."
             }
             Self::UnsafeDestinationFolder => {
-                "Nothing was written. Another account may be able to replace temporary save entries in this folder. Use Save As to choose a folder protected from other writers."
+                "Nothing was written. Another account may be able to replace temporary save entries in this folder. Use Save As to choose a folder protected from other writers. If the folder's protection changed during this attempt, an empty private .festerm-save-* folder may remain."
             }
         }
     }
@@ -1022,6 +1022,7 @@ struct TemporaryFile<'a> {
     staging_identity: DirectoryIdentity,
     staging_directory: PathBuf,
     file: Option<File>,
+    payload_is_published: bool,
     persist: bool,
 }
 
@@ -1117,7 +1118,7 @@ impl<'a> TemporaryFile<'a> {
                         path = %staging_directory.display(),
                         "save staging was retained after the parent security state changed"
                     );
-                    return Err(SaveFailure::Interrupted);
+                    return Err(SaveFailure::UnsafeDestinationFolder);
                 }
             }
             #[cfg(unix)]
@@ -1183,6 +1184,7 @@ impl<'a> TemporaryFile<'a> {
                         staging_identity,
                         staging_directory,
                         file: Some(file),
+                        payload_is_published: false,
                         persist: false,
                     };
                     temporary.verify_name()?;
@@ -1345,13 +1347,15 @@ impl<'a> TemporaryFile<'a> {
             }
         }
         #[cfg(windows)]
-        if let Some(file) = &self.file {
-            if let Err(error) = festerm_windows_security::restrict_to_current_user(file) {
-                tracing::error!(
-                    path = %self.staging_directory.display(),
-                    %error,
-                    "a retained Windows save recovery file could not be restricted to the current user"
-                );
+        if !self.payload_is_published {
+            if let Some(file) = &self.file {
+                if let Err(error) = festerm_windows_security::restrict_to_current_user(file) {
+                    tracing::error!(
+                        path = %self.staging_directory.display(),
+                        %error,
+                        "a retained Windows save recovery file could not be restricted to the current user"
+                    );
+                }
             }
         }
         self.persist();
@@ -1363,7 +1367,7 @@ impl<'a> TemporaryFile<'a> {
     }
 
     #[cfg(windows)]
-    fn publish_new(&self, target: &Path) -> Result<(), std::io::Error> {
+    fn publish_new(&mut self, target: &Path) -> Result<(), std::io::Error> {
         let target_directory = self.directory.try_clone()?.into_std_file();
         let exact_source = self
             .file
@@ -1379,7 +1383,9 @@ impl<'a> TemporaryFile<'a> {
                 "the staged payload name no longer identifies its retained handle",
             ));
         }
-        festerm_windows_security::rename_file_noreplace(&source, &target_directory, target)
+        festerm_windows_security::rename_file_noreplace(&source, &target_directory, target)?;
+        self.payload_is_published = true;
+        Ok(())
     }
 
     fn staging_name_matches(&self) -> bool {
@@ -2115,7 +2121,7 @@ mod tests {
         let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
 
         fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(failure, SaveFailure::Interrupted);
+        assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
         assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
         assert!(fs::read_dir(&directory.path)
             .unwrap()
@@ -2819,6 +2825,37 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[allow(clippy::permissions_set_readonly_false)]
+    fn recovery_after_publication_does_not_restrict_the_visible_target() {
+        let directory = TemporaryDirectory::new("published-recovery-metadata");
+        let path = directory.file("notes.md", "loaded\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let expected =
+            festerm_windows_security::security_metadata(&File::open(&path).unwrap()).unwrap();
+        let target = path.clone();
+        AFTER_SAVE_REPLACEMENT.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            }));
+        });
+
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
+
+        assert_eq!(failure, SaveFailure::RecoveryRequired);
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&path, permissions).unwrap();
+        let published = File::open(&path).unwrap();
+        assert!(
+            festerm_windows_security::security_metadata_matches(&published, &expected).unwrap()
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
     }
 
     #[cfg(windows)]

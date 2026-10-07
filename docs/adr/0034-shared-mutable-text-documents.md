@@ -306,7 +306,10 @@ explanation. fesTerm does not silently weaken confidentiality or publication
 semantics for FAT/exFAT and unsupported network/FUSE filesystems. Unix also
 refuses private staging with folder-specific guidance in a non-sticky
 shared-writable destination directory, where another account could substitute
-the random staging name before its handle is retained. Cross-volume redirection has a separate mount,
+the random staging name before its handle is retained. A parent-security change
+after handle retention refuses and may leave the empty private staging
+directory for inspection rather than deleting through the now-untrusted
+parent. Cross-volume redirection has a separate mount,
 junction, or reparse-point refusal rather than being misdiagnosed as a missing
 filesystem capability.
 

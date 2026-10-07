@@ -540,6 +540,9 @@ impl DocumentRegistry {
                     "That destination cannot be used",
                     "The chosen path is not a file this host can write to.",
                 );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
                 return Some((SaveOutcome::Failed(error), None));
             }
         };
@@ -583,7 +586,16 @@ impl DocumentRegistry {
         }
         let existing = keyed.or_else(|| matching.first().copied());
         if let Some(existing) = existing {
-            let destination = self.documents.get(&existing)?;
+            let Some(destination) = self.documents.get(&existing) else {
+                let error = SaveError::new(
+                    "That destination cannot be verified",
+                    "Refresh the open documents and try Save As again. Nothing was written.",
+                );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
+                return Some((SaveOutcome::Failed(error), None));
+            };
             let expectation_matches = match confirmed.expectation() {
                 DestinationExpectation::Existing(expected) => {
                     destination.generation == Some(expected)
