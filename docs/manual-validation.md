@@ -1030,9 +1030,12 @@ The separate production successor now prepares conversion of only the owned
 Open File/Save As complete opaque frame and original shadow on the installed
 eligible panel renderer. Device-free controls cover normal/narrow same-call
 selection, ambiguous/clipped refusal, independent test-only frame/backdrop
-controls and live no-renderer Modal input/responses. Its two-scale pixel,
-response, callback and frame/context/other-modal fallback regression is authored
-but **not executed** in this component. Actual cumulative default eight-picker
+controls and live no-renderer Modal input/responses. Its focused two-scale pixel,
+response, callback and frame/context/other-modal fallback regression now passes
+on explicit DX12 CPU rendering. The first parent run failed because the test
+reused an already-used RenderState; fresh ownership for each comparison arm
+repairs that fixture without changing production or weakening any guard.
+Actual cumulative default eight-picker
 PNGs, construction tradeoff, completed draws and both legacy diagnostic oracles
 must still be qualified by the coordinator before publication. The measured
 `2056b48` result above remains diagnostic predecessor evidence, not a measured

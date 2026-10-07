@@ -756,9 +756,10 @@ and input. New same-layer shapes matching the actual owned frame rectangle
 are the only candidates; preceding or nested non-owned frames,
 ambiguous/clipped frames, ordinary other modals and unsupported/ineligible
 contexts keep their fallback. Device-free selection, context-control and
-live no-renderer response regressions cover that boundary. The authored
-two-scale framebuffer regression and actual cumulative default eight-picker
-qualification remain unexecuted for this successor. Frame attribution disables
+live no-renderer response regressions cover that boundary. The two-scale
+framebuffer regression passes with fresh RenderState ownership per comparison
+arm; actual cumulative default eight-picker qualification remains pending.
+Frame attribution disables
 only owned frame conversion, leaving the default backdrop live; historical
 backdrop attribution disables both owned conversions to retain its original
 schema/geometry and one-additional-callback oracle. These test-only controls

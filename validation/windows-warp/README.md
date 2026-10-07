@@ -472,13 +472,23 @@ than silently adding the new frame to that historical oracle.
 Device-free controls cover actual normal/narrow owned Modal frame selection,
 same-call ownership, clipped/ambiguous refusal, independent diagnostic controls
 and live no-renderer shapes, responses, button/backdrop clicks and Escape.
-`owned_picker_frame_preserves_pixels_responses_and_guarded_fallbacks` is authored
+`owned_picker_frame_preserves_pixels_responses_and_guarded_fallbacks` covers
 for 1/1.25x complete pixels/responses and callback counts with normal/narrow/light,
 frame/context/no-renderer/other-modal fallbacks and unchanged live backdrop;
-it is **not run** during this component handoff.
+the exact focused regression now passes on explicit DX12 CPU rendering.
+
+The parent's first cumulative `8966` qualification failed only this new test:
+egui-kittest refused a RenderState already used by a preceding comparison arm.
+The complete failure is retained in `fleet-v5-frame-gpu-controls-v1.log` and
+the parent's receipts/archived executable. Fresh RenderState creation inside
+each render arm repairs root fixture ownership; all 14 cases at both scales,
+their original/candidate pixels, live responses and callback/fallback assertions
+are unchanged. No production code or renderer guard is changed by this repair.
+This small correctness test is not an actual eight-picker or performance replay.
 
 The `2056b48`/`006e7dea…` eight-scene record above remains the measured diagnostic
-predecessor. This successor has **no GPU/WARP/default-path measurement yet**.
+predecessor. This successor still has **no actual default-path timing
+measurement**; the focused GPU correctness result does not substitute for it.
 After ordinary composition into the coordinator's cumulative source, acquire
 the exclusive runtime slot, run the two-scale production/backdrop and diagnostic
 regressions, then execute the actual default eight ready/error normal/narrow

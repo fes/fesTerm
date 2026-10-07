@@ -3172,7 +3172,9 @@ existing backdrop/dimming remain unchanged. Unsupported, clipped, ambiguous,
 translucent, shadowless or ineligible frames retain ordinary painting; no other
 modal is opted in. This production successor is prepared, not yet qualified by
 its actual default eight-picker replay or native interaction. The two-scale
-pixel/response regression is authored but not run for this component; see
+pixel/response/callback regression passes after giving every comparison arm
+its own fresh test RenderState; this is correctness evidence, not the actual
+default eight-picker or native qualification. See
 the [qualification boundary](../validation/windows-warp/README.md#prepared-owned-picker-frame-production-successor).
 
 ## Future Populated Launcher Example
