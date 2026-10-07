@@ -4887,3 +4887,12 @@ historical receipts remain valid without claiming new evidence, and core/GPU
 lifecycle behavior is unchanged. Labeled runtime collection remains pending
 parent authorization. These labels are not stacks or private-byte attribution;
 no causal repair, leak diagnosis or resource-cap acceptance follows from them.
+
+Review of that discriminator caught a narrower admission issue before native
+execution: the first implementation checked description length only after
+an unbounded managed copy. It now examines no more than a 257-unit native
+UTF-16 prefix and constructs a managed string only with an explicitly admitted
+length of at most 256 units. The longer-label refusal reports a proven lower
+bound rather than pretending to know the full length. This bounds that managed
+copy, not the OS-allocated description buffer or transient thread/module API
+collections; those distinctions remain explicit in the validation record.

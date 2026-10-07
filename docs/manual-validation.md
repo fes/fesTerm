@@ -1458,6 +1458,11 @@ correlate sampled TIDs with real creation FILETIMEs, existing thread CPU and
 bounded owned-child description/start-module labels across complete UTC-clipped
 sampling intervals. Unavailable, unnamed, unmapped and raced metadata remains
 explicit; it samples no foreign process and changes no core/GPU lifecycle path.
+Description admission inspects at most 257 UTF-16 units before an explicit
+maximum-256-unit managed copy; a longer prefix remains unavailable without
+copying the full description. Inventory/label limits are admitted-output bounds,
+not total native/transient allocation ceilings: OS description buffers and
+thread/module API collections are materialized before their admission checks.
 Historical undeclared captures lack that identity/metadata evidence. Inspection
 of the existing short capture found new TIDs `42692` and `39200` still present
 at completion and zero matched held-window CPU deltas; those unlabelled,
