@@ -3,6 +3,29 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Preparing a narrowly owned production picker frame
+
+The completed `2056b48` diagnostic attributes the whole opaque picker frame,
+original black shadow and their batching together; it does not isolate shadow
+or shader instructions. Its preserved eight PNGs and balanced pairs motivate
+this separate production successor, independent of Preview staging.
+
+Open File and Save As now reuse their existing caller-owned wrapper and
+installed panel renderer for one complete opaque shadow/frame pair. The
+ordinary Modal and all live content/layout/input/IDs/responses remain; the
+default backdrop is retained, with no shader or visual removal. The complete
+matcher is shared with the diagnostic rather than copied. Unsupported,
+ineligible, clipped and ambiguous geometry keeps ordinary frame painting.
+There is no new cache, crate boundary, command policy or ownership contract.
+
+Explicit per-context test-only controls retain the frame diagnostic's ordinary
+frame with live optimized backdrop, and the historical backdrop diagnostic's
+two original shapes. Device-free controls cover selection, refusal and live
+fallback responses; a two-scale GPU regression is prepared but unexecuted.
+The coordinator still owns actual cumulative default eight-picker pixels,
+construction/callback tradeoffs, frame/legacy diagnostics and full/native gates.
+No predecessor measurement is relabeled as a production result or new acceptance.
+
 ## Rechecking Source drawing with balanced contemporaneous controls
 
 The first Source comparison had lower construction medians but higher drawing

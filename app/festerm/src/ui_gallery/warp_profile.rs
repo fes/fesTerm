@@ -101,29 +101,7 @@ fn opaque_frame_index(
     }
     let mut matched = None;
     for (index, shape) in shapes.iter().enumerate() {
-        if !crate::software_background::opaque_window_frame(&shape.shape) {
-            continue;
-        }
-        let egui::Shape::Vec(parts) = &shape.shape else {
-            unreachable!("matched a shadow/frame pair");
-        };
-        let [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)] = parts.as_slice() else {
-            unreachable!("matched two rectangles");
-        };
-        if !frame.rect.is_finite()
-            || !frame.rect.is_positive()
-            || !shadow.rect.is_finite()
-            || !shadow.rect.is_positive()
-            || !viewport.contains_rect(frame.rect)
-            || !shape.clip_rect.contains_rect(frame.rect)
-            || shadow.fill.r() != 0
-            || shadow.fill.g() != 0
-            || shadow.fill.b() != 0
-            || shadow.fill.a() == 0
-            || shadow.fill.is_opaque()
-            || shadow.stroke != egui::Stroke::NONE
-            || !shadow.blur_width.is_finite()
-        {
+        if !crate::software_background::complete_opaque_window_frame(shape, viewport) {
             continue;
         }
         if matched.replace(index).is_some() {

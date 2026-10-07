@@ -403,8 +403,9 @@ These are one shared-host same-frame route/batching observations, not isolated
 shadow cost, shader-instruction attribution or GPU timestamps. Callback
 construction is excluded from drawing; no construction tradeoff is accepted
 from this timing alone. The shadow and dimming are not removed. Production
-frame routing is unchanged; a shipping owned-frame route still needs its own
-live Modal/fallback, pixels, construction and default-path qualification.
+frame routing at that measured revision is unchanged; an owned-frame successor
+still needs its own live Modal/fallback, pixels, construction and default-path
+qualification.
 Native presentation, physical latency and total/driver-private memory remain
 open.
 
@@ -416,8 +417,11 @@ runtime slot, then use the existing exact release replay and fresh output.
 The backdrop-attribution option must be unset: the current default optimized
 backdrop stays live, and simultaneous options fail before creating evidence.
 Other selectors, values and non-Windows-x64 requests fail explicitly.
-Unset this option for the unchanged default replay; production reads no new
-environment variable.
+Unset this option for the production default replay. The test-only replay
+context explicitly disables just owned frame conversion during frame
+attribution, leaving the default backdrop live; production reads no new
+environment variable. Historical backdrop attribution disables both owned
+conversions to retain its original ordinary geometry, batching and schema.
 
 Each frozen actual picker must have exactly one complete opaque frame and
 untextured black shadow pair, with finite positive geometry, an opaque frame
@@ -437,6 +441,55 @@ a production optimization, native presentation or a total-resource claim.
 The small two-scale complete-frame regression and device-free option/matcher
 controls are distinct from the actual eight-picker execution requirement.
 Historical backdrop fields/oracles remain available through shared mechanics.
+
+### Prepared owned picker-frame production successor
+
+The production successor opts in only through the existing Open File/Save As
+caller wrapper. After ordinary `Modal::show`, it considers only that call's
+new shapes on its modal layer and converts at most one complete opaque frame
+plus its original untextured translucent black shadow. The candidate must
+match the actual frame rectangle captured after the live content closure;
+a nested frame cannot substitute for an ineligible owned frame. The structural
+`opaque_window_frame` predicate and complete-frame eligibility are shared with
+the existing attribution matcher. Finite positive root/frame/shadow geometry,
+zero root origin, full frame clipping coverage, root/visibility/painter opacity,
+untransformed layers and the installed eligible panel renderer remain required.
+Ambiguous, clipped, unsupported, translucent, shadowless or ineligible geometry
+retains ordinary frame painting. The existing exact backdrop route stays live
+independently; a frame refusal does not disable it. Other modals and all other
+shapes remain ordinary. No shader, fill, stroke, rounding, blur or dimming is
+removed or changed.
+
+`set_picker_frames_enabled` is compiled only for tests and stores an explicit
+per-context choice; normal production does not read a frame environment selector.
+The strict `textureless-frame`/`picker-controls` opt-in still refuses simultaneous
+backdrop attribution. Its ordinary arm disables only frame conversion, so one
+additional executed callback remains required against the live default backdrop.
+The legacy `textureless-black` arm explicitly disables both owned conversions,
+preserving its original shape/geometry/schema and one additional callback rather
+than silently adding the new frame to that historical oracle.
+
+Device-free controls cover actual normal/narrow owned Modal frame selection,
+same-call ownership, clipped/ambiguous refusal, independent diagnostic controls
+and live no-renderer shapes, responses, button/backdrop clicks and Escape.
+`owned_picker_frame_preserves_pixels_responses_and_guarded_fallbacks` is authored
+for 1/1.25x complete pixels/responses and callback counts with normal/narrow/light,
+frame/context/no-renderer/other-modal fallbacks and unchanged live backdrop;
+it is **not run** during this component handoff.
+
+The `2056b48`/`006e7dea…` eight-scene record above remains the measured diagnostic
+predecessor. This successor has **no GPU/WARP/default-path measurement yet**.
+After ordinary composition into the coordinator's cumulative source, acquire
+the exclusive runtime slot, run the two-scale production/backdrop and diagnostic
+regressions, then execute the actual default eight ready/error normal/narrow
+pickers with both attribution options unset and fresh output. Compare the
+preserved predecessor PNGs and forty ordinary pixel guards; require one extra
+executed frame callback in every default draw. Retain UI construction/preparation
+tradeoffs, all completed draw/readback samples and their separate scopes.
+Execute both frame and legacy backdrop attribution on that exact source/binary
+with separate fresh outputs, then run full gates. Native presentation, physical
+latency, hardware/mixed-DPI, accessibility and total/driver-private memory remain
+separate; no new manual acceptance or ADR boundary is claimed.
 
 ### Gallery capture and shared fixture identity
 

@@ -3164,6 +3164,17 @@ Byte-identical [focused BEFORE/AFTER review images](images/dialog-style-review/s
 retain their exact [source/physical-input provenance](images/dialog-style-review/style-pair-20261002-r2/provenance.json);
 they are separate from the original gallery and are not platform snapshots.
 
+Only the owned Open File and Save As callers also use the existing installed
+Windows DX12 CPU panel renderer for their unique complete opaque popup frame
+and original black shadow. The ordinary live Modal still owns sizing, content,
+IDs, focus, input and responses. Fill, stroke, rounding, shadow blur and the
+existing backdrop/dimming remain unchanged. Unsupported, clipped, ambiguous,
+translucent, shadowless or ineligible frames retain ordinary painting; no other
+modal is opted in. This production successor is prepared, not yet qualified by
+its actual default eight-picker replay or native interaction. The two-scale
+pixel/response regression is authored but not run for this component; see
+the [qualification boundary](../validation/windows-warp/README.md#prepared-owned-picker-frame-production-successor).
+
 ## Future Populated Launcher Example
 
 ![Future populated Launcher target](images/gui-mockups/launcher-populated.png)
