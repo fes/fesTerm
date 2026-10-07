@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -408,6 +409,25 @@ class SessionAgingTests(unittest.TestCase):
             aging.check_thread_ownership({}, [self.thread_sample("complete", 1100, 1110)], {})
         with self.assertRaisesRegex(ValueError, "undeclared"):
             aging.check_thread_ownership({"thread_ownership_methods": list(aging.THREAD_METHODS)}, [old], {})
+
+    def test_windows_description_copy_is_length_admitted_before_managed_allocation(self):
+        helper = (
+            Path(__file__).resolve().parents[2] / "scripts" / "windows-aging-thread-ownership.ps1"
+        ).read_text()
+        self.assertNotRegex(helper, r"PtrToStringUni\s*\(\s*description\s*\)")
+        self.assertRegex(
+            helper,
+            r"while \(length <= labelLimit && Marshal\.ReadInt16\(description, length \* 2\) != 0\)\s*\+\+length;",
+        )
+        admission = re.search(
+            r"if \(length > labelLimit\) \{(?P<refusal>.*?)\} else \{(?P<copy>.*?)\n\s*\}",
+            helper, re.DOTALL,
+        )
+        self.assertIsNotNone(admission)
+        self.assertNotIn("PtrToStringUni", admission["refusal"])
+        self.assertIn("description-over-limit:at-least:", admission["refusal"])
+        self.assertIn("Marshal.PtrToStringUni(description, length)", admission["copy"])
+        self.assertLess(helper.index("labelLimit < 1 || labelLimit > 256"), helper.index("OpenThread(0x0040"))
 
     def test_complete_source_bound_matrix_keeps_adverse_results(self):
         with self.owned_directory() as temporary:

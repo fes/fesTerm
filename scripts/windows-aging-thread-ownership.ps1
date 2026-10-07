@@ -40,6 +40,8 @@ namespace FesTermAging {
             out IntPtr address, int length, out int returnedLength);
 
         public static ThreadObservation Read(uint processId, uint threadId, int labelLimit) {
+            if (labelLimit < 1 || labelLimit > 256)
+                throw new ArgumentOutOfRangeException("labelLimit", "Expected 1..256 UTF-16 units");
             var result = new ThreadObservation();
             var thread = OpenThread(0x0040 | 0x0800, false, threadId);
             if (thread == IntPtr.Zero) {
@@ -77,14 +79,21 @@ namespace FesTermAging {
                         result.DescriptionStatus = "unavailable";
                         result.DescriptionReason = "GetThreadDescription:hresult:0x" + ((uint)status).ToString("X8");
                     } else {
-                        string text = description == IntPtr.Zero ? "" : Marshal.PtrToStringUni(description);
-                        if (text == null) throw new InvalidOperationException("Unreadable successful thread description");
-                        if (text.Length > labelLimit) {
+                        int length = 0;
+                        if (description != IntPtr.Zero) {
+                            // Admit the native prefix before making any managed string copy.
+                            while (length <= labelLimit && Marshal.ReadInt16(description, length * 2) != 0)
+                                ++length;
+                        }
+                        if (length > labelLimit) {
                             result.DescriptionStatus = "unavailable";
-                            result.DescriptionReason = "description-over-limit:" + text.Length;
+                            result.DescriptionReason = "description-over-limit:at-least:" + length;
                         } else {
-                            result.DescriptionStatus = text.Length == 0 ? "unnamed" : "named";
-                            result.Description = text.Length == 0 ? null : text;
+                            string text = length == 0 ? null : Marshal.PtrToStringUni(description, length);
+                            if (length > 0 && text == null)
+                                throw new InvalidOperationException("Unreadable admitted thread description");
+                            result.DescriptionStatus = length == 0 ? "unnamed" : "named";
+                            result.Description = text;
                         }
                     }
                 } catch (EntryPointNotFoundException) {

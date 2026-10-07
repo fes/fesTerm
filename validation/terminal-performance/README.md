@@ -337,12 +337,25 @@ never TID alone. Names use `GetThreadDescription`; the optional Win32 start
 address uses `NtQueryInformationThread` class 9 and is labeled only against the
 owned child's `Process.Modules` snapshot. No foreign process is inventoried.
 
-Bounds are 256 threads and 1,024 modules per sample, 256 UTF-16 units per label,
+Admitted/emitted inventories are at most 256 threads and 1,024 modules per
+sample, with 256 UTF-16 units per retained label,
 131,072 total thread records, 64 MiB of resource JSONL, and at most
 `2 * TimeoutSeconds + 1` samples at the existing 500 ms requested interval.
 Inventory/log overflow fails the supervisor with an explicit over-limit reason
 and preserves the failed run. An over-limit description/module name is instead
-recorded as unavailable with its length, not truncated. Access-denied module
+recorded as unavailable with its length or proven lower bound, not truncated.
+Thread descriptions inspect at most 257 native UTF-16 units (514 bytes,
+including the possible terminator) before copying: the successful managed
+`PtrToStringUni(pointer, length)` copy has an explicit admitted length of at
+most 256 units. A longer prefix is refused without a managed description copy
+or an unbounded terminator scan; the full native length is not inferred.
+`GetThreadDescription` itself still allocates an OS-owned native buffer, which
+is released with `LocalFree`. `Process.Threads`/`Process.Modules` and their
+wrapper arrays are materialized before count admission, and module names can
+already exist in managed API snapshots before their label check. These limits
+bound admitted records/retained labels and resource-log bytes, **not total
+native/transient allocations, API collection capacities, allocator overhead or
+driver resources**. Access-denied module
 enumeration, unavailable API/status results, unnamed threads, unmapped start
 addresses and exited/recycled TID races remain explicit. Unknown creation/CPU
 is null, never fabricated zero; unexpected native/enumeration failures remain
