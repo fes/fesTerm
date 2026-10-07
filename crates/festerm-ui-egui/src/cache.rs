@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use compact_str::CompactString;
 use festerm_core::{Attributes, Cell, CellWidth, Color, ContentPosition, Dimensions, Terminal};
 
 #[cfg(test)]
@@ -9,7 +10,7 @@ use crate::TerminalSnapshot;
 /// A copied cell used by the presentation cache.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderedCell {
-    pub(crate) text: String,
+    pub(crate) text: CompactString,
     pub(crate) width: CellWidth,
     pub(crate) foreground: Color,
     pub(crate) background: Color,
@@ -20,7 +21,7 @@ pub struct RenderedCell {
 impl RenderedCell {
     pub(crate) fn from_core(cell: &Cell) -> Self {
         Self {
-            text: cell.text().to_owned(),
+            text: CompactString::new(cell.text()),
             width: cell.width(),
             foreground: cell.foreground(),
             background: cell.background(),
@@ -31,7 +32,7 @@ impl RenderedCell {
 
     pub(crate) fn blank() -> Self {
         Self {
-            text: " ".to_owned(),
+            text: CompactString::const_new(" "),
             width: CellWidth::Single,
             foreground: Color::Default,
             background: Color::Default,
@@ -125,12 +126,15 @@ impl TerminalRenderCache {
         dirty_rows: &[usize],
     ) -> RenderCacheUpdate {
         let dimensions = snapshot.dimensions();
-        let full_refresh = self.dimensions != Some(dimensions)
-            || self.viewport_offset_rows != snapshot.viewport_offset_rows();
+        let dimensions_changed = self.dimensions != Some(dimensions);
+        let full_refresh =
+            dimensions_changed || self.viewport_offset_rows != snapshot.viewport_offset_rows();
         if full_refresh {
             self.dimensions = Some(dimensions);
             self.viewport_offset_rows = snapshot.viewport_offset_rows();
-            self.rows = vec![CachedRow::default(); dimensions.rows()];
+            if dimensions_changed {
+                self.rows = vec![CachedRow::default(); dimensions.rows()];
+            }
         }
 
         let rows: Vec<usize> = if full_refresh {
@@ -146,13 +150,13 @@ impl TerminalRenderCache {
             // Revisions are compared at the same row position, never across rows.
             let revision = RowRevision::default();
             for row in &rows {
-                self.rows[*row].cells = (0..dimensions.columns())
-                    .map(|column| {
-                        snapshot
-                            .cell(column, *row)
-                            .map_or_else(RenderedCell::blank, RenderedCell::from_core)
-                    })
-                    .collect();
+                let cells = &mut self.rows[*row].cells;
+                cells.clear();
+                cells.extend((0..dimensions.columns()).map(|column| {
+                    snapshot
+                        .cell(column, *row)
+                        .map_or_else(RenderedCell::blank, RenderedCell::from_core)
+                }));
                 self.rows[*row].revision = revision.clone();
             }
         }
@@ -248,6 +252,136 @@ impl ResizeTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rendered_cache_dirty_rows_reuse_their_owned_cell_backing() {
+        let mut terminal = Terminal::new(Dimensions::new(80, 3).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25lfirst");
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        let pointers: Vec<_> = cache.rows.iter().map(|row| row.cells.as_ptr()).collect();
+        let capacities: Vec<_> = cache.rows.iter().map(|row| row.cells.capacity()).collect();
+        for update in 0..128 {
+            terminal.ingest(if update % 2 == 0 {
+                b"\x1b[2;1Halpha"
+            } else {
+                b"\x1b[2;1Hbravo"
+            });
+            let changed = cache.update(TerminalSnapshot::from_terminal(&terminal), &[1]);
+            assert_eq!(changed.updated_rows, [1]);
+            assert!(!changed.full_refresh);
+            for row in 0..3 {
+                assert_eq!(cache.rows[row].cells.as_ptr(), pointers[row]);
+                assert_eq!(cache.rows[row].cells.capacity(), capacities[row]);
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_cache_common_graphemes_and_blanks_have_no_heap_text_payload() {
+        let mut terminal = Terminal::new(Dimensions::new(80, 3).unwrap()).unwrap();
+        terminal.ingest("ASCII e\u{301} \u{1f642}".as_bytes());
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        for row in &cache.rows {
+            assert!(row.cells.iter().all(|cell| !cell.text.is_heap_allocated()));
+        }
+        assert!(!RenderedCell::blank().text.is_heap_allocated());
+        let clone = cache.clone();
+        assert_eq!(cache, clone);
+        assert!(clone
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .all(|cell| !cell.text.is_heap_allocated()));
+    }
+
+    #[test]
+    fn rendered_cache_viewport_refresh_reuses_same_dimension_row_backing() {
+        let mut terminal = Terminal::new(Dimensions::new(80, 3).unwrap()).unwrap();
+        for _ in 0..8 {
+            terminal.ingest(b"history\r\n");
+        }
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        let outer = cache.rows.as_ptr();
+        let pointers: Vec<_> = cache.rows.iter().map(|row| row.cells.as_ptr()).collect();
+        for offset in [1, 0, 1, 0] {
+            let previous = cache.row_revision(0).unwrap().clone();
+            let snapshot = TerminalSnapshot::from_terminal_viewport(&terminal, offset);
+            let update = cache.update(snapshot, &[]);
+            assert!(update.full_refresh);
+            assert_eq!(update.updated_rows, [0, 1, 2]);
+            assert_ne!(cache.row_revision(0), Some(&previous));
+            assert_eq!(cache.rows.as_ptr(), outer);
+            for (row, pointer) in pointers.iter().enumerate() {
+                assert_eq!(cache.rows[row].cells.as_ptr(), *pointer);
+                for column in 0..80 {
+                    assert_eq!(
+                        cache.rows[row].cells[column].text(),
+                        snapshot.cell(column, row).map_or(" ", Cell::text)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_cache_dimension_change_retires_exceptional_backing() {
+        let mut terminal = Terminal::new(Dimensions::new(512, 16).unwrap()).unwrap();
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        let small = Dimensions::new(8, 3).unwrap();
+        terminal.resize(small).unwrap();
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        assert!(update.full_refresh);
+        assert_eq!(cache.rows.len(), 3);
+        assert_eq!(cache.rows.capacity(), 3);
+        for row in &cache.rows {
+            assert_eq!(row.cells.len(), 8);
+            assert_eq!(row.cells.capacity(), 8);
+        }
+    }
+
+    #[test]
+    fn rendered_cache_replacing_long_text_does_not_keep_its_heap_buffer() {
+        let mut terminal = Terminal::new(Dimensions::new(80, 3).unwrap()).unwrap();
+        let long = format!("a{}", "\u{301}".repeat(20));
+        terminal.ingest(long.as_bytes());
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[]);
+        assert_eq!(cache.rows[0].cells[0].text(), long);
+        assert!(cache.rows[0].cells[0].text.is_heap_allocated());
+        let pointer = cache.rows[0].cells.as_ptr();
+        terminal.ingest(b"\x1b[1;1H\x1b[2Kx");
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &[0]);
+        assert_eq!(cache.rows[0].cells.as_ptr(), pointer);
+        assert_eq!(cache.rows[0].cells[0].text(), "x");
+        assert!(!cache.rows[0].cells[0].text.is_heap_allocated());
+    }
+
+    #[test]
+    fn rendered_cache_preserves_unicode_width_style_color_and_hyperlink_values() {
+        let mut terminal = Terminal::new(Dimensions::new(80, 3).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[1;4;38;2;10;20;30;48;5;4m\x1b]8;;https://example.invalid/\x1b\\");
+        terminal.ingest("e\u{301}\u{754c}\u{1f642}".as_bytes());
+        terminal.ingest(b"\x1b]8;;\x1b\\\x1b[0m plain");
+        let mut cache = TerminalRenderCache::default();
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        cache.update(snapshot, &[]);
+        for row in 0..3 {
+            for column in 0..80 {
+                let rendered = &cache.rows[row].cells[column];
+                let core = snapshot.cell(column, row).unwrap();
+                assert_eq!(rendered.text(), core.text());
+                assert_eq!(rendered.width(), core.width());
+                assert_eq!(rendered.foreground(), core.foreground());
+                assert_eq!(rendered.background(), core.background());
+                assert_eq!(rendered.attributes(), core.attributes());
+                assert_eq!(rendered.hyperlink(), core.hyperlink_target().as_deref());
+            }
+        }
+    }
 
     #[test]
     fn row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality() {

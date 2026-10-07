@@ -167,6 +167,11 @@ production and controlled-test seam while remaining the single logical
 terminal writer. The first M9 slice now retains bounded logical primary-screen
 history with content-free accounting and explicit alternate-screen isolation,
 following [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md).
+Resize anchors reuse history's existing physical-row index and carry a
+transient, identity-checked line-index hint through capture and resolution.
+Wrapped cell offsets use binary row-boundary lookup. There is no new
+persistent cache or recovery field; stale hints retain ID-based fallback,
+and width reflow still processes logical content.
 The UI now projects retained physical rows through a borrowed snapshot and
 stores follow/anchor state in each session-owned `TerminalView`, without
 changing PTY grid dimensions or workspace persistence. Selection across
@@ -323,14 +328,33 @@ M4 exposes a borrowed `TerminalSnapshot` contract containing the visible
 screen, dimensions, cursor, and modes. `TerminalRenderCache` copies only rows
 identified by `Terminal::take_dirty_rows` (with a complete refresh on initial
 view or size change), so a GUI frame does not clone the entire core grid.
+Presentation cell text uses the core's existing `CompactString` representation:
+common graphemes stay inline, while replacing long text releases its old heap
+payload. Dirty rows and same-dimension viewport refreshes reuse cell-vector
+backing; dimension changes retire the old row storage rather than retaining an
+exceptional high-water capacity. Value copying, changed-row revision identities
+and the renderer's owned shaping-run strings remain unchanged.
 Cell metrics and point-to-cell helpers remain UI-owned and convert only to
 valid core dimensions. A selected bundled primary face alone determines cell
 metrics. The glyph cache is generation-keyed so replacing egui's font atlas
-cannot reuse stale layouts. One-cell layout remains the default; an explicit
-ligature policy may shape compatible ASCII runs inside their preallocated
+cannot reuse stale layouts. Its unchanged 4,096-entry bound uses indexed LRU
+retirement: a capacity-crossing miss drops one owned layout, not every warm
+entry. Cached hits update constant-time links without scanning or copying text.
+Slot IDs and recorded hashes are bounded metadata, not glyph identity; manual
+and font/atlas resets release that tracking storage along with cached layouts.
+This intentionally retains a full bounded warm cache after saturation, rather
+than claiming reduced retained bytes. One-cell layout remains the default;
+an explicit ligature policy may shape compatible ASCII runs inside their preallocated
 cell spans.
 Width-two leading cells and their continuations are submitted as one
 two-column paint span.
+
+The optional native painter may supply metadata-only atlas admission after
+tessellation and before pixel capture. Backend policy owns eligibility and
+refusal reporting; rejection retains ordinary shapes without consuming font
+deltas. Hook revalidation and current-owner teardown protect replacement
+state. Proposed ADR 0045 changes only ADR 0043's oversized capture ordering;
+trusted revision and immutable owned-snapshot contracts remain intact.
 
 The UI routes egui keyboard, text, paste, focus, pointer, wheel, selection,
 and clipboard events through M3 `InputEvent` values. It drains the core's
@@ -373,6 +397,23 @@ or network dependencies:
 
 Reading and writing bytes, watching for outside changes, and every widget stay
 in `festerm-app`.
+
+Ordered multi-edits build one result from borrowed unchanged/replacement spans;
+inverse construction tracks original and applied coordinates without cloning
+inverse payloads. Apply, replay and vi scratch share that helper. Document byte
+admission precedes output allocation, followed by existing line bounds before
+history commit. Single/equal-length undo/redo stays in place; length-changing
+multi-edit replay temporarily owns one additional bounded result and drops the
+replaced buffer immediately, without adding a retained owner or widening bounds.
+
+Ordinary ready/Normal vi motions and count prefixes use borrowed UTF-8
+boundaries/local line scans, without constructing full-document character or
+byte-offset vectors. Word motions share one algorithm between borrowed byte
+coordinates and the existing indexed operator fallback. Unsupported/pending,
+Insert/Replace and Visual routes retain that keystroke-local fallback.
+Dot-repeat's final diff streams common prefix/suffix characters and owns only
+its changed payloads, not two extra full-document character arrays. No document
+snapshot, revision cache or additional retained owner is added.
 
 ### `festerm-test-support`
 
