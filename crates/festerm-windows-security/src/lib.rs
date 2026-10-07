@@ -305,7 +305,7 @@ mod imp {
 
     fn file_has_extended_attributes(file: &File) -> io::Result<bool> {
         let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
-        let mut probe = [0u32; 2];
+        let mut probe = [0u32; 4];
         let result = unsafe {
             NtQueryEaFile(
                 file.as_raw_handle() as HANDLE,
@@ -1692,6 +1692,12 @@ mod imp {
 
         #[test]
         fn extended_attribute_probe_distinguishes_absent_present_and_failed_queries() {
+            assert!(
+                mem::size_of::<[u32; 4]>()
+                    >= mem::size_of::<
+                        windows_sys::Wdk::Storage::FileSystem::FILE_FULL_EA_INFORMATION,
+                    >()
+            );
             assert_eq!(
                 extended_attribute_query_result(STATUS_NO_EAS_ON_FILE),
                 Ok(false)
