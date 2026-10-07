@@ -16,13 +16,24 @@ live/read-only selection, OSC 8 link, frozen enabled/disabled path and history
 menus; live-close/risky-paste/final-dirty-document confirmations; and actual-task
 small/large/error Open File and small/large/error/overwrite Save As states.
 
-**Initial status: scaffolding, awaiting the exclusive validation slot.**
-No new measurements, captures or native acceptance are claimed here. Missing
+**Bounded status:** earlier complete construction/completed-render evidence is
+retained in #349. The source-bound comparisons below add current measurements
+for eight picker and four actual large Markdown controls, not a newer-head
+rerun of the entire matrix or native acceptance. Missing
 updater variants, empty picker readiness (which needs a model-state accessor),
 filter/sort/final-row/reopen interactions, aggregate quit/drop/reset safety
 variants and all native-platform evidence remain explicit prerequisites in
 [`surface-matrix.json`](surface-matrix.json). No existing CP-16/CP-17 budget is
 extended to About or menus, and no favorable menu latency threshold is invented.
+
+The semantic fixture regression covers all 52 variants at both widths.
+Chip preparation settles actual target bounds within 32 frames and uses at
+most eight real scroll-control clicks before secondary-clicking a visible
+target. It preserves active identity, movement/Close assertions and zero
+transport input. This repairs #346's stale-coordinate race during initial
+active-chip scroll reveal, including inactive-middle/read-only-last targets;
+it neither disables production scroll animations nor qualifies completed
+WARP or native input/presentation.
 
 The [existing gallery generator](../../scripts/build_ui_state_doc.py) also
 expands that reconciled audit into a machine-readable report. It lists every
@@ -43,7 +54,76 @@ python scripts\build_ui_state_doc.py --surface-matrix-report target\evidence\sur
 
 Both probes remain under their existing optional-runner flags
 `FESTERM_RUN_SURFACE_PROFILE=1` / `FESTERM_RUN_WARP_UI_PROBE=1`; neither becomes
-a default benchmark or snapshot gate. Gallery generation uses
+a default benchmark or snapshot gate. The construction probe alone accepts
+`FESTERM_SURFACE_PROFILE_SCENES=original-controls` for its original twelve
+document/list controls and model diagnostics. This explicit subset excludes
+all 52 appended variants, records that scope in its report and aggregate
+runner result, and changes no semantic guard or WARP replay selection.
+Unset the selector (or use `all`) for the full construction matrix.
+No missing variant or native row gains coverage from the controls-only result.
+
+### 2026-10-06 source-bound picker and Markdown observations
+
+The actual release replay compared clean cumulative
+`5fa487c635b4b43f0aed8017d85d42d9f142f565` against preserved before controls:
+`abb4a018373bd1469f92d534c7bce0dad52ac26c` for Markdown and
+`cbdc2aab6e499656e98f6da8ed2768297f421c56` for pickers. All use Windows x64
+DX12 CPU `Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2, and the same
+physical picker fixture paths where origin/breadcrumb text is visible.
+The four Markdown controls render the same owned 400-section document,
+not a substitute editor or untrusted external document.
+
+All twelve cross-revision reference PNGs are byte-identical. Every measured
+draw also passes the same-frame original-renderer oracle: twenty Markdown and
+forty picker guards. Ordered samples, finite timing buckets, adapter/format,
+source identity, dimensions, percentile convention and dimension-derived
+target/image/padded-readback payloads were checked independently.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:WGPU_BACKEND = 'dx12'
+# Set a fresh absolute FESTERM_WARP_UI_OUT and the preserved matching
+# FESTERM_WARP_UI_REFERENCE directory for each separately executed subset.
+$env:FESTERM_WARP_UI_SCENES = 'markdown-controls' # Passed: 10.88 seconds.
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+$env:FESTERM_WARP_UI_SCENES = 'picker-controls' # Passed: 46.40 seconds.
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+```
+
+| Scene | Before UI median (ms) | Current UI median (ms) | Before completed draw/readback median (ms) | Current median (ms) | Actual panel paints before/current |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Markdown Preview normal | 15.750 | 13.678 | 779.833 | 320.413 | 0 / 1 |
+| Markdown Preview narrow | 14.495 | 12.062 | 168.096 | 58.947 | 0 / 1 |
+| Markdown Source normal | 5.777 | 5.774 | 912.492 | 435.244 | 0 / 1 |
+| Markdown Source narrow | 5.463 | 5.101 | 206.244 | 69.948 | 0 / 1 |
+| Open File small ready normal | 0.702 | 0.667 | 1000.309 | 1074.010 | 4 / 4 |
+| Open File small ready narrow | 0.815 | 0.561 | 409.098 | 372.818 | 2 / 2 |
+| Open File error normal | 0.566 | 0.489 | 1005.937 | 1070.618 | 4 / 4 |
+| Open File error narrow | 0.574 | 0.560 | 396.448 | 368.457 | 2 / 2 |
+| Save As small ready normal | 0.558 | 0.740 | 1535.852 | 1017.992 | 2 / 3 |
+| Save As small ready narrow | 0.577 | 0.623 | 473.023 | 369.525 | 2 / 3 |
+| Save As error normal | 0.409 | 0.436 | 1511.286 | 1011.733 | 2 / 3 |
+| Save As error narrow | 0.423 | 0.457 | 461.132 | 339.882 | 2 / 3 |
+
+These shared-host samples show 52-66% lower Markdown and 22-34% lower Save As
+completed draw/readback medians on the combined source. Normal Source UI
+construction is effectively unchanged; zero preparation jobs do not prove a
+net live-UI improvement. Open File's unchanged paint route has opposite wide/
+narrow movement, so no gain or regression is established from that variance.
+Substantial completed drawing cost remains, without attributing it to a modal,
+shadow, font or individual paint operation.
+
+The seven buckets exclude small instrumentation/inter-bucket overhead included
+in the completed total; they need not sum exactly to it. CPU-observed completion
+waiting is not a GPU timestamp. Submitted geometry and temporary pixel/readback
+payloads are not actual rasterized-pixel counts, total GPU allocations or process
+peaks. This comparison does not isolate each cumulative optimization, qualify a
+quiet host, native presentation, input-to-display, real scrolling, Find or omitted
+variants. No syntax-colour normalization or reference-pixel exception was used.
+
+### Gallery capture and shared fixture identity
+
+Gallery generation uses
 `FESTERM_UI_GALLERY_OUT` pointed at a fresh owned directory before updating
 the reviewed document/images. `capture_surface_gallery(SurfaceKind, narrow)`
 is the shared full-root themed fixture API for style review.
@@ -178,6 +258,58 @@ and five completed draw/sync/readback samples with median/p95/min/max and the
 exact percentile rule. That draw bucket includes renderer tessellation,
 submission, synchronization and CPU image readback. **It is not native
 input-to-display, OS presentation latency or actual idle scheduling.**
+
+Expanded scenes additionally retain five ordered `steady_draw_buckets`
+samples: CPU tessellation, callback preparation/encoding/target creation,
+submission, draw completion wait, readback preparation/submission, readback
+wait and CPU image copying. Each sample records submitted mesh/vertex/index/
+callback counts and the temporary framebuffer, padded readback and image byte
+payloads. Actual textureless-panel paint calls are counted when that production
+pipeline is installed; `null` means no eligible installed panel pipeline,
+not zero-cost rendering. These are not total allocator traffic, actual rasterized pixels,
+driver allocations or GPU timestamps. Completion waits can include driver
+work; they do not isolate GPU execution from scheduling.
+
+The instrumented rendering path uses the same renderer, texture format,
+transparent clear, callback order and readback layout as the original probe.
+Every expanded scene compares all pixels with an original-renderer draw of
+the identical settled frame before measuring, and preserves equality on each
+sample. Two small normal-CI scale cases also cover translucent geometry,
+glyphs and non-aligned readback rows, without new stored snapshot baselines.
+This instrumentation attributes the combined #350 bucket; it changes no
+production picker rendering and makes no efficiency claim by itself.
+
+`FESTERM_WARP_UI_SCENES=picker-controls` selects only the small-ready/error
+Open File and Save As fixtures at both widths (eight scenes).
+`FESTERM_WARP_UI_SCENES=markdown-controls` selects four actual large Markdown
+Preview/Source scenes at normal/narrow widths. Each uses the same owned
+400-section remote-origin snapshot with 400 Rust fences, with no images,
+network, user files or clipboard. Readiness checks the actual rendered heading
+or raw Source marker and the final section's code; it never substitutes the
+text editor or a loading placeholder. Find is explicitly unmeasured.
+
+Unset or `all` retains all four original controls and the 52 existing expanded
+variants, and adds these four Markdown variants. The gallery/construction
+catalog remains unchanged. Empty, unknown,
+composite and non-UTF-8 selections fail before creating output. Reports and
+the Windows optional-suite receipt name the selected scene set; omitted
+variants remain unmeasured. For a bounded diagnostic:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_WARP_UI_SCENES = 'picker-controls'
+$env:FESTERM_WARP_UI_OUT = 'C:\evidence\picker-buckets-attempt-01'
+$env:WGPU_BACKEND = 'dx12'
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+```
+
+Use a fresh output path and `markdown-controls` instead for the four Markdown
+scenes. They retain the same seven draw buckets, original-renderer pixel
+guards, actual installed-panel counts and bounded temporary-payload reporting.
+The constructor/steady UI samples include real Preview or Source traversal;
+preparation-cache counters are not a proxy for this measured work. These
+controls do not qualify Find, scrolling interaction, native presentation,
+physical input-to-photon latency or a net gain without matched measurements.
 
 Cold-process start is explicitly `null/not measured`: a fresh context in an
 already-running test process is not a cold application. Package/revision,

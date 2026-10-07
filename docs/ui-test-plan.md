@@ -115,6 +115,37 @@ without opening a window:
 - color and attribute mapping; and
 - bounded glyph-cache behavior.
 
+Presentation-cache regressions additionally cover inline ASCII/short Unicode/
+blank payloads, long-payload retirement, stable dirty-row and same-dimension
+viewport backing, dimension-change capacity retirement, copied style/color/
+hyperlink/width values and existing row-revision/dirty-ID semantics. The
+CPU-only `render_cache_allocations` benchmark instruments Rust's system
+allocator and checks two metadata allocations per steady refresh, zero
+reallocations and actual long-payload deallocation. Both optional suite runners
+include it; rendering snapshots retain their existing Windows/non-Windows
+baselines. These are cache-stage checks, not GPU memory, RSS or native CPU
+acceptance. See the [allocation oracle](../validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle).
+
+The glyph-layout retirement oracle fills the unchanged 4,096-entry bound,
+refreshes a hot entry, and requires one capacity-crossing miss to preserve
+4,095 old entries while retiring the least-recently-used one. A churn fixture
+checks 8,192 further insertions, 65,536 hot hits and a fixed 4,096-slot plateau.
+Forced hash collisions prove slot-specific retirement and an actual cache
+`Arc` owner drop; key/query hash tests exclude recency IDs from glyph identity.
+Explicit reset releases recency storage, while existing font/atlas and rendering
+tests retain both platform baselines. This is bounded cache-work evidence, not
+total heap, native CPU or presentation acceptance. See the
+[retirement oracle](../validation/terminal-performance/README.md#glyph-layout-retirement-oracle).
+
+Native atlas-admission checks prove refusal before pixel copying/factory
+capture, post-tessellation metadata and unchanged font deltas, current-owner
+snapshot retirement, repeated refusal/recovery and replacement-hook isolation.
+The backend's shared pure dimension predicate checks exact existing limits
+and overflow on every platform. Windows additionally exercises native
+unsupported-state recovery and existing framebuffer/fallback tests. Proposed
+ADR 0045 requires owner review; these are capture-stage correctness/work
+checks, not native CPU, total-memory or CP-18 acceptance.
+
 ### Interaction replay cases
 
 Add a small test-only replay helper that applies ordered `InputEvent`,
@@ -310,6 +341,15 @@ These are live framebuffer comparisons, not new stored snapshot scenarios.
 The optional `replay_warp_ui_surfaces_shared_panels` uses eframe's root entry
 point and balanced ordinary/textureless repeats; its measurement plan and
 pending qualification are in `validation/windows-warp/README.md`.
+
+The bounded non-terminal fixture semantic test exercises all 52 normal/narrow
+variants. Chip-menu preparation waits for observed target bounds to settle
+within 32 frames, then uses at most eight real chip-scroll clicks to reveal a
+clipped target before secondary-clicking it. First/middle/read-only-last cases
+assert the target remains in the actual scroll viewport, applicable movement
+items and Close are present, and active identity/transport input are unchanged.
+This addresses a scroll-animation/query-coordinate race without changing
+production animations, arbitrary sleeps or weaker readiness guards.
 
 Windows native probes must exclude visible event-broker/tool HWNDs rather
 than trusting `Process.MainWindowHandle`. The Win32 selector regression creates
@@ -573,7 +613,45 @@ workloads.
   rejected changed trust, or rejected credentials. Extend app-level tab,
   profile, and restoration scenarios separately.
 
+### Ordered editor multi-edit verification
+
+`EDIT-03/05/07/13` now cross-check ordered apply/undo/redo against the old
+splice oracle for Unicode, adjacent/coincident insertions, deletions and
+no-ops. Actual-call controls for 2,000 length-changing edits show apply, undo,
+redo and vi scratch each moving from 2,000 splices to zero; result-write
+counters equal exactly one output length. Pointer/capacity checks preserve
+in-place single/equal-length replay. Preallocation byte refusal preserves
+redo, revision and saved state, alongside existing metadata/line/stale/UTF-8
+and production shared-view/refusal tests. CP-15 native caret/IME/readability
+and memory/fragmentation conclusions remain separate.
+
+### Borrowed vi motion verification
+
+`EDIT-07` has compiled old-path index-capacity controls for 128 ordinary keys
+on large ASCII/Unicode sources and dot-repeat's final diff. Normal motion/count
+construction now uses zero full-index capacity; instrumented motion-scan
+visits are bounded independently of unrelated document prefixes. Frozen
+scalar word oracles and indexed line/vertical/`G` oracles cover 53 Unicode/
+ASCII fixtures, all byte/split/out-of-range carets and absent/zero/ordinary/
+large counts. Mixed-mode/operator/visual/repeat/recording churn also checks
+pending state, register, recording, caret/action and fallback retirement.
+A trillion-count empty-line fixed point performs bounded unchanged work.
+Streaming repeat diffs equal the old char-array oracle across Unicode
+insert/remove/replace, equal text, whole removal and prefix/suffix overlap.
+CP-15 native/IME/readability and RSS/fragmentation remain separate.
+
 ### M9 scrollback and reflow verification
+
+`HIST-04` anchor-work regressions count actual lookup steps: capture/resolution
+for 16,384 logical lines and for 8,192 rows of one wrapped line each take
+16 steps, versus compiled legacy controls of 32,769 and 8,194. An independent
+linear oracle cross-checks empty rows, boundary affinity, reflow, tail splitting,
+eviction and clear; identity checks preserve stale-hint and ID-rollover behavior.
+Forty public height-only resizes with over 8,000 history lines preserve cursor
+and selection endpoints within a 128-step per-resize bound. Existing generated
+core models and UI selection/snapshots remain required. Width reflow, deliberate
+debug invariant audits and stale-hint fallback are not claimed constant-time;
+native near-budget resize/input feel remains TI-04/TI-05 evidence.
 
 ADR 0017 is the model oracle. Deterministic core tests must cover hard versus
 soft breaks, full-screen versus margin scrolling, exact byte accounting,
