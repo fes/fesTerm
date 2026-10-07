@@ -185,8 +185,42 @@ Required behavior:
 Progress delivery is a bounded event stream invoked at chunk boundaries.
 Intermediate progress may be coalesced to the newest value while collision,
 terminal-state, and destination-refresh events remain ordered and lossless.
-Recursive planning has explicit item and conservative memory-proxy ceilings;
-exceeding either fails the item before destination materialization.
+Recursive planning shares 65,536 owned items and a 64-MiB conservative
+metadata allowance per live worker, rather than granting those limits to each
+plan. Enumeration, retained/collision-paused units and overlapping managed
+container storage share actual-owner reservations. A row transfers its
+reservation into its unit; progress/cancellation releases metadata without
+evicting another admitted plan. New planning that cannot fit fails explicitly
+before destination materialization. Per-item path/collision projection is
+conservative, not a process-memory measurement.
+
+Local enumeration checks admission before retaining rows; remote enumeration
+uses the existing subsystem's paged protocol client and never first collects
+the whole directory. The owner approved a narrowly vendored `russh-sftp` 2.3.0
+getter because its convenience API eagerly collects and repeatedly recopies
+all prior pages. Its license/provenance and exact patch are recorded in
+`vendor/russh-sftp/PATCHES.md`; no second SSH/SFTP connection is introduced.
+The decoded current reply is charged before conversion, but protocol-private
+pre-decode allocations remain outside the bound. Ordinary browsing snapshots,
+queued request/event/public-snapshot payloads and allocator/private-I/O
+behavior also remain separate scopes. Sparse queue retirement moves at most
+128 live entries, releases the old allocation before rebuilding, and retains
+a requeue slot.
+
+Changed-row snapshot publication preserves stable ordering and indexed
+updates without per-unit whole-inventory reconstruction. Membership
+compaction/reindexing and explicit public snapshot requests remain bounded
+full-vector operations; unchanged request allocations are retained.
+
+Remote-to-local basename admission is owned by `festerm-ssh`, not the GUI.
+Selected file/directory roots and recursive children use the same portable
+single-filename policy and checked local join; text-mode `get` shares that
+helper when deriving a destination name. An invalid name fails through the
+existing SFTP error path before collision handling or writes, without partial
+output or stopping other work. Exact user-requested local paths retain their
+semantics. See the [name-admission policy](../sftp-ui-design.md#remote-to-local-name-admission);
+this is lexical containment, not a change to the local filesystem race/cleanup
+contract.
 
 The tab-owned command/event bridges are also bounded (64 commands, 128 events).
 Frontend polling and worker transfer-event batching each consume at most 64
@@ -400,7 +434,11 @@ core transfer workflow.
   before commit; delete is absent in v1; owner cancellation preserves and reports
   partials when race-free current ownership cannot be established; GUI bridges,
   per-poll work and finished history are bounded with explicit admission
-  refusal and retirement accounting.
+  refusal and retirement accounting. Recursive enumeration and retained plans
+  share a per-worker allowance; metadata credit follows actual data ownership
+  through copy, collision, cancellation and exceptional-capacity retirement.
+  Remote-derived local names, including selected roots, are admitted as safe
+  single filenames before joining and verified as immediate local children.
 - **GUI/action edges affected:** `LAUNCH-10` opens a GUI SFTP tab from a
   saved SSH profile or live SSH tab. `SFTPG-01/02/03` cover browsing,
   transfer/cancel/history and collision decisions; `SFTPG-04` retains deferred
@@ -409,6 +447,9 @@ core transfer workflow.
   Markdown fetch and drag/drop admission) without changing the
   application/transport ownership boundary or accepting native disconnect
   recovery.
+  Name admission refines `SFTPG-02/03/08`: unsafe roots fail before collision
+  or output creation; they require no partial cleanup and leave unrelated work
+  and owner cancellation intact.
 - **Automated tests required:** Planned coverage includes
   `sftp_directory_snapshot_contains_sortable_metadata`,
   `sftp_transfer_manager_emits_progress_and_completion`,
@@ -453,6 +494,21 @@ core transfer workflow.
   `gui_sftp_progress_coalescing_keeps_the_latest_value_and_critical_barriers`.
   `gui_sftp_observed_cleanup_notice_survives_a_blocked_bridge_and_owner_close`
   covers the separate cleanup reporter before blocked event forwarding.
+  Aggregate-planning coverage includes
+  `paused_recursive_plan_refuses_aggregate_growth_and_cancel_restores_admission`,
+  `multiple_paused_plans_preserve_decisions_and_resume_releases_shared_admission`,
+  `shared_planning_admission_is_atomic_and_restores_exact_credits`,
+  `failed_and_overflowing_growth_never_changes_shared_accounting`,
+  `planning_data_drops_before_its_credit_and_outlives_a_removed_queue`,
+  `planning_queue_refuses_storage_before_allocation_and_preserves_admitted_rows`,
+  `sparse_planning_queue_retires_backing_and_keeps_a_collision_requeue_slot`,
+  `local_planning_refuses_oversized_enumeration_and_returns_sorted_rows`,
+  `remote_planning_refuses_before_another_page_and_closes_the_directory`,
+  `remote_planning_returns_sorted_budgeted_rows_without_recollecting_pages`,
+  `remote_planning_reports_close_failure_without_losing_the_planning_error`,
+  `canceled_remote_planning_closes_its_open_handle_without_closing_the_session`,
+  `transfer_snapshot_updates_only_affected_rows_and_preserves_request_allocations`,
+  and `transfer_snapshot_keeps_batch_order_and_updates_resolved_collision`.
 - **Native/manual evidence required:** Manual evidence is required for
   cross-pane drag/drop, external OS-file drop to the remote pane, stale remote
   listing presentation, keyboard navigation, collision safety defaults, and
@@ -460,7 +516,9 @@ core transfer workflow.
   the implementing change. `SFTP-01` retains packaged owner close/quit,
   diagnostic visibility and cleanup-notice accessibility qualification.
   `SFTP-03` retains native long-history scrolling, full-queue refusal and
-  retirement-notice readability/accessibility qualification.
+  retirement-notice readability/accessibility qualification, plus shared-plan
+  exhaustion, progress/cancel followed by Retry, and preserved paused-decision
+  usability on native Windows/macOS/Linux.
 - **Coverage superseded:** None yet. `validation/traceability.json` should be
   updated in the implementing change that wires the new GUI SFTP edges and test
   relationships into real coverage.

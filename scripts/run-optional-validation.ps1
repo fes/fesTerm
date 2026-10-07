@@ -85,6 +85,16 @@ if ($env:OS -eq 'Windows_NT') {
     if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed.' }
 }
 
+Invoke-NativeCommand {
+    cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check
+}
+if ($LASTEXITCODE -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=presentation-cache-allocations status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=presentation-cache-allocations status=fail"
+    $status = 'fail'
+}
+
 if ($env:OS -eq 'Windows_NT') {
     $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
     $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
@@ -290,7 +300,8 @@ if ($env:OS -eq 'Windows_NT') {
                 cargo test --release -p festerm --bin festerm replay_warp_ui_surfaces -- --ignored --nocapture --test-threads=1
             }
             if ($LASTEXITCODE -ne 0) { throw 'WARP UI surface replay failed.' }
-            Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=pass"
+            $sceneSet = if ($env:FESTERM_WARP_UI_SCENES) { $env:FESTERM_WARP_UI_SCENES } else { 'all' }
+            Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=pass scene_set=$sceneSet"
         } catch {
             Write-Warning $_
             Add-Content -Path $ResultPath -Value "`nsuite=warp-ui-replay status=fail"
@@ -336,7 +347,8 @@ if ($env:OS -eq 'Windows_NT') {
             if (-not $env:FESTERM_AGING_SUITE_OUT) {
                 throw 'Set FESTERM_AGING_SUITE_OUT to a fresh absolute evidence directory.'
             }
-            & "$PSScriptRoot\check-windows-session-aging.ps1" -OutputDirectory $env:FESTERM_AGING_SUITE_OUT
+            & "$PSScriptRoot\check-windows-session-aging.ps1" -OutputDirectory $env:FESTERM_AGING_SUITE_OUT `
+                -ThreadOwnership:($env:FESTERM_AGING_THREAD_OWNERSHIP -eq '1')
             Add-Content -Path $ResultPath -Value "`nsuite=six-session-aging status=pass"
         } catch {
             Write-Warning $_
@@ -437,7 +449,8 @@ if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
             cargo test --release -p festerm --bin festerm profile_interactive_surfaces -- --ignored --nocapture --test-threads=1
         }
         if ($LASTEXITCODE -ne 0) { throw 'Interactive surface profile failed.' }
-        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass"
+        $profileScenes = if ([string]::IsNullOrEmpty($env:FESTERM_SURFACE_PROFILE_SCENES)) { 'all' } else { $env:FESTERM_SURFACE_PROFILE_SCENES }
+        Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=pass scene_set=$profileScenes"
     } catch {
         Write-Warning $_
         Add-Content -Path $ResultPath -Value "`nsuite=interactive-surface-profile status=fail"

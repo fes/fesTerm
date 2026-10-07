@@ -5,7 +5,9 @@ param(
     [ValidateRange(1, 2000)][int] $Cycles = 120,
     [ValidateRange(1, 1000)][int] $Frames = 100,
     [ValidateRange(1, 300)][int] $IdleSeconds = 10,
-    [ValidateRange(60, 14400)][int] $TimeoutSeconds = 1800
+    [ValidateRange(1, 8)][int] $LifecycleRepeats = 3,
+    [ValidateRange(60, 14400)][int] $TimeoutSeconds = 1800,
+    [switch] $ThreadOwnership
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +20,43 @@ if ($env:OS -ne 'Windows_NT' -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
 }
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
+$threadBounds = @{
+    threads_per_sample = 256; modules_per_sample = 1024; label_utf16_units = 256
+    total_thread_records = 131072; resource_log_bytes = 67108864
+    samples = 2 * $TimeoutSeconds + 1
+}
+if ($ThreadOwnership) { . (Join-Path $PSScriptRoot 'windows-aging-thread-ownership.ps1') }
+# PagefileUsage is process commitment, not page-file residency. Its OS-maintained
+# high-water mark observes transient peaks between the 500ms process samples.
+if (-not ('FesTermAging.ProcessMemory' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace FesTermAging {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MemoryCounters {
+        public uint cb, PageFaultCount;
+        public UIntPtr PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage,
+            QuotaPagedPoolUsage, QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage,
+            PagefileUsage, PeakPagefileUsage, PrivateUsage;
+    }
+    public static class ProcessMemory {
+        [DllImport("psapi.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetProcessMemoryInfo(
+            IntPtr process, ref MemoryCounters counters, uint size);
+        public static MemoryCounters Read(IntPtr process) {
+            var counters = new MemoryCounters();
+            counters.cb = (uint)Marshal.SizeOf<MemoryCounters>();
+            if (!GetProcessMemoryInfo(process, ref counters, counters.cb))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return counters;
+        }
+    }
+}
+'@
+}
 $head = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source HEAD.' }
 $tree = (& git rev-parse 'HEAD^{tree}').Trim()
@@ -70,16 +109,29 @@ $binding = @{
     schema = 1; source_head = $head; source_tree = $tree; profile = $Profile
     compiler_executable = $artifacts[0]; executable_sha256 = $binaryHash
     cycles = $Cycles; frames = $Frames; idle_seconds = $IdleSeconds
+    lifecycle_repeats = $LifecycleRepeats
+    process_memory_schema = 1; process_memory_method = 'GetProcessMemoryInfo.PagefileUsage/PeakPagefileUsage'
     resource_sample_interval_ms = 500; timeout_seconds = $TimeoutSeconds
     started_utc = [DateTime]::UtcNow.ToString('o')
-    limitations = 'Owned offscreen fixture; background processes allowed. Resources are sampled current process values, not complete GPU allocation accounting or external CPU attribution.'
+    limitations = 'Owned offscreen fixture; background processes allowed. Commitment peak is an OS-maintained process-lifetime high-water mark, not a per-phase peak or complete GPU allocation accounting.'
 }
-$binding | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'source.json')
+if ($ThreadOwnership) {
+    $binding.thread_ownership_schema = 1
+    $binding.thread_ownership_methods = @(
+        'GetProcessIdOfThread/GetThreadTimes',
+        'GetThreadDescription',
+        'NtQueryInformationThread.ThreadQuerySetWin32StartAddress/Process.Modules'
+    )
+    $binding.thread_ownership_bounds = $threadBounds
+    $binding.limitations += ' Optional thread names/start modules are labels, not stacks or private-byte ownership; races/unavailable metadata remain explicit.'
+}
+$binding | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $output 'source.json')
 $saved = @{}
 $settings = @{
     FESTERM_AGING_OUT = (Join-Path $output 'probe')
     FESTERM_AGING_CYCLES = "$Cycles"; FESTERM_AGING_FRAMES = "$Frames"
     FESTERM_AGING_IDLE_SECONDS = "$IdleSeconds"; FESTERM_DIRECT2D_TIMINGS = '0'
+    FESTERM_AGING_LIFECYCLE_REPEATS = "$LifecycleRepeats"
 }
 $process = $null
 $resources = $null
@@ -95,8 +147,10 @@ try {
         -RedirectStandardError (Join-Path $output 'stderr.log')
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $phasePath = Join-Path $settings.FESTERM_AGING_OUT 'phase.json'
+    $sampleCount = $threadRecords = $resourceBytes = 0
     while (-not $process.HasExited) {
         if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { throw 'Aging probe exceeded its bounded deadline.' }
+        $sampleStarted = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         $phase = 'starting'
         if (Test-Path -LiteralPath $phasePath) {
             $stream = [System.IO.File]::Open($phasePath, 'Open', 'Read',
@@ -107,19 +161,54 @@ try {
         }
         $process.Refresh()
         if ($process.HasExited) { break }
-        $threads = @($process.Threads | ForEach-Object {
-            @{ id = $_.Id; cpu_ms = $_.TotalProcessorTime.TotalMilliseconds }
-        })
+        $memory = [FesTermAging.ProcessMemory]::Read($process.Handle)
+        if ($ThreadOwnership) {
+            $threadSnapshot = @($process.Threads)
+            $ownership = Get-FesTermAgingThreadOwnership -Process $process -Threads $threadSnapshot -Bounds $threadBounds
+            $threads = @($ownership.threads)
+            $threadRecords += $threads.Count
+            $sampleCount++
+            if ($threadRecords -gt $threadBounds.total_thread_records -or $sampleCount -gt $threadBounds.samples) {
+                throw 'Owned thread diagnostic total inventory/sample count over-limit.'
+            }
+        } else {
+            $threads = @($process.Threads | ForEach-Object {
+                @{ id = $_.Id; cpu_ms = $_.TotalProcessorTime.TotalMilliseconds }
+            })
+        }
         $record = @{
             unix_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             elapsed_seconds = $clock.Elapsed.TotalSeconds; pid = $process.Id; phase = $phase
             working_set_bytes = $process.WorkingSet64; private_bytes = $process.PrivateMemorySize64
             peak_working_set_bytes = $process.PeakWorkingSet64; handles = $process.HandleCount
-            thread_count = $process.Threads.Count; process_cpu_ms = $process.TotalProcessorTime.TotalMilliseconds
+            commitment_bytes = $memory.PagefileUsage.ToUInt64()
+            peak_commitment_bytes = $memory.PeakPagefileUsage.ToUInt64()
+            thread_count = if ($ThreadOwnership) { $threads.Count } else { $process.Threads.Count }
+            process_cpu_ms = $process.TotalProcessorTime.TotalMilliseconds
             threads = $threads
         }
-        $resources.WriteLine(($record | ConvertTo-Json -Depth 4 -Compress))
+        if ($ThreadOwnership) {
+            $record.unix_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            $record.thread_ownership = @{
+                schema = 1; started_unix_ms = $sampleStarted; completed_unix_ms = $record.unix_ms
+                module_snapshot = $ownership.module_snapshot
+            }
+        }
+        $recordJson = $record | ConvertTo-Json -Depth 7 -Compress
+        if ($ThreadOwnership) {
+            $resourceBytes += [Text.Encoding]::UTF8.GetByteCount($recordJson) + [Environment]::NewLine.Length
+            if ($resourceBytes -gt $threadBounds.resource_log_bytes) { throw 'Owned thread resource log over-limit.' }
+        }
+        $resources.WriteLine($recordJson)
         $resources.Flush()
+        if ($phase -eq 'complete') {
+            # The test waits for this receipt before exiting, closing the otherwise
+            # unobserved final sampling interval without keeping graphics owners alive.
+            $receiptNext = Join-Path $settings.FESTERM_AGING_OUT 'sampled-next.json'
+            $receipt = Join-Path $settings.FESTERM_AGING_OUT 'sampled.json'
+            $recordJson | Set-Content -LiteralPath $receiptNext
+            [System.IO.File]::Move($receiptNext, $receipt, $true)
+        }
         Start-Sleep -Milliseconds 500
         $process.Refresh()
     }
@@ -127,7 +216,7 @@ try {
     $binding.completed_utc = [DateTime]::UtcNow.ToString('o')
     $binding.exit_code = $process.ExitCode
     $binding.process_id = $process.Id
-    $binding | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'source.json')
+    $binding | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $output 'source.json')
     if ($process.ExitCode -ne 0) { throw "Aging probe failed with exit $($process.ExitCode); inspect logs." }
 } finally {
     if ($process) {
