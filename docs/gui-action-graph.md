@@ -729,6 +729,15 @@ independent constrained layout at fractional widths and 0.75-3 pixels per
 point, allowing only the unused wrap-limit metadata to differ. They require
 measured-galley reuse for fitting cells and preserve wrapping, styles, Unicode,
 Find formatting and intrinsic size without removing any labels.
+Frame-local reuse across Preview tables additionally compares complete live
+cell responses/accessibility and clipped shapes against ordinary current
+preparation. It counts actual job construction, unwrapped/constrained layout
+requests and owned-buffer capacities on the 400-section normal/narrow fixture,
+including Find, scrolling and real dependency changes. The 32-entry,
+256-byte-input and 64 KiB accounted-galley-payload bounds must refuse complex,
+highlighted and over-budget cells without hiding them; later invocations
+recover normally. Unicode selection/Copy and offscreen heading navigation
+remain live. No persistent galley/font key or native-latency acceptance is added.
 The frame-local code-header caption oracle for `MD-04` and the shared Preview
 path in `EDIT-09` compares ordinary and prepared rendering of the actual
 outline-disabled 400-section fixture: complete clipped shapes, accessibility

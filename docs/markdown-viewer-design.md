@@ -136,6 +136,32 @@ frame-local reuse, not a persistent cache or block virtualization: every cell
 remains a selectable label with the same alignment, Find formatting and
 source identity.
 
+The same fresh render invocation also shares identical unwrapped, plain-text
+table-cell galleys across its tables. Eligibility is checked on borrowed text
+before job preparation: one nonempty text inline, at most 256 UTF-8 bytes,
+an explicit non-custom font family, and no overlapping Find match. Complete
+section formatting and the actual painter's context, viewport/pass, scale and
+active text options must match. All other default-job properties, including
+the infinite unwrapped width, are fixed by this callsite; final constrained
+wrapping remains ordinary. Definitions and atlas changes activate at begin-pass,
+and no entry survives the fresh `MarkdownRenderState`. No font-definition clone
+or persistent document-text key is introduced.
+
+The fixed array admits at most 32 galleys, under a separate 64 KiB accounted
+payload ceiling. Admission after ordinary construction charges actual String,
+section/placed-row/glyph Vec and row-mesh vertex/index Vec capacities, plus the
+Galley, LayoutJob and row object bodies. Checked arithmetic rejects overflow.
+At most 257 rows per entry are eligible; array/key metadata and bounded Arc
+control blocks/allocator overhead are separate, not a total-memory claim.
+Ordinary construction, egui's existing memoization and current widget/output
+owners are outside this retained-payload allowance.
+There is no replacement/eviction overlap: full or over-budget entries simply
+prepare normally, while already-admitted entries remain usable. Complex,
+highlighted, oversized and custom-family cells also prepare normally. Every
+cell still has its original live selectable Label, identity, response,
+accessibility and alignment. This is frame-local preparation reuse, not table
+virtualization, Find truncation, or a native/GPU performance claim.
+
 Inline and block raw HTML are displayed as inert source or an explicit
 `HTML not rendered` placeholder. They are never interpreted. Footnotes, math,
 Mermaid/diagrams, custom containers, includes, embedded web content, and

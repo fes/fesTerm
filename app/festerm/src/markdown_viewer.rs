@@ -117,6 +117,9 @@ const MAX_SOURCE_PREPARATION_QUERY_BYTES: usize = 4096;
 const MAX_GEOMETRY_FONT_MAP_ENTRIES: usize = 128;
 const MAX_GEOMETRY_FONT_NAME_BYTES: usize = 8 * 1024;
 const MAX_GEOMETRY_FONT_FAMILY_REFERENCES: usize = 256;
+const MAX_PREPARED_TABLE_CELLS: usize = 32;
+const MAX_PREPARED_TABLE_CELL_INPUT_BYTES: usize = 256;
+const MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES: usize = 64 * 1024;
 /// Height reserved for the viewer's own footer, used only when the shared
 /// application status bar is hidden. Matches the status bar's own geometry
 /// so toggling it doesn't reflow the document.
@@ -440,6 +443,8 @@ struct PendingImageLoad {
 }
 
 pub struct MarkdownViewerTab {
+    #[cfg(test)]
+    table_cell_probe: Option<TableCellProbe>,
     source: MarkdownSource,
     title: String,
     display_path: String,
@@ -494,6 +499,8 @@ impl MarkdownViewerTab {
                 )
             });
         let mut tab = Self {
+            #[cfg(test)]
+            table_cell_probe: None,
             source,
             title,
             display_path,
@@ -552,6 +559,8 @@ impl MarkdownViewerTab {
             .unwrap_or("Markdown")
             .to_owned();
         let mut tab = Self {
+            #[cfg(test)]
+            table_cell_probe: None,
             source: MarkdownSource::from(source.clone()),
             title,
             display_path: display_path.clone(),
@@ -672,6 +681,14 @@ impl MarkdownViewerTab {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
+        #[cfg(test)]
+        if let Some(probe) = &mut self.table_cell_probe {
+            let ordinary = probe.ordinary;
+            *probe = TableCellProbe {
+                ordinary,
+                ..Default::default()
+            };
+        }
         self.poll_background_work(ui.ctx());
         self.start_automatic_image_loads(ui.ctx());
         let mut command = self.consume_shortcuts(ui.ctx(), tab_id);
@@ -719,6 +736,7 @@ impl MarkdownViewerTab {
                                 });
                             } else {
                                 let mut render_state = MarkdownRenderState {
+                                    table_cells: TableCellPreparation::default(),
                                     code_copy_caption: CodeCopyCaptionPreparation::default(),
                                     mode: self.mode,
                                     outline_open: self.outline_open,
@@ -736,8 +754,16 @@ impl MarkdownViewerTab {
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
                                     heading_tops: None,
                                 };
+                                #[cfg(test)]
+                                {
+                                    render_state.table_cells.probe = self.table_cell_probe.take();
+                                }
                                 document_rect =
                                     Some(render_state.show_document(ui, document).document_rect);
+                                #[cfg(test)]
+                                {
+                                    self.table_cell_probe = render_state.table_cells.probe.take();
+                                }
                             }
                         } else if let Some(error) = self.error.as_ref().cloned() {
                             self.show_error(ui, &error, tab_id, &mut command);
@@ -1553,6 +1579,7 @@ impl MarkdownViewerTab {
 }
 
 struct MarkdownRenderState<'a> {
+    table_cells: TableCellPreparation,
     code_copy_caption: CodeCopyCaptionPreparation,
     mode: MarkdownViewerMode,
     outline_open: bool,
@@ -2231,6 +2258,262 @@ struct CodeCopyCaptionPreparation {
     probe: Option<CodeCopyProbe>,
 }
 
+struct TableCellPreparation {
+    key: Option<TableCellPainterKey>,
+    cells: [Option<Arc<egui::Galley>>; MAX_PREPARED_TABLE_CELLS],
+    len: usize,
+    payload_bytes: usize,
+    #[cfg(test)]
+    probe: Option<TableCellProbe>,
+}
+
+impl Default for TableCellPreparation {
+    fn default() -> Self {
+        Self {
+            key: None,
+            cells: std::array::from_fn(|_| None),
+            len: 0,
+            payload_bytes: 0,
+            #[cfg(test)]
+            probe: None,
+        }
+    }
+}
+
+#[derive(PartialEq)]
+struct TableCellPainterKey {
+    context: egui::Context,
+    viewport: egui::ViewportId,
+    pass: u64,
+    pixels_per_point: f32,
+    options: egui::epaint::text::TextOptions,
+}
+
+impl TableCellPreparation {
+    fn begin_table(&mut self, ui: &egui::Ui) {
+        let context = ui.painter().ctx();
+        let (viewport, pixels_per_point) =
+            context.input(|input| (input.raw.viewport_id, input.pixels_per_point));
+        let key = TableCellPainterKey {
+            context: context.clone(),
+            viewport,
+            pass: context.cumulative_pass_nr_for(viewport),
+            pixels_per_point,
+            options: ui.painter().fonts(|fonts| *fonts.options()),
+        };
+        // Definitions and atlas resets activate at begin-pass. The renderer
+        // owns this preparation only for one invocation, across all its tables.
+        if self.key.as_ref() != Some(&key) {
+            self.cells.fill(None);
+            self.len = 0;
+            self.payload_bytes = 0;
+            self.key = Some(key);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn unwrapped(
+        &mut self,
+        ui: &egui::Ui,
+        inlines: &[Inline],
+        document: &MarkdownDocument,
+        find: &MarkdownFindState,
+        font: FontId,
+        style: InlineRenderStyle,
+    ) -> Arc<egui::Galley> {
+        #[cfg(test)]
+        let ordinary = self.probe.as_ref().is_some_and(|probe| probe.ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        let plain = match inlines {
+            [Inline::Text(text)]
+                if !ordinary
+                    && self.key.is_some()
+                    && !text.text().is_empty()
+                    && text.text().len() <= MAX_PREPARED_TABLE_CELL_INPUT_BYTES
+                    && !matches!(font.family, egui::FontFamily::Name(_)) =>
+            {
+                let span = text.text_span();
+                let first = find.matches().partition_point(|matched| {
+                    matched.span().end().byte_offset() <= span.start().byte_offset()
+                });
+                (!find.matches().get(first).is_some_and(|matched| {
+                    matched.span().start().byte_offset() < span.end().byte_offset()
+                }))
+                .then_some(text.text())
+            }
+            _ => None,
+        };
+        if let Some(text) = plain {
+            let format = base_text_format(font.clone(), style);
+            for galley in self.cells[..self.len].iter().flatten() {
+                // These entries all came from the same ordinary default,
+                // unwrapped, single-section job. Compare borrowed text and the
+                // complete section format before constructing another job.
+                if galley.job.text == text && galley.job.sections[0].format == format {
+                    return galley.clone();
+                }
+            }
+        }
+        let job = inline_layout_job(inlines, document, find, font, style);
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.preparations += 1;
+            probe.prepared_text_bytes += job.text.len();
+            probe.job_capacity_bytes += job.text.capacity()
+                + job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+            probe.unwrapped_layouts += 1;
+        }
+        let galley = ui.painter().layout_job(job);
+        if plain.is_some() {
+            self.retain(&galley);
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.retained_entries = self.len;
+            probe.retained_payload_bytes = self.payload_bytes;
+        }
+        galley
+    }
+
+    fn retain(&mut self, galley: &Arc<egui::Galley>) -> bool {
+        if self.len >= MAX_PREPARED_TABLE_CELLS {
+            return false;
+        }
+        let Some(total) = table_cell_payload_bytes(galley)
+            .and_then(|bytes| self.payload_bytes.checked_add(bytes))
+            .filter(|total| *total <= MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES)
+        else {
+            return false;
+        };
+        self.cells[self.len] = Some(galley.clone());
+        self.len += 1;
+        self.payload_bytes = total;
+        true
+    }
+
+    fn constrained(
+        &mut self,
+        ui: &egui::Ui,
+        unwrapped: Arc<egui::Galley>,
+        width: f32,
+    ) -> Arc<egui::Galley> {
+        table_cell_galley(ui, unwrapped, width, |_job| {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                probe.wrap_layouts += 1;
+                probe.wrap_clone_capacity_bytes += _job.text.capacity()
+                    + _job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+            }
+        })
+    }
+
+    #[cfg(test)]
+    fn record(&mut self, span: SourceSpan, response: &egui::Response) {
+        if let Some(probe) = &mut self.probe {
+            probe.observations.push(TableCellObservation {
+                span,
+                id: response.id,
+                rect: response.rect,
+                interact_rect: response.interact_rect,
+                intrinsic_size: response.intrinsic_size(),
+                sense: response.sense,
+                focused: response.has_focus(),
+                hovered: response.hovered(),
+                clicked: response.clicked(),
+                dragged: response.dragged(),
+                drag_started: response.drag_started(),
+                drag_stopped: response.drag_stopped(),
+                changed: response.changed(),
+                enabled: response.enabled(),
+            });
+        }
+    }
+}
+
+fn table_cell_payload_bytes(galley: &egui::Galley) -> Option<usize> {
+    if galley.job.text.len() > MAX_PREPARED_TABLE_CELL_INPUT_BYTES
+        || galley.job.sections.len() != 1
+        || galley.rows.len() > MAX_PREPARED_TABLE_CELL_INPUT_BYTES + 1
+    {
+        return None;
+    }
+    let mut bytes = std::mem::size_of::<egui::Galley>()
+        .checked_add(std::mem::size_of::<LayoutJob>())?
+        .checked_add(galley.job.text.capacity())?
+        .checked_add(
+            galley
+                .job
+                .sections
+                .capacity()
+                .checked_mul(std::mem::size_of::<egui::text::LayoutSection>())?,
+        )?
+        .checked_add(
+            galley
+                .rows
+                .capacity()
+                .checked_mul(std::mem::size_of::<egui::epaint::text::PlacedRow>())?,
+        )?;
+    for row in &galley.rows {
+        bytes = bytes
+            .checked_add(std::mem::size_of::<egui::epaint::text::Row>())?
+            .checked_add(
+                row.glyphs
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<egui::epaint::text::Glyph>())?,
+            )?
+            .checked_add(
+                row.visuals
+                    .mesh
+                    .vertices
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<egui::epaint::Vertex>())?,
+            )?
+            .checked_add(
+                row.visuals
+                    .mesh
+                    .indices
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<u32>())?,
+            )?;
+    }
+    Some(bytes)
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TableCellProbe {
+    ordinary: bool,
+    preparations: usize,
+    prepared_text_bytes: usize,
+    job_capacity_bytes: usize,
+    unwrapped_layouts: usize,
+    wrap_layouts: usize,
+    wrap_clone_capacity_bytes: usize,
+    retained_entries: usize,
+    retained_payload_bytes: usize,
+    observations: Vec<TableCellObservation>,
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq)]
+struct TableCellObservation {
+    span: SourceSpan,
+    id: egui::Id,
+    rect: egui::Rect,
+    interact_rect: egui::Rect,
+    intrinsic_size: Option<egui::Vec2>,
+    sense: Sense,
+    focused: bool,
+    hovered: bool,
+    clicked: bool,
+    dragged: bool,
+    drag_started: bool,
+    drag_stopped: bool,
+    changed: bool,
+    enabled: bool,
+}
+
 struct PreparedCodeCopyCaption {
     key: CodeCopyCaptionKey,
     galley: Arc<egui::Galley>,
@@ -2823,6 +3106,7 @@ impl MarkdownRenderState<'_> {
         let font = FontId::proportional(BODY_TEXT_SIZE - 1.0);
         let padding_x = f32::from(TABLE_CELL_PADDING_X);
         let padding_y = f32::from(TABLE_CELL_PADDING_Y);
+        self.table_cells.begin_table(ui);
 
         // Measure unwrapped cells before assigning column widths; fitting cells
         // reuse that galley. `egui::Grid` instead feeds last frame's wrapped
@@ -2833,7 +3117,8 @@ impl MarkdownRenderState<'_> {
         for row in block.rows() {
             let mut cells = Vec::with_capacity(column_count);
             for (column, cell) in row.cells().iter().enumerate() {
-                let job = inline_layout_job(
+                let unwrapped = self.table_cells.unwrapped(
+                    ui,
                     cell.inlines(),
                     document,
                     self.find,
@@ -2844,7 +3129,6 @@ impl MarkdownRenderState<'_> {
                         text_style
                     },
                 );
-                let unwrapped = ui.painter().layout_job(job);
                 let width = unwrapped.size().x;
                 if let Some(slot) = natural.get_mut(column) {
                     *slot = slot.max(width + padding_x * 2.0);
@@ -2882,7 +3166,7 @@ impl MarkdownRenderState<'_> {
                                     .get(column)
                                     .copied()
                                     .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
-                                let galley = table_cell_galley(
+                                let galley = self.table_cells.constrained(
                                     ui,
                                     unwrapped,
                                     (width - padding_x * 2.0).max(1.0),
@@ -2935,7 +3219,13 @@ impl MarkdownRenderState<'_> {
                                         .max_rect(cell_rect.shrink2(vec2(padding_x, padding_y)))
                                         .layout(layout),
                                 );
-                                cell_ui.add(egui::Label::new(galley).selectable(true));
+                                let response =
+                                    cell_ui.add(egui::Label::new(galley).selectable(true));
+                                #[cfg(test)]
+                                self.table_cells
+                                    .record(row.cells()[column].span(), &response);
+                                #[cfg(not(test))]
+                                let _ = response;
                                 row_rects.push(cell_rect);
                             }
                             cell_rects.push(row_rects);
@@ -3956,7 +4246,12 @@ fn table_column_widths(natural: &[f32], available: f32) -> Vec<f32> {
         .collect()
 }
 
-fn table_cell_galley(ui: &egui::Ui, unwrapped: Arc<egui::Galley>, width: f32) -> Arc<egui::Galley> {
+fn table_cell_galley(
+    ui: &egui::Ui,
+    unwrapped: Arc<egui::Galley>,
+    width: f32,
+    on_layout: impl FnOnce(&LayoutJob),
+) -> Arc<egui::Galley> {
     // Match epaint's integral wrap-width cache key, including at fractional DPI.
     let width = width.round();
     if unwrapped.size().x <= width {
@@ -3964,6 +4259,7 @@ fn table_cell_galley(ui: &egui::Ui, unwrapped: Arc<egui::Galley>, width: f32) ->
     }
     let mut job = (*unwrapped.job).clone();
     job.wrap.max_width = width;
+    on_layout(&job);
     ui.painter().layout_job(job)
 }
 
@@ -4417,6 +4713,8 @@ pub(crate) const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
 /// divergent Markdown implementation.
 pub(crate) struct MarkdownPreviewPane {
     #[cfg(test)]
+    table_cell_probe: Option<TableCellProbe>,
+    #[cfg(test)]
     code_copy_probe: Option<CodeCopyProbe>,
     source: MarkdownSource,
     document: Option<MarkdownDocument>,
@@ -4454,6 +4752,8 @@ pub(crate) struct MarkdownPreviewPane {
 impl MarkdownPreviewPane {
     pub(crate) fn new(source: MarkdownSource, text: &str) -> Self {
         let mut pane = Self {
+            #[cfg(test)]
+            table_cell_probe: None,
             #[cfg(test)]
             code_copy_probe: None,
             source,
@@ -4593,6 +4893,14 @@ impl MarkdownPreviewPane {
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui) {
         #[cfg(test)]
+        if let Some(probe) = &mut self.table_cell_probe {
+            let ordinary = probe.ordinary;
+            *probe = TableCellProbe {
+                ordinary,
+                ..Default::default()
+            };
+        }
+        #[cfg(test)]
         if let Some(probe) = &mut self.code_copy_probe {
             probe.preparations = 0;
             probe.buttons.clear();
@@ -4621,6 +4929,7 @@ impl MarkdownPreviewPane {
         let mut heading_tops = std::mem::take(&mut self.heading_tops);
         heading_tops.clear();
         let mut state = MarkdownRenderState {
+            table_cells: TableCellPreparation::default(),
             code_copy_caption: CodeCopyCaptionPreparation::default(),
             mode: MarkdownViewerMode::Preview,
             outline_open: false,
@@ -4640,6 +4949,7 @@ impl MarkdownPreviewPane {
         };
         #[cfg(test)]
         {
+            state.table_cells.probe = self.table_cell_probe.take();
             state.code_copy_caption.probe = self.code_copy_probe.take();
         }
         let viewport_height = ui.available_height().max(120.0);
@@ -4675,6 +4985,7 @@ impl MarkdownPreviewPane {
             });
         #[cfg(test)]
         {
+            self.table_cell_probe = state.table_cells.probe.take();
             self.code_copy_probe = state.code_copy_caption.probe.take();
         }
         // Which section the reader is actually looking at, taken from where
@@ -5292,6 +5603,7 @@ mod tests {
         Harness::builder().build_ui_state(
             move |ui, _state: &mut ()| {
                 let mut state = MarkdownRenderState {
+                    table_cells: TableCellPreparation::default(),
                     code_copy_caption: CodeCopyCaptionPreparation::default(),
                     mode: MarkdownViewerMode::Preview,
                     outline_open: false,
@@ -5502,7 +5814,8 @@ mod tests {
                                     unwrapped.size().x.max(1.0),
                                     unwrapped.size().x + 100.0,
                                 ] {
-                                    let actual = table_cell_galley(ui, unwrapped.clone(), width);
+                                    let actual =
+                                        table_cell_galley(ui, unwrapped.clone(), width, |_| {});
                                     let mut reference_job = (*unwrapped.job).clone();
                                     reference_job.wrap.max_width = width;
                                     let reference = ui.painter().layout_job(reference_job);
@@ -7176,6 +7489,10 @@ mod tests {
                 ordinary: index == 0,
                 ..Default::default()
             });
+            pane.table_cell_probe = Some(TableCellProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
             (context, pane)
         })
     }
@@ -7245,16 +7562,379 @@ mod tests {
                     .count()
             });
         assert_eq!(ordinary.buttons.len(), fences);
-        assert_eq!(ordinary.preparations, fences);
+        assert_eq!(
+            ordinary.preparations,
+            if ordinary.ordinary {
+                fences
+            } else {
+                usize::from(fences != 0)
+            }
+        );
         assert_eq!(prepared.preparations, usize::from(fences != 0));
         assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
         assert_eq!(pair[0].1.visible_heading, pair[1].1.visible_heading);
         assert_eq!(pair[0].1.heading_tops, pair[1].1.heading_tops);
+        let old_cells = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new_cells = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(old_cells.observations, new_cells.observations);
+        assert!(new_cells.retained_entries <= MAX_PREPARED_TABLE_CELLS);
+        assert!(new_cells.retained_payload_bytes <= MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
         // These headless assertions inspect shapes without applying textures.
         for frame_output in &mut output {
             frame_output.textures_delta.clear();
         }
         output
+    }
+
+    fn assert_table_preparation_work(
+        pair: &[(egui::Context, MarkdownPreviewPane); 2],
+        expected_preparations: usize,
+        control: &str,
+    ) {
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(old.observations.len(), 1600, "{control}");
+        assert_eq!(new.observations.len(), 1600, "{control}");
+        assert_eq!(old.preparations, 1600, "{control}");
+        assert_eq!(old.unwrapped_layouts, 1600, "{control}");
+        assert_eq!(new.preparations, expected_preparations, "{control}");
+        assert_eq!(new.unwrapped_layouts, expected_preparations, "{control}");
+        assert_eq!(old.wrap_layouts, new.wrap_layouts, "{control}");
+        assert_eq!(
+            old.wrap_clone_capacity_bytes, new.wrap_clone_capacity_bytes,
+            "{control}"
+        );
+        assert!(new.job_capacity_bytes < old.job_capacity_bytes, "{control}");
+        eprintln!(
+            "table preparation {control}: live cells={}; ordinary/candidate preparations={}/{} unwrapped layouts={}/{} text bytes={}/{} actual job String/section Vec capacity bytes={}/{}; wrap layouts={}/{} actual wrap-clone capacities={}/{}; candidate retained entries={} accounted frame-local galley payload={}",
+            new.observations.len(), old.preparations, new.preparations,
+            old.unwrapped_layouts, new.unwrapped_layouts, old.prepared_text_bytes,
+            new.prepared_text_bytes, old.job_capacity_bytes, new.job_capacity_bytes,
+            old.wrap_layouts, new.wrap_layouts, old.wrap_clone_capacity_bytes,
+            new.wrap_clone_capacity_bytes, new.retained_entries, new.retained_payload_bytes,
+        );
+    }
+
+    fn table_preparation_pair(text: &str) -> [(egui::Context, MarkdownPreviewPane); 2] {
+        let mut pair = caption_oracle_pair(text);
+        // Isolate the new seam against current production caption preparation,
+        // not the caption's older independent control.
+        pair[0].1.code_copy_probe.as_mut().unwrap().ordinary = false;
+        pair
+    }
+
+    #[test]
+    fn table_preparation_removes_repeated_work_across_the_live_400_section_preview() {
+        for width in [1180.0, 360.0] {
+            let mut pair = table_preparation_pair(&mixed_caption_fixture());
+            let size = vec2(width, 760.0);
+            for frame in 0..3 {
+                caption_oracle_frame(&mut pair, frame, size, Vec::new());
+                assert_table_preparation_work(&pair, 403, &format!("width={width} frame={frame}"));
+            }
+            caption_oracle_frame(
+                &mut pair,
+                3,
+                size,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(width / 2.0, 400.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, -1100.0),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            assert_table_preparation_work(&pair, 403, "scroll");
+            for (frame, query, expected) in [(4, "synthetic", 403), (5, "Item", 802)] {
+                for (_, pane) in &mut pair {
+                    pane.find
+                        .set_query(pane.document.as_ref().unwrap(), query.into());
+                }
+                caption_oracle_frame(&mut pair, frame, size, Vec::new());
+                assert_table_preparation_work(&pair, expected, query);
+            }
+            for (_, pane) in &mut pair {
+                pane.find.next();
+            }
+            caption_oracle_frame(&mut pair, 6, size, Vec::new());
+            assert_table_preparation_work(&pair, 802, "current Find match");
+            for (_, pane) in &mut pair {
+                pane.find.clear();
+            }
+            caption_oracle_frame(&mut pair, 7, size, Vec::new());
+            assert_table_preparation_work(&pair, 403, "Find cleared");
+
+            let mut viewers = source_preparation_pair(&mixed_caption_fixture());
+            for (index, (_, viewer)) in viewers.iter_mut().enumerate() {
+                viewer.mode = MarkdownViewerMode::Preview;
+                viewer.table_cell_probe = Some(TableCellProbe {
+                    ordinary: index == 0,
+                    ..Default::default()
+                });
+            }
+            for frame in 0..2 {
+                source_preparation_frame(&mut viewers, frame, size, Vec::new());
+                let old = viewers[0].1.table_cell_probe.as_ref().unwrap();
+                let new = viewers[1].1.table_cell_probe.as_ref().unwrap();
+                assert_eq!(old.observations, new.observations, "standalone viewer");
+                assert_eq!(old.observations.len(), 1600);
+                assert_eq!(old.unwrapped_layouts, 1600);
+                assert_eq!(new.unwrapped_layouts, 403);
+            }
+        }
+    }
+
+    #[test]
+    fn table_preparation_keeps_live_dependencies_navigation_and_unicode_copy() {
+        let mut pair = table_preparation_pair(&mixed_caption_fixture());
+        let wide = vec2(1180.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, wide, Vec::new());
+        for (frame, control) in ["width", "fonts", "options", "scale", "theme", "revision"]
+            .into_iter()
+            .enumerate()
+        {
+            let size = if control == "width" {
+                vec2(360.0, 760.0)
+            } else {
+                wide
+            };
+            for (context, _) in &pair {
+                match control {
+                    "fonts" => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts.families.insert(
+                            egui::FontFamily::Proportional,
+                            fonts.families[&egui::FontFamily::Monospace].clone(),
+                        );
+                        context.set_fonts(fonts);
+                    }
+                    "options" => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    "scale" => context.set_pixels_per_point(1.25),
+                    "theme" => context.set_visuals(egui::Visuals::light()),
+                    _ => {}
+                }
+            }
+            if control == "revision" {
+                rebind_caption_oracle(
+                    &mut pair,
+                    &mixed_caption_fixture().replace("Item", "café 漢字"),
+                );
+            }
+            caption_oracle_frame(&mut pair, frame + 1, size, Vec::new());
+            assert_table_preparation_work(&pair, 403, control);
+        }
+        for (_, pane) in &mut pair {
+            pane.scroll_to_heading(0);
+        }
+        for frame in 7..10 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+        }
+        let output = caption_oracle_frame(&mut pair, 10, wide, Vec::new());
+        let text = output[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "café 漢字" => Some(text),
+                _ => None,
+            })
+            .expect("the live Unicode table cell");
+        let start = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.begin())
+                .center()
+                .to_vec2();
+        let end = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.end())
+                .center()
+                .to_vec2();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        caption_oracle_frame(
+            &mut pair,
+            11,
+            wide,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        caption_oracle_frame(&mut pair, 12, wide, vec![egui::Event::PointerMoved(end)]);
+        caption_oracle_frame(&mut pair, 13, wide, vec![button(end, false)]);
+        let output = caption_oracle_frame(&mut pair, 14, wide, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == "café 漢字")
+        }));
+        for (_, pane) in &mut pair {
+            pane.scroll_to_heading(399);
+        }
+        for frame in 15..18 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+        }
+        let cells = &pair[1].1.table_cell_probe.as_ref().unwrap().observations;
+        assert!(cells
+            .last()
+            .unwrap()
+            .rect
+            .intersects(egui::Rect::from_min_size(egui::Pos2::ZERO, wide)));
+        assert_table_preparation_work(&pair, 403, "offscreen heading navigation");
+    }
+
+    #[test]
+    fn table_preparation_refuses_complex_highlighted_and_capacity_overflow_then_recovers() {
+        let context = egui::Context::default();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let base = ui.painter().layout_no_wrap(
+                "capacity".into(),
+                FontId::proportional(BODY_TEXT_SIZE - 1.0),
+                theme::TEXT_PRIMARY,
+            );
+            let mut exact = (*base).clone();
+            let mut job = (*exact.job).clone();
+            job.text = String::with_capacity(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+            job.text.push_str("capacity");
+            exact.job = Arc::new(job);
+            let non_text = table_cell_payload_bytes(&exact).unwrap() - exact.job.text.capacity();
+            let mut job = (*exact.job).clone();
+            job.text = String::with_capacity(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES - non_text);
+            job.text.push_str("capacity");
+            exact.job = Arc::new(job);
+            assert_eq!(table_cell_payload_bytes(&exact), Some(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES));
+            let mut preparation = TableCellPreparation::default();
+            assert!(preparation.retain(&Arc::new(exact.clone())));
+            assert!(!preparation.retain(&base), "an admitted entry cannot exceed the exact aggregate cap");
+
+            let mut extra = exact.clone();
+            let mut job = (*extra.job).clone();
+            job.text = String::with_capacity(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES - non_text + 1);
+            job.text.push_str("capacity");
+            extra.job = Arc::new(job);
+            assert_eq!(table_cell_payload_bytes(&extra), Some(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES + 1));
+            assert!(!TableCellPreparation::default().retain(&Arc::new(extra)));
+
+            for field in ["sections", "rows", "glyphs", "vertices", "indices"] {
+                let mut extra = (*base).clone();
+                extra.job = Arc::new((*extra.job).clone());
+                for row in &mut extra.rows {
+                    Arc::make_mut(&mut row.row);
+                }
+                let before = table_cell_payload_bytes(&extra).unwrap();
+                let delta = match field {
+                    "sections" => {
+                        let job = Arc::make_mut(&mut extra.job);
+                        let before = job.sections.capacity();
+                        job.sections.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                        (job.sections.capacity() - before) * std::mem::size_of::<egui::text::LayoutSection>()
+                    }
+                    "rows" => {
+                        let before = extra.rows.capacity();
+                        extra.rows.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                        (extra.rows.capacity() - before) * std::mem::size_of::<egui::epaint::text::PlacedRow>()
+                    }
+                    _ => {
+                        let row = Arc::make_mut(&mut extra.rows[0].row);
+                        match field {
+                            "glyphs" => {
+                                let before = row.glyphs.capacity();
+                                row.glyphs.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                                (row.glyphs.capacity() - before) * std::mem::size_of::<egui::epaint::text::Glyph>()
+                            }
+                            "vertices" => {
+                                let before = row.visuals.mesh.vertices.capacity();
+                                row.visuals.mesh.vertices.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                                (row.visuals.mesh.vertices.capacity() - before) * std::mem::size_of::<egui::epaint::Vertex>()
+                            }
+                            _ => {
+                                let before = row.visuals.mesh.indices.capacity();
+                                row.visuals.mesh.indices.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                                (row.visuals.mesh.indices.capacity() - before) * std::mem::size_of::<u32>()
+                            }
+                        }
+                    }
+                };
+                assert!(delta > 0, "{field}");
+                assert_eq!(table_cell_payload_bytes(&extra), Some(before + delta), "{field}");
+                assert!(!TableCellPreparation::default().retain(&Arc::new(extra)), "{field} spare capacity must be charged");
+            }
+            eprintln!(
+                "table metadata: fixed entry array={} bytes; painter-key Option={} bytes; two counters={} bytes; Galley/LayoutJob/Row bodies include their Vec metadata; Arc control blocks and allocator overhead are not included in the 64 KiB payload",
+                std::mem::size_of::<[Option<Arc<egui::Galley>>; MAX_PREPARED_TABLE_CELLS]>(),
+                std::mem::size_of::<Option<TableCellPainterKey>>(),
+                2 * std::mem::size_of::<usize>(),
+            );
+        });
+        output.textures_delta.clear();
+        let mut pair = table_preparation_pair(&mixed_caption_fixture());
+        let size = vec2(1180.0, 760.0);
+        let bounded_rows: String = (0..48)
+            .map(|index| format!("| cell{index} | value{index} |\n"))
+            .collect();
+        rebind_caption_oracle(
+            &mut pair,
+            &format!("| A | B |\n| - | - |\n{bounded_rows}{bounded_rows}"),
+        );
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(new.retained_entries, MAX_PREPARED_TABLE_CELLS);
+        assert_eq!(old.observations.len(), 194);
+        assert_eq!(new.preparations, old.preparations - 30);
+
+        let input = format!("{}é", "x".repeat(MAX_PREPARED_TABLE_CELL_INPUT_BYTES - 2));
+        let rows = (0..4)
+            .map(|index| format!("| {input}{index} | **complex** |\n"))
+            .collect::<String>();
+        rebind_caption_oracle(&mut pair, &format!("| A | B |\n| - | - |\n{rows}{rows}"));
+        caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(
+            new.retained_entries, 2,
+            "257 UTF-8 bytes and complex inlines are ordinary"
+        );
+        assert_eq!(old.preparations, new.preparations);
+
+        let rows = (0..8)
+            .map(|index| {
+                format!(
+                    "| {}{index} | short |\n",
+                    "x".repeat(MAX_PREPARED_TABLE_CELL_INPUT_BYTES - 1)
+                )
+            })
+            .collect::<String>();
+        rebind_caption_oracle(&mut pair, &format!("| A | B |\n| - | - |\n{rows}{rows}"));
+        caption_oracle_frame(&mut pair, 2, size, Vec::new());
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert!(
+            new.retained_entries < 11,
+            "actual glyph/row/mesh capacities exhaust the payload allowance"
+        );
+        assert!(
+            new.preparations > 11,
+            "refused payloads are prepared normally again"
+        );
+        assert!(
+            new.preparations < old.preparations,
+            "admitted cells still reuse"
+        );
+        assert!(new.retained_payload_bytes <= MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+        eprintln!(
+            "table capacity refusal: entries={} accounted payload={} preparations={}/{}",
+            new.retained_entries, new.retained_payload_bytes, old.preparations, new.preparations
+        );
+
+        rebind_caption_oracle(&mut pair, &mixed_caption_fixture());
+        caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        assert_table_preparation_work(&pair, 403, "refusal recovery");
     }
 
     #[test]
@@ -9189,6 +9869,7 @@ mod tests {
             |context| {
                 egui::CentralPanel::default().show(context, |ui| {
                     let mut render_state = MarkdownRenderState {
+                        table_cells: TableCellPreparation::default(),
                         code_copy_caption: CodeCopyCaptionPreparation::default(),
                         mode: MarkdownViewerMode::Preview,
                         outline_open: true,
@@ -9258,6 +9939,7 @@ mod tests {
             |context| {
                 egui::CentralPanel::default().show(context, |ui| {
                     let mut render_state = MarkdownRenderState {
+                        table_cells: TableCellPreparation::default(),
                         code_copy_caption: CodeCopyCaptionPreparation::default(),
                         mode: MarkdownViewerMode::Preview,
                         // The user's own toggle stays on; only this frame
