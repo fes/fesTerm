@@ -6155,6 +6155,16 @@ mod tests {
             crate::document_store::load(&markdown, festerm_document::DocumentBounds::default())
                 .unwrap();
 
+        #[cfg(windows)]
+        {
+            let error = fs::rename(&directory, &retained).unwrap_err();
+            assert!(matches!(error.raw_os_error(), Some(5) | Some(32)));
+        }
+        let canonical_path = loaded.source_authority.canonical_path().to_path_buf();
+        let generation = loaded.generation;
+        let parent_identity = loaded.source_authority.parent_identity();
+        drop(loaded);
+
         fs::rename(&directory, &retained).unwrap();
         fs::create_dir(&directory).unwrap();
         fs::hard_link(retained.join("readme.md"), &markdown).unwrap();
@@ -6164,9 +6174,9 @@ mod tests {
         assert!(
             validate_markdown_generation(
                 &capability,
-                loaded.source_authority.canonical_path(),
-                loaded.generation,
-                loaded.source_authority.parent_identity(),
+                &canonical_path,
+                generation,
+                parent_identity,
             )
             .is_err(),
             "the same Markdown file in a different directory must not transfer image authority"

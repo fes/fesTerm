@@ -1570,6 +1570,18 @@ mod tests {
         let mut registry = DocumentRegistry::new();
         let id = registry.open_local(&path).unwrap();
 
+        #[cfg(windows)]
+        {
+            let error = fs::rename(&directory.path, &retained.path).unwrap_err();
+            assert!(matches!(error.raw_os_error(), Some(5) | Some(32)));
+            registry
+                .get_mut(id)
+                .unwrap()
+                .source_authority
+                .as_mut()
+                .unwrap()
+                .release_identity_pin_for_parent_rebind_test();
+        }
         fs::rename(&directory.path, &retained.path).unwrap();
         fs::create_dir(&directory.path).unwrap();
         fs::hard_link(retained.path.join("notes.md"), &path).unwrap();

@@ -17,7 +17,23 @@ inspection requires EA-read access, and a metadata-only handle does not
 participate in delete-sharing checks. Verification now requests EA-read and
 delete access without delete sharing, while still requesting no payload data
 access. Existing exclusive-payload and captured-original regressions prove
-that the final name is pinned. A new unprivileged native regression renames
+that the final name is pinned. Application verification hashes the retained
+readable payload and compares the locked published name's metadata and
+identity; it never attempts a data read through the metadata-only lock.
+Native DACL mutation fixtures explicitly request DACL-write access, and an
+audit fixture releases its delete-bearing mover before final verification.
+A Windows generation regression proves that the final verifier cannot read
+payload bytes while the retained readable handle supplies the digest and
+matches the locked name's metadata.
+Directory refusals also keep their typed classification: native save opens
+preserve the directory NTSTATUS, while canonical reads use cap-std backup
+semantics to inspect and reject directory handles. The sandbox, canonical
+checks, and ordinary Cloud Files hydration path remain unchanged.
+Windows parent-substitution fixtures now prove the live identity/save locks
+block ordinary directory renames. The source-authority tests explicitly retire
+only their test-owned identity pin before exercising the independent
+parent-identity rejection; production pins and save locks remain unchanged.
+A new unprivileged native regression renames
 and substitutes the destination directory, publishes a short filename into
 the retained directory, and proves a collision leaves both versions intact.
 Audit-privilege and unsupported-EA refusals remain unchanged; local endpoint

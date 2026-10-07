@@ -118,7 +118,10 @@ The editor never resolves a divergence silently.
   use native `NtSetInformationFile` with `FileRenameInformation` and
   `ReplaceIfExists = false`, relative to the retained destination handle.
   Verification requests EA-read and delete access without delete sharing;
-  metadata-only handles cannot enforce that pathname lock. The displaced original is
+  metadata-only handles cannot enforce that pathname lock. Content digests
+  read the retained exclusive payload, while the locked published handle
+  supplies matching metadata and identity without gaining payload-read access.
+  The displaced original is
   immediately restricted to the current user and also has a separately written
   private byte copy. An NTFS EFS-encrypted target is
   refused before staging because fesTerm cannot yet preserve that encryption;

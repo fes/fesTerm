@@ -1123,6 +1123,9 @@ mod imp {
                 0,
             )
         };
+        if result == windows_sys::Win32::Foundation::STATUS_FILE_IS_A_DIRECTORY {
+            return Err(io::Error::from(io::ErrorKind::IsADirectory));
+        }
         if result != STATUS_SUCCESS {
             return Err(io::Error::from_raw_os_error(unsafe {
                 RtlNtStatusToDosError(result) as i32
@@ -1942,7 +1945,11 @@ mod imp {
         #[test]
         fn staging_parent_rejects_a_dacl_that_allows_child_substitution() {
             let directory = TemporaryDirectory::new();
-            let directory_handle = directory.handle();
+            let directory_handle = OpenOptions::new()
+                .access_mode(GENERIC_READ | WRITE_DAC)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(&directory.0)
+                .unwrap();
             assert!(secure_staging_parent(&directory_handle).unwrap().is_some());
 
             make_unprotected(&directory_handle);
@@ -2264,6 +2271,7 @@ mod imp {
             assert!(security_metadata_matches(&replacement, &target_security).unwrap());
             rename_file_noreplace(&target, &staging_handle, Path::new("original")).unwrap();
             rename_file_noreplace(&replacement, &directory_handle, Path::new("target.md")).unwrap();
+            drop(replacement);
 
             let target = open_file_no_reparse_for_security_verification(
                 &directory_handle,

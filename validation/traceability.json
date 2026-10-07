@@ -1680,6 +1680,8 @@
         "exclusive_private_file_uses_a_transient_move_and_blocks_later_delete_access",
         "conditional_publication_follows_the_retained_directory_and_refuses_collisions",
         "captured_file_uses_transient_moves_and_a_final_pathname_lock",
+        "published_generation_uses_retained_payload_and_metadata_only_lock",
+        "saving_pins_the_captured_parent_against_path_rebinding",
         "unsupported_security_metadata_is_refused_before_application",
         "alternate_data_streams_are_detected_and_refused",
         "saving_into_a_file_that_changed_first_conflicts_and_writes_nothing",
