@@ -5451,8 +5451,12 @@ impl FesTermApp {
     }
 
     pub(crate) fn report_document_activation_error(&mut self, detail: String) {
+        if self.overlays.open_refusal.is_some() {
+            return;
+        }
         self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
             title: None,
+            acknowledgement_path: None,
             name: "Document request".to_owned(),
             path: String::new(),
             headline: "The document request could not be accepted".to_owned(),
@@ -6290,6 +6294,7 @@ impl FesTermApp {
                 .take_open_refusal()
                 .map(|(path, failure)| crate::overlay_state::OpenRefusalNotice {
                     title: None,
+                    acknowledgement_path: None,
                     name: path
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
@@ -9513,6 +9518,7 @@ mod tests {
             PathBuf::from("/tmp/.festerm-save-recovery.stage"),
             festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
         );
+        app.quit_confirmed = true;
 
         app.evaluate_close_request(&context);
         let mut output = context.end_pass();
@@ -9524,6 +9530,15 @@ mod tests {
         output.textures_delta.clear();
 
         app.overlays.open_refusal = app.state.take_open_refusal_notice();
+        app.report_document_activation_error("A later activation failed.".to_owned());
+        assert_eq!(
+            app.overlays
+                .open_refusal
+                .as_ref()
+                .and_then(|notice| notice.acknowledgement_path.as_deref())
+                .map(std::path::PathBuf::as_path),
+            Some(std::path::Path::new("/tmp/.festerm-save-recovery.stage"))
+        );
         assert!(app.overlays.blocks_terminal_input_except_paste());
         app.evaluate_close_request(&context);
         let mut output = context.end_pass();

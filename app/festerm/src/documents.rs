@@ -501,16 +501,18 @@ impl DocumentRegistry {
     }
 
     pub(crate) fn acknowledge_recovery_notice(&mut self, path: &Path) -> bool {
-        if self
-            .active_recovery_notice
-            .as_ref()
-            .is_some_and(|(active, _)| active == path)
-        {
-            self.active_recovery_notice = None;
-            true
-        } else {
-            false
+        let Some((active, _)) = self.active_recovery_notice.as_ref() else {
+            return false;
+        };
+        if active != path {
+            tracing::warn!(
+                active = %active.display(),
+                acknowledged = %path.display(),
+                "a recovery notice acknowledgement key did not match the active path"
+            );
         }
+        self.active_recovery_notice = None;
+        true
     }
 
     pub(crate) fn has_recovery_notices(&self) -> bool {
@@ -1049,7 +1051,7 @@ impl DocumentRegistry {
             Freshness::Unchanged => {
                 let authority_current =
                     document.source_authority.as_ref().is_some_and(|authority| {
-                        document_store::source_authority_is_current(authority, known)
+                        document_store::source_authority_identity_is_current(authority, known)
                     });
                 if authority_current {
                     document.availability = Availability::Available;
@@ -1333,7 +1335,8 @@ mod tests {
         let alias = directory.path.join("alias.md");
         if let Err(error) = symlink_file(&first_path, &alias) {
             if error.raw_os_error() == Some(1314)
-                && std::env::var_os("FESTERM_REQUIRE_WINDOWS_SYMLINKS").is_none()
+                && std::env::var_os("FESTERM_REQUIRE_WINDOWS_SYMLINKS")
+                    .is_none_or(|value| value.is_empty())
             {
                 return;
             }

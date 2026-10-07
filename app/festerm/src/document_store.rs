@@ -167,13 +167,32 @@ fn before_original_recovery_verification() {
 /// with the same contents as far as the filesystem can tell us". The identity
 /// component is what distinguishes a file that was edited in place from one
 /// that was replaced by an atomic save somewhere else.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Generation {
     size: u64,
     modified: Option<SystemTime>,
     identity: Option<FileIdentity>,
+    changed: Option<(i64, i64)>,
     digest: [u8; 32],
 }
+
+type GenerationMetadata = (
+    u64,
+    Option<SystemTime>,
+    Option<FileIdentity>,
+    Option<(i64, i64)>,
+);
+
+impl PartialEq for Generation {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size
+            && self.modified == other.modified
+            && self.identity == other.identity
+            && self.digest == other.digest
+    }
+}
+
+impl Eq for Generation {}
 
 /// What the Save As picker observed at the exact destination when the user
 /// confirmed it. Absence and an existing exact generation are deliberately
@@ -378,29 +397,43 @@ impl Generation {
         Ok(hasher.finalize().into())
     }
 
+    fn cheap_from_file(file: &File) -> Result<GenerationMetadata, std::io::Error> {
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        let changed = {
+            use std::os::unix::fs::MetadataExt;
+            Some((metadata.ctime(), metadata.ctime_nsec()))
+        };
+        #[cfg(windows)]
+        let changed = Some((festerm_windows_security::file_change_time(file)?, 0));
+        Ok((
+            metadata.len(),
+            metadata.modified().ok(),
+            file_identity_from_file(file)?,
+            changed,
+        ))
+    }
+
     #[cfg(not(windows))]
     fn from_file(file: &File) -> Result<Self, std::io::Error> {
-        let metadata = file.metadata()?;
+        let (size, modified, identity, changed) = Self::cheap_from_file(file)?;
         Ok(Self {
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
-            identity: file_identity(&metadata),
+            size,
+            modified,
+            identity,
+            changed,
             digest: Self::digest(file)?,
         })
     }
 
     #[cfg(windows)]
     fn from_file(file: &File) -> Result<Self, std::io::Error> {
-        let metadata = file.metadata()?;
-        // Creation times can collide or survive replacement through NTFS tunneling.
-        let information = winapi_util::file::information(file)?;
+        let (size, modified, identity, changed) = Self::cheap_from_file(file)?;
         Ok(Self {
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
-            identity: Some(FileIdentity {
-                volume: information.volume_serial_number(),
-                file: information.file_index(),
-            }),
+            size,
+            modified,
+            identity,
+            changed,
             digest: Self::digest(file)?,
         })
     }
@@ -413,6 +446,17 @@ impl Generation {
 
     pub(crate) fn matches_file(self, file: &File) -> bool {
         Self::from_file(file).is_ok_and(|current| current == self)
+    }
+
+    fn metadata_matches_file(self, file: &File) -> bool {
+        Self::cheap_from_file(file).is_ok_and(|(size, modified, identity, changed)| {
+            (size, modified, identity, changed)
+                == (self.size, self.modified, self.identity, self.changed)
+        })
+    }
+
+    fn identity_matches_file(self, file: &File) -> bool {
+        file_identity_from_file(file).is_ok_and(|identity| identity == self.identity)
     }
 }
 
@@ -687,6 +731,21 @@ pub(crate) fn source_authority_is_current(
             .is_ok_and(|file| generation.matches_file(&file))
 }
 
+pub(crate) fn source_authority_identity_is_current(
+    authority: &LocalSourceAuthority,
+    generation: Generation,
+) -> bool {
+    let Some(parent) = authority.canonical_path.parent() else {
+        return false;
+    };
+    let Ok(directory) = open_canonical_directory(parent) else {
+        return false;
+    };
+    authority.parent_identity.matches_directory(&directory)
+        && open_canonical_file(&directory, &authority.canonical_path)
+            .is_ok_and(|file| generation.identity_matches_file(&file))
+}
+
 pub(crate) fn open_canonical_file(
     directory: &cap_std::fs::Dir,
     canonical_path: &Path,
@@ -750,7 +809,24 @@ pub fn freshness(path: &Path, known: Generation) -> Freshness {
     match fs::metadata(path) {
         Ok(metadata) if !metadata.is_file() => Freshness::Gone(LoadFailure::NotAFile),
         Ok(_) => {
-            let current = match Generation::at(path) {
+            let file = match File::open(path) {
+                Ok(file) => file,
+                Err(error) => return Freshness::Gone(classify_read_error(error)),
+            };
+            if known.metadata_matches_file(&file) {
+                return Freshness::Unchanged;
+            }
+            let length = match file.metadata() {
+                Ok(metadata) => metadata.len(),
+                Err(error) => return Freshness::Gone(classify_read_error(error)),
+            };
+            if length > DocumentBounds::MAX_BYTES as u64 {
+                return Freshness::Gone(LoadFailure::Refused(RefusalReason::TooLarge {
+                    bytes: usize::try_from(length).unwrap_or(usize::MAX),
+                    limit: DocumentBounds::MAX_BYTES,
+                }));
+            }
+            let current = match Generation::from_file(&file) {
                 Ok(current) => current,
                 Err(error) => return Freshness::Gone(classify_read_error(error)),
             };
@@ -1025,6 +1101,47 @@ struct SaveDirectory {
     directory: cap_std::fs::Dir,
     target: PathBuf,
     source_authority: LocalSourceAuthority,
+    #[cfg(windows)]
+    _parent_path_lock: File,
+}
+
+#[cfg(unix)]
+fn validate_destination_ancestor_chain(parent: &Path) -> Result<(), SaveFailure> {
+    for ancestor in parent.ancestors() {
+        let directory = open_canonical_directory(ancestor).map_err(classify_write_error)?;
+        let directory = directory
+            .try_clone()
+            .map(cap_std::fs::Dir::into_std_file)
+            .map_err(classify_write_error)?;
+        festerm_unix_security::secure_staging_parent(&directory).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::Unsupported {
+                SaveFailure::UnsafeDestinationFolder
+            } else {
+                classify_write_error(error)
+            }
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn lock_destination_parent(
+    parent: &Path,
+    directory: &cap_std::fs::Dir,
+) -> Result<File, SaveFailure> {
+    let lock = festerm_windows_security::lock_directory_path_without_delete_sharing(parent)
+        .map_err(classify_write_error)?;
+    let directory = directory
+        .try_clone()
+        .map(cap_std::fs::Dir::into_std_file)
+        .map_err(classify_write_error)?;
+    if festerm_windows_security::same_file_identity(&lock, &directory)
+        .map_err(classify_write_error)?
+    {
+        Ok(lock)
+    } else {
+        Err(SaveFailure::UnsafeDestinationFolder)
+    }
 }
 
 fn save_directory_from_loaded_authority(
@@ -1043,10 +1160,16 @@ fn save_directory_from_loaded_authority(
     if !authority.parent_identity.matches_directory(&directory) {
         return Err(SaveFailure::Gone);
     }
+    #[cfg(unix)]
+    validate_destination_ancestor_chain(parent)?;
+    #[cfg(windows)]
+    let parent_path_lock = lock_destination_parent(parent, &directory)?;
     Ok(SaveDirectory {
         directory,
         target,
         source_authority: authority.clone(),
+        #[cfg(windows)]
+        _parent_path_lock: parent_path_lock,
     })
 }
 
@@ -1057,6 +1180,10 @@ fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory
     let parent_identity =
         DirectoryIdentity::from_directory(&directory).map_err(classify_write_error)?;
     let target = PathBuf::from(file_name);
+    #[cfg(unix)]
+    validate_destination_ancestor_chain(&canonical_parent)?;
+    #[cfg(windows)]
+    let parent_path_lock = lock_destination_parent(&canonical_parent, &directory)?;
     Ok(SaveDirectory {
         directory,
         source_authority: LocalSourceAuthority {
@@ -1065,6 +1192,8 @@ fn source_authority_for_save(path: &Path, parent: &Path) -> Result<SaveDirectory
             retained_identity: None,
         },
         target,
+        #[cfg(windows)]
+        _parent_path_lock: parent_path_lock,
     })
 }
 
@@ -1292,11 +1421,8 @@ impl<'a> TemporaryFile<'a> {
                     }
                 };
                 if !matches {
+                    remove_staging_by_handle(&staging, &staging_directory);
                     drop(staging);
-                    tracing::warn!(
-                        path = %staging_directory.display(),
-                        "save staging was retained after the parent security state changed"
-                    );
                     return Err(SaveFailure::UnsafeDestinationFolder);
                 }
             }
@@ -2387,6 +2513,29 @@ mod tests {
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn saving_refuses_an_untrusted_ancestor_that_can_rename_the_parent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("shared-writable-ancestor");
+        let shared = directory.path.join("shared");
+        fs::create_dir(&shared).unwrap();
+        let parent = shared.join("documents");
+        fs::create_dir(&parent).unwrap();
+        let path = parent.join("notes.md");
+        fs::write(&path, "before\n").unwrap();
+        let loaded = load(&path, bounds()).unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+
+        let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+    }
+
     #[cfg(windows)]
     fn grant_everyone(path: &Path, inheritance: &str, rights: &str) {
         let status = process::Command::new("icacls")
@@ -2419,7 +2568,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_parent_security_change_after_staging_refuses_and_retains_staging() {
+    fn windows_parent_security_change_after_staging_refuses_and_cleans_by_handle() {
         let directory = TemporaryDirectory::new("windows-parent-security-change");
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
@@ -2434,10 +2583,7 @@ mod tests {
 
         assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
         assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
-        assert!(fs::read_dir(&directory.path)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .any(|candidate| candidate.is_dir()));
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
     #[cfg(windows)]
@@ -2448,8 +2594,6 @@ mod tests {
             ("write-dacl", "", "(WDAC)"),
             ("write-owner", "", "(WO)"),
             ("generic-all", "", "(GA)"),
-            ("inheritable-delete", "(OI)(CI)", "(DE)"),
-            ("inheritable-generic-write", "(OI)(CI)", "(GW)"),
         ] {
             let directory = TemporaryDirectory::new(name);
             let path = directory.file("notes.md", "before\n");
@@ -2466,11 +2610,11 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_save_route_accepts_shared_modify_without_child_mutation_rights() {
+    fn windows_save_route_accepts_inheritable_shared_modify_for_protected_children() {
         let directory = TemporaryDirectory::new("shared-modify-parent");
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
-        grant_everyone(&directory.path, "", "(AD,WD,DE)");
+        grant_everyone(&directory.path, "(OI)(CI)", "(M)");
 
         save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
 
@@ -2713,6 +2857,24 @@ mod tests {
     }
 
     #[test]
+    fn freshness_refuses_an_oversized_replacement_before_content_digesting() {
+        let directory = TemporaryDirectory::new("oversized-replacement");
+        let path = directory.file("notes.md", "small\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let replacement = directory.path.join("replacement.md");
+        File::create(&replacement)
+            .unwrap()
+            .set_len(DocumentBounds::MAX_BYTES as u64 + 1)
+            .unwrap();
+        replace_path(&replacement, &path);
+
+        assert!(matches!(
+            freshness(&path, loaded.generation),
+            Freshness::Gone(LoadFailure::Refused(RefusalReason::TooLarge { .. }))
+        ));
+    }
+
+    #[test]
     fn save_as_refuses_an_in_place_rewrite_after_confirmation() {
         let directory = TemporaryDirectory::new("rewritten-save-as");
         let path = directory.file("notes.md", "aaaaa\n");
@@ -2741,6 +2903,7 @@ mod tests {
                 volume: 1,
                 file: 10,
             }),
+            changed: Some((1, 0)),
             digest: [1; 32],
         };
         let replacement = Generation {

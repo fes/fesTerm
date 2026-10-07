@@ -488,12 +488,18 @@ case refuses before staging. On Windows, confirm an untrusted parent owner or
 a DACL granting an unprivileged principal child deletion, DACL mutation,
 ownership mutation, or generic all refuses before document bytes; the current
 user, LocalSystem, and Builtin Administrators are the explicit trusted set.
-Confirm add-file/add-directory, generic-write-equivalent, and parent-delete
-grants alone remain usable only when they are not inherited by child files;
-inheritable delete or generic-write grants must refuse. Mutate the owner/DACL
-after private staging is retained and
-confirm coherent-snapshot revalidation refuses, preserves the empty private
-stage for inspection, and never deletes through the untrusted pathname.
+On Unix, make the destination folder private beneath a non-sticky
+shared-writable ancestor and confirm Save refuses before staging; a sticky
+current-user/root-owned chain remains usable. On Windows, confirm the retained
+non-delete-sharing parent lock rejects a concurrent parent rename until the
+save finishes.
+Confirm add-file/add-directory, inherited Modify/generic-write, and
+parent-delete grants alone remain usable because protected staging and new
+payload DACLs do not inherit them. Mutate the owner/DACL after private staging
+is retained and
+confirm coherent-snapshot revalidation refuses; Windows removes only the exact
+empty stage by handle while Unix may preserve it for inspection, and neither
+deletes through the untrusted pathname.
 Confirm a stale Save As
 explanation survives the automatic refresh until the next explicit Save press
 but clears on navigation. Queue two manual-recovery notices behind an

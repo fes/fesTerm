@@ -8,15 +8,15 @@ pub mod named_pipe;
 #[cfg(windows)]
 mod imp {
     use std::{
-        fs::File,
+        fs::{File, OpenOptions},
         io, mem,
         os::windows::{
             ffi::OsStrExt,
+            fs::OpenOptionsExt,
             io::{AsRawHandle, FromRawHandle, OwnedHandle},
         },
         path::Path,
         ptr,
-        sync::{Mutex, MutexGuard},
     };
 
     use windows_sys::Wdk::{
@@ -31,36 +31,38 @@ mod imp {
         Foundation::{
             CloseHandle, GetLastError, LocalFree, RtlNtStatusToDosError, SetHandleInformation,
             SetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, ERROR_NOT_SUPPORTED,
-            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
+            ERROR_NO_TOKEN, ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
             INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
             STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
-            CreateWellKnownSid, EqualSid, GetAce, GetAclInformation, GetKernelObjectSecurity,
-            GetLengthSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-            GetSecurityDescriptorOwner, GetTokenInformation, InitializeAcl,
-            InitializeSecurityDescriptor, SetKernelObjectSecurity, SetSecurityDescriptorControl,
-            SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, SetTokenInformation,
-            TokenDefaultDacl, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
-            ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION,
-            ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-            INHERIT_ONLY_ACE, LABEL_SECURITY_INFORMATION, OBJECT_INHERIT_ACE,
-            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-            SACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
-            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME,
-            TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_PRIVILEGES,
-            TOKEN_QUERY, TOKEN_USER,
+            CreateWellKnownSid, DuplicateTokenEx, EqualSid, GetAce, GetAclInformation,
+            GetKernelObjectSecurity, GetLengthSid, GetSecurityDescriptorControl,
+            GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation,
+            InitializeAcl, InitializeSecurityDescriptor, SecurityImpersonation,
+            SetKernelObjectSecurity, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+            SetSecurityDescriptorOwner, SetTokenInformation, TokenDefaultDacl, TokenImpersonation,
+            TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid, ACCESS_ALLOWED_ACE,
+            ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION,
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, INHERIT_ONLY_ACE,
+            LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+            SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME, TOKEN_ADJUST_DEFAULT,
+            TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_IMPERSONATE,
+            TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             FileBasicInfo, FileDispositionInfo, FileRenameInfoEx, GetFileInformationByHandle,
-            SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS,
-            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL,
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_DELETE_CHILD,
-            FILE_DISPOSITION_INFO, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE,
-            WRITE_DAC, WRITE_OWNER,
+            GetFileInformationByHandleEx, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED,
+            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
+            FILE_DELETE_CHILD, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+            READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
         },
         System::{
             Console::{
@@ -68,7 +70,8 @@ mod imp {
             },
             SystemServices::ACCESS_SYSTEM_SECURITY,
             Threading::{
-                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+                GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken,
+                OpenThreadToken, SetThreadToken, PROCESS_QUERY_LIMITED_INFORMATION,
             },
         },
     };
@@ -98,50 +101,54 @@ mod imp {
         restored: bool,
     }
 
-    /// Restores the process token's previous SeSecurityPrivilege state.
+    /// Restores the saving thread's prior impersonation token.
     pub struct SecurityPrivilegeGuard {
-        token: HANDLE,
-        previous: TOKEN_PRIVILEGES,
-        _lock: MutexGuard<'static, ()>,
+        _token: OwnedHandle,
+        previous: Option<OwnedHandle>,
     }
-
-    static SECURITY_PRIVILEGE_LOCK: Mutex<()> = Mutex::new(());
 
     impl Drop for SecurityPrivilegeGuard {
         fn drop(&mut self) {
-            let _ = unsafe {
-                AdjustTokenPrivileges(
-                    self.token,
-                    0,
-                    &raw const self.previous,
-                    0,
-                    ptr::null_mut(),
-                    ptr::null_mut(),
-                )
-            };
-            let _ = unsafe { CloseHandle(self.token) };
+            let previous = self
+                .previous
+                .as_ref()
+                .map_or(ptr::null_mut(), |token| token.as_raw_handle());
+            let _ = unsafe { SetThreadToken(ptr::null(), previous) };
         }
     }
 
     /// Enables the audit-policy privilege needed to capture and reproduce a
-    /// file's SACL. Existing-file replacement is refused when the process
-    /// token does not hold this privilege.
+    /// file's SACL on a saving-thread impersonation token. Existing-file
+    /// replacement is refused when the process token does not hold it.
     pub fn enable_security_privilege() -> io::Result<SecurityPrivilegeGuard> {
-        let lock = SECURITY_PRIVILEGE_LOCK
-            .lock()
-            .map_err(|_| io::Error::other("the security-privilege lock is poisoned"))?;
-        let mut token = ptr::null_mut();
+        let mut process_token = ptr::null_mut();
         if unsafe {
             OpenProcessToken(
                 GetCurrentProcess(),
-                TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES,
+                TOKEN_QUERY | TOKEN_DUPLICATE,
+                &raw mut process_token,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let process_token = unsafe { OwnedHandle::from_raw_handle(process_token) };
+        let mut token = ptr::null_mut();
+        if unsafe {
+            DuplicateTokenEx(
+                process_token.as_raw_handle(),
+                TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES | TOKEN_IMPERSONATE,
+                ptr::null(),
+                SecurityImpersonation,
+                TokenImpersonation,
                 &raw mut token,
             )
         } == 0
         {
             return Err(io::Error::last_os_error());
         }
-        let result = (|| {
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        (|| {
             let mut luid = windows_sys::Win32::Foundation::LUID::default();
             if unsafe {
                 windows_sys::Win32::Security::LookupPrivilegeValueW(
@@ -160,17 +167,15 @@ mod imp {
                     Attributes: SE_PRIVILEGE_ENABLED,
                 }],
             };
-            let mut previous = TOKEN_PRIVILEGES::default();
-            let mut previous_length = 0;
             unsafe { SetLastError(ERROR_SUCCESS) };
             if unsafe {
                 AdjustTokenPrivileges(
-                    token,
+                    token.as_raw_handle(),
                     0,
                     &raw const requested,
-                    mem::size_of::<TOKEN_PRIVILEGES>() as u32,
-                    &raw mut previous,
-                    &raw mut previous_length,
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
                 )
             } == 0
             {
@@ -182,16 +187,32 @@ mod imp {
                     "SeSecurityPrivilege is unavailable",
                 ));
             }
+            let mut previous = ptr::null_mut();
+            let previous = if unsafe {
+                OpenThreadToken(
+                    GetCurrentThread(),
+                    TOKEN_QUERY | TOKEN_IMPERSONATE,
+                    1,
+                    &raw mut previous,
+                )
+            } != 0
+            {
+                Some(unsafe { OwnedHandle::from_raw_handle(previous) })
+            } else {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(ERROR_NO_TOKEN as i32) {
+                    return Err(error);
+                }
+                None
+            };
+            if unsafe { SetThreadToken(ptr::null(), token.as_raw_handle()) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
             Ok(SecurityPrivilegeGuard {
-                token,
+                _token: token,
                 previous,
-                _lock: lock,
             })
-        })();
-        if result.is_err() {
-            let _ = unsafe { CloseHandle(token) };
-        }
-        result
+        })()
     }
 
     /// Access-control and attribute metadata that replacement must preserve.
@@ -392,8 +413,7 @@ mod imp {
         const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
         const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
         const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
-        const PARENT_DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
-        const INHERITED_CHILD_DANGEROUS: u32 = PARENT_DANGEROUS | DELETE | GENERIC_WRITE;
+        const DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
 
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
@@ -479,12 +499,7 @@ mod imp {
                     .add(mem::size_of::<ACE_HEADER>())
                     .cast::<u32>()
             };
-            let dangerous = if header.AceFlags & OBJECT_INHERIT_ACE as u8 != 0 {
-                INHERITED_CHILD_DANGEROUS
-            } else {
-                PARENT_DANGEROUS
-            };
-            if mask & dangerous == 0 {
+            if mask & DANGEROUS == 0 {
                 continue;
             }
             if header.AceType != 0
@@ -1257,6 +1272,45 @@ mod imp {
             && left.nFileIndexLow == right.nFileIndexLow)
     }
 
+    /// Pins an exact directory object against rename or deletion while a save
+    /// publishes through a separate capability handle.
+    pub fn lock_directory_path_without_delete_sharing(path: &Path) -> io::Result<File> {
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        let information = file_information(&file)?;
+        if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
+            || information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the locked parent is not a regular directory",
+            ))
+        } else {
+            Ok(file)
+        }
+    }
+
+    /// Returns the filesystem-maintained change time for an exact file handle.
+    pub fn file_change_time(file: &File) -> io::Result<i64> {
+        let mut information = FILE_BASIC_INFO::default();
+        if unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle() as HANDLE,
+                FileBasicInfo,
+                (&raw mut information).cast(),
+                mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(information.ChangeTime)
+        }
+    }
+
     /// Creates a directory relative to the exact `directory` handle with a
     /// protected current-user-only DACL and verifies the returned handle.
     pub fn create_current_user_only_directory(directory: &File, name: &Path) -> io::Result<File> {
@@ -1562,6 +1616,26 @@ mod imp {
         }
 
         #[test]
+        fn security_privilege_is_scoped_to_the_saving_thread() {
+            let directory = TemporaryDirectory::new();
+            fs::write(directory.0.join("source.md"), b"source").unwrap();
+            let directory_handle = directory.handle();
+            let other_directory = directory_handle.try_clone().unwrap();
+            let _privilege = enable_security_privilege().unwrap();
+
+            open_file_no_reparse_for_security_capture(&directory_handle, Path::new("source.md"))
+                .unwrap();
+            let error = std::thread::spawn(move || {
+                open_file_no_reparse_for_security_capture(&other_directory, Path::new("source.md"))
+                    .unwrap_err()
+            })
+            .join()
+            .unwrap();
+
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        }
+
+        #[test]
         fn security_copy_preserves_an_explicit_mandatory_integrity_label() {
             let _privilege = enable_security_privilege().unwrap();
             let directory = TemporaryDirectory::new();
@@ -1791,6 +1865,24 @@ mod imp {
 
             assert!(!moved.exists());
             assert!(staging.is_dir());
+        }
+
+        #[test]
+        fn directory_path_lock_prevents_parent_rename_until_release() {
+            let directory = TemporaryDirectory::new();
+            let parent = directory.0.join("parent");
+            let moved = directory.0.join("moved");
+            fs::create_dir(&parent).unwrap();
+            let lock = lock_directory_path_without_delete_sharing(&parent).unwrap();
+
+            let error = fs::rename(&parent, &moved).unwrap_err();
+            assert!(matches!(
+                error.raw_os_error(),
+                Some(code) if code == ERROR_SHARING_VIOLATION as i32
+            ));
+
+            drop(lock);
+            fs::rename(&parent, &moved).unwrap();
         }
 
         #[test]
@@ -2050,8 +2142,9 @@ pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
     create_current_user_only_file_with_audit, delete_directory_by_handle,
-    disable_std_handle_inheritance, enable_security_privilege, is_current_user_only,
-    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    disable_std_handle_inheritance, enable_security_privilege, file_change_time,
+    is_current_user_only, lock_directory_path_without_delete_sharing, open_file_no_reparse,
+    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, rename_file_noreplace,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,

@@ -126,10 +126,6 @@ impl FesTermApp {
             // confirmation must not cancel that automation-owned close.
             return;
         }
-        if self.quit_confirmed {
-            // Already deliberately confirmed: let the follow-up close proceed.
-            return;
-        }
         if self
             .overlays
             .open_refusal
@@ -138,6 +134,10 @@ impl FesTermApp {
             || self.state.has_recovery_notices()
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            return;
+        }
+        if self.quit_confirmed {
+            // Already deliberately confirmed: let the follow-up close proceed.
             return;
         }
         if let Some(pending) = self.overlays.pending_quit {
@@ -480,11 +480,9 @@ impl FesTermApp {
         let Some(notice) = self.overlays.open_refusal.as_ref() else {
             return;
         };
-        let recovery_path = notice
-            .requires_acknowledgement()
-            .then(|| std::path::PathBuf::from(&notice.path));
+        let recovery_path = notice.acknowledgement_path.clone();
         let (title, name, path, headline, detail) = (
-            notice.title.clone(),
+            notice.title.as_deref().map(str::to_owned),
             notice.name.clone(),
             notice.path.clone(),
             notice.headline.clone(),

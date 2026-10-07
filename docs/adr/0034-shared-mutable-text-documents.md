@@ -233,6 +233,11 @@ until the save has reopened and verified that object; the pin is released
 before Windows publication so it cannot retain the displaced original.
 Generation checks include a content digest, so an in-place equal-size rewrite
 with a restored modification time still conflicts.
+On Unix, every ancestor directory is checked against the same trusted-owner,
+shared-write, sticky-directory, and ACL mutation policy so another account
+cannot rename the retained destination parent out from under the requested
+pathname. On Windows, a non-delete-sharing handle pins that exact parent
+directory against rename or deletion for the complete save.
 
 Replacement is write-to-temporary-then-rename in the same directory. Before
 any document bytes are written, the Unix staging directory has inherited
@@ -244,11 +249,10 @@ reconstructing a pathname. Before any document bytes are written or copied,
 the Windows parent must be owned by the current user, LocalSystem, or Builtin
 Administrators and its DACL must not grant an unprivileged principal child
 deletion or access-policy mutation rights. Add-file/add-directory access,
-and deletion of the parent itself do not by themselves permit substitution of
-the retained private child and are not refused when they are not inherited by
-children. Inheritable delete or generic-write grants remain refused because
-they would grant mutation access to staged or published child files. The
-current user, LocalSystem, and
+generic-write/Modify access, and deletion of the parent itself do not by
+themselves permit substitution of the retained private child and are not
+refused: staging and new payload children use protected DACLs and do not
+inherit those grants. The current user, LocalSystem, and
 Builtin Administrators are the explicit trusted set because the latter two can
 already control the process and host; the owner/DACL snapshot is captured
 coherently and revalidated after the private staging handle is retained. Then
@@ -280,7 +284,9 @@ complete handle-bound stream copying and verification exists;
 inability to apply them refuses before publication. Existing-target
 replacement also refuses before staging when `SeSecurityPrivilege` is
 unavailable, because the target's audit SACL cannot then be captured and
-reproduced exactly; Save As to an absent destination remains available. A new Save As target keeps
+reproduced exactly. The privilege is enabled only on a duplicated
+impersonation token installed on the saving thread and never on the
+process-wide token. Save As to an absent destination remains available. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
 an owner-only staging directory on the destination filesystem. Unix verifies
 the prepared inode through both its handle and staging name; Windows relies on
@@ -348,12 +354,12 @@ refuses private staging with folder-specific guidance in a shared-writable
 destination directory unless it is sticky and owned by the current user or
 root. Another unprivileged account that owns a sticky directory
 could otherwise substitute the random staging name before its handle is
-retained. A parent-security change
-after handle retention refuses and may leave the empty private staging
-directory for inspection rather than deleting through the now-untrusted
-parent. When the parent remains trusted, Windows cleanup marks the exact
-retained directory handle for deletion rather than resolving the staging
-pathname again. Cross-volume redirection has a separate mount,
+retained. A parent-security change after handle retention refuses. Unix may leave the
+empty private staging directory for inspection rather than deleting through
+the now-untrusted parent; Windows deletes the exact empty staging object
+through its retained handle regardless of pathname trust. Other Windows
+cleanup likewise marks the retained directory handle for deletion rather than
+resolving the staging pathname again. Cross-volume redirection has a separate mount,
 junction, or reparse-point refusal rather than being misdiagnosed as a missing
 filesystem capability.
 

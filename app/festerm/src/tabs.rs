@@ -4210,6 +4210,7 @@ impl AppState {
                 if generation != request.lifecycle_generation {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
+                        acknowledgement_path: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
@@ -4223,6 +4224,7 @@ impl AppState {
                 let Some(requestor) = session.live_remote_file_requestor() else {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
+                        acknowledgement_path: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
@@ -4244,6 +4246,7 @@ impl AppState {
                 if self.pending_terminal_path_opens.len() >= 4 {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
+                        acknowledgement_path: None,
                         name: "remote path".to_owned(),
                         path: display_path,
                         headline: "Too many remote files are opening".to_owned(),
@@ -4271,6 +4274,7 @@ impl AppState {
                     Err(error) => {
                         self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                             title: None,
+                            acknowledgement_path: None,
                             name: Path::new(&display_path)
                                 .file_name()
                                 .map(|name| name.to_string_lossy().into_owned())
@@ -4313,6 +4317,7 @@ impl AppState {
                     }
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                         title: None,
+                        acknowledgement_path: None,
                         name: "remote path".to_owned(),
                         path: "remote path".to_owned(),
                         headline: "This remote path could not be opened".to_owned(),
@@ -4372,7 +4377,8 @@ impl AppState {
                 .borrow_mut()
                 .take_recovery_notice()
                 .map(|(path, error)| crate::overlay_state::OpenRefusalNotice {
-                    title: Some("Saving needs manual recovery".to_owned()),
+                    title: Some("Saving needs manual recovery".into()),
+                    acknowledgement_path: Some(Box::new(path.clone())),
                     name: "Save recovery retained".to_owned(),
                     path: path.display().to_string(),
                     headline: error.headline().to_owned(),
@@ -7417,6 +7423,32 @@ mod tests {
         assert!(state.take_open_refusal_notice().is_none());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn recovery_acknowledgement_preserves_non_utf8_path_identity() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut state = AppState::for_test();
+        let path = PathBuf::from(std::ffi::OsString::from_vec(
+            b"/tmp/.festerm-save-\xff.stage".to_vec(),
+        ));
+        state.queue_recovery_notice_for_test(
+            path.clone(),
+            festerm_document::SaveError::new("Recovery", "Recover retained bytes."),
+        );
+
+        let notice = state.take_open_refusal_notice().expect("recovery notice");
+
+        assert_eq!(notice.acknowledgement_path.as_deref(), Some(&path));
+        assert!(state.acknowledge_recovery_notice(
+            notice
+                .acknowledgement_path
+                .as_deref()
+                .expect("exact acknowledgement path")
+        ));
+        assert!(!state.has_recovery_notices());
+    }
+
     #[test]
     fn recovery_notice_overflow_preserves_oldest_paths_and_surfaces_a_count() {
         let mut state = AppState::for_test();
@@ -7453,6 +7485,7 @@ mod tests {
         for index in 1..=3 {
             state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                 title: None,
+                acknowledgement_path: None,
                 name: format!("remote-{index}.md"),
                 path: format!("host:/remote-{index}.md"),
                 headline: format!("Refusal {index}"),
@@ -7476,6 +7509,7 @@ mod tests {
                 .send(TerminalPathWorkerResult::OpenRefusal(
                     crate::overlay_state::OpenRefusalNotice {
                         title: None,
+                        acknowledgement_path: None,
                         name: format!("remote-{index}.md"),
                         path: format!("host:/remote-{index}.md"),
                         headline: format!("Refusal {index}"),
@@ -7506,6 +7540,7 @@ mod tests {
         for index in 0..=MAX_PENDING_OPEN_REFUSAL_NOTICES {
             state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
                 title: None,
+                acknowledgement_path: None,
                 name: format!("remote-{index}.md"),
                 path: format!("host:/remote-{index}.md"),
                 headline: format!("Refusal {index}"),

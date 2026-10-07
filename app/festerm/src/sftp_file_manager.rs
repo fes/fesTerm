@@ -1663,6 +1663,7 @@ impl SftpCleanupReporter {
     fn report(&self, label: String, error: festerm_ssh::SftpSessionError, repaint: &egui::Context) {
         let notice = crate::overlay_state::OpenRefusalNotice {
             title: None,
+            acknowledgement_path: None,
             name: label,
             path: String::new(),
             headline: "SFTP cleanup is incomplete".to_owned(),

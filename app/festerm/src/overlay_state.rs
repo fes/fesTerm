@@ -222,7 +222,8 @@ pub(crate) enum StoredCredentialLaunch {
 /// layer already uses.
 #[derive(Debug)]
 pub(crate) struct OpenRefusalNotice {
-    pub(crate) title: Option<String>,
+    pub(crate) title: Option<Box<str>>,
+    pub(crate) acknowledgement_path: Option<Box<PathBuf>>,
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) headline: String,
@@ -231,7 +232,7 @@ pub(crate) struct OpenRefusalNotice {
 
 impl OpenRefusalNotice {
     pub(crate) fn requires_acknowledgement(&self) -> bool {
-        self.title.as_deref() == Some("Saving needs manual recovery")
+        self.acknowledgement_path.is_some()
     }
 }
 
