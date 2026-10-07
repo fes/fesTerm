@@ -321,9 +321,11 @@ $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
 pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-thread-identity -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900 -ThreadOwnership
 ```
 
-This command is a pending runtime discriminator, not evidence of an executed
-metadata capture. The parent supervisor must separately authorize its GPU slot;
-it does not permit desktop activation, native input or an automatic retry.
+This is an explicit runtime discriminator. Its
+[first actual labeled capture](#2026-10-06-cumulative-owned-thread-observations)
+is recorded separately below. The parent supervisor must separately authorize
+its GPU slot; it does not permit desktop activation, native input or an
+automatic retry.
 
 Source receipts declare `thread_ownership_schema=1`, the three exact
 `thread_ownership_methods` and all `thread_ownership_bounds`. Every process
@@ -376,8 +378,84 @@ methods, bounds or the final source-bound memory receipt; existing executable
 hash, twelve-phase/frame/timing, exact PNG and lifecycle checks remain in force.
 Descriptions/start modules are **labels, not stacks or private-byte ownership**:
 they do not establish an app-owned causal root, attribute driver allocations,
-prove a leak or accept a resource cap. Actual labeled runtime observations remain
-pending; CP-18/#297/#282 and native qualification are unchanged.
+prove a leak or accept a resource cap. The labeled observations below do not
+close CP-18/#297/#282 or native qualification.
+
+### 2026-10-06 cumulative owned-thread observations
+
+The metadata-enabled supervisor completed at exact clean cumulative
+`8f4b8741d8f25c3d15830aec693898bfb8773898`, tree
+`b092905488399e449a3619d0bc1994c6a5232e7c`, after #367/#368.
+The archived release executable SHA256 is
+`5F05979652FC4B95B23D024FAC07867F77442F13E6AAF4161EFA0C9811BF0A9B`;
+the owned child PID is `19392`. Source-bound execution ran from
+`2026-10-07T04:06:02.5871986Z` to `2026-10-07T04:06:56.0779845Z`
+(53.491 seconds, 2026-10-06 local date), with normal exit 0.
+These are actual current native metadata calls, not only static C# compilation.
+
+```powershell
+# Passed with a fresh absolute output directory at the source above.
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-thread-identity -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900 -ThreadOwnership
+# Supervisor checking and independent rechecking both passed.
+python validation\terminal-performance\check_session_aging.py C:\evidence\six-session-thread-identity
+```
+
+The paths are reproducible examples, not the private evidence location.
+All twelve complete six-session phases, three whole-owner rounds, exact
+normalized framebuffers and final acknowledged `complete` sample pass the
+strict checker. Each round completes host submission, releases the weak
+repaint owner, drops the reporting instance and drains all 23 public registries
+to zero allocated/kept IDs. Vacant slots still do not establish driver retirement.
+
+An independent raw-log correlation verifies the executable/source binding,
+99 owned-process samples, 2,487 thread records, 41 distinct TID-plus-creation
+identities and 26 final observed identities. No observed identity is raced or
+unavailable; every actual CPU counter is known. The maximum sampled inventories
+are 29 threads and 54 modules, and the resource JSONL is 887,419 bytes.
+All retained labels fit the declared allowance. These observed sizes are below
+the admitted-output ceilings, not measurements of total sampler allocation.
+
+Seven held windows admit 6/5/5/6/6/6/6 complete sampling intervals, with zero
+boundary exclusions and zero unknown identity observations. Independent
+recomputation matches their identity sets and first-to-last CPU deltas.
+Every admitted held identity has at least two actual CPU observations and
+zero measured delta; this is not continuous monitoring or proof of no work
+between samples.
+
+| Whole-owner round | Held commitment (MiB) | Observed identities | Admitted samples | Newly observed identities versus preceding held window |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 144.605 | 25 | 6 | 1 |
+| 1 | 143.457 | 26 | 6 | 1 |
+| 2 | 145.254 | 26 | 6 | 0 |
+
+The added identities are labeled explicitly, without treating a module as
+the requester or owner of a native worker:
+
+| First whole-owner window | TID | Creation FILETIME (100 ns) | Description | Win32 start module | Observed in final acknowledgment |
+| --- | ---: | ---: | --- | --- | --- |
+| 0 | 25992 | 134358195992042497 | unnamed | `ntdll.dll` | yes |
+| 1 | 18064 | 134358196046101781 | unnamed | `ntdll.dll` | yes |
+
+Across all 41 identities, start-module labels are two
+`festerm-aging-probe.exe`, five `d3d11on12.dll` and 34 `ntdll.dll`.
+Only `main` and the aging test-harness thread have descriptions; 39 identities
+are explicitly unnamed. These are observed labels, not stack samples, a claim
+that the named module allocated memory, or proof that sampled absence means exit.
+
+| Process commitment observation | MiB |
+| --- | ---: |
+| OS-maintained lifetime peak commitment | 587.102 |
+| Maximum sampled current commitment | 565.637 |
+| Unsampled high-water excess | 21.465 |
+| Final acknowledged current commitment | 17.734 |
+
+Commitment comes from `GetProcessMemoryInfo.PagefileUsage/PeakPagefileUsage`,
+not inference from private bytes. The held residual memory/threads remain
+adverse observations. The final lower commitment does not identify who
+retired allocations or accept a resource cap; no causal app-owned leak,
+private-byte attribution, complete driver retirement or native latency result
+is established. This is a separate current capture, not a before/after resource
+improvement attributed against the historical `5fa487c` run below.
 
 ### 2026-10-06 cumulative short retirement observations
 

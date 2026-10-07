@@ -1532,11 +1532,24 @@ Historical undeclared captures lack that identity/metadata evidence. Inspection
 of the existing short capture found new TIDs `42692` and `39200` still present
 at completion and zero matched held-window CPU deltas; those unlabelled,
 creation-identity-free observations do not demonstrate an app-owned causal root.
-The new labeled runtime capture is pending separate parent authorization.
+On 2026-10-06 the separately authorized labeled capture completed at exact
+clean cumulative `8f4b874`, after #367/#368. All twelve six-session phases,
+three whole-owner rounds and normalized pixels pass. Independent raw
+correlation confirms 99 samples, 2,487 known creation-bound thread observations,
+41 distinct identities and all seven complete held windows. The first two
+whole-owner windows each add one unnamed identity labeled `ntdll.dll`;
+the third adds none, and both new identities are observed at final
+acknowledgment. All admitted held identity CPU deltas are measured zero.
+Public allocated/kept IDs again drain, but held commitment remains
+144.605/143.457/145.254 MiB with 25/26/26 threads; these are a separate
+capture, not improvements attributed against the earlier unlabelled run.
 Descriptions/start modules are not stacks or private-byte attribution, and
 no leak, driver-allocation or resource-cap acceptance is implied. See the
 [owned-thread discriminator](../validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator)
-for schema, inventory/payload bounds and optional-suite invocation.
+for schema, inventory/payload bounds and optional-suite invocation, and the
+[actual labeled record](../validation/terminal-performance/README.md#2026-10-06-cumulative-owned-thread-observations)
+for source-bound execution. CP-18/#297/#282 and native/multi-day qualification
+remain open.
 
 The same source's fresh-build OS-input/lifecycle attempt stopped at initial
 foreground activation before any input or external captures. The existing
