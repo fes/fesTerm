@@ -748,7 +748,7 @@ pub use imp::{
     security_metadata_matches, staging_parent_matches, SecurityMetadata, StagingParentSecurity,
 };
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::{
