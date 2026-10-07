@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Separating CI readiness from bounded syntax degradation
+
+Required CI on #354 exposed two distinct test-driver assumptions. The Markdown
+Preview retry click now runs through the existing five-second, loaded-image
+readiness loop, as in #361, instead of asking `Harness::run` for repaint
+quiescence within four frames while an image worker is active. The initial
+failure, no-automatic-retry checks and admission count remain asserted.
+
+Windows CI on #354 and #355 also found that the syntax-range regression could
+legitimately exhaust the production 40 ms parse budget while parsing its
+400-function fixture, leaving no spans to query. That regression now prepares
+its tree without elapsed-time cancellation through private parse options, so it
+tests range clipping independently of scheduler load. A separate deterministic
+cancel callback proves that abandonment clears old highlights, reports
+`ParseFailed`, does not retry the same revision and recovers on the next one.
+Production parsing retains its time and size bounds; no test failure, fallback,
+worker or product assertion is suppressed.
+
 ## Routing the editor surface through eligible panel painting
 
 The first bounded #351 replay completed all eight picker controls with exact
