@@ -3,6 +3,17 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Waiting for editor image readiness rather than repaint quiescence
+
+The real-editor local-image command regression could exhaust the headless
+harness's four-frame settling limit while its asynchronous image worker was
+still running. The manual-load click now goes directly through the existing
+bounded readiness loop, as in PR #355, instead of first demanding repaint
+quiescence. Automatic-admission limits, actual image completion, centralized
+command observation and the ten-second deadline remain asserted. This repairs
+`EDIT-18`'s automated evidence without changing image policy, increasing the
+harness frame limit or claiming remaining native validation.
+
 ## Separating picker rendering from readback
 
 The full WARP replay found sub-millisecond picker construction alongside a
