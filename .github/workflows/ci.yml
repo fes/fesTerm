@@ -112,6 +112,9 @@ jobs:
       - name: Check native Windows extended-attribute probing
         if: matrix.os == 'windows-latest'
         run: cargo test -p festerm-windows-security ordinary_temp_file_has_no_extended_attributes -- --nocapture
+      - name: Check isolated Windows save integration
+        if: matrix.os == 'windows-latest'
+        run: cargo test -p festerm --bin festerm document_store::tests::saving_replaces_the_contents_and_returns_the_new_generation -- --exact --nocapture
       - run: cargo test --workspace
         env:
           FESTERM_REQUIRE_WINDOWS_SYMLINKS: ${{ matrix.os == 'windows-latest' && '1' || '' }}

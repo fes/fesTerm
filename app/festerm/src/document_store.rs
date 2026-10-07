@@ -1242,6 +1242,12 @@ fn classify_read_error(error: std::io::Error) -> LoadFailure {
 }
 
 fn classify_write_error(error: std::io::Error) -> SaveFailure {
+    #[cfg(all(test, windows))]
+    eprintln!(
+        "classify_write_error: kind={:?} raw_os_error={:?} error={error}",
+        error.kind(),
+        error.raw_os_error()
+    );
     match error.kind() {
         std::io::ErrorKind::PermissionDenied => SaveFailure::PermissionDenied,
         std::io::ErrorKind::Unsupported | std::io::ErrorKind::InvalidData => {
@@ -1253,6 +1259,12 @@ fn classify_write_error(error: std::io::Error) -> SaveFailure {
 }
 
 fn classify_metadata_error(error: std::io::Error) -> SaveFailure {
+    #[cfg(all(test, windows))]
+    eprintln!(
+        "classify_metadata_error: kind={:?} raw_os_error={:?} error={error}",
+        error.kind(),
+        error.raw_os_error()
+    );
     if error.kind() == std::io::ErrorKind::PermissionDenied {
         SaveFailure::MetadataPreservation
     } else if matches!(
