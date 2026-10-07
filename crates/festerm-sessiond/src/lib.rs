@@ -60,6 +60,98 @@ const RECOVERY_HEADER_BYTES: usize = 12;
 /// Allows the largest supported 256 MiB scrollback setting plus bounded
 /// screen/history serialization overhead without trusting arbitrary lengths.
 const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 768 * 1024 * 1024;
+
+struct RecoveryWireBuffer {
+    // Retire the allocation before its test-only lifetime observation.
+    bytes: Vec<u8>,
+    #[cfg(test)]
+    _observation: RecoveryWireObservation,
+}
+
+impl RecoveryWireBuffer {
+    fn zeroed(length: usize) -> Result<Self, std::collections::TryReserveError> {
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length)?;
+        bytes.resize(length, 0);
+        Ok(Self::from_vec(bytes))
+    }
+
+    fn from_vec(bytes: Vec<u8>) -> Self {
+        #[cfg(test)]
+        let observation = RecoveryWireObservation::new(bytes.capacity());
+        Self {
+            bytes,
+            #[cfg(test)]
+            _observation: observation,
+        }
+    }
+
+    fn into_vec(self) -> Vec<u8> {
+        // Measurement ends at the encoder's ownership handoff, not allocation retirement.
+        self.bytes
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+struct RecoveryWireMeasurements {
+    current: usize,
+    peak: usize,
+    before_restore: Option<usize>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static RECOVERY_WIRE_MEASUREMENTS: std::cell::Cell<Option<RecoveryWireMeasurements>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+struct RecoveryWireObservation {
+    bytes: usize,
+    tracked: bool,
+}
+
+#[cfg(test)]
+impl RecoveryWireObservation {
+    fn new(bytes: usize) -> Self {
+        let tracked = RECOVERY_WIRE_MEASUREMENTS.with(|slot| {
+            let Some(mut measurement) = slot.get() else {
+                return false;
+            };
+            measurement.current += bytes;
+            measurement.peak = measurement.peak.max(measurement.current);
+            slot.set(Some(measurement));
+            true
+        });
+        Self { bytes, tracked }
+    }
+}
+
+#[cfg(test)]
+impl Drop for RecoveryWireObservation {
+    fn drop(&mut self) {
+        if self.tracked {
+            RECOVERY_WIRE_MEASUREMENTS.with(|slot| {
+                let mut measurement = slot.get().expect("wire measurement is active");
+                measurement.current -= self.bytes;
+                slot.set(Some(measurement));
+            });
+        }
+    }
+}
+
+#[inline]
+fn observe_recovery_allocation_restore() {
+    #[cfg(test)]
+    RECOVERY_WIRE_MEASUREMENTS.with(|slot| {
+        if let Some(mut measurement) = slot.get() {
+            measurement.before_restore = Some(measurement.current);
+            slot.set(Some(measurement));
+        }
+    });
+}
+
 /// Compatibility epoch for registry records and the persistent-session client protocol.
 ///
 /// This changes only when the daemon introduces an incompatible wire format.
@@ -1442,16 +1534,22 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
             "persistent-session recovery snapshot exceeds the protocol limit",
         ));
     }
-    let mut payload = vec![0; payload_len];
-    read_protocol_bytes(stream, &mut payload, &mut should_abort)?;
+    let mut payload = RecoveryWireBuffer::zeroed(payload_len).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::OutOfMemory,
+            format!("could not allocate persistent-session recovery snapshot: {error}"),
+        )
+    })?;
+    read_protocol_bytes(stream, &mut payload.bytes, &mut should_abort)?;
     let mut terminal = bincode_options()
-        .deserialize::<Terminal>(&payload)
+        .deserialize::<Terminal>(&payload.bytes)
         .map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("persistent-session recovery snapshot is invalid: {error}"),
             )
         })?;
+    drop(payload);
     terminal.validate_recovery_snapshot().map_err(|error| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -1464,6 +1562,7 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
             "persistent-session retained history allocation exceeds the protocol limit",
         ));
     }
+    observe_recovery_allocation_restore();
     terminal.restore_recovery_snapshot_allocations();
     Ok(Some(terminal))
 }
@@ -2532,26 +2631,63 @@ pub fn runtime_root() -> Result<PathBuf, PersistentSessionError> {
 }
 
 pub fn encode_recovery_snapshot(terminal: &Terminal) -> Result<Vec<u8>, PersistentSessionError> {
+    encode_recovery_snapshot_with_limit(terminal, MAX_RECOVERY_SNAPSHOT_BYTES)
+}
+
+fn encode_recovery_snapshot_with_limit(
+    terminal: &Terminal,
+    maximum: usize,
+) -> Result<Vec<u8>, PersistentSessionError> {
     let snapshot = terminal.recovery_clone();
     snapshot
         .validate_recovery_snapshot()
         .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-    let payload = bincode_options().serialize(&snapshot).map_err(|error| {
-        PersistentSessionError::new(format!(
-            "could not serialize terminal recovery snapshot: {error}"
-        ))
+    let payload_len = bincode_options()
+        .with_limit(maximum as u64)
+        .serialized_size(&snapshot)
+        .map_err(|error| {
+            PersistentSessionError::new(format!(
+                "could not size terminal recovery snapshot: {error}"
+            ))
+        })?;
+    let payload_len = usize::try_from(payload_len).map_err(|_| {
+        PersistentSessionError::new("terminal recovery snapshot length overflows usize")
     })?;
-    if payload.len() > MAX_RECOVERY_SNAPSHOT_BYTES {
+    if payload_len > maximum {
         return Err(PersistentSessionError::new(format!(
             "terminal recovery snapshot exceeds the {}-byte protocol limit",
-            MAX_RECOVERY_SNAPSHOT_BYTES
+            maximum
         )));
     }
-    let mut encoded = Vec::with_capacity(RECOVERY_HEADER_BYTES + payload.len());
-    encoded.extend_from_slice(RECOVERY_MAGIC);
-    encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
-    encoded.extend_from_slice(&payload);
-    Ok(encoded)
+    let encoded_len = RECOVERY_HEADER_BYTES
+        .checked_add(payload_len)
+        .ok_or_else(|| {
+            PersistentSessionError::new("terminal recovery prelude length overflows usize")
+        })?;
+    let mut encoded = RecoveryWireBuffer::zeroed(encoded_len).map_err(|error| {
+        PersistentSessionError::new(format!(
+            "could not allocate terminal recovery snapshot: {error}"
+        ))
+    })?;
+    encoded.bytes[..RECOVERY_MAGIC.len()].copy_from_slice(RECOVERY_MAGIC);
+    encoded.bytes[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
+        .copy_from_slice(&(payload_len as u64).to_be_bytes());
+    let mut destination = io::Cursor::new(&mut encoded.bytes[RECOVERY_HEADER_BYTES..]);
+    // The sized slice enforces the wire bound without a third sizing traversal.
+    bincode_options()
+        .with_no_limit()
+        .serialize_into(&mut destination, &snapshot)
+        .map_err(|error| {
+            PersistentSessionError::new(format!(
+                "could not serialize terminal recovery snapshot: {error}"
+            ))
+        })?;
+    if destination.position() != payload_len as u64 {
+        return Err(PersistentSessionError::new(
+            "terminal recovery snapshot serialized length changed",
+        ));
+    }
+    Ok(encoded.into_vec())
 }
 
 pub fn encode_recovery_sync_command(
@@ -2806,6 +2942,185 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+#[cfg(test)]
+mod recovery_wire_tests {
+    use super::*;
+
+    struct WireMeasurement;
+
+    impl WireMeasurement {
+        fn start() -> Self {
+            RECOVERY_WIRE_MEASUREMENTS.with(|slot| {
+                assert!(slot
+                    .replace(Some(RecoveryWireMeasurements::default()))
+                    .is_none());
+            });
+            Self
+        }
+
+        fn read(&self) -> RecoveryWireMeasurements {
+            RECOVERY_WIRE_MEASUREMENTS.with(|slot| slot.get().unwrap())
+        }
+    }
+
+    impl Drop for WireMeasurement {
+        fn drop(&mut self) {
+            RECOVERY_WIRE_MEASUREMENTS.with(|slot| {
+                let measurement = slot.take().unwrap();
+                assert_eq!(measurement.current, 0);
+            });
+        }
+    }
+
+    fn large_recovery_terminal() -> Terminal {
+        let mut terminal = Terminal::with_scrollback_limit(
+            festerm_core::Dimensions::new(80, 24).unwrap(),
+            8 * 1024 * 1024,
+        )
+        .unwrap();
+        let line = format!("{}\r\n", "0123456789".repeat(8));
+        for _ in 0..2048 {
+            terminal.ingest(line.as_bytes());
+        }
+        terminal.ingest(
+            "\x1b[?1049halternate e\u{301}\x1b[?1049l\
+             \x1b]8;;https://example.invalid/recovery\x1b\\link\x1b]8;;\x1b\\\
+             e\u{301}\u{1f642}\x1b[6n"
+                .as_bytes(),
+        );
+        terminal.queue_input(b"not replayed");
+        terminal.ingest(b"\x1b[38;2;123;");
+        terminal
+    }
+
+    fn read_snapshot(reader: &mut impl Read) -> io::Result<Option<Terminal>> {
+        read_attach_recovery_terminal(
+            reader,
+            PROTOCOL_VERSION,
+            RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(10),
+        )
+    }
+
+    #[test]
+    fn recovery_encoding_uses_one_wire_buffer_and_preserves_legacy_bytes() {
+        let terminal = large_recovery_terminal();
+        let snapshot = terminal.recovery_clone();
+        let payload = bincode_options().serialize(&snapshot).unwrap();
+        assert!(payload.len() > 1024 * 1024);
+        let mut expected = Vec::from(RECOVERY_MAGIC);
+        expected.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        expected.extend_from_slice(&payload);
+        drop(payload);
+        drop(snapshot);
+
+        let measurement = WireMeasurement::start();
+        let encoded = encode_recovery_snapshot(&terminal).unwrap();
+        assert_eq!(encoded, expected);
+        assert_eq!(
+            measurement.read().peak,
+            encoded.capacity(),
+            "encoding must not overlap complete payload and prefixed-wire allocations"
+        );
+        assert_eq!(measurement.read().current, 0);
+    }
+
+    #[test]
+    fn recovery_decoding_retires_wire_before_restoring_capacities() {
+        let terminal = large_recovery_terminal();
+        let encoded = encode_recovery_snapshot(&terminal).unwrap();
+        let measurement = WireMeasurement::start();
+        let recovered = read_snapshot(&mut io::Cursor::new(&encoded))
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.recovery_clone(), terminal.recovery_clone());
+        assert!(measurement.read().peak > 1024 * 1024);
+        assert_eq!(
+            measurement.read().before_restore,
+            Some(0),
+            "decoded wire bytes must retire before terminal-capacity restoration"
+        );
+        assert_eq!(measurement.read().current, 0);
+    }
+
+    #[test]
+    fn recovery_encoding_refuses_before_owning_an_over_limit_wire_buffer() {
+        let terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        let measurement = WireMeasurement::start();
+        assert!(encode_recovery_snapshot_with_limit(&terminal, 1).is_err());
+        assert_eq!(measurement.read().peak, 0);
+        assert_eq!(measurement.read().current, 0);
+    }
+
+    #[test]
+    fn recovery_encoding_enforces_the_exact_payload_limit() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest("e\u{301}\u{1f642}\r\nbounded".as_bytes());
+        let expected = encode_recovery_snapshot(&terminal).unwrap();
+        let payload_len = expected.len() - RECOVERY_HEADER_BYTES;
+        assert_eq!(
+            encode_recovery_snapshot_with_limit(&terminal, payload_len).unwrap(),
+            expected
+        );
+        let measurement = WireMeasurement::start();
+        assert!(encode_recovery_snapshot_with_limit(&terminal, payload_len - 1).is_err());
+        assert_eq!(measurement.read().peak, 0);
+    }
+
+    #[test]
+    fn recovery_wire_refuses_invalid_state_before_capacity_restoration() {
+        let terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        let mut value = serde_json::to_value(terminal.recovery_clone()).unwrap();
+        value["tab_stops"] = serde_json::Value::Array(Vec::new());
+        let invalid: Terminal = serde_json::from_value(value).unwrap();
+        let payload = bincode_options().serialize(&invalid).unwrap();
+        let mut encoded = Vec::from(RECOVERY_MAGIC);
+        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&payload);
+        let measurement = WireMeasurement::start();
+        let error = read_snapshot(&mut io::Cursor::new(encoded)).unwrap_err();
+        assert!(error.to_string().contains("tab stops"));
+        assert_eq!(measurement.read().before_restore, None);
+        assert_eq!(measurement.read().current, 0);
+    }
+
+    #[test]
+    fn recovery_wire_refuses_trailing_truncated_and_oversized_payloads() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest("e\u{301}\u{1f642}\r\nbounded".as_bytes());
+        let encoded = encode_recovery_snapshot(&terminal).unwrap();
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        let length = (trailing.len() - RECOVERY_HEADER_BYTES) as u64;
+        trailing[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
+            .copy_from_slice(&length.to_be_bytes());
+        let measurement = WireMeasurement::start();
+        assert_eq!(
+            read_snapshot(&mut io::Cursor::new(trailing))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(measurement.read().before_restore, None);
+        assert_eq!(measurement.read().current, 0);
+        assert_eq!(
+            read_snapshot(&mut io::Cursor::new(&encoded[..encoded.len() - 1]))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        assert_eq!(measurement.read().current, 0);
+        let mut oversized = Vec::from(RECOVERY_MAGIC);
+        oversized.extend_from_slice(&((MAX_RECOVERY_SNAPSHOT_BYTES + 1) as u64).to_be_bytes());
+        assert!(read_snapshot(&mut io::Cursor::new(oversized))
+            .unwrap_err()
+            .to_string()
+            .contains("protocol limit"));
+        assert_eq!(measurement.read().before_restore, None);
+        assert_eq!(measurement.read().current, 0);
+    }
 }
 
 /// Client-worker regression tests that need no real transport, so they cover
