@@ -991,6 +991,7 @@
         "docs/gui-design.md#explicit-terminal-hyperlinks",
         "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
         "validation/terminal-performance/README.md#glyph-layout-retirement-oracle",
+        "validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator",
         "validation/direct2d/README.md#native-quad-scratch-allocation-control"
       ],
       "decisions": [
@@ -1175,6 +1176,7 @@
         "Windows CI native quad scratch control (quad_tests.cpp via Direct2D SelfTestOnly) proves exact prepared operations and two avoided allocations per valid quad; capture/prepare-inclusive baseline/candidate CPU and native framebuffer qualification remain separate CP-18 evidence",
         "IME and complete selection semantics remain platform/capability work",
         "CP-18 native-window, hardware and device-loss qualification; ADR-0039 architectural review; ADR-0043 snapshot ownership/vendoring contract accepted by source review only, with vendor texture_atlas::tests explicitly gated on all three desktop platforms, formatting and repository hygiene checked separately, and sustained resource/CPU/native evidence still pending",
+        "CP-18 optional supervisor-only thread creation/name/start-module discriminator has device-free checker/static description-admission coverage; native description buffers and transient thread/module API collections are not total-allocation bounded, labeled owned-child runtime capture is pending, and labels do not replace thread stacks, private-byte ownership or multi-day resource qualification",
         "CP-17/18 native CPU evidence requires application-window identity and recorded input/geometry/cadence guards; noisy shared-host results are approximate, not strict benchmarks",
         "ADR-0044 exact-source 86e4274 unlocked macOS 52-run cleanup controls retain 13-23% localized/Unicode savings, approximately neutral unshaped full foreground and unchanged 0.133% quiet CPU; owner explicitly accepts residual +2.56% shaped full foreground (all four longer pairs adverse) for PR328, with external PR review, native input, mixed-DPI and physical latency remaining separate gates",
         "Issue334 remains open for residual shaped-heavy CPU cost and unexplained low-first-run variation; bounded revision-batch/bookmark cleanup preserves row-position identity and fallback meshes with negative controls, and all older adverse/mixed/outlier receipts remain preserved without a causal before/after speedup claim",

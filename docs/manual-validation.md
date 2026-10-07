@@ -1518,6 +1518,26 @@ retirement. See the
 Native device recovery and multi-day attribution remain qualification work;
 no process-resource acceptance cap or native/manual row is closed.
 
+An additional explicit `-ThreadOwnership` aging-supervisor discriminator can
+correlate sampled TIDs with real creation FILETIMEs, existing thread CPU and
+bounded owned-child description/start-module labels across complete UTC-clipped
+sampling intervals. Unavailable, unnamed, unmapped and raced metadata remains
+explicit; it samples no foreign process and changes no core/GPU lifecycle path.
+Description admission inspects at most 257 UTF-16 units before an explicit
+maximum-256-unit managed copy; a longer prefix remains unavailable without
+copying the full description. Inventory/label limits are admitted-output bounds,
+not total native/transient allocation ceilings: OS description buffers and
+thread/module API collections are materialized before their admission checks.
+Historical undeclared captures lack that identity/metadata evidence. Inspection
+of the existing short capture found new TIDs `42692` and `39200` still present
+at completion and zero matched held-window CPU deltas; those unlabelled,
+creation-identity-free observations do not demonstrate an app-owned causal root.
+The new labeled runtime capture is pending separate parent authorization.
+Descriptions/start modules are not stacks or private-byte attribution, and
+no leak, driver-allocation or resource-cap acceptance is implied. See the
+[owned-thread discriminator](../validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator)
+for schema, inventory/payload bounds and optional-suite invocation.
+
 The same source's fresh-build OS-input/lifecycle attempt stopped at initial
 foreground activation before any input or external captures. The existing
 separate-GUI-thread/no-input activation calibration independently failed with
