@@ -3,6 +3,42 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Preparing repeated Preview table cells within one live render
+
+After the cumulative Source successor, unchanged Preview still had roughly
+10 ms shared-host construction observations, not an isolated baseline. Reading
+the actual 400-section path found that its 400 tables constructed another
+unwrapped job for every cell, even though `Name`, `Value` and `Item` repeated
+with identical formatting. Existing fitting-cell reuse only helped *after*
+that preparation; another persistent document-layout cache was unnecessary.
+
+A fresh renderer now shares eligible plain-text galleys across all its tables,
+through the already-used ordinary galley/Label APIs. Borrowed text and complete
+format comparisons precede job construction; actual painter context/pass,
+scale and options guard the invocation. Find-overlapping, complex, oversized
+and unsupported cells remain ordinary, and every cell still allocates its live
+selectable Label. Nothing survives the render or changes Source/Outline.
+The 32-entry, 256-byte-input allowance has a separate 64 KiB actual-capacity
+payload ceiling covering jobs, placed rows, glyphs and meshes; the fixed
+256-byte entry array, 56-byte key Option and 16-byte counters observed on
+Windows x64 are separate.
+Object bodies include their Vec metadata; Arc control blocks, allocator
+overhead and existing font-cache ownership are not a process-memory claim.
+
+Exact CPU ordinary/current controls preserve complete clipped shapes, every
+cell response/accessibility identity, Unicode selection/Copy and offscreen
+heading navigation at both widths, through Find and dependency changes.
+Cold and warm frames construct 403 rather than 1600 unwrapped jobs: 1197
+actual preparations/layout requests disappear, with 832000 versus 209560
+String/section-vector capacity bytes. The fixture's 800 constrained requests
+and 106000 cloned-capacity bytes remain unchanged. Find highlighting every
+`Item` uses the ordinary path for those cells, leaving 802 unwrapped requests.
+The normal retained accounted payload is 45528 bytes; exact 65536/65537-byte
+admission, spare-capacity rejection, array saturation and subsequent recovery
+are covered separately. These are component-work and CPU-fidelity results,
+not measured total Preview time, GPU drawing or native latency. The cumulative
+campaign retains those runtime/full-platform gates.
+
 ## Qualifying the default picker backdrop after the Source successor
 
 The narrowly owned Open File/Save As route now has actual cumulative application
