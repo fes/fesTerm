@@ -68,7 +68,7 @@ pub(crate) enum SaveAsOutcome {
     /// already joined from the browsed directory and the file-name field.
     Save {
         path: PathBuf,
-        destination: ConfirmedDestination,
+        destination: Box<ConfirmedDestination>,
     },
     /// Dismissed with Cancel or Escape.
     Cancelled,
@@ -567,7 +567,10 @@ impl SaveAsPicker {
                             DestinationExpectation::Existing(_)
                         );
                         if observed_exists == file_collision {
-                            outcome = SaveAsOutcome::Save { path, destination };
+                            outcome = SaveAsOutcome::Save {
+                                path,
+                                destination: Box::new(destination),
+                            };
                         } else {
                             self.load(SftpPath::Local(directory));
                             let notice = (

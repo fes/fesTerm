@@ -49,6 +49,7 @@ const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 /// the middle of typing.
 const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
 pub(crate) const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
+pub(crate) const MAX_OVERFLOW_RECOVERY_NOTICES: usize = 64;
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -236,7 +237,9 @@ pub(crate) struct DocumentRegistry {
     next_id: u64,
     next_untitled_by_prefix: HashMap<String, u64>,
     pending_recovery_notices: VecDeque<(PathBuf, SaveError)>,
-    recovery_notice_overflow: Option<(usize, PathBuf, SaveError)>,
+    overflow_recovery_notices: VecDeque<(PathBuf, SaveError)>,
+    recovery_notice_overflow_summary: Option<(usize, PathBuf, SaveError)>,
+    active_recovery_notice: Option<(PathBuf, SaveError)>,
     bounds: DocumentBounds,
 }
 
@@ -467,29 +470,54 @@ impl DocumentRegistry {
     }
 
     pub(crate) fn take_recovery_notice(&mut self) -> Option<(PathBuf, SaveError)> {
-        self.pending_recovery_notices.pop_front().or_else(|| {
-            self.recovery_notice_overflow
-                .take()
-                .map(|(count, path, error)| {
-                    (
-                        path.clone(),
-                        SaveError::new(
-                            "Additional saves need manual recovery",
-                            format!(
+        if self.active_recovery_notice.is_some() {
+            return None;
+        }
+        let notice = self
+            .pending_recovery_notices
+            .pop_front()
+            .or_else(|| self.overflow_recovery_notices.pop_front())
+            .or_else(|| {
+                self.recovery_notice_overflow_summary
+                    .take()
+                    .map(|(count, path, error)| {
+                        (
+                            path.clone(),
+                            SaveError::new(
+                                "Additional saves need manual recovery",
+                                format!(
                                 "{count} additional recovery notice(s) exceeded the visible queue. \
                                  The latest retained path is {}. {} Check the application logs for \
                                  every retained path.",
                                 path.display(),
                                 error.detail()
                             ),
-                        ),
-                    )
-                })
-        })
+                            ),
+                        )
+                    })
+            });
+        self.active_recovery_notice.clone_from(&notice);
+        notice
+    }
+
+    pub(crate) fn acknowledge_recovery_notice(&mut self, path: &Path) -> bool {
+        if self
+            .active_recovery_notice
+            .as_ref()
+            .is_some_and(|(active, _)| active == path)
+        {
+            self.active_recovery_notice = None;
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn has_recovery_notices(&self) -> bool {
-        !self.pending_recovery_notices.is_empty() || self.recovery_notice_overflow.is_some()
+        !self.pending_recovery_notices.is_empty()
+            || !self.overflow_recovery_notices.is_empty()
+            || self.recovery_notice_overflow_summary.is_some()
+            || self.active_recovery_notice.is_some()
     }
 
     #[cfg(test)]
@@ -502,17 +530,22 @@ impl DocumentRegistry {
             self.pending_recovery_notices.push_back((path, error));
             return;
         }
+        if self.overflow_recovery_notices.len() < MAX_OVERFLOW_RECOVERY_NOTICES {
+            self.overflow_recovery_notices.push_back((path, error));
+            return;
+        }
         tracing::error!(
             path = %path.display(),
+            detail = %error.detail(),
             "a save recovery notice exceeded the visible queue; its path remains in the logs"
         );
-        match &mut self.recovery_notice_overflow {
+        match &mut self.recovery_notice_overflow_summary {
             Some((count, latest_path, latest_error)) => {
                 *count += 1;
                 *latest_path = path;
                 *latest_error = error;
             }
-            overflow @ None => *overflow = Some((1, path, error)),
+            summary @ None => *summary = Some((1, path, error)),
         }
     }
 
@@ -717,7 +750,11 @@ impl DocumentRegistry {
             let authority_matches = document
                 .source_authority
                 .as_ref()
-                .is_some_and(|authority| confirmed.matches_source_authority(authority));
+                .zip(document.generation)
+                .is_some_and(|(authority, generation)| {
+                    confirmed.matches_source_authority(authority)
+                        && document_store::source_authority_is_current(authority, generation)
+                });
             let origin_matches = matches!(
                 document.origin(),
                 DocumentOrigin::Local(local)
@@ -1294,8 +1331,14 @@ mod tests {
         let first_path = directory.file("first.md", "first\n");
         let second_path = directory.file("second.md", "second\n");
         let alias = directory.path.join("alias.md");
-        symlink_file(&first_path, &alias)
-            .expect("Windows CI must permit the owned file-symlink fixture");
+        if let Err(error) = symlink_file(&first_path, &alias) {
+            if error.raw_os_error() == Some(1314)
+                && std::env::var_os("FESTERM_REQUIRE_WINDOWS_SYMLINKS").is_none()
+            {
+                return;
+            }
+            panic!("Windows CI must permit the owned file-symlink fixture: {error}");
+        }
         let mut registry = DocumentRegistry::new();
 
         let first = registry.open_local(&first_path).unwrap();
@@ -1721,6 +1764,42 @@ mod tests {
         assert_eq!(
             registry.get(original_id).unwrap().text().text(),
             "original\n"
+        );
+    }
+
+    #[test]
+    fn save_as_does_not_rebind_a_stale_primary_hard_link_document() {
+        let directory = TemporaryDirectory::new("save-as-stale-primary-hard-link");
+        let primary = directory.file("primary.md", "primary\n");
+        let destination = directory.path.join("destination.md");
+        fs::hard_link(&primary, &destination).unwrap();
+        let source = directory.file("source.md", "source\n");
+        let mut registry = DocumentRegistry::new();
+        let stale = registry.open_local(&primary).unwrap();
+        assert_eq!(registry.open_local(&destination).unwrap(), stale);
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+
+        let replacement = directory.file("replacement.md", "replacement\n");
+        #[cfg(windows)]
+        fs::remove_file(&primary).unwrap();
+        fs::rename(&replacement, &primary).unwrap();
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert!(moved.is_some_and(|destination_id| destination_id != stale));
+        assert_eq!(registry.get(stale).unwrap().text().text(), "primary\n");
+        assert_eq!(
+            registry.get(stale).unwrap().origin().file_name(),
+            "primary.md"
+        );
+        assert_eq!(fs::read_to_string(&primary).unwrap(), "replacement\n");
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "source\nedited\n"
         );
     }
 

@@ -130,6 +130,16 @@ impl FesTermApp {
             // Already deliberately confirmed: let the follow-up close proceed.
             return;
         }
+        if self
+            .overlays
+            .open_refusal
+            .as_ref()
+            .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement)
+            || self.state.has_recovery_notices()
+        {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            return;
+        }
         if let Some(pending) = self.overlays.pending_quit {
             // A second close while the ordinary Quit dialog is showing is the
             // platform's follow-up teardown request. An update-consent dialog
@@ -470,6 +480,9 @@ impl FesTermApp {
         let Some(notice) = self.overlays.open_refusal.as_ref() else {
             return;
         };
+        let recovery_path = notice
+            .requires_acknowledgement()
+            .then(|| std::path::PathBuf::from(&notice.path));
         let (title, name, path, headline, detail) = (
             notice.title.clone(),
             notice.name.clone(),
@@ -523,6 +536,9 @@ impl FesTermApp {
             });
         self.overlays.open_refusal_focused = true;
         if dismiss {
+            if let Some(path) = recovery_path {
+                self.state.acknowledge_recovery_notice(&path);
+            }
             self.overlays.open_refusal = None;
             self.overlays.open_refusal_focused = false;
         }

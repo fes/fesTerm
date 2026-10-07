@@ -110,6 +110,8 @@ jobs:
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+        env:
+          FESTERM_REQUIRE_WINDOWS_SYMLINKS: ${{ matrix.os == 'windows-latest' && '1' || '' }}
       - name: Check retained composition invariants in the vendored renderer
         run: cargo test -p egui-wgpu --lib retained::tests
       - name: Check the excluded vendored font-atlas invariants

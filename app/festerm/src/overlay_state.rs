@@ -229,6 +229,12 @@ pub(crate) struct OpenRefusalNotice {
     pub(crate) detail: String,
 }
 
+impl OpenRefusalNotice {
+    pub(crate) fn requires_acknowledgement(&self) -> bool {
+        self.title.as_deref() == Some("Saving needs manual recovery")
+    }
+}
+
 /// The confirmation prompts, in-flight secure-storage lookup, and transient
 /// notice banner that can be active at once. `FesTermApp` holds exactly one
 /// of these instead of five separate `Option` fields.
@@ -307,6 +313,10 @@ impl OverlayState {
             || self.pending_quit.is_some()
             || self.markdown_file_picker.is_some()
             || self.save_as_picker.is_some()
+            || self
+                .open_refusal
+                .as_ref()
+                .is_some_and(OpenRefusalNotice::requires_acknowledgement)
             || self.about_open
     }
 }

@@ -489,8 +489,9 @@ a DACL granting an unprivileged principal child deletion, DACL mutation,
 ownership mutation, or generic all refuses before document bytes; the current
 user, LocalSystem, and Builtin Administrators are the explicit trusted set.
 Confirm add-file/add-directory, generic-write-equivalent, and parent-delete
-grants alone remain usable because they cannot substitute the protected
-retained child. Mutate the owner/DACL after private staging is retained and
+grants alone remain usable only when they are not inherited by child files;
+inheritable delete or generic-write grants must refuse. Mutate the owner/DACL
+after private staging is retained and
 confirm coherent-snapshot revalidation refuses, preserves the empty private
 stage for inspection, and never deletes through the untrusted pathname.
 Confirm a stale Save As
@@ -499,8 +500,10 @@ but clears on navigation. Queue two manual-recovery notices behind an
 unrelated visible modal; neither may replace it, and both must appear after
 dismissal in insertion order with the exact recovery paths. Exercise every
 blocking modal/picker state. Overflow the bounded recovery queue and confirm
-the oldest exact paths remain visible plus a counted latest-path notice points
-to logs for all additional paths. Complete several asynchronous remote-open
+the first 80 exact paths remain visible plus a counted latest-path notice
+points to logs for all further paths. While a recovery notice is queued or
+displayed, native menu Quit, shortcuts, and the OS window close button must
+cancel close until the notice is explicitly acknowledged. Complete several asynchronous remote-open
 refusals through worker-result channels while that modal remains visible and
 confirm their bounded FIFO delivers each refusal rather than overwriting an
 earlier one.
@@ -534,8 +537,9 @@ intermediate and root-acquisition races; portable tests cover visible
 source-resolution refusal, generation mismatch and directory-handle release
 after successful/refused reads. Windows CI now owns a file-symlink fixture and verifies alias reuse plus
 retargeting when Developer Mode or symlink privilege is available; the test
-fails rather than silently skipping when the runner lacks that required
-capability. Native
+fails rather than silently skipping when the runner's
+`FESTERM_REQUIRE_WINDOWS_SYMLINKS=1` capability contract is unmet, while an
+ordinary unprivileged developer run may skip only error 1314. Native
 visual/focus/accessibility and filesystem-permission review remain pending;
 this is not total-RAM/VRAM or long-running RSS acceptance.
 

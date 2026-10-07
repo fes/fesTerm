@@ -227,7 +227,12 @@ first; if it changed, the write does not happen and the document enters Conflict
 
 Save As similarly revalidates the typed absent-or-exact-generation expectation
 captured by the picker. A target that appears, disappears, or changes after
-confirmation is refused before displacement rather than being adopted.
+confirmation is refused before displacement rather than being adopted. An
+existing confirmed destination remains pinned by an exact identity handle
+until the save has reopened and verified that object; the pin is released
+before Windows publication so it cannot retain the displaced original.
+Generation checks include a content digest, so an in-place equal-size rewrite
+with a restored modification time still conflicts.
 
 Replacement is write-to-temporary-then-rename in the same directory. Before
 any document bytes are written, the Unix staging directory has inherited
@@ -239,9 +244,11 @@ reconstructing a pathname. Before any document bytes are written or copied,
 the Windows parent must be owned by the current user, LocalSystem, or Builtin
 Administrators and its DACL must not grant an unprivileged principal child
 deletion or access-policy mutation rights. Add-file/add-directory access,
-generic-write-equivalent creation, and deletion of the parent itself do not by
-themselves permit substitution of the retained private child and are not
-refused. The current user, LocalSystem, and
+and deletion of the parent itself do not by themselves permit substitution of
+the retained private child and are not refused when they are not inherited by
+children. Inheritable delete or generic-write grants remain refused because
+they would grant mutation access to staged or published child files. The
+current user, LocalSystem, and
 Builtin Administrators are the explicit trusted set because the latter two can
 already control the process and host; the owner/DACL snapshot is captured
 coherently and revalidated after the private staging handle is retained. Then
@@ -301,12 +308,14 @@ exists, and prepared/displaced versions remain in the private
 names the exact retained directory and is not replaced by freshness polling.
 If the last view closes or rebinds, the registry promotes that record to a
 bounded ordered application-level notice rather than discarding the only
-visible breadcrumb. A queued recovery notice never replaces an undismissed
-modal, and asynchronous open refusals use a bounded FIFO rather than
+visible breadcrumb. A queued or displayed recovery notice blocks native menu,
+shortcut, and OS window-close paths until explicit acknowledgement. A queued
+recovery notice never replaces an undismissed modal, and asynchronous open
+refusals use a bounded FIFO rather than
 overwriting one another while a modal is visible. If the bounded recovery
-notice queue overflows, its oldest exact breadcrumbs remain visible and a
-final counted notice identifies the latest retained path and directs the user
-to the logs for every additional path. This
+notice queue overflows, a second bounded queue preserves 64 additional exact
+breadcrumbs before a final counted notice identifies the latest retained path
+and directs the user to the logs for every further path. This
 also covers partial move failures; every ambiguous arrangement is retained for
 manual recovery. Failure to reproduce ownership/access metadata refuses before
 publication with an ownership-specific Save As explanation. Cleanup failure

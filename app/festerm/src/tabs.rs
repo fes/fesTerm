@@ -3977,6 +3977,16 @@ impl AppState {
             || self.documents.borrow().has_recovery_notices()
     }
 
+    pub(crate) fn has_recovery_notices(&self) -> bool {
+        self.documents.borrow().has_recovery_notices()
+    }
+
+    pub(crate) fn acknowledge_recovery_notice(&mut self, path: &Path) -> bool {
+        self.documents
+            .borrow_mut()
+            .acknowledge_recovery_notice(path)
+    }
+
     pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
         if let Some(existing) = self.local_document_tab(path) {
             self.set_active(existing);
@@ -7398,15 +7408,21 @@ mod tests {
             Some("Saving needs manual recovery")
         );
         assert_eq!(first_notice.path, first.display().to_string());
+        assert!(state.take_open_refusal_notice().is_none());
+        assert!(state.has_recovery_notices());
+        assert!(state.acknowledge_recovery_notice(&first));
         let second_notice = state.take_open_refusal_notice().expect("second notice");
         assert_eq!(second_notice.path, second.display().to_string());
+        assert!(state.acknowledge_recovery_notice(&second));
         assert!(state.take_open_refusal_notice().is_none());
     }
 
     #[test]
     fn recovery_notice_overflow_preserves_oldest_paths_and_surfaces_a_count() {
         let mut state = AppState::for_test();
-        for index in 0..(crate::documents::MAX_PENDING_RECOVERY_NOTICES + 2) {
+        let exact_capacity = crate::documents::MAX_PENDING_RECOVERY_NOTICES
+            + crate::documents::MAX_OVERFLOW_RECOVERY_NOTICES;
+        for index in 0..(exact_capacity + 2) {
             state.queue_recovery_notice_for_test(
                 PathBuf::from(format!("/tmp/.festerm-save-{index}.stage")),
                 festerm_document::SaveError::new(
@@ -7416,19 +7432,18 @@ mod tests {
             );
         }
 
-        for index in 0..crate::documents::MAX_PENDING_RECOVERY_NOTICES {
+        for index in 0..exact_capacity {
             let notice = state.take_open_refusal_notice().expect("retained notice");
             assert_eq!(notice.path, format!("/tmp/.festerm-save-{index}.stage"));
+            assert!(state.acknowledge_recovery_notice(Path::new(&notice.path)));
         }
         let overflow = state.take_open_refusal_notice().expect("overflow summary");
         assert_eq!(
             overflow.path,
-            format!(
-                "/tmp/.festerm-save-{}.stage",
-                crate::documents::MAX_PENDING_RECOVERY_NOTICES + 1
-            )
+            format!("/tmp/.festerm-save-{}.stage", exact_capacity + 1)
         );
         assert!(overflow.detail.contains("2 additional recovery notice(s)"));
+        assert!(state.acknowledge_recovery_notice(Path::new(&overflow.path)));
         assert!(state.take_open_refusal_notice().is_none());
     }
 
@@ -7453,7 +7468,7 @@ mod tests {
     }
 
     #[test]
-    fn asynchronous_remote_refusals_are_collected_in_worker_completion_order() {
+    fn asynchronous_remote_refusals_are_collected_without_loss() {
         let mut state = AppState::for_test();
         for index in 1..=3 {
             let (sender, receiver) = mpsc::channel();

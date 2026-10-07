@@ -4236,8 +4236,13 @@ impl FesTermApp {
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path, destination }) => {
                 self.close_save_as_picker(ctx);
-                self.state
-                    .dispatch(AppCommand::SaveTextDocumentTo { path, destination }, ctx);
+                self.state.dispatch(
+                    AppCommand::SaveTextDocumentTo {
+                        path,
+                        destination: *destination,
+                    },
+                    ctx,
+                );
                 if let Some(pending) = self.overlays.pending_document_close_after_save_as.take() {
                     if self.state.document_close_consequence(pending.tab).is_none() {
                         self.state.dispatch(AppCommand::CloseTab(pending.tab), ctx);
@@ -6820,6 +6825,10 @@ mod tests {
             Some(recovery_display.as_str())
         );
 
+        assert!(harness
+            .state_mut()
+            .state
+            .acknowledge_recovery_notice(&recovery));
         harness.state_mut().overlays.open_refusal = None;
         harness.run();
         assert_eq!(
@@ -9488,6 +9497,36 @@ mod tests {
             .overlays
             .pending_quit
             .is_some_and(|pending| { pending.purpose == QuitConfirmationPurpose::InstallUpdate }));
+        assert!(output
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose)));
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn window_close_waits_for_explicit_recovery_notice_acknowledgement() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+
+        app.evaluate_close_request(&context);
+        let mut output = context.end_pass();
+        assert!(output
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose)));
+        output.textures_delta.clear();
+
+        app.overlays.open_refusal = app.state.take_open_refusal_notice();
+        assert!(app.overlays.blocks_terminal_input_except_paste());
+        app.evaluate_close_request(&context);
+        let mut output = context.end_pass();
         assert!(output
             .viewport_output
             .values()

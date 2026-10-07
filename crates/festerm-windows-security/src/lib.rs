@@ -31,7 +31,7 @@ mod imp {
         Foundation::{
             CloseHandle, GetLastError, LocalFree, RtlNtStatusToDosError, SetHandleInformation,
             SetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, ERROR_NOT_SUPPORTED,
-            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
+            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
             INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
             STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
         },
@@ -46,11 +46,12 @@ mod imp {
             TokenDefaultDacl, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
             ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION,
             ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-            INHERIT_ONLY_ACE, LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-            PROTECTED_DACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
-            SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME, TOKEN_ADJUST_DEFAULT,
-            TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+            INHERIT_ONLY_ACE, LABEL_SECURITY_INFORMATION, OBJECT_INHERIT_ACE,
+            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+            SACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME,
+            TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_PRIVILEGES,
+            TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             FileBasicInfo, FileDispositionInfo, FileRenameInfoEx, GetFileInformationByHandle,
@@ -391,7 +392,8 @@ mod imp {
         const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
         const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
         const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
-        const DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
+        const PARENT_DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
+        const INHERITED_CHILD_DANGEROUS: u32 = PARENT_DANGEROUS | DELETE | GENERIC_WRITE;
 
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
@@ -477,7 +479,12 @@ mod imp {
                     .add(mem::size_of::<ACE_HEADER>())
                     .cast::<u32>()
             };
-            if mask & DANGEROUS == 0 {
+            let dangerous = if header.AceFlags & OBJECT_INHERIT_ACE as u8 != 0 {
+                INHERITED_CHILD_DANGEROUS
+            } else {
+                PARENT_DANGEROUS
+            };
+            if mask & dangerous == 0 {
                 continue;
             }
             if header.AceType != 0
