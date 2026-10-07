@@ -4892,9 +4892,9 @@ mod tests {
         let root = unique_test_directory("top-level-root-admission");
         let selected_directory = SftpPath::local(root.join("downloads"));
         let source = SftpPath::remote(format!("/remote/{name}"));
-        let safe_source = SftpPath::remote("/remote/ordinary-root");
+        let safe_source = SftpPath::remote("/remote/ordinary-root-é");
         let follow_up_source = SftpPath::remote("/remote/after.txt");
-        let safe_destination = selected_directory.join_child("ordinary-root");
+        let safe_destination = selected_directory.join_child("ordinary-root-é");
         let safe_file = if file_type == SftpEntryType::Directory {
             safe_destination.join_child("child.txt")
         } else {
@@ -5074,6 +5074,83 @@ mod tests {
         ] {
             assert_top_level_download_root_rejected(name, SftpEntryType::Directory);
         }
+    }
+
+    #[test]
+    fn top_level_download_file_root_rejects_windows_filename_aliases_before_local_io() {
+        for name in [
+            "report.txt:payload",
+            "CON",
+            "con.txt",
+            "LPT9.log",
+            "COM¹.txt",
+            "name.",
+            "name ",
+        ] {
+            assert_top_level_download_root_rejected(name, SftpEntryType::File);
+        }
+    }
+
+    #[test]
+    fn top_level_download_directory_root_rejects_windows_filename_aliases_before_local_io() {
+        for name in [
+            "report.txt:payload",
+            "CON",
+            "con.txt",
+            "LPT9.log",
+            "COM¹.txt",
+            "name.",
+            "name ",
+        ] {
+            assert_top_level_download_root_rejected(name, SftpEntryType::Directory);
+        }
+    }
+
+    #[test]
+    fn top_level_download_can_use_an_explicit_safe_local_name() {
+        let root = unique_test_directory("explicit-root-destination");
+        let source = SftpPath::remote("/remote/C:remote-name");
+        let destination = SftpPath::local(root.join("safe-local.txt"));
+        let temporary = destination
+            .parent_directory()
+            .join_child("safe-local.txt.festerm-part");
+        let mut fixture = RootDownloadIo::default();
+        fixture
+            .directories
+            .insert(SftpPath::local(root), Vec::new());
+        fixture.files.insert(source.clone(), b"explicit".to_vec());
+        let io = Arc::new(Mutex::new(fixture));
+        let events = test_runtime().block_on(async {
+            let (commands, mut receiver, _snapshot) = spawn_worker(RootDownloadBackend {
+                io: Arc::clone(&io),
+            })
+            .await;
+            let batch = queue_batch(
+                &commands,
+                vec![SftpTransferRequest::new(source.clone(), destination.clone()).unwrap()],
+            );
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                collect_until_batch_finished(&mut receiver, batch.batch_id),
+            )
+            .await
+            .expect("an explicit safe destination must remain usable")
+        });
+        let io = io.lock().unwrap();
+        assert_eq!(io.files.get(&destination).unwrap(), b"explicit");
+        assert_eq!(io.files.get(&source).unwrap(), b"explicit");
+        assert_eq!(
+            io.mutations,
+            vec![("copy file", temporary), ("rename file", destination)]
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SftpTransferEvent::ItemCompleted { transfer_id, bytes_transferred: 8, .. }
+                if *transfer_id == SftpTransferId(1)
+        )));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, SftpTransferEvent::ItemFailed { .. })));
     }
 
     #[test]
