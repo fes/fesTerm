@@ -557,6 +557,8 @@ pub enum SaveFailure {
     MetadataPreservation,
     EncryptedFile,
     NamedStreams,
+    UnsupportedWindowsIntegrity,
+    WindowsExtendedAttributes,
     UnsupportedFilesystem,
     CrossVolume,
     UnsafeDestinationFolder,
@@ -582,6 +584,12 @@ impl SaveFailure {
             Self::MetadataPreservation => "This file's access cannot be preserved",
             Self::EncryptedFile => "This file's encryption cannot be preserved",
             Self::NamedStreams => "This file's Windows data streams cannot be preserved",
+            Self::UnsupportedWindowsIntegrity => {
+                "This file's Windows integrity policy cannot be preserved"
+            }
+            Self::WindowsExtendedAttributes => {
+                "This file's Windows extended attributes cannot be preserved"
+            }
             Self::UnsupportedFilesystem => "This disk cannot support safe saving",
             Self::CrossVolume => "This destination crossed a filesystem boundary",
             Self::UnsafeDestinationFolder => "This folder cannot protect save staging",
@@ -618,6 +626,12 @@ impl SaveFailure {
             }
             Self::NamedStreams => {
                 "The file has NTFS alternate data streams such as Zone.Identifier that fesTerm cannot safely preserve yet. Use Save As to choose a new destination.".to_owned()
+            }
+            Self::UnsupportedWindowsIntegrity => {
+                "The file uses Windows integrity-stream or no-scrub attributes that fesTerm cannot reproduce exactly. Nothing was written. Use Save As to choose a new destination.".to_owned()
+            }
+            Self::WindowsExtendedAttributes => {
+                "The file has NTFS extended attributes, including possible WSL ownership or mode metadata, that fesTerm cannot reproduce exactly. Nothing was written. Use Save As to choose a new destination.".to_owned()
             }
             Self::UnsupportedFilesystem => {
                 "This disk cannot provide private staging and no-overwrite publication. Use Save As on a different local disk.".to_owned()
@@ -948,18 +962,11 @@ pub fn save(
         })
         .transpose()?;
     #[cfg(windows)]
-    if security_metadata
+    if let Some(reason) = security_metadata
         .as_ref()
-        .is_some_and(festerm_windows_security::SecurityMetadata::is_encrypted)
+        .and_then(festerm_windows_security::SecurityMetadata::unsupported_reason)
     {
-        return Err(SaveFailure::EncryptedFile);
-    }
-    #[cfg(windows)]
-    if security_metadata
-        .as_ref()
-        .is_some_and(festerm_windows_security::SecurityMetadata::has_named_streams)
-    {
-        return Err(SaveFailure::NamedStreams);
+        return Err(classify_unsupported_windows_security(reason));
     }
 
     let parent_path = save_directory
@@ -1257,6 +1264,19 @@ fn classify_metadata_error(error: std::io::Error) -> SaveFailure {
         SaveFailure::UnsupportedFilesystem
     } else {
         classify_write_error(error)
+    }
+}
+
+#[cfg(windows)]
+fn classify_unsupported_windows_security(
+    reason: festerm_windows_security::UnsupportedSecurityMetadata,
+) -> SaveFailure {
+    use festerm_windows_security::UnsupportedSecurityMetadata;
+    match reason {
+        UnsupportedSecurityMetadata::EfsEncryption => SaveFailure::EncryptedFile,
+        UnsupportedSecurityMetadata::NamedStreams => SaveFailure::NamedStreams,
+        UnsupportedSecurityMetadata::IntegrityPolicy => SaveFailure::UnsupportedWindowsIntegrity,
+        UnsupportedSecurityMetadata::ExtendedAttributes => SaveFailure::WindowsExtendedAttributes,
     }
 }
 
@@ -2711,6 +2731,23 @@ mod tests {
         assert!(streams.headline().contains("data streams"));
         assert!(streams.detail().contains("Zone.Identifier"));
         assert!(streams.detail().contains("Save As"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unsupported_windows_security_metadata_maps_to_pre_staging_refusals() {
+        use festerm_windows_security::UnsupportedSecurityMetadata;
+        assert_eq!(
+            classify_unsupported_windows_security(UnsupportedSecurityMetadata::IntegrityPolicy),
+            SaveFailure::UnsupportedWindowsIntegrity
+        );
+        assert_eq!(
+            classify_unsupported_windows_security(UnsupportedSecurityMetadata::ExtendedAttributes),
+            SaveFailure::WindowsExtendedAttributes
+        );
+        let extended = SaveFailure::WindowsExtendedAttributes;
+        assert!(extended.detail().contains("WSL ownership or mode"));
+        assert!(extended.detail().contains("Nothing was written"));
     }
 
     #[test]

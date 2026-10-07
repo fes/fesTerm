@@ -158,6 +158,17 @@ impl FesTermApp {
             self.request_document_close(tab, AfterDocumentClose::ResumeClose(purpose));
             return false;
         }
+        if self.role == crate::app::WindowRole::Secondary {
+            if let Some(dirty) = self.state.dirty_document_lost_by_window_close() {
+                context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.show_dirty_document_blocker(
+                    dirty,
+                    "Closing this window is waiting for unsaved documents",
+                    "Save or close the document's views before closing this window. fesTerm will not discard several views together without an explicit document decision.",
+                );
+                return false;
+            }
+        }
         if self.refuse_application_action_for_dirty_document("Quitting") {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             return false;
@@ -192,6 +203,7 @@ impl FesTermApp {
     }
 
     pub(super) fn request_update_install(&mut self) {
+        self.update_restart_declined = false;
         if self.state.has_recovery_notices()
             || self
                 .overlays
@@ -236,6 +248,7 @@ impl FesTermApp {
         {
             return;
         }
+        self.update_restart_declined = true;
         if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
             self.request_document_close(
                 tab,
@@ -281,21 +294,33 @@ impl FesTermApp {
         let Some(dirty) = self.state.first_dirty_document() else {
             return false;
         };
+        self.show_dirty_document_blocker(
+            dirty,
+            format!("{action} is waiting for unsaved documents"),
+            "Save or close every unsaved document in its owning window, then try again. fesTerm will not discard a document merely because another window requested an application-wide close.",
+        );
+        true
+    }
+
+    fn show_dirty_document_blocker(
+        &mut self,
+        dirty: crate::tabs::DirtyDocumentClose,
+        headline: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
         self.overlays.about_open = false;
         self.overlays.about_licenses_open = false;
         if self.overlays.open_refusal.is_none() {
-            self.overlays.open_refusal =
-                Some(crate::overlay_state::OpenRefusalNotice {
-                    title: Some("Unsaved documents are still open".into()),
-                    acknowledgement_path: None,
-                    name: dirty.title,
-                    path: dirty.origin,
-                    headline: format!("{action} is waiting for unsaved documents"),
-                    detail: "Save or close every unsaved document in its owning window, then try again. fesTerm will not discard a document merely because another window requested an application-wide close.".to_owned(),
-                });
+            self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
+                title: Some("Unsaved documents are still open".into()),
+                acknowledgement_path: None,
+                name: dirty.title,
+                path: dirty.origin,
+                headline: headline.into(),
+                detail: detail.into(),
+            });
             self.overlays.open_refusal_focused = false;
         }
-        true
     }
 
     pub(super) fn show_close_confirmation(&mut self, context: &egui::Context, escape: bool) {
@@ -527,6 +552,12 @@ impl FesTermApp {
         }
 
         if cancel {
+            if matches!(
+                pending.then,
+                AfterDocumentClose::ResumeClose(QuitConfirmationPurpose::RestartAfterUpdate)
+            ) {
+                self.update_restart_declined = true;
+            }
             self.overlays.pending_document_close = None;
             // Popup and menu widget IDs can disappear in the frame that opens
             // a dialog, so focus is put back on the surface that was active
@@ -739,6 +770,9 @@ impl FesTermApp {
             current.cancel_focus_requested = true;
         }
         if cancel {
+            if pending.purpose == QuitConfirmationPurpose::RestartAfterUpdate {
+                self.update_restart_declined = true;
+            }
             self.overlays.pending_quit = None;
         } else if confirm {
             self.overlays.pending_quit = None;

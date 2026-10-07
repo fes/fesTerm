@@ -280,6 +280,11 @@ staging or writing because basic attribute restoration cannot reproduce its
 encryption. A target with any NTFS alternate data stream, including
 `Zone.Identifier` Mark-of-the-Web, is likewise refused before staging until
 complete handle-bound stream copying and verification exists;
+targets carrying integrity-stream or no-scrub attributes are also refused before
+staging because those policies cannot be reproduced through basic file metadata.
+Any NTFS extended attribute likewise refuses before staging until exact,
+handle-bound copying and verification exists, because WSL stores Linux owner,
+group, and mode metadata in `$LXUID`, `$LXGID`, and `$LXMOD` extended attributes;
 inability to apply them refuses before publication. Existing-target
 replacement also refuses before staging when `SeSecurityPrivilege` is
 unavailable, because the target's audit SACL cannot then be captured and
@@ -316,9 +321,9 @@ pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error that
 names the exact retained directory and is not replaced by freshness polling.
-If the last view closes or rebinds, the registry promotes that record to a
-bounded ordered application-level notice rather than discarding the only
-visible breadcrumb. A queued or displayed recovery notice blocks native menu,
+The registry immediately promotes that record to a bounded ordered
+application-level notice rather than leaving application close/update policy
+blind while a view remains open. A queued or displayed recovery notice blocks native menu,
 shortcut, and OS window-close paths until explicit acknowledgement. A queued
 recovery notice never replaces an undismissed modal, and asynchronous open
 refusals use a bounded FIFO rather than

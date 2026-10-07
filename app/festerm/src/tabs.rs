@@ -3893,6 +3893,40 @@ impl AppState {
             .collect()
     }
 
+    /// A dirty document whose every remaining view belongs to this window.
+    ///
+    /// Window teardown drops all tabs as one batch, so two views in the same
+    /// window are collectively final even though neither tab is final alone.
+    pub(crate) fn dirty_document_lost_by_window_close(&self) -> Option<DirtyDocumentClose> {
+        let registry = self.documents.borrow();
+        let mut examined = Vec::new();
+        for tab in &self.tabs {
+            let Some(document) = view_document(&tab.content) else {
+                continue;
+            };
+            if examined.contains(&document) {
+                continue;
+            }
+            examined.push(document);
+            let Some(open) = registry.get(document) else {
+                continue;
+            };
+            let owned_views = self
+                .tabs
+                .iter()
+                .filter(|candidate| view_document(&candidate.content) == Some(document))
+                .count();
+            if open.text().is_dirty() && owned_views >= open.views() {
+                return Some(DirtyDocumentClose {
+                    document,
+                    title: open.origin().file_name().to_owned(),
+                    origin: open.origin().qualified_label(),
+                });
+            }
+        }
+        None
+    }
+
     pub(crate) fn first_dirty_document(&self) -> Option<DirtyDocumentClose> {
         self.documents
             .borrow()

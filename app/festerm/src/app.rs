@@ -464,6 +464,9 @@ pub struct FesTermApp {
     /// update is installed. Kept separate from `quit_confirmed` so an install
     /// failure cannot disable ordinary quit protection.
     update_restart_authorized: bool,
+    /// A post-install restart preflight is driven automatically only once;
+    /// later progress comes from its explicit confirmation chain.
+    update_restart_declined: bool,
     /// Set once the aggregate quit confirmation has been deliberately
     /// confirmed, so the follow-up OS close request that actually tears
     /// down the window is let through instead of being intercepted again
@@ -899,6 +902,7 @@ impl FesTermApp {
             updates,
             update_exit_requested: false,
             update_restart_authorized: false,
+            update_restart_declined: false,
             quit_confirmed: false,
             role: WindowRole::Primary,
             application_live_session_counts: None,
@@ -5625,9 +5629,11 @@ impl FesTermApp {
         self.persist_update_check();
         if matches!(self.updates.status(), UpdateStatus::Failed { .. }) {
             self.update_restart_authorized = false;
+            self.update_restart_declined = false;
         }
         if matches!(self.updates.status(), UpdateStatus::Installed(_))
             && self.update_restart_authorized
+            && !self.update_restart_declined
             && !self.update_exit_requested
         {
             self.request_update_restart(ui.ctx());
@@ -6774,6 +6780,7 @@ impl FesTermApp {
             updates: UpdateController::unavailable_for_test(),
             update_exit_requested: false,
             update_restart_authorized: false,
+            update_restart_declined: false,
             quit_confirmed: false,
             role: WindowRole::Primary,
             application_live_session_counts: None,
@@ -13081,6 +13088,29 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_post_install_restart_restores_application_input() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.updates = UpdateController::installed_for_test();
+        app.update_restart_authorized = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness.get_by_label("Restart fesTerm");
+
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.step();
+
+        assert!(harness.state().overlays.pending_quit.is_none());
+        assert!(harness.state().update_restart_declined);
+        assert!(!harness.state().overlays.blocks_terminal_input());
+        assert!(!harness.state().update_exit_requested);
+    }
+
+    #[test]
     fn installed_update_rechecks_dirty_documents_before_restart() {
         let context = egui::Context::default();
         let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
@@ -13105,41 +13135,111 @@ mod tests {
         );
         assert!(!harness.state().update_exit_requested);
         assert!(!harness.state().quit_confirmed);
+
+        harness.step();
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.step();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(harness.state().update_restart_declined);
+        assert!(!harness.state().overlays.blocks_terminal_input());
+        assert!(!harness.state().update_exit_requested);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn post_install_restart_dirty_multi_view_refusal_does_not_reopen() {
+        let context = egui::Context::default();
+        let (mut app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        app.state
+            .dispatch(AppCommand::OpenAnotherEditorView, &context);
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        harness.state_mut().updates = UpdateController::installed_for_test();
+        harness.state_mut().update_restart_authorized = true;
+
+        harness.step();
+        harness.step();
+        assert!(harness.state().overlays.open_refusal.is_some());
+
+        harness.get_by_label("OK").click();
+        harness.step();
+        harness.step();
+        harness.step();
+
+        assert!(harness.state().overlays.open_refusal.is_none());
+        assert!(harness.state().update_restart_declined);
+        assert!(!harness.state().overlays.blocks_terminal_input());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn failed_save_during_post_install_restart_stays_dismissed() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        harness.state_mut().updates = UpdateController::installed_for_test();
+        harness.state_mut().update_restart_authorized = true;
+
+        harness.step();
+        harness.step();
+        std::fs::write(&path, "external\n").unwrap();
+        harness
+            .query_all_by_label("Save")
+            .find(|save| save.is_focused())
+            .expect("the update-restart dirty-close Save action should be focused")
+            .click();
+        harness.step();
+        harness.step();
+        harness.step();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(harness.state().update_restart_declined);
+        assert!(!harness.state().overlays.blocks_terminal_input());
+        assert!(!harness.state().update_exit_requested);
         let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]
     fn installed_update_waits_for_recovery_acknowledgement_before_restart() {
-        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
         app.updates = UpdateController::installed_for_test();
         app.update_restart_authorized = true;
         app.state.queue_recovery_notice_for_test(
             PathBuf::from("/tmp/.festerm-save-recovery.stage"),
             festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
         );
-        let context = egui::Context::default();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
 
-        let mut first_frame = context.run_ui(egui::RawInput::default(), |context| {
-            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
-        });
-        first_frame.textures_delta.clear();
-        let mut recovery_frame = context.run_ui(egui::RawInput::default(), |context| {
-            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
-        });
-
-        assert!(!app.update_exit_requested);
-        assert!(!app.quit_confirmed);
-        assert!(app
+        assert!(!harness.state().update_exit_requested);
+        assert!(!harness.state().quit_confirmed);
+        assert!(!harness.state().update_restart_declined);
+        assert!(harness
+            .state()
             .overlays
             .open_refusal
             .as_ref()
             .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement));
-        assert!(recovery_frame
-            .viewport_output
-            .values()
-            .flat_map(|viewport| &viewport.commands)
-            .all(|command| !matches!(command, egui::ViewportCommand::Close)));
-        recovery_frame.textures_delta.clear();
+
+        harness.get_by_label("OK").click();
+        harness.step();
+        harness.step();
+
+        assert!(harness.state().update_restart_declined);
+        assert!(harness
+            .state()
+            .overlays
+            .pending_quit
+            .is_some_and(|pending| {
+                pending.purpose == QuitConfirmationPurpose::RestartAfterUpdate
+            }));
     }
 
     #[test]

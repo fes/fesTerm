@@ -22,9 +22,10 @@ mod imp {
     use windows_sys::Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            FileStreamInformation, NtCreateFile, NtQueryInformationFile, FILE_CREATE,
-            FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
-            FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+            FileEaInformation, FileStreamInformation, NtCreateFile, NtQueryInformationFile,
+            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_EA_INFORMATION, FILE_NON_DIRECTORY_FILE,
+            FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_STREAM_INFORMATION,
+            FILE_SYNCHRONOUS_IO_NONALERT,
         },
     };
     use windows_sys::Win32::{
@@ -233,8 +234,10 @@ mod imp {
         resource_attributes: Vec<u8>,
         scoped_policy: Vec<u8>,
         attributes: u32,
+        unsupported_integrity_attributes: u32,
         encrypted: bool,
         has_named_streams: bool,
+        has_extended_attributes: bool,
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -243,9 +246,25 @@ mod imp {
     }
 
     const FILE_ATTRIBUTE_VALID_SET_FLAGS: u32 = 0x0000_31A7;
+    const FILE_ATTRIBUTE_INTEGRITY_STREAM_FLAG: u32 = 0x0000_8000;
+    const FILE_ATTRIBUTE_NO_SCRUB_DATA_FLAG: u32 = 0x0002_0000;
+    const UNSUPPORTED_INTEGRITY_ATTRIBUTES: u32 =
+        FILE_ATTRIBUTE_INTEGRITY_STREAM_FLAG | FILE_ATTRIBUTE_NO_SCRUB_DATA_FLAG;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum UnsupportedSecurityMetadata {
+        EfsEncryption,
+        NamedStreams,
+        IntegrityPolicy,
+        ExtendedAttributes,
+    }
 
     fn settable_file_attributes(attributes: u32) -> u32 {
         attributes & FILE_ATTRIBUTE_VALID_SET_FLAGS
+    }
+
+    fn unsupported_integrity_attributes(attributes: u32) -> u32 {
+        attributes & UNSUPPORTED_INTEGRITY_ATTRIBUTES
     }
 
     fn file_is_encrypted(attributes: u32) -> bool {
@@ -262,6 +281,46 @@ mod imp {
         pub const fn has_named_streams(&self) -> bool {
             self.has_named_streams
         }
+
+        /// Integrity-stream and no-scrub policy need dedicated filesystem
+        /// controls; basic attributes cannot reproduce them exactly.
+        pub const fn has_unsupported_integrity_attributes(&self) -> bool {
+            self.unsupported_integrity_attributes != 0
+        }
+
+        pub const fn unsupported_reason(&self) -> Option<UnsupportedSecurityMetadata> {
+            if self.encrypted {
+                Some(UnsupportedSecurityMetadata::EfsEncryption)
+            } else if self.has_named_streams {
+                Some(UnsupportedSecurityMetadata::NamedStreams)
+            } else if self.unsupported_integrity_attributes != 0 {
+                Some(UnsupportedSecurityMetadata::IntegrityPolicy)
+            } else if self.has_extended_attributes {
+                Some(UnsupportedSecurityMetadata::ExtendedAttributes)
+            } else {
+                None
+            }
+        }
+    }
+
+    fn file_has_extended_attributes(file: &File) -> io::Result<bool> {
+        let mut status = windows_sys::Win32::System::IO::IO_STATUS_BLOCK::default();
+        let mut information = FILE_EA_INFORMATION::default();
+        let result = unsafe {
+            NtQueryInformationFile(
+                file.as_raw_handle() as HANDLE,
+                &raw mut status,
+                (&raw mut information).cast(),
+                mem::size_of::<FILE_EA_INFORMATION>() as u32,
+                FileEaInformation,
+            )
+        };
+        if result != STATUS_SUCCESS {
+            return Err(io::Error::from_raw_os_error(unsafe {
+                RtlNtStatusToDosError(result) as i32
+            }));
+        }
+        Ok(information.EaSize != 0)
     }
 
     fn file_has_named_streams(file: &File) -> io::Result<bool> {
@@ -572,8 +631,12 @@ mod imp {
             resource_attributes,
             scoped_policy,
             attributes: settable_file_attributes(information.dwFileAttributes),
+            unsupported_integrity_attributes: unsupported_integrity_attributes(
+                information.dwFileAttributes,
+            ),
             encrypted: file_is_encrypted(information.dwFileAttributes),
             has_named_streams: file_has_named_streams(file)?,
+            has_extended_attributes: file_has_extended_attributes(file)?,
         })
     }
 
@@ -620,16 +683,23 @@ mod imp {
     pub fn apply_security_metadata(file: &File, metadata: &SecurityMetadata) -> io::Result<()> {
         const INFORMATION: u32 =
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-        if metadata.encrypted {
+        if let Some(reason) = metadata.unsupported_reason() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "NTFS EFS encryption cannot be preserved through basic file metadata",
-            ));
-        }
-        if metadata.has_named_streams {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "NTFS alternate data streams cannot be preserved through basic file metadata",
+                match reason {
+                    UnsupportedSecurityMetadata::EfsEncryption => {
+                        "NTFS EFS encryption cannot be preserved through basic file metadata"
+                    }
+                    UnsupportedSecurityMetadata::NamedStreams => {
+                        "NTFS alternate data streams cannot be preserved through basic file metadata"
+                    }
+                    UnsupportedSecurityMetadata::IntegrityPolicy => {
+                        "filesystem integrity or scrub attributes cannot be preserved through basic file metadata"
+                    }
+                    UnsupportedSecurityMetadata::ExtendedAttributes => {
+                        "NTFS extended attributes cannot be preserved through basic file metadata"
+                    }
+                },
             ));
         }
         let audit_sacl = metadata.audit_sacl.as_ref().ok_or_else(|| {
@@ -1600,28 +1670,52 @@ mod imp {
             assert_eq!(settable_file_attributes(0x0000_0E10), 0);
             assert!(file_is_encrypted(FILE_ATTRIBUTE_ENCRYPTED));
             assert!(!file_is_encrypted(FILE_ATTRIBUTE_NORMAL));
+            assert_eq!(
+                unsupported_integrity_attributes(
+                    FILE_ATTRIBUTE_INTEGRITY_STREAM_FLAG | FILE_ATTRIBUTE_NO_SCRUB_DATA_FLAG
+                ),
+                UNSUPPORTED_INTEGRITY_ATTRIBUTES
+            );
         }
 
-        #[test]
-        fn encrypted_security_metadata_is_refused_instead_of_applied_as_plaintext() {
-            let directory = TemporaryDirectory::new();
-            let directory_handle = directory.handle();
-            let file =
-                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
-            let encrypted = SecurityMetadata {
+        fn unsupported_metadata(reason: UnsupportedSecurityMetadata) -> SecurityMetadata {
+            SecurityMetadata {
                 descriptor: Vec::new(),
                 audit_sacl: None,
                 mandatory_label: Vec::new(),
                 resource_attributes: Vec::new(),
                 scoped_policy: Vec::new(),
                 attributes: FILE_ATTRIBUTE_NORMAL,
-                encrypted: true,
-                has_named_streams: false,
-            };
+                unsupported_integrity_attributes: if reason
+                    == UnsupportedSecurityMetadata::IntegrityPolicy
+                {
+                    FILE_ATTRIBUTE_INTEGRITY_STREAM_FLAG
+                } else {
+                    0
+                },
+                encrypted: reason == UnsupportedSecurityMetadata::EfsEncryption,
+                has_named_streams: reason == UnsupportedSecurityMetadata::NamedStreams,
+                has_extended_attributes: reason == UnsupportedSecurityMetadata::ExtendedAttributes,
+            }
+        }
 
-            let error = apply_security_metadata(&file, &encrypted).unwrap_err();
-
-            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        #[test]
+        fn unsupported_security_metadata_is_refused_before_application() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let file =
+                create_current_user_only_file(&directory_handle, Path::new("target.md")).unwrap();
+            for reason in [
+                UnsupportedSecurityMetadata::EfsEncryption,
+                UnsupportedSecurityMetadata::NamedStreams,
+                UnsupportedSecurityMetadata::IntegrityPolicy,
+                UnsupportedSecurityMetadata::ExtendedAttributes,
+            ] {
+                let metadata = unsupported_metadata(reason);
+                assert_eq!(metadata.unsupported_reason(), Some(reason));
+                let error = apply_security_metadata(&file, &metadata).unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+            }
         }
 
         #[test]
@@ -2159,4 +2253,5 @@ pub use imp::{
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
     secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
     DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard, StagingParentSecurity,
+    UnsupportedSecurityMetadata,
 };

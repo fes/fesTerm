@@ -1664,6 +1664,41 @@ mod tests {
     }
 
     #[test]
+    fn secondary_window_close_refuses_all_dirty_views_it_owns() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("secondary-views.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenAnotherEditorView, &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let document = documents.borrow().find_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("unsaved\n")
+            .unwrap();
+
+        assert!(!application
+            .window_mut(1)
+            .evaluate_close_request_for_test(&context));
+
+        assert_eq!(
+            application.window_mut(1).open_refusal_headline_for_test(),
+            Some("Closing this window is waiting for unsaved documents")
+        );
+        assert_eq!(documents.borrow().get(document).unwrap().views(), 2);
+        assert_eq!(application.window_count(), 2);
+    }
+
+    #[test]
     fn accepted_window_close_releases_its_last_document_views() {
         let (mut application, context) = application();
         application.open_window(&context, None);

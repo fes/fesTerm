@@ -70,6 +70,7 @@ pub(crate) struct OpenDocument {
     last_error: Option<SaveError>,
     recovery_error: Option<SaveError>,
     recovery_path: Option<PathBuf>,
+    recovery_notice_queued: bool,
     /// When this document's source was last checked, so metadata queries run
     /// once per interval, not per frame. Windows also opens a file handle to
     /// retrieve its stable identity; Unix obtains identity from the stat.
@@ -402,6 +403,7 @@ impl DocumentRegistry {
                 last_error: None,
                 recovery_error: None,
                 recovery_path: None,
+                recovery_notice_queued: false,
                 checked: Instant::now(),
                 reloaded: None,
                 settled: None,
@@ -457,10 +459,14 @@ impl DocumentRegistry {
         if document.views > 0 {
             return false;
         }
-        let recovery = document
-            .recovery_path
-            .clone()
-            .zip(document.recovery_error.clone());
+        let recovery = (!document.recovery_notice_queued)
+            .then(|| {
+                document
+                    .recovery_path
+                    .clone()
+                    .zip(document.recovery_error.clone())
+            })
+            .flatten();
         self.documents.remove(&id);
         self.by_key.retain(|_, document| *document != id);
         if let Some(recovery) = recovery {
@@ -676,6 +682,7 @@ impl DocumentRegistry {
                 let error = SaveError::new(failure.headline(), failure.detail());
                 if let SaveFailure::RecoveryRequired(path) = &failure {
                     document.recovery_path = Some(path.clone());
+                    document.recovery_notice_queued = true;
                 }
                 document.recovery_error = Some(error.clone());
                 SaveOutcome::Failed(error)
@@ -687,6 +694,28 @@ impl DocumentRegistry {
             }
         };
         document.save = SaveProgress::Idle;
+        let recovery = if document.recovery_notice_queued {
+            document
+                .recovery_path
+                .clone()
+                .zip(document.recovery_error.clone())
+        } else {
+            None
+        };
+        if let Some((path, error)) = recovery {
+            let already_queued = self
+                .pending_recovery_notices
+                .iter()
+                .chain(&self.overflow_recovery_notices)
+                .any(|(queued, _)| queued == &path)
+                || self
+                    .active_recovery_notice
+                    .as_ref()
+                    .is_some_and(|(active, _)| active == &path);
+            if !already_queued {
+                self.queue_recovery_notice_record(path, error);
+            }
+        }
         Some(outcome)
     }
 
@@ -868,8 +897,12 @@ impl DocumentRegistry {
                     if let Some(document) = self.documents.get_mut(&id) {
                         if let SaveFailure::RecoveryRequired(path) = &failure {
                             document.recovery_path = Some(path.clone());
+                            document.recovery_notice_queued = true;
                         }
                         document.recovery_error = Some(error.clone());
+                    }
+                    if let SaveFailure::RecoveryRequired(path) = failure {
+                        self.queue_recovery_notice_record(path, error.clone());
                     }
                     return Some((SaveOutcome::Failed(error), None));
                 }
@@ -903,6 +936,7 @@ impl DocumentRegistry {
                 document.last_error = None;
                 document.recovery_error = None;
                 document.recovery_path = None;
+                document.recovery_notice_queued = false;
                 document.save = SaveProgress::Idle;
                 document.reloaded = Some(Instant::now());
                 document.checked = Instant::now();
@@ -1846,6 +1880,60 @@ mod tests {
     }
 
     #[test]
+    fn save_as_recovery_is_promoted_while_the_source_view_remains_open() {
+        let directory = TemporaryDirectory::new("save-as-promotes-recovery");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.file("destination.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        #[cfg(not(windows))]
+        {
+            let target = destination.clone();
+            let replacement = directory.path.join("replacement.md");
+            document_store::set_after_save_replacement_hook(move || {
+                fs::write(&replacement, "later\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = destination.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert!(matches!(outcome, SaveOutcome::Failed(_)));
+        assert!(moved.is_none());
+        let recovery = registry
+            .get(source_id)
+            .unwrap()
+            .recovery_path()
+            .expect("save as retained exact recovery")
+            .to_owned();
+        let (notice_path, _) = registry
+            .take_recovery_notice()
+            .expect("save as immediately promoted its recovery notice");
+        assert_eq!(notice_path, recovery);
+        assert_eq!(registry.get(source_id).unwrap().views(), 1);
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&destination).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(&destination, permissions).unwrap();
+        }
+    }
+
+    #[test]
     fn save_as_refuses_a_dirty_open_destination_without_mutating_either_buffer_or_disk() {
         let directory = TemporaryDirectory::new("save-as-dirty-open");
         let source = directory.file("notes.md", "source\n");
@@ -2231,6 +2319,18 @@ mod tests {
             .recovery_path
             .clone()
             .expect("exact retained recovery path");
+        assert!(
+            registry.has_recovery_notices(),
+            "an open document's retained recovery must block application close and update actions"
+        );
+        let (retained_path, retained_error) = registry
+            .take_recovery_notice()
+            .expect("the open document immediately promotes its application notice");
+        assert_eq!(retained_path, recovery);
+        assert!(retained_error
+            .detail()
+            .contains(&recovery.display().to_string()));
+        assert!(registry.acknowledge_recovery_notice(&retained_path));
         #[cfg(windows)]
         {
             let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -2251,12 +2351,10 @@ mod tests {
         assert_eq!(document.status().severity(), Severity::Blocking);
         assert!(!document.status().can_save());
         assert!(registry.release(id));
-        let (retained_path, retained_error) =
-            registry.take_recovery_notice().expect("application notice");
-        assert_eq!(retained_path, recovery);
-        assert!(retained_error
-            .detail()
-            .contains(&recovery.display().to_string()));
+        assert!(
+            registry.take_recovery_notice().is_none(),
+            "final-view release must not duplicate an acknowledged notice"
+        );
     }
 
     #[test]
