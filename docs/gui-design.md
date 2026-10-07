@@ -1729,6 +1729,17 @@ would have moved fesTerm's own scrollback, so a trackpad's stream of
 pixel-sized events is not reported as a full notch each, and the preference
 is not silently bypassed by the programs a user is most likely to scroll.
 
+The **Markdown images** card exposes **Image memory budget**: 64, 128, 256,
+512 (default), 1024 or 2048 MiB, without an unlimited option. The managed
+allowance applies immediately across windows, viewers and saved-local editor
+Preview; it preserves admitted images when lowered and explains that new loads
+are blocked while usage exceeds the limit. Four actual manual/automatic image
+workers share the same application quota. The choice autosaves; a failed save
+reports failure but preserves the live choice without broadcasting an unsaved
+configuration. Reset restores 512 MiB without evicting existing images.
+This allowance excludes decoder-private/native-GPU allocations and is not a
+process-RAM cap (ADR 0030).
+
 The **Terminal typography** card exposes the bundled terminal-family selector
 plus the default-on ligature toggle. The **Quick switch** card currently
 exposes the on-by-default quick-switch-number overlay preference; it no
