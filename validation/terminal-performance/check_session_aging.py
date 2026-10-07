@@ -25,6 +25,45 @@ TEARDOWN_POINTS = (
     "renderer-dropped", "fixture-dropped",
     "rebuilt-renderer-dropped", "rebuilt-fixture-dropped",
 )
+RESOURCE_FIELDS = (
+    "working_set_bytes", "private_bytes", "peak_working_set_bytes", "handles", "thread_count",
+)
+COMMITMENT_FIELDS = ("commitment_bytes", "peak_commitment_bytes")
+
+
+def check_registry_report(registries):
+    require(type(registries) is dict and set(registries) == set(REGISTRIES), "incomplete wgpu registry report")
+    for registry in registries.values():
+        require(
+            type(registry) is dict and set(registry) == {
+                "num_allocated", "num_kept_from_user", "num_released_from_user", "element_size",
+            },
+            "unsupported registry fields",
+        )
+        require(
+            all(type(value) is int and value >= 0 for value in registry.values()),
+            "registry counters must be nonnegative integers",
+        )
+        require(registry["element_size"] > 0, "registry element size must be positive")
+
+
+def check_window(window, idle_seconds):
+    require(
+        type(window) is dict
+        and {"started_unix_ms", "completed_unix_ms", "wall_seconds"}.issubset(window),
+        "incomplete registry observation window",
+    )
+    started, completed = window["started_unix_ms"], window["completed_unix_ms"]
+    require(
+        type(started) is int and type(completed) is int and 0 <= started <= completed,
+        "invalid registry observation window",
+    )
+    elapsed = number(window["wall_seconds"], "registry observation duration")
+    require(elapsed >= idle_seconds, "truncated registry observation window")
+    require(
+        math.isclose(elapsed, (completed - started) / 1000, rel_tol=0, abs_tol=0.002),
+        "inconsistent registry observation clocks",
+    )
 
 
 def check_registries(records, cycles, idle_seconds):
@@ -36,33 +75,9 @@ def check_registries(records, cycles, idle_seconds):
     require(type(records) is list and len(records) == len(expected), "incomplete registry checkpoints")
     for record, name in zip(records, expected):
         require(record["name"] == name, "unordered registry checkpoint")
-        registries = record["registries"]
-        require(set(registries) == set(REGISTRIES), "incomplete wgpu registry report")
-        for registry in registries.values():
-            require(
-                set(registry) == {
-                    "num_allocated", "num_kept_from_user", "num_released_from_user", "element_size",
-                },
-                "unsupported registry fields",
-            )
-            require(
-                all(type(value) is int and value >= 0 for value in registry.values()),
-                "registry counters must be nonnegative integers",
-            )
-            require(registry["element_size"] > 0, "registry element size must be positive")
+        check_registry_report(record["registries"])
         if name in TEARDOWN_POINTS:
-            window = record["window"]
-            started, completed = window["started_unix_ms"], window["completed_unix_ms"]
-            require(
-                type(started) is int and type(completed) is int and 0 <= started <= completed,
-                "invalid registry observation window",
-            )
-            elapsed = number(window["wall_seconds"], "registry observation duration")
-            require(elapsed >= idle_seconds, "truncated registry observation window")
-            require(
-                math.isclose(elapsed, (completed - started) / 1000, rel_tol=0, abs_tol=0.002),
-                "inconsistent registry observation clocks",
-            )
+            check_window(record["window"], idle_seconds)
     return records
 
 
@@ -90,7 +105,8 @@ def distribution(values):
     )
 
 
-def check_phase(summary, samples, frames, idle_seconds):
+def check_phase(summary, samples, frames, idle_seconds, resource_schema=None):
+    require(resource_schema is None or type(resource_schema) is int and resource_schema == 1, "unsupported frame resource schema")
     require(summary["schema"] == 1, "unsupported phase schema")
     mode = summary["mode"]
     require(mode in MODES, "unknown phase mode")
@@ -143,6 +159,10 @@ def check_phase(summary, samples, frames, idle_seconds):
             )
         previous_completion_ms = completion_ms
         rendering = sample["rendering"]
+        if resource_schema == 1:
+            require(rendering.get("wgpu_submission_completed") is True, "missing/incomplete GPU submission observation")
+        else:
+            require("wgpu_submission_completed" not in rendering, "undeclared GPU submission observation")
         require(rendering["native_calls"] == 1, "ordinary fallback is not admitted evidence")
         require(rendering["host_copy"] is True, "native copy declined")
         updated = number(rendering["updated_pixels"], "native updated pixels")
@@ -176,6 +196,95 @@ def check_phase(summary, samples, frames, idle_seconds):
         "retained_reused_frames": sum(sample["rendering"]["retained_reused"] for sample in samples),
         "retained_rebuilt_frames": sum(sample["rendering"]["retained_rebuilt"] for sample in samples),
     }
+
+
+def check_process_memory(binding, manifest, resources, probe):
+    declared = "process_memory_schema" in binding or "process_memory_schema" in manifest
+    receipt_path = probe / "sampled.json"
+    if not declared:
+        require("process_memory_method" not in binding, "undeclared process memory method")
+        require(not receipt_path.exists(), "undeclared final process memory receipt")
+        require(
+            all(not set(COMMITMENT_FIELDS).intersection(sample) for sample in resources),
+            "undeclared commitment observations",
+        )
+        return None
+    require(
+        all(type(record.get("process_memory_schema")) is int and record["process_memory_schema"] == 1
+            for record in (binding, manifest)),
+        "incomplete/unsupported process memory declaration",
+    )
+    require(
+        binding.get("process_memory_method") == "GetProcessMemoryInfo.PagefileUsage/PeakPagefileUsage",
+        "unsupported process commitment method",
+    )
+    previous_peak = previous_time = 0
+    for sample in resources:
+        require(
+            all(type(sample.get(field)) is int and sample[field] >= 0 for field in COMMITMENT_FIELDS),
+            "incomplete/invalid process commitment counters",
+        )
+        require(
+            sample["peak_commitment_bytes"] >= max(previous_peak, sample["commitment_bytes"]),
+            "inconsistent process-lifetime commitment peak",
+        )
+        require(
+            type(sample["unix_ms"]) is int and sample["unix_ms"] >= previous_time,
+            "unordered commitment observations",
+        )
+        previous_peak, previous_time = sample["peak_commitment_bytes"], sample["unix_ms"]
+    require(receipt_path.exists(), "missing final process memory receipt")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    require(
+        receipt == resources[-1] and receipt["phase"] == "complete",
+        "final commitment receipt does not match the last completed process observation",
+    )
+    sampled_maximum = max(sample["commitment_bytes"] for sample in resources)
+    return {
+        "lifetime_peak_commitment_bytes": previous_peak,
+        "maximum_sampled_commitment_bytes": sampled_maximum,
+        "peak_above_sampled_commitment_bytes": previous_peak - sampled_maximum,
+        "final_observation": receipt,
+        "classification": "OS-maintained process-lifetime high-water mark, not a per-phase peak, live cache size or GPU-byte counter",
+    }
+
+
+def window_resources(resources, name, window, fields, require_sample=False):
+    selected = [
+        sample for sample in resources
+        if sample["phase"] == name
+        and window["started_unix_ms"] <= sample["unix_ms"] <= window["completed_unix_ms"]
+    ]
+    require(not require_sample or selected, f"missing process samples in {name} held window")
+    return {
+        "sample_count": len(selected),
+        **{field: distribution([number(sample[field], field) for sample in selected]) for field in fields},
+    }
+
+
+def check_lifecycles(records, repeats, idle_seconds):
+    require(type(records) is list and len(records) == repeats, "incomplete whole-owner lifecycle observations")
+    previous_end = 0
+    for index, record in enumerate(records):
+        require(type(record.get("index")) is int and record["index"] == index, "unordered lifecycle observation")
+        require(
+            type(record.get("churn_cycles")) is int and record["churn_cycles"] == 2
+            and type(record.get("churn_submitted_frames")) is int and record["churn_submitted_frames"] == 12,
+            "incomplete lifecycle churn",
+        )
+        for field in ("reporting_instance_dropped", "repaint_owner_released", "wgpu_submission_completed"):
+            require(record.get(field) is True, f"incomplete lifecycle {field}")
+        require(
+            type(record.get("temporary_oracle_rgba_bytes")) is int
+            and record["temporary_oracle_rgba_bytes"] == 2 * 2058 * 1658 * 4,
+            "incorrect temporary CPU pixel oracle accounting",
+        )
+        check_registry_report(record.get("live_registries"))
+        check_registry_report(record.get("drained_registries"))
+        check_window(record.get("window"), idle_seconds)
+        require(record["window"]["started_unix_ms"] >= previous_end, "overlapping lifecycle windows")
+        previous_end = record["window"]["completed_unix_ms"]
+    return records
 
 
 def validate(directory):
@@ -222,13 +331,18 @@ def validate(directory):
         "missing or unexpected frame log",
     )
     phases = {}
+    frame_schema = manifest.get("frame_resource_schema")
+    require(
+        "frame_resource_schema" not in manifest or type(frame_schema) is int and frame_schema == 1,
+        "unsupported frame resource schema",
+    )
     for state in STATES:
         for mode in MODES:
             name = f"{state}-{mode}"
             summary = json.loads((probe / f"{name}.json").read_text())
             require(summary["phase"] == name and summary["mode"] == mode, "phase identity mismatch")
             samples = [json.loads(line) for line in (probe / f"{name}.jsonl").read_text().splitlines()]
-            phases[name] = check_phase(summary, samples, binding["frames"], binding["idle_seconds"])
+            phases[name] = check_phase(summary, samples, binding["frames"], binding["idle_seconds"], frame_schema)
     resources = [json.loads(line) for line in (directory / "resources.jsonl").read_text().splitlines()]
     require(resources, "missing process resource observations")
     pids = {sample["pid"] for sample in resources}
@@ -236,8 +350,11 @@ def validate(directory):
     for sample in resources:
         for field in ("unix_ms", "elapsed_seconds", "process_cpu_ms"):
             number(sample[field], field)
+        for field in RESOURCE_FIELDS:
+            number(sample[field], field)
+    process_memory = check_process_memory(binding, manifest, resources, probe)
     resource_phases = {}
-    fields = ("working_set_bytes", "private_bytes", "peak_working_set_bytes", "handles", "thread_count")
+    fields = RESOURCE_FIELDS + (COMMITMENT_FIELDS if process_memory else ())
     for name in phases:
         selected = [sample for sample in resources if sample["phase"] == name]
         # Short smoke windows may legitimately finish between the 500ms observations.
@@ -251,6 +368,12 @@ def validate(directory):
         "normalized_png_sha256": png_hashes,
         "limitations": "No performance budget assertion. Non-idle frames are forced/paced offscreen work. Idle follows egui demand. Sampled process resources exclude GPU-specific and in-flight allocation accounting; rebuilt GUI is not a process restart or persistent-shell experiment.",
     }
+    if process_memory:
+        result["process_memory"] = process_memory
+        result["limitations"] += (
+            " Commitment high-water marks include unsampled transient commitment but are "
+            "process-lifetime values: differences show new lifetime highs, not local phase peaks."
+        )
     registry_path = probe / "registries.json"
     if "registry_schema" in manifest:
         require(type(manifest["registry_schema"]) is int and manifest["registry_schema"] == 1, "unsupported registry schema")
@@ -263,24 +386,58 @@ def validate(directory):
             window = next(
                 record["window"] for record in result["registry_observations"] if record["name"] == name
             )
-            selected = [
-                sample for sample in resources
-                if sample["phase"] == name
-                and window["started_unix_ms"] <= sample["unix_ms"] <= window["completed_unix_ms"]
-            ]
-            result["teardown_resources"][name] = {
-                "sample_count": len(selected),
-                **{
-                    field: distribution([number(sample[field], field) for sample in selected])
-                    for field in fields
-                },
-            }
+            result["teardown_resources"][name] = window_resources(resources, name, window, fields)
         result["limitations"] += (
             " Registry reports count public wgpu IDs/vacant slots, not complete native, "
             "queued/in-flight allocations or GPU bytes; teardown retains the reporting instance."
         )
     else:
         require(not registry_path.exists(), "undeclared registry observations")
+    lifecycle_path = probe / "lifecycles.json"
+    lifecycle_pngs = {path.name for path in probe.glob("lifecycle-*.png")}
+    if "lifecycle_schema" in manifest:
+        require(
+            type(manifest["lifecycle_schema"]) is int and manifest["lifecycle_schema"] == 1,
+            "unsupported lifecycle schema",
+        )
+        require(process_memory and frame_schema == 1 and manifest.get("registry_schema") == 1, "incomplete lifecycle resource declarations")
+        repeats = binding.get("lifecycle_repeats")
+        require(type(repeats) is int and 1 <= repeats <= 8, "invalid bounded lifecycle repeats")
+        require(
+            type(manifest.get("lifecycle_repeats")) is int and manifest["lifecycle_repeats"] == repeats
+            and type(manifest.get("lifecycle_churn_cycles")) is int and manifest["lifecycle_churn_cycles"] == 2,
+            "lifecycle declaration mismatch",
+        )
+        require(lifecycle_path.exists(), "missing lifecycle observations")
+        result["lifecycle_observations"] = check_lifecycles(
+            json.loads(lifecycle_path.read_text()), repeats, binding["idle_seconds"],
+        )
+        require(
+            lifecycle_pngs == {f"lifecycle-{index}-normalized.png" for index in range(repeats)},
+            "incomplete/unexpected lifecycle pixel oracles",
+        )
+        result["lifecycle_resources"] = {}
+        for record in result["lifecycle_observations"]:
+            name = f"lifecycle-{record['index']}-dropped"
+            require(
+                digest(probe / f"lifecycle-{record['index']}-normalized.png") == png_hashes["fresh"],
+                "whole-owner normalized PNG bytes differ",
+            )
+            result["lifecycle_resources"][name] = window_resources(
+                resources, name, record["window"], fields, require_sample=True,
+            )
+        result["limitations"] += (
+            " Repeated whole-owner windows also drop the reporting instance. Temporary oracle "
+            "bytes count two CPU RGBA payloads only, not spare capacity/all temporary allocations; completed "
+            "submissions and public registries do not measure driver-private/in-flight bytes."
+        )
+    else:
+        require(
+            not lifecycle_path.exists() and not lifecycle_pngs
+            and "lifecycle_repeats" not in binding
+            and not {"lifecycle_repeats", "lifecycle_churn_cycles"}.intersection(manifest),
+            "undeclared lifecycle observations",
+        )
     (directory / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 

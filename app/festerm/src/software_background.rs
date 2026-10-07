@@ -76,7 +76,7 @@ fn white_mesh_geometry(mesh: &egui::Mesh) -> bool {
         && mesh.is_valid()
 }
 
-fn opaque_window_frame(shape: &egui::Shape) -> bool {
+pub(crate) fn opaque_window_frame(shape: &egui::Shape) -> bool {
     matches!(shape, egui::Shape::Vec(shapes) if matches!(
         shapes.as_slice(),
         [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)]
@@ -479,6 +479,100 @@ fn supports_panel_frame(ui: &egui::Ui, frame: &egui::Frame) -> bool {
     frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
 }
 
+pub(crate) fn full_root_black_backdrop(
+    shape: &egui::epaint::ClippedShape,
+    viewport: egui::Rect,
+) -> bool {
+    let egui::Shape::Rect(rect) = &shape.shape else {
+        return false;
+    };
+    viewport.is_finite()
+        && viewport.min == egui::Pos2::ZERO
+        && viewport.is_positive()
+        && rect.rect == viewport
+        && shape.clip_rect.contains_rect(viewport)
+        && rect.fill.r() == 0
+        && rect.fill.g() == 0
+        && rect.fill.b() == 0
+        && rect.fill.a() != 0
+        && !rect.fill.is_opaque()
+        && rect.brush.is_none()
+        && rect.corner_radius == egui::CornerRadius::ZERO
+        && rect.stroke == egui::Stroke::NONE
+        && rect.blur_width == 0.0
+}
+
+#[cfg(test)]
+fn picker_backdrops_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-picker-backdrop")
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn set_picker_backdrops_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(picker_backdrops_disabled_id(), !enabled));
+}
+
+pub(crate) fn show_picker_modal<R>(
+    context: &egui::Context,
+    modal: egui::Modal,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::ModalResponse<R> {
+    let layer = modal.area.layer();
+    let color = modal.backdrop_color;
+    let start = context.graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), egui::layers::PaintList::next_idx)
+    });
+    let mut supported = false;
+    let response = modal.show(context, |ui| {
+        supported = supports_panel_painter(ui);
+        contents(ui)
+    });
+    #[cfg(test)]
+    if context.data(|data| {
+        data.get_temp::<bool>(picker_backdrops_disabled_id())
+            .unwrap_or(false)
+    }) {
+        return response;
+    }
+    if !supported || context.layer_transform_to_global(layer).is_some() {
+        return response;
+    }
+    let Some(renderer) =
+        context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+    else {
+        return response;
+    };
+    let viewport = context.viewport_rect();
+    if response.backdrop_response.rect != viewport {
+        return response;
+    }
+    let backdrop = context.graphics(|graphics| {
+        let mut matched = None;
+        for (index, shape) in graphics.get(layer)?.all_entries().enumerate().skip(start.0) {
+            if full_root_black_backdrop(shape, viewport)
+                && matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == color)
+                && matched.replace((egui::layers::ShapeIdx(index), shape.clone())).is_some()
+            {
+                tracing::warn!(target: "festerm::rendering", "retaining ordinary picker painting for ambiguous backdrop geometry");
+                return None;
+            }
+        }
+        matched
+    });
+    if let Some((index, backdrop)) = backdrop {
+        let shape = renderer.shape_for_clip(context, backdrop.clip_rect, backdrop.shape);
+        context.graphics_mut(|graphics| {
+            graphics
+                .get_mut(layer)
+                .expect("picker paint list remains present in the same pass")
+                .set(index, backdrop.clip_rect, shape);
+        });
+    }
+    response
+}
+
 pub(crate) fn show_frame<R>(
     ui: &mut egui::Ui,
     frame: egui::Frame,
@@ -507,6 +601,18 @@ pub(crate) struct PanelTestProbe(Option<Arc<PanelRenderer>>);
 
 #[cfg(test)]
 impl PanelTestProbe {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub(crate) fn existing(context: &egui::Context) -> Self {
+        Self(context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())))
+    }
+
+    pub(crate) fn existing_paints(context: &egui::Context) -> Option<usize> {
+        context.data(|data| {
+            data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())
+                .map(|renderer| renderer.paints.load(std::sync::atomic::Ordering::Relaxed))
+        })
+    }
+
     pub(crate) fn install(context: &egui::Context, state: &egui_wgpu::RenderState) -> Self {
         // Exercise geometry on CI adapters too; production install retains its adapter guards.
         let renderer = PanelRenderer::new(state, egui_wgpu::RendererOptions::default().dithering);
@@ -786,6 +892,110 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             current_fills
         );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn picker_modal_preserves_pixels_responses_and_guarded_fallbacks() {
+        use egui_kittest::TestRenderer;
+        let render = |enabled: bool, scale: f32, case: &str| {
+            let mut setup = default_wgpu_setup();
+            let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+                unreachable!()
+            };
+            options.instance_descriptor.backends = wgpu::Backends::DX12;
+            let state = create_render_state(setup, Default::default());
+            assert_eq!(state.adapter.get_info().backend, wgpu::Backend::Dx12);
+            assert_eq!(state.adapter.get_info().device_type, wgpu::DeviceType::Cpu);
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let context = egui::Context::default();
+            context.set_visuals(if case == "light" {
+                egui::Visuals::light()
+            } else {
+                festerm_ui_egui::theme::default_visuals()
+            });
+            context.all_styles_mut(|style| style.animation_time = 0.0);
+            if case != "no-renderer" {
+                install(&context, &state);
+            }
+            set_picker_backdrops_enabled(&context, enabled);
+            let id = egui::Id::new("guarded-picker-modal");
+            if case == "transform" {
+                context.set_transform_layer(
+                    egui::Modal::default_area(id).layer(),
+                    egui::emath::TSTransform::from_translation(egui::vec2(1.25, 2.5)),
+                );
+            }
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    if case == "origin" {
+                        egui::pos2(1.0, 2.0)
+                    } else {
+                        egui::Pos2::ZERO
+                    },
+                    egui::vec2(224.0, 144.0),
+                )),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let color = if case == "colored" {
+                egui::Color32::from_rgba_unmultiplied(31, 43, 61, 100)
+            } else {
+                egui::Color32::from_black_alpha(100)
+            };
+            let mut observed = None;
+            let mut frame = egui::FullOutput::default();
+            for _ in 0..5 {
+                frame = context.run_ui(input.clone(), |ui| {
+                    ui.label("Underlying content stays live");
+                    let response = show_picker_modal(
+                        &context,
+                        egui::Modal::new(id).backdrop_color(color),
+                        |ui| {
+                            ui.label("Actual picker content");
+                            let button = ui.button("Choose");
+                            (button.id, button.rect, button.sense, button.enabled())
+                        },
+                    );
+                    observed = Some((
+                        response.response.id,
+                        response.response.rect,
+                        response.backdrop_response.id,
+                        response.backdrop_response.rect,
+                        response.backdrop_response.sense,
+                        response.is_top_modal,
+                        response.any_popup_open,
+                        response.inner,
+                    ));
+                });
+                renderer.handle_delta(&mut frame.textures_delta);
+            }
+            let before = PanelTestProbe::existing_paints(&context).unwrap_or(0);
+            let image = renderer.render(&context, &frame).unwrap();
+            let paints = PanelTestProbe::existing_paints(&context).unwrap_or(0) - before;
+            (image, observed.unwrap(), paints)
+        };
+        for scale in [1.0, 1.25] {
+            for case in [
+                "normal",
+                "light",
+                "origin",
+                "transform",
+                "colored",
+                "no-renderer",
+            ] {
+                let (ordinary, expected, ordinary_paints) = render(false, scale, case);
+                let (converted, actual, paints) = render(true, scale, case);
+                assert_eq!(converted, ordinary, "{case}, scale {scale}");
+                assert_eq!(actual, expected, "{case}, scale {scale}");
+                assert_eq!(ordinary_paints, 0);
+                assert_eq!(paints, usize::from(matches!(case, "normal" | "light")));
+            }
+        }
     }
 
     #[test]
