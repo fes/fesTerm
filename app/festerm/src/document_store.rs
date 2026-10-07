@@ -51,6 +51,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static AFTER_SECURITY_METADATA_COPY: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    #[cfg(windows)]
+    static BEFORE_ORIGINAL_RECOVERY_VERIFICATION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 fn after_save_directory_capture() {
@@ -130,6 +133,16 @@ fn after_security_metadata_copy() {
     AFTER_SECURITY_METADATA_COPY.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
+        }
+
+        #[cfg(windows)]
+        fn before_original_recovery_verification() {
+            #[cfg(test)]
+            BEFORE_ORIGINAL_RECOVERY_VERIFICATION.with(|slot| {
+                if let Some(hook) = slot.borrow_mut().take() {
+                    hook();
+                }
+            });
         }
     });
 }
@@ -1253,6 +1266,7 @@ impl<'a> TemporaryFile<'a> {
 
     #[cfg(windows)]
     fn original_recovery_copy_matches(&self, source: &mut File) -> Result<bool, SaveFailure> {
+        before_original_recovery_verification();
         let mut recovery =
             open_named_file(&self.staging, Path::new("original")).map_err(classify_write_error)?;
         source.rewind().map_err(classify_write_error)?;
@@ -1820,7 +1834,26 @@ fn publish_temporary(
         let _ = festerm_windows_security::restrict_to_current_user(&current);
         return Err(temporary.recovery_required());
     }
-    if !temporary.original_recovery_copy_matches(&mut current)? {
+    let original_copy_matches = match temporary.original_recovery_copy_matches(&mut current) {
+        Ok(matches) => matches,
+        Err(error) => {
+            tracing::error!(
+                "the private Windows original copy could not be compared after capture"
+            );
+            if let Ok(_restored_lock) = restore_windows_displaced(
+                &current,
+                &staging_handle,
+                &directory_handle,
+                target,
+                Some(security_metadata),
+            ) {
+                temporary.finish();
+                return Err(error);
+            }
+            return Err(temporary.recovery_required());
+        }
+    };
+    if !original_copy_matches {
         if let Ok(_restored_lock) = restore_windows_displaced(
             &current,
             &staging_handle,
@@ -2776,6 +2809,37 @@ mod tests {
         save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "editor\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn post_capture_recovery_read_error_restores_before_cleanup() {
+        let directory = TemporaryDirectory::new("recovery-read-error");
+        let path = directory.file("notes.md", "loaded\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let observed_directory = directory.path.clone();
+        BEFORE_ORIGINAL_RECOVERY_VERIFICATION.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let staging = fs::read_dir(&observed_directory)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                name.starts_with(".festerm-save-") && name.ends_with(".stage")
+                            })
+                    })
+                    .expect("private save staging directory");
+                fs::remove_file(staging.join("original")).unwrap();
+            }));
+        });
+
+        let failure = save(&path, b"editor\n", loaded_expectation(&loaded)).unwrap_err();
+
+        assert_eq!(failure, SaveFailure::Interrupted);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "loaded\n");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
