@@ -507,7 +507,8 @@
         "SSH-09"
       ],
       "requirements": [
-        "docs/gui-design.md#ssh-session-creation"
+        "docs/gui-design.md#ssh-session-creation",
+        "docs/sftp-ui-design.md#remote-to-local-name-admission"
       ],
       "decisions": [
         "ADR-0018",
@@ -1881,6 +1882,7 @@
       "requirements": [
         "docs/sftp-ui-design.md#layout-and-navigation",
         "docs/sftp-ui-design.md#transfer-behavior",
+        "docs/sftp-ui-design.md#remote-to-local-name-admission",
         "docs/sftp-ui-design.md#bounded-gui-backlog-and-history",
         "docs/sftp-ui-design.md#bounded-recursive-planning",
         "docs/sftp-ui-design.md#owner-cancellation-and-cleanup",
