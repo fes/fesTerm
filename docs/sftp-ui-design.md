@@ -49,6 +49,32 @@ Transfers are always **copies**, never moves. Selection remains after starting s
 
 Refresh the affected destination directory after each committed item while preserving selection and scroll position where possible. Partial files use a temporary sibling name and are renamed only after successful completion where the backend supports it; a canceled/failed temporary is cleaned up when safe and otherwise reported explicitly.
 
+### Remote-to-local name admission
+
+Remote names are untrusted even when they identify the selected top-level
+file or directory, not just a recursively enumerated child. Before deriving
+a local destination from a remote basename, `festerm-ssh` requires one safe
+filename and verifies that the joined path is an immediate child of the
+requested local directory. GUI buttons, shortcuts, cross-pane drops and Retry
+share this transfer-manager check; text-mode `get` uses the same backend helper
+for its default or existing-directory destination. Widgets do not implement
+their own filename policy.
+
+The policy is deliberately portable: it rejects empty/dot names, either path
+separator, drive/stream colons, Windows-invalid characters and control bytes,
+trailing dots/spaces and reserved Windows device names (including extensions).
+It rejects rather than sanitizes; ordinary Unicode filenames remain unchanged.
+An explicitly requested exact local path is not derived from the remote name
+and retains its existing semantics, so a single-file download may choose a
+safe local name instead. Recursive descendants still require admission.
+
+A name refusal becomes an actionable existing SFTP operation error before
+collision handling, recursive enumeration or destination writes. It produces
+no partial output and does not disconnect browsing or stop unrelated queued
+items. This is lexical path admission, not a new claim of race-free filesystem
+containment against local ancestor replacement; the existing collision,
+commit and owner-cleanup policies still apply.
+
 ### Bounded GUI backlog and history
 
 Each GUI SFTP tab admits at most **64 pending commands** and retains at most
@@ -81,7 +107,7 @@ An already-delivered collision prompt retires when its row becomes terminal,
 rather than offering decisions for work that bulk Cancel has ended.
 The backend's existing **256-item batch limit** is checked before the batch
 enters the GUI command bridge. Queue counts are not total payload-byte budgets;
-aggregate directory and recursive-plan admission is separate work.
+recursive-plan admission has its separate shared allowance below.
 
 The drawer retains the **128 most recently finished records**, including
 failures, ordered by completion rather than start time. Oldest finished records
@@ -100,6 +126,52 @@ The retained rows are rendered normally, not virtualized; the finished-record
 cap bounds historical rendering work. Owner cancellation remains independent
 of command/event capacity. Native drawer reachability, retirement-notice
 readability and assistive-technology behavior remain `SFTP-03` evidence.
+
+### Bounded recursive planning
+
+Each live SFTP transfer worker shares **65,536 owned planning items** and
+**64 MiB of conservative metadata accounting** across directory enumeration,
+queued/active units and collision-paused plans. These are not separate
+allowances for each plan. Existing work is not evicted to admit another plan;
+exhaustion fails the new planning item visibly before its destination is
+materialized. Retry becomes eligible as work progresses, finishes or is
+canceled. Already committed copies are never rolled back by this refusal.
+
+Reservations follow actual owned rows, units and pending collisions. An
+enumerated row transfers its item reservation into its planned unit, rather
+than being counted twice. Capacity, old/new container overlap during growth,
+directory-stack paths and each decoded remote page are also charged. The
+metadata proxy includes a 512-byte per-item overhead, owned text capacities
+and a conservative destination/collision expansion envelope; it is not an
+allocator/RSS measurement. Units release their credits after their data
+retires, including in-flight copies and paused decisions. Exceptional empty
+slots remain charged until their allocation retires; sparse queues copy at
+most 128 live entries into fixed staging, free the old allocation before
+rebuilding, and keep a slot for requeuing a collision.
+
+Local enumeration admits each row before retaining it. Remote planning reads
+one protocol page at a time over the same authenticated subsystem, checks
+admission before growing the application-owned collection, and closes its
+directory handle on completion/refusal or requests closure on cancellation.
+It does not use the library's eager, repeatedly recopied whole-directory
+listing. Sorting the bounded planning rows is heap-free. The pinned
+`russh-sftp` patch exposes only its existing paged client; provenance is in
+`vendor/russh-sftp/PATCHES.md`.
+
+Backend snapshot publication updates indexed changed rows without cloning
+unchanged requests or sorting the whole inventory after each unit.
+Membership changes still compact/reindex the bounded active vector;
+explicit public snapshot queries still clone their requested snapshot.
+
+The allowance is per worker, not app-wide or configurable. Ordinary browsing
+and file-picker snapshots, queued request/event/public-snapshot payloads,
+library wire/parser and blocking-I/O private allocations, allocator
+fragmentation and fixed staging stack space remain outside this accounting.
+One protocol reply has already been decoded before its page admission check;
+this is not a pre-decode wire-buffer bound or a total-process memory promise.
+Peer-side handle cleanup cannot be guaranteed after teardown, consistent with
+the owner-cancellation policy below. Native refusal/retry readability,
+keyboard interaction and accessibility remain `SFTP-03` evidence.
 
 ### Owner cancellation and cleanup
 

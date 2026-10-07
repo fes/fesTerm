@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     fs,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver, TryRecvError},
@@ -11,8 +12,8 @@ use std::{
 };
 
 use eframe::egui::{
-    self, text::LayoutJob, text::TextFormat, vec2, Align, Color32, FontId, RichText, Sense,
-    WidgetInfo, WidgetType,
+    self, emath::GuiRounding, text::LayoutJob, text::TextFormat, vec2, Align, Color32, FontId,
+    RichText, Sense, WidgetInfo, WidgetType,
 };
 use festerm_markdown::{
     Block, CodeBlock, ContainerInline, HeadingBlock, HighlightedCodeLine, ImageInline, Inline,
@@ -22,7 +23,12 @@ use festerm_markdown::{
     TaskState, TextBlock, TextMatch,
 };
 use festerm_ui_egui::{icon, icon::Icon, theme};
+use image::ImageDecoder;
 
+use crate::markdown_images::{
+    DecodedImage, ImageLoadFailure, ImageMemoryBudget, ImageReservation, ImageRetry, ImageWorker,
+    MAX_CONCURRENT_IMAGE_LOADS, RETAINED_IMAGE_OVERHEAD,
+};
 use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
@@ -34,10 +40,9 @@ const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 /// pathological document cannot turn one open into unbounded filesystem
 /// work.
 const MAX_AUTOMATIC_IMAGE_LOADS: usize = 64;
-/// How many automatic image loads may be in flight at once. Each load owns a
-/// thread, so this caps the burst a large document creates; the rest start as
-/// earlier ones finish.
-const MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS: usize = 4;
+/// Per-view pending results are bounded as well as the shared running workers.
+const MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS: usize = MAX_CONCURRENT_IMAGE_LOADS;
+const IMAGE_READ_RESERVATION: u64 = 2 * (MAX_IMAGE_BYTES + 1) + 16 * 1024;
 const OUTLINE_WIDTH: f32 = 216.0;
 /// Narrower than this and the outline is hidden for the frame: the reading
 /// column matters more than the navigation aid on a cramped window.
@@ -105,6 +110,16 @@ const OUTLINE_ITEM_PADDING_Y: f32 = 6.0;
 const OUTLINE_ITEM_INDENT: f32 = 12.0;
 const OUTLINE_ITEM_ACCENT_WIDTH: f32 = 2.0;
 const OUTLINE_ITEM_RADIUS: f32 = 3.0;
+const MAX_PREPARED_OUTLINE_ROWS: usize = 4096;
+const MAX_PREPARED_SOURCE_JOBS: usize = 8192;
+const MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+const MAX_SOURCE_PREPARATION_QUERY_BYTES: usize = 4096;
+const MAX_GEOMETRY_FONT_MAP_ENTRIES: usize = 128;
+const MAX_GEOMETRY_FONT_NAME_BYTES: usize = 8 * 1024;
+const MAX_GEOMETRY_FONT_FAMILY_REFERENCES: usize = 256;
+const MAX_PREPARED_TABLE_CELLS: usize = 32;
+const MAX_PREPARED_TABLE_CELL_INPUT_BYTES: usize = 256;
+const MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES: usize = 64 * 1024;
 /// Height reserved for the viewer's own footer, used only when the shared
 /// application status bar is hidden. Matches the status bar's own geometry
 /// so toggling it doesn't reflow the document.
@@ -293,6 +308,8 @@ impl MarkdownViewerErrorState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResourceApprovalState {
     approved: HashSet<usize>,
+    local_image_reads_blocked: bool,
+    local_image_block_reason: Option<String>,
 }
 
 impl ResourceApprovalState {
@@ -415,15 +432,19 @@ impl MarkdownFindState {
 }
 
 struct LoadedImage {
+    // Release the texture handle before its reservation's retirement check.
     texture: egui::TextureHandle,
     size: [usize; 2],
+    _reservation: ImageReservation,
 }
 
 struct PendingImageLoad {
-    receiver: Receiver<Result<egui::ColorImage, String>>,
+    receiver: Receiver<Result<DecodedImage, ImageLoadFailure>>,
 }
 
 pub struct MarkdownViewerTab {
+    #[cfg(test)]
+    table_cell_probe: Option<TableCellProbe>,
     source: MarkdownSource,
     title: String,
     display_path: String,
@@ -444,9 +465,13 @@ pub struct MarkdownViewerTab {
     /// budget is spent once per document and cannot be replenished by, say,
     /// an image that fails to decode.
     automatic_image_loads: usize,
+    automatic_image_references: HashSet<usize>,
+    image_retries: BTreeMap<usize, ImageRetry>,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
+    source_preparation: SourcePreparation,
+    outline_preparation: OutlinePreparation,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
 }
@@ -474,6 +499,8 @@ impl MarkdownViewerTab {
                 )
             });
         let mut tab = Self {
+            #[cfg(test)]
+            table_cell_probe: None,
             source,
             title,
             display_path,
@@ -489,9 +516,13 @@ impl MarkdownViewerTab {
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
             automatic_image_loads: 0,
+            automatic_image_references: HashSet::new(),
+            image_retries: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
+            source_preparation: SourcePreparation::default(),
+            outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -528,6 +559,8 @@ impl MarkdownViewerTab {
             .unwrap_or("Markdown")
             .to_owned();
         let mut tab = Self {
+            #[cfg(test)]
+            table_cell_probe: None,
             source: MarkdownSource::from(source.clone()),
             title,
             display_path: display_path.clone(),
@@ -543,9 +576,13 @@ impl MarkdownViewerTab {
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
             automatic_image_loads: 0,
+            automatic_image_references: HashSet::new(),
+            image_retries: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
+            source_preparation: SourcePreparation::default(),
+            outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
         };
@@ -644,12 +681,21 @@ impl MarkdownViewerTab {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
+        #[cfg(test)]
+        if let Some(probe) = &mut self.table_cell_probe {
+            let ordinary = probe.ordinary;
+            *probe = TableCellProbe {
+                ordinary,
+                ..Default::default()
+            };
+        }
         self.poll_background_work(ui.ctx());
         self.start_automatic_image_loads(ui.ctx());
         let mut command = self.consume_shortcuts(ui.ctx(), tab_id);
-        egui::Frame::new()
-            .fill(theme::SURFACE_WINDOW)
-            .show(ui, |ui| {
+        crate::software_background::show_frame(
+            ui,
+            egui::Frame::new().fill(theme::SURFACE_WINDOW),
+            |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     // `.fmd-toolbar { padding: 5px 9px }` over the full
@@ -680,7 +726,6 @@ impl MarkdownViewerTab {
                     };
                     let body_height = (ui.available_height() - footer_height).max(120.0);
                     let mut document_rect = None;
-                    let mut heading_tops = Vec::new();
                     ui.allocate_ui(vec2(ui.available_width(), body_height), |ui| {
                         ui.set_height(body_height);
                         if let Some(document) = self.document.as_ref() {
@@ -691,6 +736,7 @@ impl MarkdownViewerTab {
                                 });
                             } else {
                                 let mut render_state = MarkdownRenderState {
+                                    table_cells: TableCellPreparation::default(),
                                     code_copy_caption: CodeCopyCaptionPreparation::default(),
                                     mode: self.mode,
                                     outline_open: self.outline_open,
@@ -703,11 +749,21 @@ impl MarkdownViewerTab {
                                     pending_scroll: &mut self.pending_scroll,
                                     line_heading_indices: &self.line_heading_indices,
                                     source_syntax: &mut self.source_syntax,
+                                    source_preparation: &mut self.source_preparation,
+                                    outline_preparation: &mut self.outline_preparation,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
-                                    heading_tops: &mut heading_tops,
+                                    heading_tops: None,
                                 };
+                                #[cfg(test)]
+                                {
+                                    render_state.table_cells.probe = self.table_cell_probe.take();
+                                }
                                 document_rect =
                                     Some(render_state.show_document(ui, document).document_rect);
+                                #[cfg(test)]
+                                {
+                                    self.table_cell_probe = render_state.table_cells.probe.take();
+                                }
                             }
                         } else if let Some(error) = self.error.as_ref().cloned() {
                             self.show_error(ui, &error, tab_id, &mut command);
@@ -727,7 +783,8 @@ impl MarkdownViewerTab {
                         self.show_footer(ui);
                     }
                 });
-            });
+            },
+        );
         command
     }
 
@@ -759,6 +816,8 @@ impl MarkdownViewerTab {
                 self.pending_scroll = Some(pending_scroll_for_anchor(&document, anchor));
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
                 self.source_syntax = None;
+                self.source_preparation.clear();
+                self.outline_preparation.clear();
                 self.document = Some(document);
                 self.error = None;
                 self.stale_snapshot = false;
@@ -767,6 +826,8 @@ impl MarkdownViewerTab {
                 self.pending_image_loads.clear();
                 self.image_errors.clear();
                 self.automatic_image_loads = 0;
+                self.automatic_image_references.clear();
+                self.image_retries.clear();
                 self.outline_keyboard_focus = false;
                 if let Some(document) = &self.document {
                     self.find.restore_for_reload(document);
@@ -831,57 +892,171 @@ impl MarkdownViewerTab {
     }
 
     pub fn load_local_image(&mut self, reference_index: usize, context: &egui::Context) {
+        self.image_state()
+            .try_load_local_image(reference_index, context, false);
+    }
+
+    fn start_automatic_image_loads(&mut self, context: &egui::Context) {
+        self.image_state().start_automatic_image_loads(context);
+    }
+
+    fn poll_background_work(&mut self, context: &egui::Context) {
+        self.image_state().poll_background_work(context);
+    }
+
+    fn image_state(&mut self) -> MarkdownImageState<'_> {
+        MarkdownImageState {
+            source: &self.source,
+            document: self.document.as_ref(),
+            texture_label: &self.title,
+            resource_approvals: &mut self.resource_approvals,
+            loaded_images: &mut self.loaded_images,
+            pending_image_loads: &mut self.pending_image_loads,
+            image_errors: &mut self.image_errors,
+            automatic_image_loads: &mut self.automatic_image_loads,
+            automatic_image_references: &mut self.automatic_image_references,
+            image_retries: &mut self.image_retries,
+        }
+    }
+}
+
+struct MarkdownImageState<'a> {
+    source: &'a MarkdownSource,
+    document: Option<&'a MarkdownDocument>,
+    texture_label: &'a str,
+    resource_approvals: &'a mut ResourceApprovalState,
+    loaded_images: &'a mut BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &'a mut BTreeMap<usize, PendingImageLoad>,
+    image_errors: &'a mut BTreeMap<usize, String>,
+    automatic_image_loads: &'a mut usize,
+    automatic_image_references: &'a mut HashSet<usize>,
+    image_retries: &'a mut BTreeMap<usize, ImageRetry>,
+}
+
+impl MarkdownImageState<'_> {
+    fn try_load_local_image(
+        &mut self,
+        reference_index: usize,
+        context: &egui::Context,
+        automatic: bool,
+    ) -> bool {
         if self.loaded_images.contains_key(&reference_index)
             || self.pending_image_loads.contains_key(&reference_index)
         {
-            return;
+            return false;
         }
-        let Some(document) = &self.document else {
-            return;
+        let Some(document) = self.document else {
+            return false;
         };
         let Some(reference) = document.resource_references().get(reference_index) else {
-            return;
+            return false;
         };
-        let Some(local) = local_document_source(&self.source) else {
+        if self.resource_approvals.local_image_reads_blocked {
+            self.image_errors.insert(
+                reference_index,
+                "Only saved local Markdown documents can load local images.".to_owned(),
+            );
+            return false;
+        }
+        let Some(local) = local_document_source(self.source) else {
             self.image_errors.insert(
                 reference_index,
                 "Only local Markdown documents can load local images.".to_owned(),
             );
-            return;
+            return false;
         };
         if reference.kind() != ResourceReferenceKind::Image {
-            return;
+            return false;
         }
         if reference.class() != ResourceReferenceClass::LocalRelative {
             self.image_errors.insert(
                 reference_index,
                 resource_placeholder_action(reference.class()).to_owned(),
             );
-            return;
+            return false;
         }
+        if self.pending_image_loads.len() >= MAX_CONCURRENT_IMAGE_LOADS {
+            self.image_errors
+                .insert(reference_index, ImageLoadFailure::Busy.message().to_owned());
+            self.image_retries
+                .insert(reference_index, ImageRetry::PendingQueue);
+            return false;
+        }
+        let budget = ImageMemoryBudget::for_context(context, Default::default());
+        let worker = match budget.start_worker(context) {
+            Ok(worker) => worker,
+            Err(error) => {
+                self.record_image_failure(reference_index, error);
+                return false;
+            }
+        };
+        let captured_bytes = reference.target().len() as u64
+            + local.path().as_os_str().as_encoded_bytes().len() as u64;
+        let mut admission_bytes = IMAGE_READ_RESERVATION + captured_bytes;
+        if automatic {
+            if let Some(ImageRetry::Memory(required)) = self.image_retries.get(&reference_index) {
+                admission_bytes = admission_bytes.max(*required);
+            }
+        }
+        let scratch = match budget.reserve(admission_bytes, Some(context)) {
+            Ok(scratch) => scratch,
+            Err(error) => {
+                drop(worker);
+                self.record_image_failure(reference_index, error);
+                return false;
+            }
+        };
         let markdown_path = local.path().clone();
         let target = reference.target().to_owned();
-        let repaint = context.clone();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        if thread::Builder::new()
-            .name(format!("festerm-markdown-image-{reference_index}"))
-            .spawn(move || {
-                let _ = sender.send(read_local_image(&markdown_path, &target));
-                repaint.request_repaint();
-            })
-            .is_ok()
-        {
-            self.resource_approvals.approve(reference_index);
-            self.image_errors.remove(&reference_index);
-            self.pending_image_loads
-                .insert(reference_index, PendingImageLoad { receiver });
-        } else {
-            self.resource_approvals.approve(reference_index);
-            self.image_errors.insert(
-                reference_index,
-                "A background image loader could not be started.".to_owned(),
-            );
+        let texture_side = context.input(|input| input.max_texture_side);
+        match spawn_image_worker(
+            budget,
+            worker,
+            scratch,
+            context.clone(),
+            move |scratch, _, budget| {
+                read_local_image_with_budget(&markdown_path, &target, budget, scratch, texture_side)
+            },
+            |work| {
+                thread::Builder::new()
+                    .name(format!("festerm-markdown-image-{reference_index}"))
+                    .spawn(work)
+            },
+        ) {
+            Ok(receiver) => {
+                self.resource_approvals.approve(reference_index);
+                self.image_errors.remove(&reference_index);
+                self.image_retries.remove(&reference_index);
+                self.pending_image_loads
+                    .insert(reference_index, PendingImageLoad { receiver });
+                true
+            }
+            Err(_) => {
+                self.resource_approvals.approve(reference_index);
+                self.image_errors.insert(
+                    reference_index,
+                    "A background image loader could not be started.".to_owned(),
+                );
+                self.image_retries.remove(&reference_index);
+                false
+            }
         }
+    }
+
+    fn record_image_failure(&mut self, index: usize, error: ImageLoadFailure) {
+        let retry = match &error {
+            ImageLoadFailure::Budget { required_bytes, .. } => {
+                Some(ImageRetry::Memory(*required_bytes))
+            }
+            ImageLoadFailure::Busy => Some(ImageRetry::Workers),
+            ImageLoadFailure::Permanent(_) => None,
+        };
+        if let Some(retry) = retry {
+            self.image_retries.insert(index, retry);
+        } else {
+            self.image_retries.remove(&index);
+        }
+        self.image_errors.insert(index, error.message().to_owned());
     }
 
     /// Starts loading the local images a local document references, without
@@ -900,17 +1075,19 @@ impl MarkdownViewerTab {
     /// A document whose images are all placeholders is not a readable
     /// document, which is the behaviour this restores.
     fn start_automatic_image_loads(&mut self, context: &egui::Context) {
-        if local_document_source(&self.source).is_none() {
+        if self.resource_approvals.local_image_reads_blocked
+            || local_document_source(self.source).is_none()
+        {
             return;
         }
-        let Some(document) = &self.document else {
+        let Some(document) = self.document else {
             return;
         };
+        let (available, workers) =
+            ImageMemoryBudget::for_context(context, Default::default()).availability();
         let mut candidates = Vec::new();
+        let mut new_references = 0;
         for (index, reference) in document.resource_references().iter().enumerate() {
-            if self.automatic_image_loads + candidates.len() >= MAX_AUTOMATIC_IMAGE_LOADS {
-                break;
-            }
             if self.pending_image_loads.len() + candidates.len()
                 >= MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS
             {
@@ -926,28 +1103,51 @@ impl MarkdownViewerTab {
             // would be re-read from disk on every single frame.
             if self.loaded_images.contains_key(&index)
                 || self.pending_image_loads.contains_key(&index)
-                || self.image_errors.contains_key(&index)
             {
                 continue;
+            }
+            if self.image_errors.contains_key(&index) {
+                match self.image_retries.get(&index) {
+                    Some(ImageRetry::Memory(required)) if available >= *required => {}
+                    Some(ImageRetry::Workers) if workers < MAX_CONCURRENT_IMAGE_LOADS => {}
+                    Some(ImageRetry::PendingQueue) => {}
+                    _ => continue,
+                }
+            }
+            if !self.automatic_image_references.contains(&index) {
+                if *self.automatic_image_loads + new_references >= MAX_AUTOMATIC_IMAGE_LOADS {
+                    continue;
+                }
+                new_references += 1;
             }
             candidates.push(index);
         }
         for index in candidates {
-            self.automatic_image_loads += 1;
-            self.load_local_image(index, context);
+            if self.try_load_local_image(index, context, true)
+                && self.automatic_image_references.insert(index)
+            {
+                *self.automatic_image_loads += 1;
+            }
         }
     }
 
     fn poll_background_work(&mut self, context: &egui::Context) {
         let mut finished = Vec::new();
-        for (&reference_index, pending) in &self.pending_image_loads {
+        for (&reference_index, pending) in self.pending_image_loads.iter() {
             match pending.receiver.try_recv() {
                 Ok(result) => {
                     match result {
-                        Ok(image) => {
+                        Ok(mut image) => {
+                            let pixels = Arc::new(image.pixels);
+                            image
+                                .reservation
+                                .track_texture_pixels(Arc::downgrade(&pixels));
                             let texture = context.load_texture(
-                                format!("markdown-image-{}-{}", self.title, reference_index),
-                                image,
+                                format!(
+                                    "markdown-image-{}-{}",
+                                    self.texture_label, reference_index
+                                ),
+                                egui::ImageData::Color(pixels),
                                 egui::TextureOptions::LINEAR,
                             );
                             self.loaded_images.insert(
@@ -955,12 +1155,21 @@ impl MarkdownViewerTab {
                                 LoadedImage {
                                     size: texture.size(),
                                     texture,
+                                    _reservation: image.reservation,
                                 },
                             );
                             self.image_errors.remove(&reference_index);
+                            self.image_retries.remove(&reference_index);
                         }
-                        Err(message) => {
-                            self.image_errors.insert(reference_index, message);
+                        Err(error) => {
+                            if let ImageLoadFailure::Budget { required_bytes, .. } = &error {
+                                self.image_retries
+                                    .insert(reference_index, ImageRetry::Memory(*required_bytes));
+                            } else {
+                                self.image_retries.remove(&reference_index);
+                            }
+                            self.image_errors
+                                .insert(reference_index, error.message().to_owned());
                         }
                     }
                     finished.push(reference_index);
@@ -971,6 +1180,7 @@ impl MarkdownViewerTab {
                         reference_index,
                         "The background image loader stopped unexpectedly.".to_owned(),
                     );
+                    self.image_retries.remove(&reference_index);
                     finished.push(reference_index);
                 }
             }
@@ -979,7 +1189,9 @@ impl MarkdownViewerTab {
             self.pending_image_loads.remove(&reference_index);
         }
     }
+}
 
+impl MarkdownViewerTab {
     fn move_outline_selection(&mut self, delta: isize) {
         let Some(document) = self.document.as_ref() else {
             return;
@@ -1367,6 +1579,7 @@ impl MarkdownViewerTab {
 }
 
 struct MarkdownRenderState<'a> {
+    table_cells: TableCellPreparation,
     code_copy_caption: CodeCopyCaptionPreparation,
     mode: MarkdownViewerMode,
     outline_open: bool,
@@ -1379,11 +1592,663 @@ struct MarkdownRenderState<'a> {
     pending_scroll: &'a mut Option<PendingScroll>,
     line_heading_indices: &'a [Option<usize>],
     source_syntax: &'a mut Option<Vec<festerm_syntax::Span>>,
+    source_preparation: &'a mut SourcePreparation,
+    outline_preparation: &'a mut OutlinePreparation,
     outline_keyboard_focus: &'a mut bool,
-    /// Where each heading was painted this frame, so a caller that wants to
-    /// know which section the reader is looking at can ask the rendering
-    /// rather than guess from a scroll offset.
-    heading_tops: &'a mut Vec<(usize, f32)>,
+    /// Shared Preview measures section positions; the standalone viewer has
+    /// no consumer and does not collect them.
+    heading_tops: Option<&'a mut Vec<(usize, f32)>>,
+}
+
+#[derive(Default)]
+struct SourcePreparation {
+    query: Option<String>,
+    jobs: BTreeMap<usize, PreparedSourceLine>,
+    payload_bytes: usize,
+    geometry_key: Option<OutlineGeometryKey>,
+    #[cfg(test)]
+    probe: Option<SourcePreparationProbe>,
+}
+
+struct PreparedSourceLine {
+    span: SourceSpan,
+    current_match: Option<usize>,
+    job: Arc<LayoutJob>,
+    payload_bytes: usize,
+    geometry: Option<SourceRowGeometry>,
+}
+
+#[derive(Clone, Copy)]
+struct SourceRowGeometry {
+    size: egui::Vec2,
+    intrinsic_size: egui::Vec2,
+    wrap_width: f32,
+}
+
+impl SourcePreparation {
+    fn clear(&mut self) {
+        self.query = None;
+        self.jobs.clear();
+        self.payload_bytes = 0;
+        self.geometry_key = None;
+    }
+
+    fn begin(&mut self, find: &MarkdownFindState) {
+        if find.query().len() > MAX_SOURCE_PREPARATION_QUERY_BYTES {
+            self.clear();
+        } else if self.query.as_deref() != Some(find.query()) {
+            self.clear();
+            self.query = Some(find.query().to_owned());
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.visited_lines = 0;
+            probe.preparations = 0;
+            probe.prepared_text_bytes = 0;
+            probe.rebased_roles = 0;
+            probe.layouts = 0;
+            probe.layout_text_bytes = 0;
+            probe.shared_label_inputs = 0;
+            probe.label_clone_payload_bytes = 0;
+            probe.explicit_job_clones = 0;
+            probe.explicit_clone_capacity_bytes = 0;
+            probe.geometry_key_resets = 0;
+            probe.geometry_key_clones = 0;
+            probe.geometry_metadata_rejections = 0;
+            probe.geometry_clone_string_capacity_bytes = 0;
+            probe.geometry_clone_family_vector_capacity_bytes = 0;
+            probe.geometry_clone_custom_family_name_bytes = 0;
+            probe.observations.clear();
+        }
+    }
+
+    fn begin_geometry(&mut self, ui: &egui::Ui) {
+        let width = ui.available_width();
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let font = FontId::monospace(CODE_TEXT_SIZE);
+        let current = ui.painter().fonts(|fonts| {
+            geometry_font_metadata(fonts.definitions()).map(|_| {
+                self.geometry_key.as_ref().is_some_and(|key| {
+                    key.matches(
+                        width,
+                        pixels_per_point,
+                        &font,
+                        fonts.definitions(),
+                        *fonts.options(),
+                    )
+                })
+            })
+        });
+        if current == Some(true) {
+            return;
+        }
+        self.geometry_key = None;
+        for prepared in self.jobs.values_mut() {
+            prepared.geometry = None;
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.geometry_key_resets += 1;
+        }
+        let replacement = current.and_then(|_| {
+            ui.painter().fonts(|fonts| {
+                OutlineGeometryKey::admitted(
+                    width,
+                    pixels_per_point,
+                    font,
+                    fonts.definitions(),
+                    *fonts.options(),
+                    |definitions| {
+                        #[cfg(test)]
+                        if let Some(probe) = &mut self.probe {
+                            probe.record_geometry_definition_clone(definitions);
+                        }
+                        #[cfg(not(test))]
+                        let _ = definitions;
+                    },
+                )
+            })
+        });
+        if let Some(key) = replacement {
+            self.geometry_key = Some(key);
+        } else {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                probe.geometry_metadata_rejections += 1;
+            }
+        }
+    }
+
+    fn line(
+        &mut self,
+        line_start: usize,
+        line: &str,
+        document: &MarkdownDocument,
+        find: &MarkdownFindState,
+        syntax: &[festerm_syntax::Span],
+    ) -> (SourceSpan, Arc<LayoutJob>) {
+        let range = line_start..line_start + line.len();
+        let current_match = find.current_index.filter(|_| {
+            find.current_match().is_some_and(|matched| {
+                let matched = matched.span().byte_range();
+                matched.start < range.end && matched.end > range.start
+            })
+        });
+        #[cfg(test)]
+        let ordinary = self.probe.as_ref().is_some_and(|probe| probe.ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.visited_lines += 1;
+        }
+        if !ordinary {
+            if let Some(prepared) = self.jobs.get(&line_start) {
+                if prepared.current_match == current_match {
+                    return (prepared.span, prepared.job.clone());
+                }
+            }
+        }
+        if let Some(previous) = self.jobs.remove(&line_start) {
+            self.payload_bytes -= previous.payload_bytes;
+        }
+        let span = document
+            .source_span(range.clone())
+            .unwrap_or_else(|| document.source_span(0..0).expect("empty span"));
+        let roles = roles_within(syntax, range);
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.preparations += 1;
+            probe.rebased_roles += roles.len();
+            probe.prepared_text_bytes += trim_line_ending(line).len().max(1);
+        }
+        let job = Arc::new(source_line_job(line, span, find, roles));
+        let payload_bytes = job.text.capacity()
+            + job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+        if !ordinary
+            && self.query.is_some()
+            && self.jobs.len() < MAX_PREPARED_SOURCE_JOBS
+            && payload_bytes
+                <= MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES.saturating_sub(self.payload_bytes)
+        {
+            // Formatting instructions and finite local geometry are bounded by
+            // the same admitted owner. No galley or atlas reference survives.
+            self.jobs.insert(
+                line_start,
+                PreparedSourceLine {
+                    span,
+                    current_match,
+                    job: job.clone(),
+                    payload_bytes,
+                    geometry: None,
+                },
+            );
+            self.payload_bytes += payload_bytes;
+        }
+        (span, job)
+    }
+
+    fn label(
+        &mut self,
+        ui: &mut egui::Ui,
+        line_start: usize,
+        job: Arc<LayoutJob>,
+    ) -> egui::Response {
+        #[cfg(test)]
+        let ordinary = self
+            .probe
+            .as_ref()
+            .is_some_and(|probe| probe.ordinary || probe.geometry_ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        // render_source owns a fresh Frame child; its placer cannot inherit a grid.
+        let supported = *ui.layout() == egui::Layout::top_down(Align::Min)
+            && ui.available_width().is_finite()
+            && ui.available_width() > 0.0;
+        let geometry = (!ordinary && supported && self.geometry_key.is_some())
+            .then(|| {
+                self.jobs
+                    .get(&line_start)
+                    .and_then(|prepared| prepared.geometry)
+            })
+            .flatten()
+            .filter(|geometry| geometry.wrap_width == ui.available_width())
+            .filter(|geometry| {
+                let frame =
+                    egui::Rect::from_min_size(ui.next_widget_position(), geometry.size).round_ui();
+                let rect = ui.layout().align_size_within_rect(geometry.size, frame);
+                !rect.intersects(ui.clip_rect())
+            });
+        if let Some(geometry) = geometry {
+            // Label's selection/painting branch only runs for visible response
+            // rectangles. Keep its live allocation/info and exact measured sizes.
+            let mut sense = if ui.memory(|memory| memory.options.screen_reader) {
+                Sense::focusable_noninteractive()
+            } else {
+                Sense::hover()
+            };
+            let mut selection = if ui.input(|input| input.has_touch_screen()) {
+                Sense::click()
+            } else {
+                Sense::click_and_drag()
+            };
+            selection -= Sense::FOCUSABLE;
+            sense |= selection;
+            let (_, mut response) = ui.allocate_exact_size(geometry.size, sense);
+            debug_assert!(!ui.is_rect_visible(response.rect));
+            response.set_intrinsic_size(geometry.intrinsic_size);
+            response
+                .widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), &job.text));
+            return response;
+        }
+        let width = ui.available_width();
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.layouts += 1;
+            probe.layout_text_bytes += job.text.len();
+        }
+        if ordinary
+            || !supported
+            || self.geometry_key.is_none()
+            || !self.jobs.contains_key(&line_start)
+        {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                // The pinned Label unwraps/clones this shared job before its
+                // memoized fonts call. Count that actual input condition, not
+                // the descriptor cache hit or the retained Vec capacities.
+                if Arc::strong_count(&job) > 1 {
+                    probe.shared_label_inputs += 1;
+                    probe.label_clone_payload_bytes += job.text.len()
+                        + job.sections.len() * std::mem::size_of::<egui::text::LayoutSection>();
+                }
+            }
+            return ui.add(egui::Label::new(job).selectable(true).wrap());
+        }
+        #[cfg(test)]
+        let shared = Arc::strong_count(&job) > 1;
+        let text = egui::WidgetText::from(job);
+        let mut job = Arc::unwrap_or_clone(text.into_layout_job(
+            ui.style(),
+            egui::FontSelection::Default,
+            ui.text_valign(),
+        ));
+        #[cfg(test)]
+        if shared {
+            if let Some(probe) = &mut self.probe {
+                probe.explicit_job_clones += 1;
+                probe.explicit_clone_capacity_bytes += job.text.capacity()
+                    + job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+            }
+        }
+        job.wrap.max_width = width;
+        job.halign = Align::Min;
+        job.justify = false;
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        // Capture the exact local desired size before world-coordinate rounding.
+        // The galley is frame-local; Label keeps its normal painting/selection.
+        let size = galley.size();
+        let intrinsic_size = galley.intrinsic_size();
+        let mut response = ui.add(egui::Label::new(galley).selectable(true).wrap());
+        response.set_intrinsic_size(intrinsic_size);
+        if size.is_finite()
+            && intrinsic_size.is_finite()
+            && size.x >= 0.0
+            && size.y > 0.0
+            && intrinsic_size.x >= 0.0
+            && intrinsic_size.y > 0.0
+        {
+            if let Some(prepared) = self.jobs.get_mut(&line_start) {
+                prepared.geometry = Some(SourceRowGeometry {
+                    size,
+                    intrinsic_size,
+                    wrap_width: width,
+                });
+            }
+        }
+        response
+    }
+
+    #[cfg(test)]
+    fn record(&mut self, span: SourceSpan, response: &egui::Response) {
+        if let Some(probe) = &mut self.probe {
+            probe.observations.push(SourceRowObservation {
+                span,
+                id: response.id,
+                rect: response.rect,
+                interact_rect: response.interact_rect,
+                intrinsic_size: response.intrinsic_size(),
+                sense: response.sense,
+                focused: response.has_focus(),
+                hovered: response.hovered(),
+                clicked: response.clicked(),
+                dragged: response.dragged(),
+                drag_started: response.drag_started(),
+                drag_stopped: response.drag_stopped(),
+                changed: response.changed(),
+                enabled: response.enabled(),
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct SourcePreparationProbe {
+    ordinary: bool,
+    geometry_ordinary: bool,
+    visited_lines: usize,
+    preparations: usize,
+    prepared_text_bytes: usize,
+    rebased_roles: usize,
+    layouts: usize,
+    layout_text_bytes: usize,
+    shared_label_inputs: usize,
+    label_clone_payload_bytes: usize,
+    explicit_job_clones: usize,
+    explicit_clone_capacity_bytes: usize,
+    geometry_key_resets: usize,
+    geometry_key_clones: usize,
+    geometry_metadata_rejections: usize,
+    geometry_clone_string_capacity_bytes: usize,
+    geometry_clone_family_vector_capacity_bytes: usize,
+    geometry_clone_custom_family_name_bytes: usize,
+    observations: Vec<SourceRowObservation>,
+}
+
+#[cfg(test)]
+impl SourcePreparationProbe {
+    fn record_geometry_definition_clone(&mut self, definitions: &egui::FontDefinitions) {
+        self.geometry_key_clones += 1;
+        self.geometry_clone_string_capacity_bytes += definitions
+            .font_data
+            .keys()
+            .chain(definitions.families.values().flatten())
+            .map(String::capacity)
+            .sum::<usize>();
+        self.geometry_clone_family_vector_capacity_bytes += definitions
+            .families
+            .values()
+            .map(|names| names.capacity() * std::mem::size_of::<String>())
+            .sum::<usize>();
+        self.geometry_clone_custom_family_name_bytes += definitions
+            .families
+            .keys()
+            .filter_map(|family| match family {
+                egui::FontFamily::Name(name) => Some(name.len()),
+                _ => None,
+            })
+            .sum::<usize>();
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq)]
+struct SourceRowObservation {
+    span: SourceSpan,
+    id: egui::Id,
+    rect: egui::Rect,
+    interact_rect: egui::Rect,
+    intrinsic_size: Option<egui::Vec2>,
+    sense: Sense,
+    focused: bool,
+    hovered: bool,
+    clicked: bool,
+    dragged: bool,
+    drag_started: bool,
+    drag_stopped: bool,
+    changed: bool,
+    enabled: bool,
+}
+
+#[derive(Default)]
+struct OutlinePreparation {
+    key: Option<OutlineGeometryKey>,
+    rows: Vec<Option<OutlineRowGeometry>>,
+    #[cfg(test)]
+    probe: Option<OutlinePreparationProbe>,
+}
+
+#[derive(Clone)]
+struct OutlineGeometryKey {
+    width: f32,
+    pixels_per_point: f32,
+    font: FontId,
+    definitions: egui::FontDefinitions,
+    options: egui::epaint::text::TextOptions,
+}
+
+impl PartialEq for OutlineGeometryKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.matches(
+            other.width,
+            other.pixels_per_point,
+            &other.font,
+            &other.definitions,
+            other.options,
+        )
+    }
+}
+
+impl OutlineGeometryKey {
+    fn matches(
+        &self,
+        width: f32,
+        pixels_per_point: f32,
+        font: &FontId,
+        definitions: &egui::FontDefinitions,
+        options: egui::epaint::text::TextOptions,
+    ) -> bool {
+        self.width == width
+            && self.pixels_per_point == pixels_per_point
+            && &self.font == font
+            && self.options == options
+            && self.definitions.font_data.len() == definitions.font_data.len()
+            && self
+                .definitions
+                .font_data
+                .iter()
+                .zip(&definitions.font_data)
+                .all(|((name, data), (other_name, other_data))| {
+                    // Do not traverse font bytes; replacement conservatively invalidates.
+                    name == other_name && Arc::ptr_eq(data, other_data)
+                })
+            && self.definitions.families == definitions.families
+    }
+
+    fn admitted(
+        width: f32,
+        pixels_per_point: f32,
+        font: FontId,
+        definitions: &egui::FontDefinitions,
+        options: egui::epaint::text::TextOptions,
+        on_clone: impl FnOnce(&egui::FontDefinitions),
+    ) -> Option<Self> {
+        geometry_font_metadata(definitions)?;
+        let definitions = definitions.clone();
+        on_clone(&definitions);
+        geometry_font_metadata(&definitions)?;
+        Some(Self {
+            width,
+            pixels_per_point,
+            font,
+            definitions,
+            options,
+        })
+    }
+}
+
+#[derive(Default)]
+struct GeometryFontMetadata {
+    string_capacity_bytes: usize,
+    custom_family_name_bytes: usize,
+    family_reference_capacity: usize,
+}
+
+fn geometry_font_metadata(definitions: &egui::FontDefinitions) -> Option<GeometryFontMetadata> {
+    if definitions.font_data.len() > MAX_GEOMETRY_FONT_MAP_ENTRIES
+        || definitions.families.len() > MAX_GEOMETRY_FONT_MAP_ENTRIES
+    {
+        return None;
+    }
+    let mut metadata = GeometryFontMetadata::default();
+    for name in definitions.font_data.keys() {
+        metadata.string_capacity_bytes = metadata
+            .string_capacity_bytes
+            .checked_add(name.capacity())?;
+        if metadata.string_capacity_bytes > MAX_GEOMETRY_FONT_NAME_BYTES {
+            return None;
+        }
+    }
+    for (family, names) in &definitions.families {
+        metadata.family_reference_capacity = metadata
+            .family_reference_capacity
+            .checked_add(names.capacity())?;
+        if metadata.family_reference_capacity > MAX_GEOMETRY_FONT_FAMILY_REFERENCES {
+            return None;
+        }
+        if let egui::FontFamily::Name(name) = family {
+            metadata.custom_family_name_bytes =
+                metadata.custom_family_name_bytes.checked_add(name.len())?;
+        }
+        for name in names {
+            metadata.string_capacity_bytes = metadata
+                .string_capacity_bytes
+                .checked_add(name.capacity())?;
+            if metadata
+                .string_capacity_bytes
+                .checked_add(metadata.custom_family_name_bytes)?
+                > MAX_GEOMETRY_FONT_NAME_BYTES
+            {
+                return None;
+            }
+        }
+        if metadata
+            .string_capacity_bytes
+            .checked_add(metadata.custom_family_name_bytes)?
+            > MAX_GEOMETRY_FONT_NAME_BYTES
+        {
+            return None;
+        }
+    }
+    Some(metadata)
+}
+
+#[derive(Clone, Copy)]
+struct OutlineRowGeometry {
+    height: f32,
+    text_bounds: egui::Rect,
+}
+
+impl OutlinePreparation {
+    fn clear(&mut self) {
+        self.key = None;
+        self.rows.clear();
+    }
+
+    fn begin(&mut self, ui: &egui::Ui, rows: usize) {
+        let width = ui.available_width();
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
+        let current = ui.painter().fonts(|fonts| {
+            geometry_font_metadata(fonts.definitions()).map(|_| {
+                self.key.as_ref().is_some_and(|key| {
+                    key.matches(
+                        width,
+                        pixels_per_point,
+                        &font,
+                        fonts.definitions(),
+                        *fonts.options(),
+                    )
+                })
+            })
+        });
+        if current != Some(true) {
+            self.clear();
+            self.key = current.and_then(|_| {
+                ui.painter().fonts(|fonts| {
+                    OutlineGeometryKey::admitted(
+                        width,
+                        pixels_per_point,
+                        font,
+                        fonts.definitions(),
+                        *fonts.options(),
+                        |_| {},
+                    )
+                })
+            });
+        }
+        let rows = if self.key.is_some() {
+            rows.min(MAX_PREPARED_OUTLINE_ROWS)
+        } else {
+            0
+        };
+        if self.rows.capacity() < rows {
+            self.rows.reserve_exact(rows - self.rows.len());
+        }
+        self.rows.resize(rows, None);
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.rows = 0;
+            probe.layouts = 0;
+            probe.prepared_text_bytes = 0;
+            probe.observations.clear();
+        }
+    }
+
+    fn offscreen_geometry(&self, ui: &egui::Ui, index: usize) -> Option<OutlineRowGeometry> {
+        #[cfg(test)]
+        if self.probe.as_ref().is_some_and(|probe| probe.ordinary) {
+            return None;
+        }
+        let geometry = self.rows.get(index).copied().flatten()?;
+        let rect = egui::Rect::from_min_size(
+            ui.next_widget_position(),
+            vec2(ui.available_width(), geometry.height),
+        );
+        let text_rect = geometry.text_bounds.translate(rect.min.to_vec2());
+        (!ui.is_rect_visible(rect.union(text_rect))).then_some(geometry)
+    }
+
+    fn item(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        heading: &festerm_markdown::Heading,
+        selected: bool,
+    ) -> egui::Response {
+        let geometry = self.offscreen_geometry(ui, index);
+        let (response, measured) = outline_item_with_geometry(ui, heading, selected, geometry);
+        if let Some(cached) = self.rows.get_mut(index) {
+            *cached = Some(measured);
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.rows += 1;
+            if geometry.is_none() {
+                probe.layouts += 1;
+                probe.prepared_text_bytes += heading.text().len();
+            }
+            probe.observations.push((
+                response.id,
+                response.rect,
+                response.interact_rect,
+                response.has_focus(),
+                response.clicked(),
+            ));
+        }
+        response
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct OutlinePreparationProbe {
+    ordinary: bool,
+    rows: usize,
+    layouts: usize,
+    prepared_text_bytes: usize,
+    observations: Vec<(egui::Id, egui::Rect, egui::Rect, bool, bool)>,
 }
 
 #[derive(Default)]
@@ -1391,6 +2256,262 @@ struct CodeCopyCaptionPreparation {
     prepared: Option<PreparedCodeCopyCaption>,
     #[cfg(test)]
     probe: Option<CodeCopyProbe>,
+}
+
+struct TableCellPreparation {
+    key: Option<TableCellPainterKey>,
+    cells: [Option<Arc<egui::Galley>>; MAX_PREPARED_TABLE_CELLS],
+    len: usize,
+    payload_bytes: usize,
+    #[cfg(test)]
+    probe: Option<TableCellProbe>,
+}
+
+impl Default for TableCellPreparation {
+    fn default() -> Self {
+        Self {
+            key: None,
+            cells: std::array::from_fn(|_| None),
+            len: 0,
+            payload_bytes: 0,
+            #[cfg(test)]
+            probe: None,
+        }
+    }
+}
+
+#[derive(PartialEq)]
+struct TableCellPainterKey {
+    context: egui::Context,
+    viewport: egui::ViewportId,
+    pass: u64,
+    pixels_per_point: f32,
+    options: egui::epaint::text::TextOptions,
+}
+
+impl TableCellPreparation {
+    fn begin_table(&mut self, ui: &egui::Ui) {
+        let context = ui.painter().ctx();
+        let (viewport, pixels_per_point) =
+            context.input(|input| (input.raw.viewport_id, input.pixels_per_point));
+        let key = TableCellPainterKey {
+            context: context.clone(),
+            viewport,
+            pass: context.cumulative_pass_nr_for(viewport),
+            pixels_per_point,
+            options: ui.painter().fonts(|fonts| *fonts.options()),
+        };
+        // Definitions and atlas resets activate at begin-pass. The renderer
+        // owns this preparation only for one invocation, across all its tables.
+        if self.key.as_ref() != Some(&key) {
+            self.cells.fill(None);
+            self.len = 0;
+            self.payload_bytes = 0;
+            self.key = Some(key);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn unwrapped(
+        &mut self,
+        ui: &egui::Ui,
+        inlines: &[Inline],
+        document: &MarkdownDocument,
+        find: &MarkdownFindState,
+        font: FontId,
+        style: InlineRenderStyle,
+    ) -> Arc<egui::Galley> {
+        #[cfg(test)]
+        let ordinary = self.probe.as_ref().is_some_and(|probe| probe.ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        let plain = match inlines {
+            [Inline::Text(text)]
+                if !ordinary
+                    && self.key.is_some()
+                    && !text.text().is_empty()
+                    && text.text().len() <= MAX_PREPARED_TABLE_CELL_INPUT_BYTES
+                    && !matches!(font.family, egui::FontFamily::Name(_)) =>
+            {
+                let span = text.text_span();
+                let first = find.matches().partition_point(|matched| {
+                    matched.span().end().byte_offset() <= span.start().byte_offset()
+                });
+                (!find.matches().get(first).is_some_and(|matched| {
+                    matched.span().start().byte_offset() < span.end().byte_offset()
+                }))
+                .then_some(text.text())
+            }
+            _ => None,
+        };
+        if let Some(text) = plain {
+            let format = base_text_format(font.clone(), style);
+            for galley in self.cells[..self.len].iter().flatten() {
+                // These entries all came from the same ordinary default,
+                // unwrapped, single-section job. Compare borrowed text and the
+                // complete section format before constructing another job.
+                if galley.job.text == text && galley.job.sections[0].format == format {
+                    return galley.clone();
+                }
+            }
+        }
+        let job = inline_layout_job(inlines, document, find, font, style);
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.preparations += 1;
+            probe.prepared_text_bytes += job.text.len();
+            probe.job_capacity_bytes += job.text.capacity()
+                + job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+            probe.unwrapped_layouts += 1;
+        }
+        let galley = ui.painter().layout_job(job);
+        if plain.is_some() {
+            self.retain(&galley);
+        }
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.retained_entries = self.len;
+            probe.retained_payload_bytes = self.payload_bytes;
+        }
+        galley
+    }
+
+    fn retain(&mut self, galley: &Arc<egui::Galley>) -> bool {
+        if self.len >= MAX_PREPARED_TABLE_CELLS {
+            return false;
+        }
+        let Some(total) = table_cell_payload_bytes(galley)
+            .and_then(|bytes| self.payload_bytes.checked_add(bytes))
+            .filter(|total| *total <= MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES)
+        else {
+            return false;
+        };
+        self.cells[self.len] = Some(galley.clone());
+        self.len += 1;
+        self.payload_bytes = total;
+        true
+    }
+
+    fn constrained(
+        &mut self,
+        ui: &egui::Ui,
+        unwrapped: Arc<egui::Galley>,
+        width: f32,
+    ) -> Arc<egui::Galley> {
+        table_cell_galley(ui, unwrapped, width, |_job| {
+            #[cfg(test)]
+            if let Some(probe) = &mut self.probe {
+                probe.wrap_layouts += 1;
+                probe.wrap_clone_capacity_bytes += _job.text.capacity()
+                    + _job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+            }
+        })
+    }
+
+    #[cfg(test)]
+    fn record(&mut self, span: SourceSpan, response: &egui::Response) {
+        if let Some(probe) = &mut self.probe {
+            probe.observations.push(TableCellObservation {
+                span,
+                id: response.id,
+                rect: response.rect,
+                interact_rect: response.interact_rect,
+                intrinsic_size: response.intrinsic_size(),
+                sense: response.sense,
+                focused: response.has_focus(),
+                hovered: response.hovered(),
+                clicked: response.clicked(),
+                dragged: response.dragged(),
+                drag_started: response.drag_started(),
+                drag_stopped: response.drag_stopped(),
+                changed: response.changed(),
+                enabled: response.enabled(),
+            });
+        }
+    }
+}
+
+fn table_cell_payload_bytes(galley: &egui::Galley) -> Option<usize> {
+    if galley.job.text.len() > MAX_PREPARED_TABLE_CELL_INPUT_BYTES
+        || galley.job.sections.len() != 1
+        || galley.rows.len() > MAX_PREPARED_TABLE_CELL_INPUT_BYTES + 1
+    {
+        return None;
+    }
+    let mut bytes = std::mem::size_of::<egui::Galley>()
+        .checked_add(std::mem::size_of::<LayoutJob>())?
+        .checked_add(galley.job.text.capacity())?
+        .checked_add(
+            galley
+                .job
+                .sections
+                .capacity()
+                .checked_mul(std::mem::size_of::<egui::text::LayoutSection>())?,
+        )?
+        .checked_add(
+            galley
+                .rows
+                .capacity()
+                .checked_mul(std::mem::size_of::<egui::epaint::text::PlacedRow>())?,
+        )?;
+    for row in &galley.rows {
+        bytes = bytes
+            .checked_add(std::mem::size_of::<egui::epaint::text::Row>())?
+            .checked_add(
+                row.glyphs
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<egui::epaint::text::Glyph>())?,
+            )?
+            .checked_add(
+                row.visuals
+                    .mesh
+                    .vertices
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<egui::epaint::Vertex>())?,
+            )?
+            .checked_add(
+                row.visuals
+                    .mesh
+                    .indices
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<u32>())?,
+            )?;
+    }
+    Some(bytes)
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TableCellProbe {
+    ordinary: bool,
+    preparations: usize,
+    prepared_text_bytes: usize,
+    job_capacity_bytes: usize,
+    unwrapped_layouts: usize,
+    wrap_layouts: usize,
+    wrap_clone_capacity_bytes: usize,
+    retained_entries: usize,
+    retained_payload_bytes: usize,
+    observations: Vec<TableCellObservation>,
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq)]
+struct TableCellObservation {
+    span: SourceSpan,
+    id: egui::Id,
+    rect: egui::Rect,
+    interact_rect: egui::Rect,
+    intrinsic_size: Option<egui::Vec2>,
+    sense: Sense,
+    focused: bool,
+    hovered: bool,
+    clicked: bool,
+    dragged: bool,
+    drag_started: bool,
+    drag_stopped: bool,
+    changed: bool,
+    enabled: bool,
 }
 
 struct PreparedCodeCopyCaption {
@@ -1696,7 +2817,11 @@ impl MarkdownRenderState<'_> {
         heading: &festerm_markdown::Heading,
     ) {
         let selected = *self.outline_selected == Some(index);
-        if outline_item(ui, heading, selected).clicked() {
+        if self
+            .outline_preparation
+            .item(ui, index, heading, selected)
+            .clicked()
+        {
             *self.outline_selected = Some(index);
             *self.pending_scroll = Some(PendingScroll::Heading(index));
             *self.outline_keyboard_focus = true;
@@ -1715,6 +2840,8 @@ impl MarkdownRenderState<'_> {
             .max_height(content.available_height())
             .show(&mut content, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                self.outline_preparation
+                    .begin(ui, document.headings().len());
                 for (index, heading) in document.headings().iter().enumerate() {
                     self.show_outline_item(ui, index, heading);
                 }
@@ -1901,7 +3028,9 @@ impl MarkdownRenderState<'_> {
                 egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
             );
         }
-        self.heading_tops.push((heading_index, response.rect.top()));
+        if let Some(heading_tops) = self.heading_tops.as_mut() {
+            heading_tops.push((heading_index, response.rect.top()));
+        }
         if matches!(*self.pending_scroll, Some(PendingScroll::Heading(index)) if index == heading_index)
         {
             response.scroll_to_me(Some(Align::Center));
@@ -1977,6 +3106,7 @@ impl MarkdownRenderState<'_> {
         let font = FontId::proportional(BODY_TEXT_SIZE - 1.0);
         let padding_x = f32::from(TABLE_CELL_PADDING_X);
         let padding_y = f32::from(TABLE_CELL_PADDING_Y);
+        self.table_cells.begin_table(ui);
 
         // Measure unwrapped cells before assigning column widths; fitting cells
         // reuse that galley. `egui::Grid` instead feeds last frame's wrapped
@@ -1987,7 +3117,8 @@ impl MarkdownRenderState<'_> {
         for row in block.rows() {
             let mut cells = Vec::with_capacity(column_count);
             for (column, cell) in row.cells().iter().enumerate() {
-                let job = inline_layout_job(
+                let unwrapped = self.table_cells.unwrapped(
+                    ui,
                     cell.inlines(),
                     document,
                     self.find,
@@ -1998,7 +3129,6 @@ impl MarkdownRenderState<'_> {
                         text_style
                     },
                 );
-                let unwrapped = ui.painter().layout_job(job);
                 let width = unwrapped.size().x;
                 if let Some(slot) = natural.get_mut(column) {
                     *slot = slot.max(width + padding_x * 2.0);
@@ -2036,7 +3166,7 @@ impl MarkdownRenderState<'_> {
                                     .get(column)
                                     .copied()
                                     .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
-                                let galley = table_cell_galley(
+                                let galley = self.table_cells.constrained(
                                     ui,
                                     unwrapped,
                                     (width - padding_x * 2.0).max(1.0),
@@ -2089,7 +3219,13 @@ impl MarkdownRenderState<'_> {
                                         .max_rect(cell_rect.shrink2(vec2(padding_x, padding_y)))
                                         .layout(layout),
                                 );
-                                cell_ui.add(egui::Label::new(galley).selectable(true));
+                                let response =
+                                    cell_ui.add(egui::Label::new(galley).selectable(true));
+                                #[cfg(test)]
+                                self.table_cells
+                                    .record(row.cells()[column].span(), &response);
+                                #[cfg(not(test))]
+                                let _ = response;
                                 row_rects.push(cell_rect);
                             }
                             cell_rects.push(row_rects);
@@ -2251,21 +3387,16 @@ impl MarkdownRenderState<'_> {
                 // show the same file coloured on one surface and flat on the
                 // other (ADR 0035 §8).
                 let syntax = source_syntax_spans(self.source_syntax, document.source_text());
+                self.source_preparation.begin(self.find);
+                self.source_preparation.begin_geometry(ui);
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
-                    let span = document
-                        .source_span(line_start..line_start + line.len())
-                        .unwrap_or_else(|| document.source_span(0..0).expect("empty span"));
-                    let response = ui.add(
-                        egui::Label::new(source_line_job(
-                            line,
-                            span,
-                            self.find,
-                            roles_within(syntax, line_start..line_start + line.len()),
-                        ))
-                            .selectable(true)
-                            .wrap(),
+                    let (span, job) = self.source_preparation.line(
+                        line_start, line, document, self.find, syntax,
                     );
+                    let response = self.source_preparation.label(ui, line_start, job);
+                    #[cfg(test)]
+                    self.source_preparation.record(span, &response);
                     if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(span, target))
                     {
                         response.scroll_to_me(Some(Align::Center));
@@ -2391,17 +3522,125 @@ fn map_local_io_error(error: std::io::Error) -> MarkdownViewerLoadFailure {
     })
 }
 
+#[cfg(test)]
 fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorImage, String> {
-    let Some(parent) = markdown_path.parent() else {
-        return Err("The Markdown file has no parent directory for relative resources.".to_owned());
+    let context = egui::Context::default();
+    let budget = ImageMemoryBudget::for_context(&context, Default::default());
+    let mut scratch = budget.reserve(IMAGE_READ_RESERVATION, None).unwrap();
+    read_local_image_with_budget(
+        markdown_path,
+        target,
+        &budget,
+        &mut scratch,
+        MAX_IMAGE_PIXELS as usize,
+    )
+    .map(|image| image.pixels)
+    .map_err(|error| error.message().to_owned())
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_LOCAL_IMAGE_OPEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[inline]
+fn before_local_image_open() {
+    #[cfg(test)]
+    BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[inline]
+fn before_local_image_directory_open() {
+    #[cfg(test)]
+    BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+fn open_canonical_image_directory(parent: &Path) -> std::io::Result<cap_std::fs::Dir> {
+    use cap_fs_ext::DirExt;
+    use std::io;
+
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The Markdown resource directory must be a canonical absolute path.",
+        )
     };
+    if !parent.is_absolute() {
+        return Err(invalid());
+    }
+    let root = parent.ancestors().last().ok_or_else(invalid)?;
+    let relative = parent.strip_prefix(root).map_err(|_| invalid())?;
+    let mut directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // The source's canonical parent is the grant. Following a newly inserted
+    // alias while acquiring it would silently grant a different directory.
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(invalid());
+        };
+        directory = directory.open_dir_nofollow(name)?;
+    }
+    Ok(directory)
+}
+
+fn read_local_image_with_budget(
+    markdown_path: &Path,
+    target: &str,
+    budget: &ImageMemoryBudget,
+    scratch: &mut ImageReservation,
+    texture_side: usize,
+) -> Result<DecodedImage, ImageLoadFailure> {
+    let permanent = |message: &str| ImageLoadFailure::Permanent(message.to_owned());
+    let Some(parent) = markdown_path.parent() else {
+        return Err(permanent(
+            "The Markdown file has no parent directory for relative resources.",
+        ));
+    };
+    if Path::new(target).has_root() || Path::new(target).is_absolute() {
+        return Err(permanent(
+            "Only relative local image paths can be loaded here.",
+        ));
+    }
+    before_local_image_directory_open();
+    let directory = open_canonical_image_directory(parent)
+        .map_err(|_| permanent("The Markdown image directory could not be opened safely."))?;
     let candidate = parent.join(target);
     let canonical = fs::canonicalize(&candidate)
-        .map_err(|_| "The requested local image could not be found.".to_owned())?;
-    let metadata = fs::metadata(&canonical)
-        .map_err(|_| "The requested local image could not be read.".to_owned())?;
+        .map_err(|_| permanent("The requested local image could not be found."))?;
+    let relative = canonical
+        .strip_prefix(parent)
+        .map_err(|_| permanent("Local images must remain inside the Markdown file's directory."))?;
+    before_local_image_open();
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK);
+    }
+    // Pathname admission is not an authority: resolve again beneath the
+    // captured directory handle, including intermediate symlinks/reparse points.
+    let file = directory
+        .open_with(relative, &options)
+        .map_err(|_| permanent("The requested local image could not be read."))?;
+    drop(directory);
+    let metadata = file
+        .metadata()
+        .map_err(|_| permanent("The requested local image could not be read."))?;
     if !metadata.is_file() {
-        return Err("The requested local image is not a regular file.".to_owned());
+        return Err(permanent(
+            "The requested local image is not a regular file.",
+        ));
     }
     let extension = canonical
         .extension()
@@ -2409,27 +3648,141 @@ fn read_local_image(markdown_path: &Path, target: &str) -> Result<egui::ColorIma
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
     if extension == "svg" {
-        return Err("SVG images remain blocked in the Markdown viewer.".to_owned());
-    }
-    if metadata.len() > MAX_IMAGE_BYTES {
-        return Err(format!(
-            "Local images must not exceed {} bytes.",
-            MAX_IMAGE_BYTES
+        return Err(permanent(
+            "SVG images remain blocked in the Markdown viewer.",
         ));
     }
-    let bytes = fs::read(&canonical)
-        .map_err(|_| "The requested local image could not be read.".to_owned())?;
-    let decoded = image::load_from_memory(&bytes)
-        .map_err(|_| "Only bounded local raster images can be loaded here.".to_owned())?
-        .to_rgba8();
-    let (width, height) = decoded.dimensions();
-    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
-        return Err("The requested local image exceeds the raster-area limit.".to_owned());
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err(ImageLoadFailure::Permanent(format!(
+            "Local images must not exceed {} bytes.",
+            MAX_IMAGE_BYTES
+        )));
     }
-    Ok(egui::ColorImage::from_rgba_unmultiplied(
-        [width as usize, height as usize],
-        decoded.as_raw(),
-    ))
+    let bytes = read_bounded_image_bytes(file)?;
+    let mut reader = image::ImageReader::new(Cursor::new(bytes.as_slice()))
+        .with_guessed_format()
+        .map_err(|_| permanent("Only bounded local raster images can be loaded here."))?;
+    let mut limits = image::Limits::default();
+    let axis_limit = u32::try_from(texture_side.min(MAX_IMAGE_PIXELS as usize))
+        .map_err(|_| permanent("The local image texture limit is unavailable."))?;
+    limits.max_image_width = Some(axis_limit);
+    limits.max_image_height = Some(axis_limit);
+    // This decoder hint is non-strict; only dimensions and our own
+    // reservations provide a hard application-managed admission boundary.
+    limits.max_alloc = Some(budget.limit());
+    reader.limits(limits);
+    let decoder = reader.into_decoder().map_err(|_| {
+        permanent("Only bounded local raster images within the texture limits can be loaded here.")
+    })?;
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return Err(permanent(
+            "The requested local image exceeds the raster-area limit.",
+        ));
+    }
+    let rgba_bytes = u64::from(width) * u64::from(height) * 4;
+    let captured_bytes =
+        target.len() as u64 + markdown_path.as_os_str().as_encoded_bytes().len() as u64;
+    let retained_bytes = RETAINED_IMAGE_OVERHEAD + 2 * rgba_bytes;
+    scratch.resize(
+        IMAGE_READ_RESERVATION
+            + captured_bytes
+            + decoder.total_bytes()
+            + rgba_bytes
+            + retained_bytes,
+    )?;
+    let reservation = scratch.split(retained_bytes);
+    let decoded = image::DynamicImage::from_decoder(decoder)
+        .map_err(|_| permanent("Only bounded local raster images can be loaded here."))?
+        .into_rgba8();
+    if decoded.dimensions() != (width, height) {
+        return Err(permanent(
+            "The local image dimensions changed during decoding.",
+        ));
+    }
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact((u64::from(width) * u64::from(height)) as usize)
+        .map_err(|_| permanent("Local image pixel storage could not be allocated."))?;
+    pixels.extend(
+        decoded
+            .as_raw()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|rgba| egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])),
+    );
+    let pixels = egui::ColorImage::new([width as usize, height as usize], pixels);
+    Ok(DecodedImage {
+        pixels,
+        reservation,
+    })
+}
+
+fn read_bounded_image_bytes(mut reader: impl Read) -> Result<Vec<u8>, ImageLoadFailure> {
+    let limit = MAX_IMAGE_BYTES as usize;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let remaining = (limit + 1 - bytes.len()).min(chunk.len());
+        let read = match reader.read(&mut chunk[..remaining]) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => {
+                return Err(ImageLoadFailure::Permanent(
+                    "The requested local image could not be read.".to_owned(),
+                ))
+            }
+        };
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if bytes.len() + read > limit {
+            return Err(ImageLoadFailure::Permanent(format!(
+                "Local images must not exceed {} bytes.",
+                MAX_IMAGE_BYTES
+            )));
+        }
+        let needed = bytes.len() + read;
+        if needed > bytes.capacity() {
+            let capacity = needed.max(bytes.capacity().saturating_mul(2)).min(limit);
+            bytes
+                .try_reserve_exact(capacity - bytes.len())
+                .map_err(|_| {
+                    ImageLoadFailure::Permanent(
+                        "Local image input storage could not be allocated.".to_owned(),
+                    )
+                })?;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn spawn_image_worker(
+    budget: ImageMemoryBudget,
+    worker: ImageWorker,
+    mut scratch: ImageReservation,
+    context: egui::Context,
+    read: impl FnOnce(
+            &mut ImageReservation,
+            &egui::Context,
+            &ImageMemoryBudget,
+        ) -> Result<DecodedImage, ImageLoadFailure>
+        + Send
+        + 'static,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<thread::JoinHandle<()>>,
+) -> std::io::Result<Receiver<Result<DecodedImage, ImageLoadFailure>>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let viewport = context.viewport_id();
+    spawn(Box::new(move || {
+        let result = read(&mut scratch, &context, &budget);
+        drop(scratch);
+        drop(worker);
+        let _ = sender.send(result);
+        context.request_repaint_of(viewport);
+        crate::markdown_images::wake_image_viewports(&context);
+    }))?;
+    Ok(receiver)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2819,12 +4172,23 @@ fn render_image(
                                     .color(theme::TEXT_SECONDARY),
                             );
                         } else {
+                            let blocked_local = reference.class()
+                                == ResourceReferenceClass::LocalRelative
+                                && approvals.local_image_reads_blocked;
                             ui.label(
-                                RichText::new(resource_placeholder_action(reference.class()))
-                                    .small(),
+                                RichText::new(if blocked_local {
+                                    approvals.local_image_block_reason.as_deref().unwrap_or(
+                                        "Local images require a saved local Markdown document.",
+                                    )
+                                } else {
+                                    resource_placeholder_action(reference.class())
+                                })
+                                .small(),
                             );
                             if reference.class() == ResourceReferenceClass::LocalRelative
-                                && !approvals.is_approved(image.reference_index())
+                                && !blocked_local
+                                && (!approvals.is_approved(image.reference_index())
+                                    || image_errors.contains_key(&image.reference_index()))
                                 && ui.small_button("Load local image").clicked()
                             {
                                 ui.ctx().memory_mut(|memory| {
@@ -2882,7 +4246,12 @@ fn table_column_widths(natural: &[f32], available: f32) -> Vec<f32> {
         .collect()
 }
 
-fn table_cell_galley(ui: &egui::Ui, unwrapped: Arc<egui::Galley>, width: f32) -> Arc<egui::Galley> {
+fn table_cell_galley(
+    ui: &egui::Ui,
+    unwrapped: Arc<egui::Galley>,
+    width: f32,
+    on_layout: impl FnOnce(&LayoutJob),
+) -> Arc<egui::Galley> {
     // Match epaint's integral wrap-width cache key, including at fractional DPI.
     let width = width.round();
     if unwrapped.size().x <= width {
@@ -2890,6 +4259,7 @@ fn table_cell_galley(ui: &egui::Ui, unwrapped: Arc<egui::Galley>, width: f32) ->
     }
     let mut job = (*unwrapped.job).clone();
     job.wrap.max_width = width;
+    on_layout(&job);
     ui.painter().layout_job(job)
 }
 
@@ -3343,6 +4713,8 @@ pub(crate) const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
 /// divergent Markdown implementation.
 pub(crate) struct MarkdownPreviewPane {
     #[cfg(test)]
+    table_cell_probe: Option<TableCellProbe>,
+    #[cfg(test)]
     code_copy_probe: Option<CodeCopyProbe>,
     source: MarkdownSource,
     document: Option<MarkdownDocument>,
@@ -3359,6 +4731,9 @@ pub(crate) struct MarkdownPreviewPane {
     loaded_images: BTreeMap<usize, LoadedImage>,
     pending_image_loads: BTreeMap<usize, PendingImageLoad>,
     image_errors: BTreeMap<usize, String>,
+    automatic_image_loads: usize,
+    automatic_image_references: HashSet<usize>,
+    image_retries: BTreeMap<usize, ImageRetry>,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
@@ -3378,6 +4753,8 @@ impl MarkdownPreviewPane {
     pub(crate) fn new(source: MarkdownSource, text: &str) -> Self {
         let mut pane = Self {
             #[cfg(test)]
+            table_cell_probe: None,
+            #[cfg(test)]
             code_copy_probe: None,
             source,
             document: None,
@@ -3387,10 +4764,16 @@ impl MarkdownPreviewPane {
             pending_text: None,
             outline_selected: None,
             find: MarkdownFindState::default(),
-            resource_approvals: ResourceApprovalState::default(),
+            resource_approvals: ResourceApprovalState {
+                local_image_reads_blocked: true,
+                ..Default::default()
+            },
             loaded_images: BTreeMap::new(),
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
+            automatic_image_loads: 0,
+            automatic_image_references: HashSet::new(),
+            image_retries: BTreeMap::new(),
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
@@ -3402,6 +4785,44 @@ impl MarkdownPreviewPane {
         };
         pane.parse(text.to_owned());
         pane
+    }
+
+    pub(crate) fn for_saved_local_source(source: LocalMarkdownSource, text: &str) -> Self {
+        let mut pane = Self::new(MarkdownSource::from(source), text);
+        pane.resource_approvals.local_image_reads_blocked = false;
+        pane
+    }
+
+    pub(crate) fn with_unavailable_local_images(
+        source: MarkdownSource,
+        text: &str,
+        reason: &str,
+    ) -> Self {
+        let mut pane = Self::new(source, text);
+        pane.resource_approvals.local_image_block_reason = Some(reason.to_owned());
+        pane
+    }
+
+    pub(crate) fn load_local_image(&mut self, index: usize, context: &egui::Context) {
+        if self.error.is_none() {
+            self.image_state()
+                .try_load_local_image(index, context, false);
+        }
+    }
+
+    fn image_state(&mut self) -> MarkdownImageState<'_> {
+        MarkdownImageState {
+            source: &self.source,
+            document: self.document.as_ref(),
+            texture_label: "editor-preview",
+            resource_approvals: &mut self.resource_approvals,
+            loaded_images: &mut self.loaded_images,
+            pending_image_loads: &mut self.pending_image_loads,
+            image_errors: &mut self.image_errors,
+            automatic_image_loads: &mut self.automatic_image_loads,
+            automatic_image_references: &mut self.automatic_image_references,
+            image_retries: &mut self.image_retries,
+        }
     }
 
     /// Takes this frame's text. Parsing is deferred until typing settles, and
@@ -3433,7 +4854,19 @@ impl MarkdownPreviewPane {
         &self.parsed
     }
 
+    #[cfg(test)]
+    pub(crate) fn image_loaded_for_test(&self, index: usize) -> bool {
+        self.loaded_images.contains_key(&index)
+    }
+
     fn parse(&mut self, text: String) {
+        self.resource_approvals.clear();
+        self.loaded_images.clear();
+        self.pending_image_loads.clear();
+        self.image_errors.clear();
+        self.automatic_image_loads = 0;
+        self.automatic_image_references.clear();
+        self.image_retries.clear();
         let bytes = text.as_bytes();
         match MarkdownLoader::default().load(
             self.source.clone(),
@@ -3447,10 +4880,6 @@ impl MarkdownPreviewPane {
                 self.outline_selected = document.headings().first().map(|_| 0);
                 self.document = Some(document);
                 self.error = None;
-                self.resource_approvals.clear();
-                self.loaded_images.clear();
-                self.pending_image_loads.clear();
-                self.image_errors.clear();
             }
             Err(error) => {
                 // The text stays editable whatever the preview makes of it,
@@ -3463,6 +4892,14 @@ impl MarkdownPreviewPane {
     }
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui) {
+        #[cfg(test)]
+        if let Some(probe) = &mut self.table_cell_probe {
+            let ordinary = probe.ordinary;
+            *probe = TableCellProbe {
+                ordinary,
+                ..Default::default()
+            };
+        }
         #[cfg(test)]
         if let Some(probe) = &mut self.code_copy_probe {
             probe.preparations = 0;
@@ -3484,11 +4921,15 @@ impl MarkdownPreviewPane {
             });
             return;
         }
+        self.image_state().poll_background_work(ui.ctx());
+        self.image_state().start_automatic_image_loads(ui.ctx());
         let Some(document) = self.document.take() else {
             return;
         };
-        let mut heading_tops = Vec::new();
+        let mut heading_tops = std::mem::take(&mut self.heading_tops);
+        heading_tops.clear();
         let mut state = MarkdownRenderState {
+            table_cells: TableCellPreparation::default(),
             code_copy_caption: CodeCopyCaptionPreparation::default(),
             mode: MarkdownViewerMode::Preview,
             outline_open: false,
@@ -3501,11 +4942,14 @@ impl MarkdownPreviewPane {
             pending_scroll: &mut self.pending_scroll,
             line_heading_indices: &self.line_heading_indices,
             source_syntax: &mut self.source_syntax,
+            source_preparation: &mut SourcePreparation::default(),
+            outline_preparation: &mut OutlinePreparation::default(),
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
-            heading_tops: &mut heading_tops,
+            heading_tops: Some(&mut heading_tops),
         };
         #[cfg(test)]
         {
+            state.table_cells.probe = self.table_cell_probe.take();
             state.code_copy_caption.probe = self.code_copy_probe.take();
         }
         let viewport_height = ui.available_height().max(120.0);
@@ -3541,6 +4985,7 @@ impl MarkdownPreviewPane {
             });
         #[cfg(test)]
         {
+            self.table_cell_probe = state.table_cells.probe.take();
             self.code_copy_probe = state.code_copy_caption.probe.take();
         }
         // Which section the reader is actually looking at, taken from where
@@ -3614,6 +5059,15 @@ fn outline_item(
     heading: &festerm_markdown::Heading,
     selected: bool,
 ) -> egui::Response {
+    outline_item_with_geometry(ui, heading, selected, None).0
+}
+
+fn outline_item_with_geometry(
+    ui: &mut egui::Ui,
+    heading: &festerm_markdown::Heading,
+    selected: bool,
+    cached_offscreen_geometry: Option<OutlineRowGeometry>,
+) -> (egui::Response, OutlineRowGeometry) {
     // `.fmd-outline-item` gives H1 and H2 the same inset and only steps in
     // from `.fmd-depth2` onward: in a document whose H1 is the title, the H2
     // sections read as its peers in the outline, and indenting every level
@@ -3630,14 +5084,29 @@ fn outline_item(
     let width = ui.available_width();
     let text_left =
         OUTLINE_ITEM_PADDING_X + OUTLINE_ITEM_ACCENT_WIDTH + OUTLINE_ITEM_PADDING_X + indent;
-    let galley = ui.painter().layout(
-        heading.text().to_owned(),
-        font,
-        text_color,
-        (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
-    );
-    let height = galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    // Retain only bounded, snapshot-owned geometry, never atlas-backed galleys.
+    // All rows still allocate live responses and accessibility nodes.
+    let galley = cached_offscreen_geometry.is_none().then(|| {
+        ui.painter().layout(
+            heading.text().to_owned(),
+            font,
+            text_color,
+            (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
+        )
+    });
+    let geometry = cached_offscreen_geometry.unwrap_or_else(|| {
+        let galley = galley.as_ref().expect("uncached row");
+        OutlineRowGeometry {
+            height: galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0,
+            text_bounds: egui::epaint::TextShape::new(
+                egui::pos2(text_left, OUTLINE_ITEM_PADDING_Y),
+                galley.clone(),
+                text_color,
+            )
+            .visual_bounding_rect(),
+        }
+    });
+    let (rect, response) = ui.allocate_exact_size(vec2(width, geometry.height), Sense::click());
     response.widget_info(|| {
         WidgetInfo::selected(
             WidgetType::Button,
@@ -3672,12 +5141,17 @@ fn outline_item(
             theme::ACCENT_PRIMARY,
         );
     }
-    ui.painter().galley(
-        egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
-        galley,
-        text_color,
-    );
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if let Some(galley) = galley {
+        ui.painter().galley(
+            egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
+            galley,
+            text_color,
+        );
+    }
+    (
+        response.on_hover_cursor(egui::CursorIcon::PointingHand),
+        geometry,
+    )
 }
 
 /// The outline panel's chrome and its titled content area.
@@ -4129,6 +5603,7 @@ mod tests {
         Harness::builder().build_ui_state(
             move |ui, _state: &mut ()| {
                 let mut state = MarkdownRenderState {
+                    table_cells: TableCellPreparation::default(),
                     code_copy_caption: CodeCopyCaptionPreparation::default(),
                     mode: MarkdownViewerMode::Preview,
                     outline_open: false,
@@ -4141,8 +5616,10 @@ mod tests {
                     pending_scroll: &mut pending_scroll,
                     line_heading_indices: &[],
                     source_syntax: &mut None,
+                    source_preparation: &mut SourcePreparation::default(),
+                    outline_preparation: &mut OutlinePreparation::default(),
                     outline_keyboard_focus: &mut outline_keyboard_focus,
-                    heading_tops: &mut heading_tops,
+                    heading_tops: Some(&mut heading_tops),
                 };
                 state.render_blocks(ui, parsed.blocks(), &parsed, InlineRenderStyle::body());
             },
@@ -4337,7 +5814,8 @@ mod tests {
                                     unwrapped.size().x.max(1.0),
                                     unwrapped.size().x + 100.0,
                                 ] {
-                                    let actual = table_cell_galley(ui, unwrapped.clone(), width);
+                                    let actual =
+                                        table_cell_galley(ui, unwrapped.clone(), width, |_| {});
                                     let mut reference_job = (*unwrapped.job).clone();
                                     reference_job.wrap.max_width = width;
                                     let reference = ui.painter().layout_job(reference_job);
@@ -4704,7 +6182,11 @@ mod tests {
     fn mixed_caption_fixture() -> String {
         // Keep the actual outline-disabled profile's 400 mixed sections, not
         // a caption-only surrogate. The profiling module has a separate owner.
-        (0..400)
+        mixed_fixture_sections(400)
+    }
+
+    fn mixed_fixture_sections(sections: usize) -> String {
+        (0..sections)
             .map(|index| {
                 format!(
                     "## Section {index}\n\nA **synthetic** paragraph with `inline code` and ordinary text.\n\n\
@@ -4713,6 +6195,1272 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    fn source_preparation_pair(text: &str) -> [(egui::Context, MarkdownViewerTab); 2] {
+        let source = test_remote_source("/owned/source.md");
+        let (_, document) = load_remote_document(
+            source.clone(),
+            "/owned/source.md".into(),
+            text.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let syntax = source_syntax_spans(&mut None, text).to_vec();
+        std::array::from_fn(|index| {
+            let context = code_navigation_context();
+            context.enable_accesskit();
+            let mut viewer = MarkdownViewerTab::open_remote(
+                source.clone(),
+                "/owned/source.md".into(),
+                text.as_bytes().to_vec(),
+            );
+            // Both oracles use the same syntax-budget outcome, not two timed parses.
+            viewer.document = Some(document.clone());
+            viewer.source_syntax = Some(syntax.clone());
+            viewer.mode = MarkdownViewerMode::Source;
+            viewer.outline_open = false;
+            viewer.pending_scroll = None;
+            viewer.source_preparation.probe = Some(SourcePreparationProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
+            (context, viewer)
+        })
+    }
+
+    fn source_preparation_frame(
+        pair: &mut [(egui::Context, MarkdownViewerTab); 2],
+        frame: usize,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+    ) -> [egui::FullOutput; 2] {
+        source_preparation_frame_with_opacity(pair, frame, size, events, 1.0)
+    }
+
+    fn source_preparation_frame_with_opacity(
+        pair: &mut [(egui::Context, MarkdownViewerTab); 2],
+        frame: usize,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+        opacity: f32,
+    ) -> [egui::FullOutput; 2] {
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let output = std::array::from_fn(|index| {
+            let (context, viewer) = &mut pair[index];
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(frame as f64 / 60.0),
+                    events: events.clone(),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_opacity(opacity);
+                    assert!(viewer.show(ui, tab_id).is_none());
+                },
+            );
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(
+            output[0].shapes, output[1].shapes,
+            "all Source clipped shapes, frame {frame}"
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.accesskit_update),
+            format!("{:?}", output[1].platform_output.accesskit_update),
+            "all Source accessibility nodes, bounds and order, frame {frame}"
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.commands),
+            format!("{:?}", output[1].platform_output.commands),
+            "selection and Copy commands, frame {frame}"
+        );
+        let ordinary = pair[0].1.source_preparation.probe.as_ref().unwrap();
+        let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(ordinary.observations, candidate.observations);
+        assert_eq!(ordinary.visited_lines, candidate.visited_lines);
+        if ordinary.ordinary {
+            assert_eq!(ordinary.preparations, ordinary.visited_lines);
+        }
+        if ordinary.geometry_ordinary {
+            assert_eq!(ordinary.layouts, ordinary.visited_lines);
+        }
+        for prepared in pair[1].1.source_preparation.jobs.values() {
+            if let Some(geometry) = prepared.geometry {
+                assert!(geometry.size.is_finite());
+                assert!(geometry.intrinsic_size.is_finite());
+                assert!(geometry.wrap_width.is_finite());
+            }
+        }
+        assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
+        assert_eq!(pair[0].1.find, pair[1].1.find);
+        assert!(pair[1].1.source_preparation.jobs.len() <= MAX_PREPARED_SOURCE_JOBS);
+        assert!(
+            pair[1].1.source_preparation.payload_bytes <= MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES
+        );
+        output
+    }
+
+    fn source_geometry_pair(text: &str) -> [(egui::Context, MarkdownViewerTab); 2] {
+        let mut pair = source_preparation_pair(text);
+        for (index, (_, viewer)) in pair.iter_mut().enumerate() {
+            let probe = viewer.source_preparation.probe.as_mut().unwrap();
+            probe.ordinary = false;
+            probe.geometry_ordinary = index == 0;
+        }
+        pair
+    }
+
+    fn assert_source_geometry_warm(pair: &[(egui::Context, MarkdownViewerTab); 2], control: &str) {
+        let ordinary = pair[0].1.source_preparation.probe.as_ref().unwrap();
+        let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(ordinary.preparations, 0, "{control}");
+        assert_eq!(candidate.preparations, 0, "{control}");
+        assert_eq!(ordinary.layouts, ordinary.visited_lines, "{control}");
+        assert_eq!(ordinary.shared_label_inputs, ordinary.layouts, "{control}");
+        assert_eq!(
+            candidate.explicit_job_clones, candidate.layouts,
+            "{control}"
+        );
+        assert_eq!(candidate.geometry_key_clones, 0, "{control}");
+        assert_eq!(candidate.geometry_metadata_rejections, 0, "{control}");
+        assert!(
+            (1..=96).contains(&candidate.layouts),
+            "{control}: {}",
+            candidate.layouts
+        );
+        assert!(candidate.layouts * 4 < ordinary.layouts, "{control}");
+        assert!(
+            candidate.explicit_clone_capacity_bytes * 4 < ordinary.label_clone_payload_bytes,
+            "{control}"
+        );
+        println!(
+            "source geometry {control}: rows old={} candidate={}, actual layouts old={} candidate={}, layout UTF-8 bytes old={} candidate={}, retained jobs={} payload bytes={}",
+            ordinary.visited_lines, candidate.visited_lines,
+            ordinary.layouts, candidate.layouts,
+            ordinary.layout_text_bytes, candidate.layout_text_bytes,
+            pair[1].1.source_preparation.jobs.len(), pair[1].1.source_preparation.payload_bytes,
+        );
+        println!(
+            "source geometry cloning {control}: ordinary shared Label inputs={} clone payload bytes={}, candidate explicit clones={} cloned String/Vec capacity bytes={}; payload capacities are not allocator usable-size, total allocations or retained font-atlas memory",
+            ordinary.shared_label_inputs, ordinary.label_clone_payload_bytes,
+            candidate.explicit_job_clones, candidate.explicit_clone_capacity_bytes,
+        );
+        let preparation = &pair[1].1.source_preparation;
+        let definitions = &preparation.geometry_key.as_ref().unwrap().definitions;
+        let definition_strings: usize = definitions.font_data.keys().map(String::capacity).sum();
+        let family_strings: usize = definitions
+            .families
+            .values()
+            .flatten()
+            .map(String::capacity)
+            .sum();
+        let family_vectors: usize = definitions
+            .families
+            .values()
+            .map(|names| names.capacity() * std::mem::size_of::<String>())
+            .sum();
+        println!(
+            "source geometry metadata {control}: slots={} slot bytes={} inline key bytes={} font map entries={} family map entries={} owned key/name string capacities={} owned family vector capacities={}; map-node allocator overhead and shared font bytes are not counted as instruction payload",
+            preparation.jobs.len(),
+            preparation.jobs.len() * std::mem::size_of::<Option<SourceRowGeometry>>(),
+            std::mem::size_of::<Option<OutlineGeometryKey>>(),
+            definitions.font_data.len(),
+            definitions.families.len(),
+            definition_strings + family_strings,
+            family_vectors,
+        );
+        println!(
+            "source dependency metadata {control}: key resets={} clones={} rejected={} cloned String capacities={} family Vec capacities={} shared custom-family name bytes={}; separate from layout work, not allocator/RSS totals",
+            candidate.geometry_key_resets,
+            candidate.geometry_key_clones,
+            candidate.geometry_metadata_rejections,
+            candidate.geometry_clone_string_capacity_bytes,
+            candidate.geometry_clone_family_vector_capacity_bytes,
+            candidate.geometry_clone_custom_family_name_bytes,
+        );
+    }
+
+    fn assert_source_font_metadata_rejected(
+        pair: &[(egui::Context, MarkdownViewerTab); 2],
+        rows: usize,
+        control: usize,
+    ) {
+        let preparation = &pair[1].1.source_preparation;
+        let probe = preparation.probe.as_ref().unwrap();
+        assert!(preparation.geometry_key.is_none(), "control {control}");
+        assert!(preparation.jobs.values().all(|job| job.geometry.is_none()));
+        assert_eq!(probe.layouts, rows, "control {control}");
+        assert_eq!(probe.shared_label_inputs, rows, "control {control}");
+        assert_eq!(probe.explicit_job_clones, 0, "ordinary Label fallback");
+        assert_eq!(probe.geometry_key_clones, 0, "reject before cloning");
+        assert_eq!(probe.geometry_metadata_rejections, 1);
+        assert_eq!(probe.geometry_clone_string_capacity_bytes, 0);
+        assert_eq!(probe.geometry_clone_family_vector_capacity_bytes, 0);
+        assert_eq!(probe.geometry_clone_custom_family_name_bytes, 0);
+        println!(
+            "source dependency rejection control={control}: rows={} layouts={} definition clones={} metadata payload=0",
+            probe.visited_lines, probe.layouts, probe.geometry_key_clones,
+        );
+    }
+
+    #[test]
+    fn source_geometry_font_metadata_overflow_uses_live_labels_and_recovers() {
+        let line = "metadata café 漢字   ";
+        let text = format!("{line}\n{}", mixed_caption_fixture());
+        let rows = text.split_inclusive('\n').count();
+        let size = vec2(1180.0, 760.0);
+        for control in 0..5 {
+            let mut pair = source_geometry_pair(&text);
+            source_preparation_frame(&mut pair, 0, size, Vec::new());
+            source_preparation_frame(&mut pair, 1, size, Vec::new());
+            assert_source_geometry_warm(&pair, &format!("metadata control={control} valid"));
+            let mut definitions = egui::FontDefinitions::default();
+            match control {
+                0 => {
+                    let data = definitions.font_data.values().next().unwrap().clone();
+                    while definitions.font_data.len() <= MAX_GEOMETRY_FONT_MAP_ENTRIES {
+                        definitions.font_data.insert(
+                            format!("alias-{}", definitions.font_data.len()),
+                            data.clone(),
+                        );
+                    }
+                }
+                1 => {
+                    while definitions.families.len() <= MAX_GEOMETRY_FONT_MAP_ENTRIES {
+                        definitions.families.insert(
+                            egui::FontFamily::Name(
+                                format!("family-{}", definitions.families.len()).into(),
+                            ),
+                            Vec::new(),
+                        );
+                    }
+                }
+                2 => {
+                    let data = definitions.font_data.values().next().unwrap().clone();
+                    definitions
+                        .font_data
+                        .insert("x".repeat(MAX_GEOMETRY_FONT_NAME_BYTES + 1), data);
+                }
+                3 => {
+                    definitions.families.insert(
+                        egui::FontFamily::Name("x".repeat(MAX_GEOMETRY_FONT_NAME_BYTES + 1).into()),
+                        Vec::new(),
+                    );
+                }
+                _ => {
+                    let names = definitions
+                        .families
+                        .get_mut(&egui::FontFamily::Monospace)
+                        .unwrap();
+                    let name = names[0].clone();
+                    names.resize(MAX_GEOMETRY_FONT_FAMILY_REFERENCES + 1, name);
+                }
+            }
+            assert!(geometry_font_metadata(&definitions).is_none());
+            for (context, _) in &pair {
+                context.set_fonts(definitions.clone());
+            }
+            source_preparation_frame(&mut pair, 2, size, Vec::new());
+            assert_source_font_metadata_rejected(&pair, rows, control);
+            let output = source_preparation_frame(&mut pair, 3, size, Vec::new());
+            assert_source_font_metadata_rejected(&pair, rows, control);
+            let (rect, clip) = visible_code_geometry(&output[0], line).unwrap();
+            let start = rect.min + vec2(1.0, CODE_LINE_HEIGHT / 2.0);
+            let end = egui::pos2(rect.right() + 8.0, rect.center().y);
+            assert!(clip.contains(start) && clip.contains(end));
+            source_preparation_frame(
+                &mut pair,
+                4,
+                size,
+                vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton {
+                        pos: start,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            source_preparation_frame(&mut pair, 5, size, vec![egui::Event::PointerMoved(end)]);
+            source_preparation_frame(
+                &mut pair,
+                6,
+                size,
+                vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            let output = source_preparation_frame(&mut pair, 7, size, vec![egui::Event::Copy]);
+            assert!(output[1].platform_output.commands.iter().any(
+                |command| matches!(command, egui::OutputCommand::CopyText(text) if text == line)
+            ));
+            assert_source_font_metadata_rejected(&pair, rows, control);
+            for (context, _) in &pair {
+                context.set_fonts(egui::FontDefinitions::default());
+            }
+            source_preparation_frame(&mut pair, 8, size, Vec::new());
+            let probe = pair[1].1.source_preparation.probe.as_ref().unwrap();
+            assert_eq!(probe.layouts, rows, "admitted recovery is cold");
+            assert_eq!(probe.geometry_key_clones, 1);
+            assert_eq!(probe.geometry_metadata_rejections, 0);
+            assert!(
+                probe.geometry_clone_string_capacity_bytes
+                    + probe.geometry_clone_custom_family_name_bytes
+                    <= MAX_GEOMETRY_FONT_NAME_BYTES
+            );
+            assert!(
+                probe.geometry_clone_family_vector_capacity_bytes
+                    <= MAX_GEOMETRY_FONT_FAMILY_REFERENCES * std::mem::size_of::<String>()
+            );
+            println!(
+                "source dependency recovery control={control}: layouts={} clones={} String capacities={} family Vec capacities={} custom-family name bytes={}",
+                probe.layouts,
+                probe.geometry_key_clones,
+                probe.geometry_clone_string_capacity_bytes,
+                probe.geometry_clone_family_vector_capacity_bytes,
+                probe.geometry_clone_custom_family_name_bytes,
+            );
+            source_preparation_frame(&mut pair, 9, size, Vec::new());
+            assert_source_geometry_warm(&pair, &format!("metadata control={control} recovered"));
+        }
+    }
+
+    #[test]
+    fn source_geometry_font_metadata_admits_exact_caps_without_warm_key_clones() {
+        let mut definitions = egui::FontDefinitions::default();
+        let data = definitions.font_data.values().next().unwrap().clone();
+        while definitions.font_data.len() < MAX_GEOMETRY_FONT_MAP_ENTRIES {
+            definitions
+                .font_data
+                .insert(format!("a{}", definitions.font_data.len()), data.clone());
+        }
+        while definitions.families.len() < MAX_GEOMETRY_FONT_MAP_ENTRIES - 1 {
+            definitions.families.insert(
+                egui::FontFamily::Name(format!("f{}", definitions.families.len()).into()),
+                Vec::new(),
+            );
+        }
+        let other_capacity: usize = definitions
+            .families
+            .iter()
+            .filter(|(family, _)| **family != egui::FontFamily::Monospace)
+            .map(|(_, names)| names.capacity())
+            .sum();
+        let names = definitions
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap();
+        let capacity = MAX_GEOMETRY_FONT_FAMILY_REFERENCES - other_capacity;
+        names.reserve_exact(capacity - names.len());
+        names.resize(capacity, names[0].clone());
+        // Match egui's cloned input, not spare capacity in the fixture builder.
+        definitions = definitions.clone();
+        let metadata = geometry_font_metadata(&definitions).unwrap();
+        definitions.families.insert(
+            egui::FontFamily::Name(
+                "x".repeat(
+                    MAX_GEOMETRY_FONT_NAME_BYTES
+                        - metadata.string_capacity_bytes
+                        - metadata.custom_family_name_bytes,
+                )
+                .into(),
+            ),
+            Vec::new(),
+        );
+        let mut pair = source_geometry_pair(&mixed_caption_fixture());
+        for (context, _) in &pair {
+            context.set_fonts(definitions.clone());
+        }
+        let size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        let preparation = &pair[1].1.source_preparation;
+        let key = preparation.geometry_key.as_ref().unwrap();
+        let metadata = geometry_font_metadata(&key.definitions).unwrap();
+        assert_eq!(
+            key.definitions.font_data.len(),
+            MAX_GEOMETRY_FONT_MAP_ENTRIES
+        );
+        assert_eq!(
+            key.definitions.families.len(),
+            MAX_GEOMETRY_FONT_MAP_ENTRIES
+        );
+        assert_eq!(
+            metadata.string_capacity_bytes + metadata.custom_family_name_bytes,
+            MAX_GEOMETRY_FONT_NAME_BYTES
+        );
+        assert_eq!(
+            metadata.family_reference_capacity,
+            MAX_GEOMETRY_FONT_FAMILY_REFERENCES
+        );
+        let probe = preparation.probe.as_ref().unwrap();
+        assert_eq!(probe.geometry_key_clones, 1);
+        assert_eq!(
+            probe.geometry_clone_string_capacity_bytes
+                + probe.geometry_clone_custom_family_name_bytes,
+            MAX_GEOMETRY_FONT_NAME_BYTES
+        );
+        assert_eq!(
+            probe.geometry_clone_family_vector_capacity_bytes,
+            MAX_GEOMETRY_FONT_FAMILY_REFERENCES * std::mem::size_of::<String>()
+        );
+        println!(
+            "source dependency exact caps: maps={}/{} cloned String capacities={} shared custom-family name bytes={} family Vec capacities={} clones={}",
+            key.definitions.font_data.len(),
+            key.definitions.families.len(),
+            probe.geometry_clone_string_capacity_bytes,
+            probe.geometry_clone_custom_family_name_bytes,
+            probe.geometry_clone_family_vector_capacity_bytes,
+            probe.geometry_key_clones,
+        );
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_geometry_warm(&pair, "exact metadata ceilings");
+        source_preparation_frame(&mut pair, 2, size, Vec::new());
+        assert_source_geometry_warm(&pair, "exact metadata ceilings unchanged again");
+    }
+
+    #[test]
+    fn source_geometry_bounds_actual_warm_layouts_without_removing_live_rows() {
+        for sections in [64, 400] {
+            let text = mixed_fixture_sections(sections);
+            let rows = text.split_inclusive('\n').count();
+            for width in [430.0, 1180.0] {
+                let mut pair = source_geometry_pair(&text);
+                let size = vec2(width, 760.0);
+                source_preparation_frame(&mut pair, 0, size, Vec::new());
+                assert_eq!(
+                    pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+                    rows,
+                    "cold Source performs ordinary layout for every row"
+                );
+                for frame in 1..=12 {
+                    source_preparation_frame(&mut pair, frame, size, Vec::new());
+                    assert_source_geometry_warm(
+                        &pair,
+                        &format!("sections={sections}, width={width}, unchanged={frame}"),
+                    );
+                    let old = pair[0].1.source_preparation.probe.as_ref().unwrap();
+                    let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+                    assert!(candidate.layout_text_bytes * 4 < old.layout_text_bytes);
+                }
+                source_preparation_frame(
+                    &mut pair,
+                    13,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(egui::pos2(width / 2.0, 400.0)),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: vec2(0.0, -1100.0),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+                for frame in 14..=16 {
+                    source_preparation_frame(&mut pair, frame, size, Vec::new());
+                    assert_source_geometry_warm(
+                        &pair,
+                        &format!("sections={sections}, width={width}, scroll={frame}"),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_geometry_invalidates_real_width_fonts_scale_options_and_revision() {
+        let text = mixed_caption_fixture();
+        let rows = text.split_inclusive('\n').count();
+        let mut pair = source_geometry_pair(&text);
+        let mut size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_geometry_warm(&pair, "initial warm");
+        for dependency in 0..4 {
+            for (context, _) in &pair {
+                match dependency {
+                    0 => {}
+                    1 => context.set_pixels_per_point(1.25),
+                    2 => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts
+                            .families
+                            .get_mut(&egui::FontFamily::Monospace)
+                            .unwrap()
+                            .reverse();
+                        context.set_fonts(fonts);
+                    }
+                    _ => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                }
+            }
+            if dependency == 0 {
+                size.x = 430.0;
+            }
+            let frame = 2 + dependency * 3;
+            source_preparation_frame(&mut pair, frame, size, Vec::new());
+            assert_eq!(
+                pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+                rows,
+                "dependency {dependency} invalidates every row before replay"
+            );
+            for warm in frame + 1..=frame + 2 {
+                let previous = pair[1].1.source_preparation.geometry_key.clone().unwrap();
+                source_preparation_frame(&mut pair, warm, size, Vec::new());
+                let current = pair[1].1.source_preparation.geometry_key.as_ref().unwrap();
+                if *current != previous {
+                    assert_eq!(
+                        pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+                        rows,
+                        "actual geometry dependency changed again before frame {warm}"
+                    );
+                    println!(
+                        "source geometry dependency={dependency}, frame={warm}: actual width {} -> {}, scale {} -> {}; all {rows} rows relaid out",
+                        previous.width, current.width, previous.pixels_per_point, current.pixels_per_point
+                    );
+                } else {
+                    assert_source_geometry_warm(
+                        &pair,
+                        &format!("dependency={dependency}, frame={warm}"),
+                    );
+                }
+            }
+            assert_source_geometry_warm(&pair, &format!("dependency={dependency} stabilized"));
+        }
+        for (context, _) in &pair {
+            context.set_theme(egui::ThemePreference::Light);
+            context.memory_mut(|memory| memory.options.screen_reader = true);
+        }
+        for frame in 14..17 {
+            source_preparation_frame_with_opacity(&mut pair, frame, size, Vec::new(), 0.5);
+        }
+        assert_source_geometry_warm(&pair, "live theme, opacity and screen-reader sense");
+        let replacement = text.replace(
+            "ordinary text.",
+            &"Unicode café 漢字 🦀 e\u{301} ".repeat(40),
+        );
+        let (_, document) = load_remote_document(
+            test_remote_source("/owned/source.md"),
+            "/owned/source.md".into(),
+            replacement.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let syntax = source_syntax_spans(&mut None, &replacement).to_vec();
+        for (_, viewer) in &mut pair {
+            viewer.apply_load_result(Ok(("/owned/source.md".into(), document.clone())));
+            assert!(viewer.source_preparation.jobs.is_empty());
+            assert!(viewer.source_preparation.geometry_key.is_none());
+            viewer.source_syntax = Some(syntax.clone());
+        }
+        source_preparation_frame(&mut pair, 17, size, Vec::new());
+        assert_eq!(
+            pair[1].1.source_preparation.probe.as_ref().unwrap().layouts,
+            rows
+        );
+        source_preparation_frame(&mut pair, 18, size, Vec::new());
+        assert_source_geometry_warm(&pair, "replaced long wrapped Unicode snapshot");
+    }
+
+    #[test]
+    fn source_geometry_keeps_ordinary_uncached_overflow_and_unsupported_layouts() {
+        let text = "bounded\n".repeat(MAX_PREPARED_SOURCE_JOBS + 1);
+        let mut pair = source_geometry_pair(&text);
+        for (_, viewer) in &mut pair {
+            // One role keeps each formatting job small enough to reach the
+            // entry cap independently of the separate payload cap.
+            viewer.source_syntax = Some(vec![festerm_syntax::Span {
+                start: 0,
+                end: text.len(),
+                role: festerm_syntax::Role::StringLiteral,
+            }]);
+        }
+        let size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(candidate.visited_lines, MAX_PREPARED_SOURCE_JOBS + 1);
+        assert_eq!(
+            pair[1].1.source_preparation.jobs.len(),
+            MAX_PREPARED_SOURCE_JOBS
+        );
+        assert_eq!(
+            candidate.preparations, 1,
+            "only the overflow row is rebuilt"
+        );
+        assert!((2..=97).contains(&candidate.layouts));
+        assert!(!pair[1]
+            .1
+            .source_preparation
+            .jobs
+            .contains_key(&(text.len() - "bounded\n".len())));
+        let raw = "# heading\nline café 漢字\n";
+        for layout in [
+            egui::Layout::top_down(Align::Center),
+            egui::Layout::top_down(Align::Min).with_cross_justify(true),
+            egui::Layout::left_to_right(Align::Center).with_main_wrap(true),
+        ] {
+            let document = document(raw);
+            let pair = source_geometry_pair(raw);
+            let mut preparations: [SourcePreparation; 2] =
+                std::array::from_fn(|index| SourcePreparation {
+                    probe: Some(SourcePreparationProbe {
+                        geometry_ordinary: index == 0,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+            for frame in 0..2 {
+                let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
+                    let find = &pair[index].1.find;
+                    let preparation = &mut preparations[index];
+                    let mut output = pair[index].0.run_ui(egui::RawInput::default(), |ui| {
+                        ui.with_layout(layout, |ui| {
+                            preparation.begin(find);
+                            preparation.begin_geometry(ui);
+                            let mut start = 0;
+                            for line in raw.split_inclusive('\n') {
+                                let (span, job) =
+                                    preparation.line(start, line, &document, find, &[]);
+                                let response = preparation.label(ui, start, job);
+                                preparation.record(span, &response);
+                                start += line.len();
+                            }
+                        });
+                    });
+                    output.textures_delta.clear();
+                    output
+                });
+                assert_eq!(
+                    output[0].shapes, output[1].shapes,
+                    "unsupported layout, frame {frame}"
+                );
+                assert_eq!(
+                    format!("{:?}", output[0].platform_output.accesskit_update),
+                    format!("{:?}", output[1].platform_output.accesskit_update),
+                );
+                assert_eq!(
+                    preparations[0].probe.as_ref().unwrap().observations,
+                    preparations[1].probe.as_ref().unwrap().observations,
+                );
+                assert_eq!(preparations[1].probe.as_ref().unwrap().layouts, 2);
+                assert!(preparations[1]
+                    .jobs
+                    .values()
+                    .all(|prepared| prepared.geometry.is_none()));
+            }
+        }
+    }
+
+    #[test]
+    fn source_geometry_preserves_long_wrapped_crlf_find_and_offscreen_navigation() {
+        let line = format!(
+            "needle {} trailing   ",
+            "café 漢字 🦀 e\u{301}\t".repeat(40)
+        );
+        let raw = format!(
+            "# Unicode\r\n\r\n{line}\r\n{}\r\n## Tail\r\nlast needle café without newline",
+            "\r\n".repeat(400)
+        );
+        let mut pair = source_geometry_pair(&raw);
+        let size = vec2(430.0, 760.0);
+        let output = source_preparation_frame(&mut pair, 0, size, Vec::new());
+        let wrapped_rows = output[1]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == line => {
+                    Some(text.galley.rows.len())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            wrapped_rows > 8,
+            "the actual selectable label wraps the Unicode row"
+        );
+        let output = source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_geometry_warm(&pair, "long Unicode CRLF and empty rows");
+        let (rect, clip) = visible_code_geometry(&output[0], &line).unwrap();
+        let start = rect.min + vec2(1.0, CODE_LINE_HEIGHT / 2.0);
+        let end = egui::pos2(rect.right() + 8.0, rect.bottom() - CODE_LINE_HEIGHT / 2.0);
+        assert!(
+            clip.contains(start) && clip.contains(end),
+            "owned wrapped selection fits the viewport"
+        );
+        source_preparation_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        source_preparation_frame(&mut pair, 3, size, vec![egui::Event::PointerMoved(end)]);
+        source_preparation_frame(
+            &mut pair,
+            4,
+            size,
+            vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let output = source_preparation_frame(&mut pair, 5, size, vec![egui::Event::Copy]);
+        assert!(
+            output[1].platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::CopyText(text) if text == &line)
+            }),
+            "wrapped Unicode Copy preserves raw tab/combining/trailing text"
+        );
+        for (_, viewer) in &mut pair {
+            viewer
+                .find
+                .set_query(viewer.document.as_ref().unwrap(), "needle".into());
+            assert_eq!(viewer.find.matches().len(), 2);
+        }
+        source_preparation_frame(&mut pair, 6, size, Vec::new());
+        source_preparation_frame(&mut pair, 7, size, Vec::new());
+        assert_source_geometry_warm(&pair, "long wrapped Unicode Find");
+        for (_, viewer) in &mut pair {
+            viewer.find.previous();
+            viewer.pending_scroll = Some(PendingScroll::Byte(
+                viewer
+                    .find
+                    .current_match()
+                    .unwrap()
+                    .span()
+                    .start()
+                    .byte_offset(),
+            ));
+        }
+        let mut output = source_preparation_frame(&mut pair, 8, size, Vec::new());
+        for frame in 9..12 {
+            output = source_preparation_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert!(visible_code_geometry(&output[1], "last needle café without newline").is_some());
+        assert!(pair[1].1.pending_scroll.is_none());
+        assert_source_geometry_warm(&pair, "offscreen byte Find target");
+        for (_, viewer) in &mut pair {
+            viewer.find.clear();
+            viewer.pending_scroll = Some(PendingScroll::Heading(0));
+        }
+        let mut output = source_preparation_frame(&mut pair, 12, size, Vec::new());
+        for frame in 13..16 {
+            output = source_preparation_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert!(visible_code_geometry(&output[1], "# Unicode").is_some());
+        assert!(pair[1].1.pending_scroll.is_none());
+        assert_source_geometry_warm(&pair, "offscreen heading target");
+    }
+
+    fn assert_source_preparation_warm(
+        pair: &[(egui::Context, MarkdownViewerTab); 2],
+        control: &str,
+    ) {
+        let ordinary = pair[0].1.source_preparation.probe.as_ref().unwrap();
+        let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(candidate.preparations, 0, "{control}");
+        assert_eq!(candidate.prepared_text_bytes, 0, "{control}");
+        assert_eq!(candidate.rebased_roles, 0, "{control}");
+        println!(
+            "source {control}: visited old={} candidate={}, prepared jobs old={} candidate={}, prepared text bytes old={} candidate={}, rebased roles old={} candidate={}, retained jobs={} payload bytes={}",
+            ordinary.visited_lines, candidate.visited_lines,
+            ordinary.preparations, candidate.preparations,
+            ordinary.prepared_text_bytes, candidate.prepared_text_bytes,
+            ordinary.rebased_roles, candidate.rebased_roles,
+            pair[1].1.source_preparation.jobs.len(), pair[1].1.source_preparation.payload_bytes,
+        );
+    }
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn markdown_outer_frame_preserves_real_preview_source_pixels_dpi_and_opacity() {
+        use eframe::{egui_wgpu, wgpu};
+        use egui_kittest::{
+            wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer},
+            TestRenderer,
+        };
+
+        let mut setup = default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state = create_render_state(setup, Default::default());
+        let adapter = state.adapter.get_info();
+        assert_eq!(adapter.backend, wgpu::Backend::Dx12);
+        assert_eq!(adapter.device_type, wgpu::DeviceType::Cpu);
+        assert_eq!(state.target_format, wgpu::TextureFormat::Rgba8Unorm);
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let tab_id = crate::tabs::AppState::for_test().active();
+        for mode in [MarkdownViewerMode::Preview, MarkdownViewerMode::Source] {
+            for (width, scale, opacity) in [
+                (430.0, 1.0, 1.0),
+                (430.0, 1.25, 1.0),
+                (1180.0, 1.0, 1.0),
+                (1180.0, 1.25, 1.0),
+                (430.0, 1.25, 0.5),
+            ] {
+                let mut pair = source_preparation_pair(&mixed_fixture_sections(4));
+                for (_, viewer) in &mut pair {
+                    viewer.mode = mode;
+                    viewer.outline_open = true;
+                    viewer
+                        .find
+                        .set_query(viewer.document.as_ref().unwrap(), "value".into());
+                    viewer.open_find();
+                }
+                let probe = crate::software_background::PanelTestProbe::install(&pair[1].0, &state);
+                let mut output = Vec::new();
+                let mut images = Vec::new();
+                for (context, viewer) in &mut pair {
+                    let mut input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 760.0),
+                        )),
+                        ..Default::default()
+                    };
+                    input
+                        .viewports
+                        .get_mut(&egui::ViewportId::ROOT)
+                        .unwrap()
+                        .native_pixels_per_point = Some(scale);
+                    let mut last = None;
+                    for frame in 0..4 {
+                        input.time = Some(frame as f64 / 60.0);
+                        let mut current = context.run_ui(input.clone(), |ui| {
+                            ui.painter().rect_filled(
+                                ui.max_rect(),
+                                0.0,
+                                egui::Color32::from_rgb(70, 25, 80),
+                            );
+                            ui.set_opacity(opacity);
+                            ui.set_clip_rect(egui::Rect::from_min_max(
+                                egui::pos2(11.25, 13.5),
+                                egui::pos2(width - 14.5, 744.75),
+                            ));
+                            assert!(viewer.show(ui, tab_id).is_none());
+                        });
+                        renderer.handle_delta(&mut current.textures_delta);
+                        last = Some(current);
+                    }
+                    let last = last.unwrap();
+                    images.push(
+                        renderer
+                            .render(context, &last)
+                            .expect("Markdown framebuffer"),
+                    );
+                    output.push(last);
+                }
+                assert_eq!(images[0].dimensions(), images[1].dimensions());
+                let mismatches = images[0]
+                    .pixels()
+                    .zip(images[1].pixels())
+                    .filter(|(ordinary, candidate)| ordinary != candidate)
+                    .count();
+                assert_eq!(
+                    mismatches, 0,
+                    "{mode:?}, width={width}, scale={scale}, opacity={opacity}"
+                );
+                assert_eq!(
+                    probe.paints(),
+                    usize::from(opacity == 1.0),
+                    "exactly the eligible outer frame must use the callback"
+                );
+                assert_eq!(
+                    format!("{:?}", output[0].platform_output.accesskit_update),
+                    format!("{:?}", output[1].platform_output.accesskit_update),
+                    "actual caller keeps complete live accessibility"
+                );
+                assert_eq!(
+                    pair[0]
+                        .1
+                        .source_preparation
+                        .probe
+                        .as_ref()
+                        .unwrap()
+                        .observations,
+                    pair[1]
+                        .1
+                        .source_preparation
+                        .probe
+                        .as_ref()
+                        .unwrap()
+                        .observations,
+                    "actual Source response geometry and identities"
+                );
+                assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
+                assert_eq!(pair[0].1.outline_selected, pair[1].1.outline_selected);
+                println!(
+                    "Markdown outer frame {mode:?}: width={width}, scale={scale}, opacity={opacity}, format={:?}, callbacks={}, differing pixels={mismatches}",
+                    state.target_format, probe.paints()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn source_preparation_reuses_jobs_with_live_wrap_font_theme_and_revision_layout() {
+        for sections in [64, 400] {
+            let text = mixed_fixture_sections(sections);
+            let mut pair = source_preparation_pair(&text);
+            let size = vec2(1180.0, 760.0);
+            source_preparation_frame(&mut pair, 0, size, Vec::new());
+            assert_eq!(
+                pair[1]
+                    .1
+                    .source_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .preparations,
+                text.split_inclusive('\n').count()
+            );
+            source_preparation_frame(&mut pair, 1, size, Vec::new());
+            assert_source_preparation_warm(&pair, &format!("sections={sections} unchanged"));
+            source_preparation_frame(
+                &mut pair,
+                2,
+                size,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(700.0, 400.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, -1100.0),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            source_preparation_frame(&mut pair, 3, size, Vec::new());
+            assert_source_preparation_warm(&pair, &format!("sections={sections} scroll"));
+        }
+        let mut pair = source_preparation_pair(&mixed_caption_fixture());
+        let mut size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        let pointers: Vec<_> = pair[1]
+            .1
+            .source_preparation
+            .jobs
+            .values()
+            .map(|prepared| Arc::as_ptr(&prepared.job))
+            .collect();
+        for control in 0..4 {
+            for (context, _) in &pair {
+                match control {
+                    0 => {}
+                    1 => context.set_pixels_per_point(1.5),
+                    2 => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts
+                            .families
+                            .get_mut(&egui::FontFamily::Monospace)
+                            .unwrap()
+                            .reverse();
+                        context.set_fonts(fonts);
+                    }
+                    _ => {
+                        context.set_theme(egui::ThemePreference::Light);
+                        context.global_style_mut(|style| {
+                            style.visuals.text_options.font_hinting =
+                                !style.visuals.text_options.font_hinting;
+                        });
+                    }
+                }
+            }
+            if control == 0 {
+                size.x = 430.0;
+            }
+            source_preparation_frame(&mut pair, 1 + control, size, Vec::new());
+            assert_source_preparation_warm(&pair, &format!("400 sections dependency={control}"));
+            assert_eq!(
+                pointers,
+                pair[1]
+                    .1
+                    .source_preparation
+                    .jobs
+                    .values()
+                    .map(|prepared| Arc::as_ptr(&prepared.job))
+                    .collect::<Vec<_>>()
+            );
+        }
+        let replacement =
+            mixed_caption_fixture().replace("ordinary text.", "revised Unicode café 漢字 text.");
+        let (_, document) = load_remote_document(
+            test_remote_source("/owned/source.md"),
+            "/owned/source.md".into(),
+            replacement.as_bytes().to_vec(),
+        )
+        .unwrap();
+        let syntax = source_syntax_spans(&mut None, &replacement).to_vec();
+        for (_, viewer) in &mut pair {
+            viewer.apply_load_result(Ok(("/owned/source.md".into(), document.clone())));
+            assert!(viewer.source_preparation.jobs.is_empty());
+            viewer.source_syntax = Some(syntax.clone());
+        }
+        source_preparation_frame(&mut pair, 5, size, Vec::new());
+        assert_eq!(
+            pair[1]
+                .1
+                .source_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .preparations,
+            replacement.split_inclusive('\n').count()
+        );
+        source_preparation_frame(&mut pair, 6, size, Vec::new());
+        assert_source_preparation_warm(&pair, "400 sections replaced snapshot");
+        for (context, _) in &pair {
+            context.memory_mut(|memory| memory.options.screen_reader = true);
+        }
+        source_preparation_frame(&mut pair, 7, size, Vec::new());
+        assert_source_preparation_warm(&pair, "400 sections live screen-reader labels");
+    }
+
+    #[test]
+    fn source_preparation_preserves_find_offscreen_bytes_unicode_selection_and_copy() {
+        let mut pair = source_preparation_pair(&mixed_caption_fixture());
+        let size = vec2(1180.0, 760.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        for (_, viewer) in &mut pair {
+            let document = viewer.document.as_ref().unwrap();
+            viewer.find.set_query(document, "value".into());
+        }
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        source_preparation_frame(&mut pair, 2, size, Vec::new());
+        assert_source_preparation_warm(&pair, "400 sections Find unchanged");
+        for (_, viewer) in &mut pair {
+            viewer.find.previous();
+            viewer.pending_scroll = Some(PendingScroll::Byte(
+                viewer
+                    .find
+                    .current_match()
+                    .unwrap()
+                    .span()
+                    .start()
+                    .byte_offset(),
+            ));
+        }
+        let output = source_preparation_frame(&mut pair, 3, size, Vec::new());
+        assert!(
+            pair[1]
+                .1
+                .source_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .preparations
+                <= 2
+        );
+        let mut output = output;
+        for frame in 4..7 {
+            output = source_preparation_frame(&mut pair, frame, size, Vec::new());
+        }
+        assert!(visible_code_geometry(&output[1], "fn example() { let value = 399; }").is_some());
+        assert!(pair[1].1.pending_scroll.is_none());
+        assert_source_preparation_warm(&pair, "400 sections Find tail");
+
+        let raw = "# Unicode\r\n\r\nneedle café 漢字   \r\nneedle\tβ \r\n\r\n```text\r\nraw\tbytes  \r\n```\r\nlast needle café without newline";
+        let mut pair = source_preparation_pair(raw);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        for (_, viewer) in &mut pair {
+            let document = viewer.document.as_ref().unwrap();
+            viewer.find.set_query(document, "needle".into());
+        }
+        let output = source_preparation_frame(&mut pair, 1, size, Vec::new());
+        let (rect, _) = visible_code_geometry(&output[0], "needle café 漢字   ").unwrap();
+        let start = egui::pos2(rect.left() + 1.0, rect.center().y);
+        let end = egui::pos2(rect.right() + 8.0, rect.center().y);
+        source_preparation_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        source_preparation_frame(&mut pair, 3, size, vec![egui::Event::PointerMoved(end)]);
+        source_preparation_frame(
+            &mut pair,
+            4,
+            size,
+            vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let output = source_preparation_frame(&mut pair, 5, size, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text == "needle café 漢字   ")
+        }));
+        for (_, viewer) in &mut pair {
+            viewer.find.clear();
+            let target = viewer
+                .document
+                .as_ref()
+                .unwrap()
+                .source_text()
+                .find("last needle")
+                .unwrap();
+            viewer.pending_scroll = Some(PendingScroll::Byte(target));
+        }
+        for frame in 6..9 {
+            source_preparation_frame(&mut pair, frame, vec2(430.0, 180.0), Vec::new());
+        }
+        assert!(pair[1].1.pending_scroll.is_none());
+        assert_source_preparation_warm(&pair, "Unicode CRLF/trailing/no-newline byte navigation");
+
+        let mut pair = source_preparation_pair("first\r\nsecond\r\n\r\nfirst\r\nsecond");
+        for (_, viewer) in &mut pair {
+            viewer
+                .find
+                .set_query(viewer.document.as_ref().unwrap(), "first\r\nsecond".into());
+            assert_eq!(viewer.find.matches().len(), 2);
+        }
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        source_preparation_frame(&mut pair, 1, size, Vec::new());
+        assert_source_preparation_warm(&pair, "multiline Find unchanged");
+        for (_, viewer) in &mut pair {
+            viewer.find.next();
+        }
+        source_preparation_frame(&mut pair, 2, size, Vec::new());
+        assert_eq!(
+            pair[1]
+                .1
+                .source_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .preparations,
+            4,
+            "all old/new multiline match rows refresh"
+        );
+        source_preparation_frame(&mut pair, 3, size, Vec::new());
+        assert_source_preparation_warm(&pair, "multiline Find moved");
+    }
+
+    #[test]
+    fn source_preparation_caps_payload_queries_entries_and_releases_snapshot_owners() {
+        let find = MarkdownFindState::default();
+        let text = "bounded\n".repeat(MAX_PREPARED_SOURCE_JOBS + 1);
+        let document = document(&text);
+        let roles = [festerm_syntax::Span {
+            start: 0,
+            end: text.len(),
+            role: festerm_syntax::Role::StringLiteral,
+        }];
+        let mut preparation = SourcePreparation::default();
+        preparation.begin(&find);
+        for repeat in 0..2 {
+            let mut start = 0;
+            for line in text.split_inclusive('\n') {
+                let (span, job) = preparation.line(start, line, &document, &find, &roles);
+                assert_eq!(
+                    job.as_ref(),
+                    &source_line_job(
+                        line,
+                        span,
+                        &find,
+                        roles_within(&roles, start..start + line.len())
+                    )
+                );
+                start += line.len();
+            }
+            assert_eq!(preparation.jobs.len(), MAX_PREPARED_SOURCE_JOBS);
+            assert!(!preparation
+                .jobs
+                .contains_key(&(text.len() - "bounded\n".len())));
+            assert!(preparation.payload_bytes <= MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES);
+            println!(
+                "source cap repeat={repeat}: retained={} payload={}",
+                preparation.jobs.len(),
+                preparation.payload_bytes
+            );
+        }
+        let large = "x".repeat(festerm_markdown::MAX_SOURCE_BYTES);
+        let large_document = self::document(&large);
+        preparation.clear();
+        preparation.begin(&find);
+        let (_, job) = preparation.line(0, &large, &large_document, &find, &[]);
+        assert_eq!(job.text, large);
+        assert!(
+            preparation.jobs.is_empty(),
+            "one over-budget job must use the ordinary path"
+        );
+        assert_eq!(preparation.payload_bytes, 0);
+
+        let mut pair = source_preparation_pair(&"x".repeat(MAX_SOURCE_PREPARATION_QUERY_BYTES + 1));
+        source_preparation_frame(&mut pair, 0, vec2(1180.0, 760.0), Vec::new());
+        let weak = Arc::downgrade(&pair[1].1.source_preparation.jobs[&0].job);
+        for (_, viewer) in &mut pair {
+            viewer.find.set_query(
+                viewer.document.as_ref().unwrap(),
+                "x".repeat(MAX_SOURCE_PREPARATION_QUERY_BYTES + 1),
+            );
+        }
+        source_preparation_frame(&mut pair, 1, vec2(1180.0, 760.0), Vec::new());
+        assert!(weak.upgrade().is_none());
+        assert!(pair[1].1.source_preparation.jobs.is_empty());
+        let probe = pair[1].1.source_preparation.probe.as_ref().unwrap();
+        assert_eq!(
+            probe.layouts, probe.visited_lines,
+            "uncached Find retains ordinary row layout"
+        );
+        assert_eq!(
+            pair[1].1.find.matches().len(),
+            1,
+            "long Find is not truncated"
+        );
+        for (_, viewer) in &mut pair {
+            viewer.find.clear();
+        }
+        source_preparation_frame(&mut pair, 2, vec2(1180.0, 760.0), Vec::new());
+        let weak = Arc::downgrade(&pair[1].1.source_preparation.jobs[&0].job);
+        pair[1].1.reload();
+        assert!(
+            weak.upgrade().is_some(),
+            "failed reload retains its prior snapshot"
+        );
+        let replacement = load_remote_document(
+            test_remote_source("/owned/source.md"),
+            "/owned/source.md".into(),
+            b"# New\n".to_vec(),
+        )
+        .unwrap();
+        pair[1].1.apply_load_result(Ok(replacement));
+        assert!(weak.upgrade().is_none());
+        assert!(pair[1].1.source_preparation.jobs.is_empty());
+        let mut owner = source_preparation_pair("# Close\n");
+        source_preparation_frame(&mut owner, 0, vec2(1180.0, 760.0), Vec::new());
+        let weak = Arc::downgrade(&owner[1].1.source_preparation.jobs[&0].job);
+        drop(owner);
+        assert!(weak.upgrade().is_none());
     }
 
     fn caption_oracle_pair(text: &str) -> [(egui::Context, MarkdownPreviewPane); 2] {
@@ -4738,6 +7486,10 @@ mod tests {
             pane.document = Some(document.clone());
             pane.parsed = text.into();
             pane.code_copy_probe = Some(CodeCopyProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
+            pane.table_cell_probe = Some(TableCellProbe {
                 ordinary: index == 0,
                 ..Default::default()
             });
@@ -4810,16 +7562,379 @@ mod tests {
                     .count()
             });
         assert_eq!(ordinary.buttons.len(), fences);
-        assert_eq!(ordinary.preparations, fences);
+        assert_eq!(
+            ordinary.preparations,
+            if ordinary.ordinary {
+                fences
+            } else {
+                usize::from(fences != 0)
+            }
+        );
         assert_eq!(prepared.preparations, usize::from(fences != 0));
         assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
         assert_eq!(pair[0].1.visible_heading, pair[1].1.visible_heading);
         assert_eq!(pair[0].1.heading_tops, pair[1].1.heading_tops);
+        let old_cells = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new_cells = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(old_cells.observations, new_cells.observations);
+        assert!(new_cells.retained_entries <= MAX_PREPARED_TABLE_CELLS);
+        assert!(new_cells.retained_payload_bytes <= MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
         // These headless assertions inspect shapes without applying textures.
         for frame_output in &mut output {
             frame_output.textures_delta.clear();
         }
         output
+    }
+
+    fn assert_table_preparation_work(
+        pair: &[(egui::Context, MarkdownPreviewPane); 2],
+        expected_preparations: usize,
+        control: &str,
+    ) {
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(old.observations.len(), 1600, "{control}");
+        assert_eq!(new.observations.len(), 1600, "{control}");
+        assert_eq!(old.preparations, 1600, "{control}");
+        assert_eq!(old.unwrapped_layouts, 1600, "{control}");
+        assert_eq!(new.preparations, expected_preparations, "{control}");
+        assert_eq!(new.unwrapped_layouts, expected_preparations, "{control}");
+        assert_eq!(old.wrap_layouts, new.wrap_layouts, "{control}");
+        assert_eq!(
+            old.wrap_clone_capacity_bytes, new.wrap_clone_capacity_bytes,
+            "{control}"
+        );
+        assert!(new.job_capacity_bytes < old.job_capacity_bytes, "{control}");
+        eprintln!(
+            "table preparation {control}: live cells={}; ordinary/candidate preparations={}/{} unwrapped layouts={}/{} text bytes={}/{} actual job String/section Vec capacity bytes={}/{}; wrap layouts={}/{} actual wrap-clone capacities={}/{}; candidate retained entries={} accounted frame-local galley payload={}",
+            new.observations.len(), old.preparations, new.preparations,
+            old.unwrapped_layouts, new.unwrapped_layouts, old.prepared_text_bytes,
+            new.prepared_text_bytes, old.job_capacity_bytes, new.job_capacity_bytes,
+            old.wrap_layouts, new.wrap_layouts, old.wrap_clone_capacity_bytes,
+            new.wrap_clone_capacity_bytes, new.retained_entries, new.retained_payload_bytes,
+        );
+    }
+
+    fn table_preparation_pair(text: &str) -> [(egui::Context, MarkdownPreviewPane); 2] {
+        let mut pair = caption_oracle_pair(text);
+        // Isolate the new seam against current production caption preparation,
+        // not the caption's older independent control.
+        pair[0].1.code_copy_probe.as_mut().unwrap().ordinary = false;
+        pair
+    }
+
+    #[test]
+    fn table_preparation_removes_repeated_work_across_the_live_400_section_preview() {
+        for width in [1180.0, 360.0] {
+            let mut pair = table_preparation_pair(&mixed_caption_fixture());
+            let size = vec2(width, 760.0);
+            for frame in 0..3 {
+                caption_oracle_frame(&mut pair, frame, size, Vec::new());
+                assert_table_preparation_work(&pair, 403, &format!("width={width} frame={frame}"));
+            }
+            caption_oracle_frame(
+                &mut pair,
+                3,
+                size,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(width / 2.0, 400.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, -1100.0),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            assert_table_preparation_work(&pair, 403, "scroll");
+            for (frame, query, expected) in [(4, "synthetic", 403), (5, "Item", 802)] {
+                for (_, pane) in &mut pair {
+                    pane.find
+                        .set_query(pane.document.as_ref().unwrap(), query.into());
+                }
+                caption_oracle_frame(&mut pair, frame, size, Vec::new());
+                assert_table_preparation_work(&pair, expected, query);
+            }
+            for (_, pane) in &mut pair {
+                pane.find.next();
+            }
+            caption_oracle_frame(&mut pair, 6, size, Vec::new());
+            assert_table_preparation_work(&pair, 802, "current Find match");
+            for (_, pane) in &mut pair {
+                pane.find.clear();
+            }
+            caption_oracle_frame(&mut pair, 7, size, Vec::new());
+            assert_table_preparation_work(&pair, 403, "Find cleared");
+
+            let mut viewers = source_preparation_pair(&mixed_caption_fixture());
+            for (index, (_, viewer)) in viewers.iter_mut().enumerate() {
+                viewer.mode = MarkdownViewerMode::Preview;
+                viewer.table_cell_probe = Some(TableCellProbe {
+                    ordinary: index == 0,
+                    ..Default::default()
+                });
+            }
+            for frame in 0..2 {
+                source_preparation_frame(&mut viewers, frame, size, Vec::new());
+                let old = viewers[0].1.table_cell_probe.as_ref().unwrap();
+                let new = viewers[1].1.table_cell_probe.as_ref().unwrap();
+                assert_eq!(old.observations, new.observations, "standalone viewer");
+                assert_eq!(old.observations.len(), 1600);
+                assert_eq!(old.unwrapped_layouts, 1600);
+                assert_eq!(new.unwrapped_layouts, 403);
+            }
+        }
+    }
+
+    #[test]
+    fn table_preparation_keeps_live_dependencies_navigation_and_unicode_copy() {
+        let mut pair = table_preparation_pair(&mixed_caption_fixture());
+        let wide = vec2(1180.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, wide, Vec::new());
+        for (frame, control) in ["width", "fonts", "options", "scale", "theme", "revision"]
+            .into_iter()
+            .enumerate()
+        {
+            let size = if control == "width" {
+                vec2(360.0, 760.0)
+            } else {
+                wide
+            };
+            for (context, _) in &pair {
+                match control {
+                    "fonts" => {
+                        let mut fonts = egui::FontDefinitions::default();
+                        fonts.families.insert(
+                            egui::FontFamily::Proportional,
+                            fonts.families[&egui::FontFamily::Monospace].clone(),
+                        );
+                        context.set_fonts(fonts);
+                    }
+                    "options" => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    "scale" => context.set_pixels_per_point(1.25),
+                    "theme" => context.set_visuals(egui::Visuals::light()),
+                    _ => {}
+                }
+            }
+            if control == "revision" {
+                rebind_caption_oracle(
+                    &mut pair,
+                    &mixed_caption_fixture().replace("Item", "café 漢字"),
+                );
+            }
+            caption_oracle_frame(&mut pair, frame + 1, size, Vec::new());
+            assert_table_preparation_work(&pair, 403, control);
+        }
+        for (_, pane) in &mut pair {
+            pane.scroll_to_heading(0);
+        }
+        for frame in 7..10 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+        }
+        let output = caption_oracle_frame(&mut pair, 10, wide, Vec::new());
+        let text = output[0]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "café 漢字" => Some(text),
+                _ => None,
+            })
+            .expect("the live Unicode table cell");
+        let start = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.begin())
+                .center()
+                .to_vec2();
+        let end = text.pos
+            + text
+                .galley
+                .pos_from_cursor(text.galley.end())
+                .center()
+                .to_vec2();
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        caption_oracle_frame(
+            &mut pair,
+            11,
+            wide,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        caption_oracle_frame(&mut pair, 12, wide, vec![egui::Event::PointerMoved(end)]);
+        caption_oracle_frame(&mut pair, 13, wide, vec![button(end, false)]);
+        let output = caption_oracle_frame(&mut pair, 14, wide, vec![egui::Event::Copy]);
+        assert!(output[1].platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(text) if text.trim() == "café 漢字")
+        }));
+        for (_, pane) in &mut pair {
+            pane.scroll_to_heading(399);
+        }
+        for frame in 15..18 {
+            caption_oracle_frame(&mut pair, frame, wide, Vec::new());
+        }
+        let cells = &pair[1].1.table_cell_probe.as_ref().unwrap().observations;
+        assert!(cells
+            .last()
+            .unwrap()
+            .rect
+            .intersects(egui::Rect::from_min_size(egui::Pos2::ZERO, wide)));
+        assert_table_preparation_work(&pair, 403, "offscreen heading navigation");
+    }
+
+    #[test]
+    fn table_preparation_refuses_complex_highlighted_and_capacity_overflow_then_recovers() {
+        let context = egui::Context::default();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            let base = ui.painter().layout_no_wrap(
+                "capacity".into(),
+                FontId::proportional(BODY_TEXT_SIZE - 1.0),
+                theme::TEXT_PRIMARY,
+            );
+            let mut exact = (*base).clone();
+            let mut job = (*exact.job).clone();
+            job.text = String::with_capacity(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+            job.text.push_str("capacity");
+            exact.job = Arc::new(job);
+            let non_text = table_cell_payload_bytes(&exact).unwrap() - exact.job.text.capacity();
+            let mut job = (*exact.job).clone();
+            job.text = String::with_capacity(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES - non_text);
+            job.text.push_str("capacity");
+            exact.job = Arc::new(job);
+            assert_eq!(table_cell_payload_bytes(&exact), Some(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES));
+            let mut preparation = TableCellPreparation::default();
+            assert!(preparation.retain(&Arc::new(exact.clone())));
+            assert!(!preparation.retain(&base), "an admitted entry cannot exceed the exact aggregate cap");
+
+            let mut extra = exact.clone();
+            let mut job = (*extra.job).clone();
+            job.text = String::with_capacity(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES - non_text + 1);
+            job.text.push_str("capacity");
+            extra.job = Arc::new(job);
+            assert_eq!(table_cell_payload_bytes(&extra), Some(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES + 1));
+            assert!(!TableCellPreparation::default().retain(&Arc::new(extra)));
+
+            for field in ["sections", "rows", "glyphs", "vertices", "indices"] {
+                let mut extra = (*base).clone();
+                extra.job = Arc::new((*extra.job).clone());
+                for row in &mut extra.rows {
+                    Arc::make_mut(&mut row.row);
+                }
+                let before = table_cell_payload_bytes(&extra).unwrap();
+                let delta = match field {
+                    "sections" => {
+                        let job = Arc::make_mut(&mut extra.job);
+                        let before = job.sections.capacity();
+                        job.sections.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                        (job.sections.capacity() - before) * std::mem::size_of::<egui::text::LayoutSection>()
+                    }
+                    "rows" => {
+                        let before = extra.rows.capacity();
+                        extra.rows.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                        (extra.rows.capacity() - before) * std::mem::size_of::<egui::epaint::text::PlacedRow>()
+                    }
+                    _ => {
+                        let row = Arc::make_mut(&mut extra.rows[0].row);
+                        match field {
+                            "glyphs" => {
+                                let before = row.glyphs.capacity();
+                                row.glyphs.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                                (row.glyphs.capacity() - before) * std::mem::size_of::<egui::epaint::text::Glyph>()
+                            }
+                            "vertices" => {
+                                let before = row.visuals.mesh.vertices.capacity();
+                                row.visuals.mesh.vertices.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                                (row.visuals.mesh.vertices.capacity() - before) * std::mem::size_of::<egui::epaint::Vertex>()
+                            }
+                            _ => {
+                                let before = row.visuals.mesh.indices.capacity();
+                                row.visuals.mesh.indices.reserve_exact(MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+                                (row.visuals.mesh.indices.capacity() - before) * std::mem::size_of::<u32>()
+                            }
+                        }
+                    }
+                };
+                assert!(delta > 0, "{field}");
+                assert_eq!(table_cell_payload_bytes(&extra), Some(before + delta), "{field}");
+                assert!(!TableCellPreparation::default().retain(&Arc::new(extra)), "{field} spare capacity must be charged");
+            }
+            eprintln!(
+                "table metadata: fixed entry array={} bytes; painter-key Option={} bytes; two counters={} bytes; Galley/LayoutJob/Row bodies include their Vec metadata; Arc control blocks and allocator overhead are not included in the 64 KiB payload",
+                std::mem::size_of::<[Option<Arc<egui::Galley>>; MAX_PREPARED_TABLE_CELLS]>(),
+                std::mem::size_of::<Option<TableCellPainterKey>>(),
+                2 * std::mem::size_of::<usize>(),
+            );
+        });
+        output.textures_delta.clear();
+        let mut pair = table_preparation_pair(&mixed_caption_fixture());
+        let size = vec2(1180.0, 760.0);
+        let bounded_rows: String = (0..48)
+            .map(|index| format!("| cell{index} | value{index} |\n"))
+            .collect();
+        rebind_caption_oracle(
+            &mut pair,
+            &format!("| A | B |\n| - | - |\n{bounded_rows}{bounded_rows}"),
+        );
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(new.retained_entries, MAX_PREPARED_TABLE_CELLS);
+        assert_eq!(old.observations.len(), 194);
+        assert_eq!(new.preparations, old.preparations - 30);
+
+        let input = format!("{}é", "x".repeat(MAX_PREPARED_TABLE_CELL_INPUT_BYTES - 2));
+        let rows = (0..4)
+            .map(|index| format!("| {input}{index} | **complex** |\n"))
+            .collect::<String>();
+        rebind_caption_oracle(&mut pair, &format!("| A | B |\n| - | - |\n{rows}{rows}"));
+        caption_oracle_frame(&mut pair, 1, size, Vec::new());
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert_eq!(
+            new.retained_entries, 2,
+            "257 UTF-8 bytes and complex inlines are ordinary"
+        );
+        assert_eq!(old.preparations, new.preparations);
+
+        let rows = (0..8)
+            .map(|index| {
+                format!(
+                    "| {}{index} | short |\n",
+                    "x".repeat(MAX_PREPARED_TABLE_CELL_INPUT_BYTES - 1)
+                )
+            })
+            .collect::<String>();
+        rebind_caption_oracle(&mut pair, &format!("| A | B |\n| - | - |\n{rows}{rows}"));
+        caption_oracle_frame(&mut pair, 2, size, Vec::new());
+        let old = pair[0].1.table_cell_probe.as_ref().unwrap();
+        let new = pair[1].1.table_cell_probe.as_ref().unwrap();
+        assert!(
+            new.retained_entries < 11,
+            "actual glyph/row/mesh capacities exhaust the payload allowance"
+        );
+        assert!(
+            new.preparations > 11,
+            "refused payloads are prepared normally again"
+        );
+        assert!(
+            new.preparations < old.preparations,
+            "admitted cells still reuse"
+        );
+        assert!(new.retained_payload_bytes <= MAX_PREPARED_TABLE_CELL_PAYLOAD_BYTES);
+        eprintln!(
+            "table capacity refusal: entries={} accounted payload={} preparations={}/{}",
+            new.retained_entries, new.retained_payload_bytes, old.preparations, new.preparations
+        );
+
+        rebind_caption_oracle(&mut pair, &mixed_caption_fixture());
+        caption_oracle_frame(&mut pair, 3, size, Vec::new());
+        assert_table_preparation_work(&pair, 403, "refusal recovery");
     }
 
     #[test]
@@ -5316,6 +8431,820 @@ mod tests {
             .expect("test PNG should be writable");
     }
 
+    #[cfg(windows)]
+    fn image_test_junction(link: &Path, target: &Path) {
+        let command = format!(
+            "New-Item -ItemType Junction -Path '{}' -Target '{}' -ErrorAction Stop | Out-Null",
+            link.display().to_string().replace('\'', "''"),
+            target.display().to_string().replace('\'', "''"),
+        );
+        let created = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+    }
+
+    fn pump_preview_images(
+        pane: &mut MarkdownPreviewPane,
+        context: &egui::Context,
+        predicate: impl Fn(&MarkdownPreviewPane) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            pane.image_state().poll_background_work(context);
+            pane.image_state().start_automatic_image_loads(context);
+            if predicate(pane) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
+    #[test]
+    fn image_budget_saved_local_preview_shares_viewer_bytes_and_recovers_after_a_limit_increase() {
+        let directory = image_test_directory("preview-shared-bytes");
+        write_test_png(&directory.join("image.png"), 1536, 1536);
+        let markdown = directory.join("readme.md");
+        let body = "![Image](image.png)\n";
+        fs::write(&markdown, body).unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(
+            &context,
+            festerm_config::ImageMemoryBudgetPreference::MiB64,
+        );
+        let mut viewer = MarkdownViewerTab::open_local(markdown.clone());
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 1536 * 1536 * 4;
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(markdown).unwrap(),
+            body,
+        );
+        assert!(pump_preview_images(&mut preview, &context, |pane| !pane
+            .image_errors
+            .is_empty()));
+        assert!(preview.image_errors[&0].contains("Image memory budget exhausted"));
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        let generation = budget.generation();
+        for _ in 0..32 {
+            preview.image_state().start_automatic_image_loads(&context);
+        }
+        assert_eq!(budget.generation(), generation);
+        budget.set_preference(festerm_config::ImageMemoryBudgetPreference::MiB128);
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(preview.automatic_image_loads, 1);
+        assert_eq!(budget.usage_for_test(), (2 * retained, 0));
+        preview.parse("# Replaced\n".to_owned());
+        assert!(preview.loaded_images.is_empty());
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(!preview.resource_approvals.is_approved(0));
+        assert!(preview.image_retries.is_empty());
+        assert_eq!(preview.automatic_image_loads, 0);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        drop(viewer);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_preview_and_viewer_share_worker_slots() {
+        let directory = image_test_directory("preview-shared-workers");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let markdown = directory.join("readme.md");
+        let body = "![Image](image.png)\n";
+        fs::write(&markdown, body).unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let workers: Vec<_> = (0..MAX_CONCURRENT_IMAGE_LOADS)
+            .map(|_| budget.start_worker(&context).unwrap())
+            .collect();
+        let mut viewer = MarkdownViewerTab::open_local(markdown.clone());
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(markdown).unwrap(),
+            body,
+        );
+        viewer.load_local_image(0, &context);
+        preview.load_local_image(0, &context);
+        assert!(viewer.pending_image_loads.is_empty());
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(viewer.image_errors[&0].contains("Four image loads"));
+        assert!(preview.image_errors[&0].contains("Four image loads"));
+        drop(workers);
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        drop(preview);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_preview_failed_image_can_be_explicitly_retried_without_automatic_retry() {
+        use egui_kittest::kittest::Queryable;
+        let directory = image_test_directory("preview-manual-retry");
+        let source = LocalMarkdownSource::new(directory.join("readme.md")).unwrap();
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, pane: &mut MarkdownPreviewPane| {
+                pane.show(ui);
+                for command in take_viewer_commands(ui.ctx()) {
+                    if let AppCommand::LoadMarkdownLocalImage { reference_index } = command {
+                        pane.load_local_image(reference_index, ui.ctx());
+                    }
+                }
+            },
+            MarkdownPreviewPane::for_saved_local_source(source, "![Image](image.png)\n"),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while harness.state().image_errors.is_empty() {
+            harness.step();
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        write_test_png(&directory.join("image.png"), 2, 2);
+        for _ in 0..8 {
+            harness.step();
+        }
+        assert!(harness.state().loaded_images.is_empty());
+        assert!(harness.state().pending_image_loads.is_empty());
+        harness.get_by_label("Load local image").click();
+        while harness.state().loaded_images.is_empty() {
+            harness.step();
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(harness.state().automatic_image_loads, 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_failed_preview_parse_releases_images_without_reloading_the_hidden_snapshot() {
+        let directory = image_test_directory("preview-parse-failure");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(directory.join("readme.md")).unwrap(),
+            "![Image](image.png)\n",
+        );
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        preview.parse("x".repeat(festerm_markdown::MAX_SOURCE_BYTES + 1));
+        assert!(preview.error.is_some());
+        assert!(preview.loaded_images.is_empty());
+        preview.load_local_image(0, &context);
+        let mut output = context.run_ui(Default::default(), |ui| preview.show(ui));
+        output.textures_delta.clear();
+        assert!(preview.pending_image_loads.is_empty());
+        assert_eq!(preview.automatic_image_loads, 0);
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_local_paths_cannot_escape_the_opened_markdown_directory() {
+        let directory = image_test_directory("image-directory-grant");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        fs::create_dir(directory.join("docs")).unwrap();
+        let source = directory.join("docs").join("readme.md");
+        let target = Path::new("..").join("image.png");
+        assert!(read_local_image(&source, target.to_str().unwrap())
+            .unwrap_err()
+            .contains("inside the Markdown file's directory"));
+        assert!(
+            read_local_image(&source, directory.join("image.png").to_str().unwrap())
+                .unwrap_err()
+                .contains("Only relative")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_final_symlink_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("final-image-rebinding");
+        let outside = image_test_directory("final-image-outside");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("image.png");
+        let escaped = outside.join("image.png");
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::remove_file(&replaced).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "image.png");
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "an opened image must remain beneath its authorized directory after final-name rebinding"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_intermediate_symlink_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("intermediate-image-rebinding");
+        let outside = image_test_directory("intermediate-image-outside");
+        fs::create_dir(directory.join("images")).unwrap();
+        write_test_png(&directory.join("images").join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("images");
+        let retained = directory.join("retained-images");
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, retained).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "images/image.png");
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "an opened image must remain beneath its authorized directory after component rebinding"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn image_budget_intermediate_junction_rebinding_cannot_read_outside_the_root() {
+        let directory = image_test_directory("junction-image-rebinding");
+        let outside = image_test_directory("junction-image-outside");
+        fs::create_dir(directory.join("images")).unwrap();
+        write_test_png(&directory.join("images").join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.join("images");
+        let retained = directory.join("retained-images");
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, retained).unwrap();
+                image_test_junction(&replaced, &escaped);
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "images\\image.png");
+        fs::remove_dir(directory.join("images")).unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "a Windows reparse point must not redirect an admitted image outside its captured root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_captured_root_survives_directory_name_rebinding() {
+        let directory = image_test_directory("captured-image-root");
+        let outside = image_test_directory("captured-image-outside");
+        let retained = image_test_directory("captured-image-retained");
+        fs::remove_dir(&retained).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.clone();
+        let moved = retained.clone();
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, moved).unwrap();
+                std::os::unix::fs::symlink(escaped, replaced).unwrap();
+            }));
+        });
+        let image = read_local_image(&directory.join("readme.md"), "image.png").unwrap();
+        fs::remove_file(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert_eq!(
+            image.size,
+            [2, 2],
+            "only the captured authorized root may supply bytes"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_in_root_relative_and_absolute_symlink_aliases_remain_readable() {
+        let directory = image_test_directory("allowed-image-symlinks");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        std::os::unix::fs::symlink("image.png", directory.join("relative.png")).unwrap();
+        std::os::unix::fs::symlink(directory.join("image.png"), directory.join("absolute.png"))
+            .unwrap();
+        for alias in ["relative.png", "absolute.png"] {
+            let image = read_local_image(&directory.join("readme.md"), alias).unwrap();
+            assert_eq!(image.size, [2, 2]);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_image_reads_release_directory_handles_on_success_and_refusal() {
+        let directory = image_test_directory("image-directory-handle-lifetime");
+        let moved = image_test_directory("image-directory-handle-moved");
+        fs::remove_dir(&moved).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        fs::write(directory.join("image.svg"), "<svg/>").unwrap();
+        assert!(read_local_image(&directory.join("readme.md"), "image.png").is_ok());
+        for target in ["missing.png", "image.svg", "../outside.png"] {
+            assert!(read_local_image(&directory.join("readme.md"), target).is_err());
+        }
+        fs::rename(&directory, &moved).expect("no finished image read may retain a directory lock");
+        fs::remove_dir_all(moved).unwrap();
+    }
+
+    #[test]
+    fn image_budget_root_acquisition_refuses_a_rebound_canonical_source_parent() {
+        let directory = image_test_directory("image-root-acquisition");
+        let outside = image_test_directory("image-root-acquisition-outside");
+        let retained = image_test_directory("image-root-acquisition-retained");
+        fs::remove_dir(&retained).unwrap();
+        write_test_png(&directory.join("image.png"), 2, 2);
+        write_test_png(&outside.join("image.png"), 4, 4);
+        let replaced = directory.clone();
+        let moved = retained.clone();
+        let escaped = outside.clone();
+        BEFORE_LOCAL_IMAGE_DIRECTORY_OPEN.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&replaced, moved).unwrap();
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&escaped, &replaced).unwrap();
+                #[cfg(windows)]
+                image_test_junction(&replaced, &escaped);
+            }));
+        });
+        let result = read_local_image(&directory.join("readme.md"), "image.png");
+        #[cfg(unix)]
+        fs::remove_file(directory).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(directory).unwrap();
+        fs::remove_dir_all(retained).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+        assert!(
+            result.is_err(),
+            "root acquisition must not reinterpret the granted canonical parent through a new alias"
+        );
+    }
+
+    #[test]
+    fn image_budget_preview_reparse_cannot_adopt_an_old_workers_result() {
+        let directory = image_test_directory("preview-stale-worker");
+        write_test_png(&directory.join("old.png"), 2, 2);
+        write_test_png(&directory.join("new.png"), 4, 4);
+        let markdown = directory.join("readme.md");
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut preview = MarkdownPreviewPane::for_saved_local_source(
+            LocalMarkdownSource::new(markdown.clone()).unwrap(),
+            "![Old](old.png)\n",
+        );
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
+        let worker = budget.start_worker(&context).unwrap();
+        let scratch = budget
+            .reserve(IMAGE_READ_RESERVATION, Some(&context))
+            .unwrap();
+        let receiver = spawn_image_worker(
+            budget.clone(),
+            worker,
+            scratch,
+            context.clone(),
+            move |scratch, _, budget| {
+                release_receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                let result =
+                    read_local_image_with_budget(&markdown, "old.png", budget, scratch, 4096);
+                finished_sender.send(()).unwrap();
+                result
+            },
+            |work| thread::Builder::new().spawn(work),
+        )
+        .unwrap();
+        preview
+            .pending_image_loads
+            .insert(0, PendingImageLoad { receiver });
+        preview.parse("![New](new.png)\n".to_owned());
+        assert!(preview.pending_image_loads.is_empty());
+        assert!(pump_preview_images(&mut preview, &context, |pane| pane
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(preview.loaded_images[&0].size, [4, 4]);
+        release_sender.send(()).unwrap();
+        finished_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 4 * 4 * 4;
+        while budget.usage_for_test() != (retained, 0) {
+            assert!(
+                Instant::now() < deadline,
+                "the discarded old result must release its real owners"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        preview.image_state().poll_background_work(&context);
+        assert_eq!(preview.loaded_images[&0].size, [4, 4]);
+        drop(preview);
+        context.tex_manager().write().take_delta().clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_budget_local_fifo_is_rejected_without_waiting_for_a_writer() {
+        let directory = image_test_directory("image-fifo");
+        let status = std::process::Command::new("mkfifo")
+            .arg(directory.join("image.png"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "the owned FIFO fixture must be created");
+        let markdown = directory.join("readme.md");
+        let (sender, receiver) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            sender
+                .send(read_local_image(&markdown, "image.png"))
+                .unwrap()
+        });
+        let result = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a special file must not pin an image worker waiting for a writer");
+        assert!(result.unwrap_err().contains("not a regular file"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn image_budget_manual_admission_obeys_the_same_pending_limit_as_automatic_loads() {
+        let directory = image_test_directory("manual-admission");
+        let mut body = String::new();
+        for index in 0..8 {
+            write_test_png(&directory.join(format!("image-{index}.png")), 2, 2);
+            body.push_str(&format!("![Image {index}](image-{index}.png)\n\n"));
+        }
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, body).unwrap();
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        for index in 0..8 {
+            viewer.load_local_image(index, &context);
+        }
+        assert!(
+            viewer.pending_image_loads.len() <= MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS,
+            "manual admission retained {} pending loads, above the shared limit",
+            viewer.pending_image_loads.len()
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_rejects_oversized_raster_header_before_trying_to_expand_its_pixels() {
+        let directory = image_test_directory("predecode-area");
+        let path = directory.join("oversized.png");
+        write_test_png(&path, 1, 1);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[16..20].copy_from_slice(&4097u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&4097u32.to_be_bytes());
+        let mut crc = u32::MAX;
+        for byte in &bytes[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        fs::write(&path, bytes).unwrap();
+        let refusal = read_local_image(&directory.join("readme.md"), "oversized.png")
+            .expect_err("oversized header must be refused before pixel decoding");
+        assert_eq!(
+            refusal,
+            "The requested local image exceeds the raster-area limit."
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_actual_read_is_bounded_even_without_relying_on_metadata() {
+        struct GrowingReader {
+            read: usize,
+            interrupted: bool,
+        }
+        impl Read for GrowingReader {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                if !self.interrupted {
+                    self.interrupted = true;
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                output.fill(0);
+                self.read += output.len();
+                Ok(output.len())
+            }
+        }
+        let mut reader = GrowingReader {
+            read: 0,
+            interrupted: false,
+        };
+        let error = read_bounded_image_bytes(&mut reader).unwrap_err();
+        assert!(error.message().contains("must not exceed"));
+        assert_eq!(reader.read, MAX_IMAGE_BYTES as usize + 1);
+        let exact = vec![0u8; MAX_IMAGE_BYTES as usize];
+        let admitted = read_bounded_image_bytes(Cursor::new(&exact)).unwrap();
+        assert_eq!(admitted, exact);
+        assert_eq!(admitted.capacity(), MAX_IMAGE_BYTES as usize);
+    }
+
+    #[test]
+    fn image_budget_two_viewers_share_storage_and_retry_only_after_external_capacity_changes() {
+        let directory = image_test_directory("shared-budget");
+        write_test_png(&directory.join("image.png"), 1536, 1536);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(
+            &context,
+            festerm_config::ImageMemoryBudgetPreference::MiB64,
+        );
+        let mut first = MarkdownViewerTab::open_local(markdown.clone());
+        let mut second = MarkdownViewerTab::open_local(markdown);
+        assert!(pump_image_loads(&mut first, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 1536 * 1536 * 4;
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        assert!(pump_image_loads(&mut second, &context, |viewer| !viewer
+            .image_errors
+            .is_empty()));
+        assert!(second.image_errors[&0].contains("Image memory budget exhausted"));
+        assert_eq!(second.automatic_image_loads, 1);
+        let generation = budget.generation();
+        for _ in 0..32 {
+            second.poll_background_work(&context);
+            second.start_automatic_image_loads(&context);
+        }
+        assert_eq!(
+            budget.generation(),
+            generation,
+            "a refused reference must not retry its own released scratch storage"
+        );
+        assert!(second.pending_image_loads.is_empty());
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        assert_eq!(first.loaded_images.len(), 1);
+        budget.set_preference(festerm_config::ImageMemoryBudgetPreference::MiB128);
+        assert!(pump_image_loads(&mut second, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(
+            second.automatic_image_loads, 1,
+            "retrying the same reference must not spend another automatic admission"
+        );
+        assert_eq!(budget.usage_for_test(), (2 * retained, 0));
+        drop(first);
+        budget.generation();
+        assert_eq!(
+            budget.usage_for_test(),
+            (2 * retained, 0),
+            "the real egui upload delta still owns these pixels"
+        );
+        let mut delta = context.tex_manager().write().take_delta();
+        assert!(!delta.set.is_empty());
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (2 * retained, 0));
+        delta.clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        drop(second);
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_decoded_result_outlives_its_viewer_without_releasing_its_storage_early() {
+        let directory = image_test_directory("queued-result");
+        write_test_png(&directory.join("image.png"), 16, 16);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        viewer.load_local_image(0, &context);
+        let decoded = viewer.pending_image_loads[&0]
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let retained = RETAINED_IMAGE_OVERHEAD + 2 * 16 * 16 * 4;
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        assert!(
+            viewer.loaded_images.is_empty(),
+            "a hidden viewer has not uploaded its queued result"
+        );
+        drop(viewer);
+        assert_eq!(budget.usage_for_test(), (retained, 0));
+        drop(decoded);
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_closed_viewer_keeps_a_running_worker_charged_until_that_worker_finishes() {
+        let directory = image_test_directory("active-drop");
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "# Closed viewer\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let worker = budget.start_worker(&context).unwrap();
+        let scratch = budget.reserve(100, Some(&context)).unwrap();
+        let (entered_sender, entered_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let receiver = spawn_image_worker(
+            budget.clone(),
+            worker,
+            scratch,
+            context.clone(),
+            move |_, _, _| {
+                entered_sender.send(()).unwrap();
+                release_receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                Err(ImageLoadFailure::Permanent(
+                    "Controlled worker failure.".to_owned(),
+                ))
+            },
+            |work| thread::Builder::new().spawn(work),
+        )
+        .unwrap();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        viewer
+            .pending_image_loads
+            .insert(0, PendingImageLoad { receiver });
+        entered_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        drop(viewer);
+        assert_eq!(budget.usage_for_test(), (100, 1));
+        release_sender.send(()).unwrap();
+        for _ in 0..500 {
+            if budget.usage_for_test() == (0, 0) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_failed_spawn_releases_both_the_worker_and_its_reservation() {
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let worker = budget.start_worker(&context).unwrap();
+        let scratch = budget.reserve(100, Some(&context)).unwrap();
+        let failure = spawn_image_worker(
+            budget.clone(),
+            worker,
+            scratch,
+            context,
+            |_, _, _| panic!("the failed spawner must never execute the loader"),
+            |work| {
+                drop(work);
+                Err(std::io::Error::other("Controlled thread-spawn failure."))
+            },
+        );
+        assert!(failure.is_err());
+        assert_eq!(budget.usage_for_test(), (0, 0));
+    }
+
+    #[test]
+    fn image_budget_manual_and_automatic_admission_share_one_running_worker_limit() {
+        let directory = image_test_directory("shared-workers");
+        write_test_png(&directory.join("image.png"), 2, 2);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![Image](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(&context, Default::default());
+        let mut releases = Vec::new();
+        let mut results = Vec::new();
+        for _ in 0..MAX_CONCURRENT_IMAGE_LOADS {
+            let (release_sender, release_receiver) = mpsc::sync_channel(1);
+            releases.push(release_sender);
+            let worker = budget.start_worker(&context).unwrap();
+            let scratch = budget.reserve(100, Some(&context)).unwrap();
+            results.push(
+                spawn_image_worker(
+                    budget.clone(),
+                    worker,
+                    scratch,
+                    context.clone(),
+                    move |_, _, _| {
+                        release_receiver
+                            .recv_timeout(Duration::from_secs(5))
+                            .unwrap();
+                        Err(ImageLoadFailure::Permanent(
+                            "Controlled completed load.".to_owned(),
+                        ))
+                    },
+                    |work| thread::Builder::new().spawn(work),
+                )
+                .unwrap(),
+            );
+        }
+        let mut manual = MarkdownViewerTab::open_local(markdown.clone());
+        let mut automatic = MarkdownViewerTab::open_local(markdown);
+        manual.load_local_image(0, &context);
+        automatic.start_automatic_image_loads(&context);
+        assert!(manual.pending_image_loads.is_empty());
+        assert!(automatic.pending_image_loads.is_empty());
+        assert_eq!(automatic.automatic_image_loads, 0);
+        assert!(manual.image_errors[&0].contains("Four image loads"));
+        assert!(automatic.image_errors[&0].contains("Four image loads"));
+        assert_eq!(budget.usage_for_test(), (400, MAX_CONCURRENT_IMAGE_LOADS));
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for result in results {
+            assert!(result
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .is_err());
+        }
+        assert!(pump_image_loads(&mut automatic, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 1));
+        assert_eq!(automatic.automatic_image_loads, 1);
+        drop(manual);
+        drop(automatic);
+        let mut delta = context.tex_manager().write().take_delta();
+        delta.clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn image_budget_refused_images_do_not_retry_each_others_released_scratch_storage() {
+        let directory = image_test_directory("refusal-progress");
+        write_test_png(&directory.join("image.png"), 2048, 2048);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, "![One](image.png)\n\n![Two](image.png)\n").unwrap();
+        let context = egui::Context::default();
+        let budget = ImageMemoryBudget::for_context(
+            &context,
+            festerm_config::ImageMemoryBudgetPreference::MiB64,
+        );
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .image_errors
+            .len()
+            == 2));
+        for _ in 0..64 {
+            viewer.poll_background_work(&context);
+            viewer.start_automatic_image_loads(&context);
+        }
+        assert!(viewer.pending_image_loads.is_empty());
+        assert_eq!(viewer.automatic_image_loads, 2);
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        budget.set_preference(festerm_config::ImageMemoryBudgetPreference::MiB128);
+        assert!(pump_image_loads(&mut viewer, &context, |viewer| viewer
+            .loaded_images
+            .len()
+            == 2));
+        assert_eq!(viewer.automatic_image_loads, 2);
+        drop(viewer);
+        let mut delta = context.tex_manager().write().take_delta();
+        delta.clear();
+        budget.generation();
+        assert_eq!(budget.usage_for_test(), (0, 0));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
     /// Drives the viewer's per-frame background work until `condition` holds,
     /// mirroring what `show` does every frame without needing a real frame.
     fn pump_image_loads(
@@ -5441,9 +9370,477 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
     }
 
-    /// `Ctrl+O` inside a viewer replaces the document but must not carry the
-    /// previous document's resource approvals across
-    /// (`docs/adr/0030-native-markdown-viewer.md`).
+    fn outline_preparation_fixture(rows: usize) -> String {
+        (0..rows)
+            .map(|index| {
+                let depth = "#".repeat(index % 6 + 1);
+                let title = if index % 7 == 0 {
+                    "Unicode café 漢字 and a deliberately long heading that wraps onto several rows"
+                } else {
+                    "Short heading"
+                };
+                format!("{depth} {title} {index}\n\n")
+            })
+            .collect()
+    }
+
+    fn outline_preparation_pair(text: &str) -> [(egui::Context, MarkdownViewerTab); 2] {
+        std::array::from_fn(|index| {
+            let context = code_navigation_context();
+            context.enable_accesskit();
+            let mut viewer = MarkdownViewerTab::open_remote(
+                test_remote_source("/owned/outline.md"),
+                "/owned/outline.md".into(),
+                text.as_bytes().to_vec(),
+            );
+            viewer.outline_preparation.probe = Some(OutlinePreparationProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
+            (context, viewer)
+        })
+    }
+
+    fn outline_preparation_frame(
+        pair: &mut [(egui::Context, MarkdownViewerTab); 2],
+        frame: usize,
+        size: egui::Vec2,
+        scroll: f32,
+        events: Vec<egui::Event>,
+    ) -> [egui::FullOutput; 2] {
+        let output = std::array::from_fn(|index| {
+            let (context, viewer) = &mut pair[index];
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(frame as f64 / 60.0),
+                    events: events.clone(),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("owned-outline-preparation")
+                        .vertical_scroll_offset(scroll)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let headings = viewer.document.as_ref().unwrap().headings();
+                            viewer.outline_preparation.begin(ui, headings.len());
+                            for (index, heading) in headings.iter().enumerate() {
+                                let response = viewer.outline_preparation.item(
+                                    ui,
+                                    index,
+                                    heading,
+                                    viewer.outline_selected == Some(index),
+                                );
+                                if response.clicked() {
+                                    viewer.outline_selected = Some(index);
+                                    viewer.pending_scroll = Some(PendingScroll::Heading(index));
+                                    viewer.outline_keyboard_focus = true;
+                                }
+                            }
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(
+            visible_outline_shapes(&output[0]),
+            visible_outline_shapes(&output[1])
+        );
+        assert_eq!(
+            format!("{:?}", output[0].platform_output.accesskit_update),
+            format!("{:?}", output[1].platform_output.accesskit_update),
+            "all headings retain their accessibility nodes, IDs, bounds and order"
+        );
+        let ordinary = pair[0].1.outline_preparation.probe.as_ref().unwrap();
+        let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+        assert_eq!(ordinary.observations, prepared.observations);
+        assert_eq!(ordinary.rows, prepared.rows);
+        assert_eq!(ordinary.rows, ordinary.layouts);
+        assert_eq!(pair[0].1.outline_selected, pair[1].1.outline_selected);
+        assert_eq!(pair[0].1.pending_scroll, pair[1].1.pending_scroll);
+        output
+    }
+
+    fn visible_outline_shapes(output: &egui::FullOutput) -> Vec<egui::epaint::ClippedShape> {
+        output
+            .shapes
+            .iter()
+            .filter(|shape| {
+                shape
+                    .shape
+                    .visual_bounding_rect()
+                    .intersects(shape.clip_rect)
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn outline_preparation_bounds_warm_layout_work_without_losing_wrapped_rows() {
+        for rows in [64, 400, 2000] {
+            let text = outline_preparation_fixture(rows);
+            let mut pair = outline_preparation_pair(&text);
+            let size = vec2(216.0, 480.0);
+            outline_preparation_frame(&mut pair, 0, size, 0.0, Vec::new());
+            assert_eq!(
+                pair[1]
+                    .1
+                    .outline_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .layouts,
+                rows
+            );
+            // Scrollbar admission can change the actual wrap width on pass two.
+            for frame in 1..4 {
+                outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+            }
+            let maximum_scroll = pair[0]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations
+                .iter()
+                .map(|(_, rect, ..)| rect.height())
+                .sum::<f32>()
+                - size.y;
+            for (frame, requested_scroll) in [(4, 0.0_f32), (5, 1100.0_f32), (6, 8000.0_f32)] {
+                let scroll = requested_scroll.min(maximum_scroll.max(0.0));
+                outline_preparation_frame(&mut pair, frame, size, scroll, Vec::new());
+                let ordinary = pair[0].1.outline_preparation.probe.as_ref().unwrap();
+                let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+                assert!(
+                    (1..=32).contains(&prepared.layouts),
+                    "{rows} rows: {}",
+                    prepared.layouts
+                );
+                assert!(prepared.prepared_text_bytes * 2 < ordinary.prepared_text_bytes);
+                println!(
+                    "outline rows={rows} scroll={scroll}: layouts old={} candidate={}, layout text bytes old={} candidate={}",
+                    ordinary.layouts, prepared.layouts,
+                    ordinary.prepared_text_bytes, prepared.prepared_text_bytes,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outline_preparation_invalidates_width_scale_fonts_options_and_snapshot() {
+        let mut pair = outline_preparation_pair(&outline_preparation_fixture(400));
+        let mut size = vec2(216.0, 480.0);
+        for frame in 0..3 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        for control in 0..5 {
+            for (context, viewer) in &mut pair {
+                match control {
+                    0 => {}
+                    1 => context.set_pixels_per_point(1.5),
+                    2 => {
+                        let mut definitions = egui::FontDefinitions::default();
+                        definitions
+                            .families
+                            .get_mut(&egui::FontFamily::Proportional)
+                            .unwrap()
+                            .reverse();
+                        context.set_fonts(definitions);
+                    }
+                    3 => context.global_style_mut(|style| {
+                        style.visuals.text_options.font_hinting =
+                            !style.visuals.text_options.font_hinting;
+                    }),
+                    _ => {
+                        let replacement = outline_preparation_fixture(400).replace(
+                            "Short heading",
+                            "A replacement heading with different wrapping",
+                        );
+                        viewer.apply_load_result(Ok((
+                            "owned replacement".into(),
+                            document(&replacement),
+                        )));
+                        assert!(viewer.outline_preparation.rows.is_empty());
+                    }
+                }
+            }
+            if control == 0 {
+                size.x = 140.0;
+            }
+            outline_preparation_frame(&mut pair, 3 + control * 3, size, 0.0, Vec::new());
+            assert_eq!(
+                pair[1]
+                    .1
+                    .outline_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .layouts,
+                400
+            );
+            for frame in 1..3 {
+                outline_preparation_frame(
+                    &mut pair,
+                    3 + control * 3 + frame,
+                    size,
+                    0.0,
+                    Vec::new(),
+                );
+            }
+            let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+            assert!(prepared.layouts <= 32);
+            println!(
+                "outline invalidation control={control}: cold layouts=400 warm layouts={}",
+                prepared.layouts,
+            );
+        }
+        for (context, _) in &pair {
+            context.set_theme(egui::ThemePreference::Light);
+        }
+        outline_preparation_frame(&mut pair, 20, size, 8000.0, Vec::new());
+    }
+
+    #[test]
+    fn outline_preparation_font_metadata_overflow_discards_geometry_and_recovers() {
+        let mut pair = outline_preparation_pair(&outline_preparation_fixture(400));
+        let size = vec2(216.0, 480.0);
+        for frame in 0..3 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        assert!(
+            pair[1]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .layouts
+                <= 32
+        );
+        let mut definitions = egui::FontDefinitions::default();
+        definitions.families.insert(
+            egui::FontFamily::Name("x".repeat(MAX_GEOMETRY_FONT_NAME_BYTES + 1).into()),
+            Vec::new(),
+        );
+        for (context, _) in &pair {
+            context.set_fonts(definitions.clone());
+        }
+        for frame in 3..5 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+            let preparation = &pair[1].1.outline_preparation;
+            assert!(preparation.key.is_none());
+            assert!(preparation.rows.is_empty());
+            assert_eq!(preparation.probe.as_ref().unwrap().layouts, 400);
+        }
+        for (context, _) in &pair {
+            context.set_fonts(egui::FontDefinitions::default());
+        }
+        outline_preparation_frame(&mut pair, 5, size, 0.0, Vec::new());
+        assert_eq!(
+            pair[1]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .layouts,
+            400
+        );
+        for frame in 6..8 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        assert!(
+            pair[1]
+                .1
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .layouts
+                <= 32
+        );
+    }
+
+    #[test]
+    fn outline_preparation_cap_falls_back_and_keeps_live_offscreen_navigation() {
+        let rows = MAX_PREPARED_OUTLINE_ROWS + 16;
+        let text = outline_preparation_fixture(rows);
+        let mut pair = outline_preparation_pair(&outline_preparation_fixture(3000));
+        let size = vec2(216.0, 480.0);
+        outline_preparation_frame(&mut pair, 0, size, 0.0, Vec::new());
+        for (_, viewer) in &mut pair {
+            viewer.apply_load_result(Ok(("owned larger revision".into(), document(&text))));
+        }
+        for frame in 0..4 {
+            outline_preparation_frame(&mut pair, frame, size, 0.0, Vec::new());
+        }
+        let prepared = pair[1].1.outline_preparation.probe.as_ref().unwrap();
+        assert_eq!(
+            pair[1].1.outline_preparation.rows.len(),
+            MAX_PREPARED_OUTLINE_ROWS
+        );
+        assert!(pair[1].1.outline_preparation.rows.capacity() <= MAX_PREPARED_OUTLINE_ROWS);
+        assert!((16..=48).contains(&prepared.layouts));
+        println!(
+            "outline cap: rows={rows}, retained={}, capacity={}, geometry bytes={}, layouts old={rows} candidate={}",
+            pair[1].1.outline_preparation.rows.len(),
+            pair[1].1.outline_preparation.rows.capacity(),
+            pair[1].1.outline_preparation.rows.capacity() * std::mem::size_of::<Option<OutlineRowGeometry>>(),
+            prepared.layouts,
+        );
+        // All widgets, including uncached and offscreen rows, keep stable focus IDs.
+        for (context, viewer) in &mut pair {
+            let id = viewer
+                .outline_preparation
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations[rows - 1]
+                .0;
+            context.memory_mut(|memory| memory.request_focus(id));
+        }
+        outline_preparation_frame(&mut pair, 4, size, 0.0, Vec::new());
+        for (_, viewer) in &pair {
+            assert!(
+                viewer
+                    .outline_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .observations[rows - 1]
+                    .3
+            );
+        }
+
+        let total_height: f32 = pair[0]
+            .1
+            .outline_preparation
+            .probe
+            .as_ref()
+            .unwrap()
+            .observations
+            .iter()
+            .map(|(_, rect, ..)| rect.height())
+            .sum();
+        let scroll = total_height - size.y;
+        for frame in 5..7 {
+            outline_preparation_frame(&mut pair, frame, size, scroll, Vec::new());
+        }
+        let tail = pair[0]
+            .1
+            .outline_preparation
+            .probe
+            .as_ref()
+            .unwrap()
+            .observations[rows - 1]
+            .1;
+        assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains(tail.center()));
+        for (frame, pressed) in [(7, true), (8, false)] {
+            outline_preparation_frame(
+                &mut pair,
+                frame,
+                size,
+                scroll,
+                vec![
+                    egui::Event::PointerMoved(tail.center()),
+                    egui::Event::PointerButton {
+                        pos: tail.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(
+            pair[1].1.pending_scroll,
+            Some(PendingScroll::Heading(rows - 1))
+        );
+
+        let mut navigation = outline_preparation_pair(&outline_preparation_fixture(400));
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut arrivals = [None; 2];
+        for frame in 0..7 {
+            let events = match frame {
+                1 | 2 => vec![egui::Event::Key {
+                    key: if frame == 1 {
+                        egui::Key::ArrowDown
+                    } else {
+                        egui::Key::Enter
+                    },
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                _ => Vec::new(),
+            };
+            let output: [egui::FullOutput; 2] = std::array::from_fn(|index| {
+                let (context, viewer) = &mut navigation[index];
+                if frame == 1 {
+                    viewer.outline_selected = Some(398);
+                    viewer.outline_keyboard_focus = true;
+                }
+                let output = code_navigation_frame(context, frame, events.clone(), |ui| {
+                    viewer.show(ui, tab_id);
+                });
+                let title = viewer.document.as_ref().unwrap().headings()[399].text();
+                if arrivals[index].is_none() && visible_code_geometry(&output, title).is_some() {
+                    arrivals[index] = Some(frame);
+                }
+                output
+            });
+            assert_eq!(
+                visible_outline_shapes(&output[0]),
+                visible_outline_shapes(&output[1])
+            );
+            assert_eq!(
+                format!("{:?}", output[0].platform_output.accesskit_update),
+                format!("{:?}", output[1].platform_output.accesskit_update),
+            );
+        }
+        // Both paths must reach the same heading on the same settling frame.
+        assert!(arrivals[0].is_some());
+        assert_eq!(arrivals[0], arrivals[1]);
+        println!(
+            "outline keyboard tail arrival: old={:?} candidate={:?}",
+            arrivals[0], arrivals[1],
+        );
+        for (_, viewer) in &navigation {
+            assert_eq!(viewer.outline_selected, Some(399));
+            assert!(viewer.pending_scroll.is_none());
+        }
+    }
+
+    #[test]
+    fn preview_heading_positions_reuse_storage_and_replace_old_revision_positions() {
+        let context = code_navigation_context();
+        let mut pane = MarkdownPreviewPane::new(
+            LocalMarkdownSource::new(PathBuf::from(r"Q:\owned\positions.md"))
+                .unwrap()
+                .into(),
+            &outline_preparation_fixture(400),
+        );
+        code_navigation_frame(&context, 0, Vec::new(), |ui| pane.show(ui));
+        let pointer = pane.heading_tops.as_ptr();
+        let capacity = pane.heading_tops.capacity();
+        for frame in 1..4 {
+            pane.scroll_to_heading(399);
+            code_navigation_frame(&context, frame, Vec::new(), |ui| pane.show(ui));
+            assert_eq!(pane.heading_tops.as_ptr(), pointer);
+            assert_eq!(pane.heading_tops.capacity(), capacity);
+            assert_eq!(pane.visible_heading(), Some(399));
+        }
+        pane.parse("# Replacement\n\nOnly one section.\n".into());
+        code_navigation_frame(&context, 4, Vec::new(), |ui| pane.show(ui));
+        assert_eq!(pane.heading_tops.len(), 1);
+        assert_eq!(pane.heading_tops[0].0, 0);
+    }
+
     #[test]
     fn outline_and_preview_keep_separate_vertical_viewports() {
         let document = document(
@@ -5472,6 +9869,7 @@ mod tests {
             |context| {
                 egui::CentralPanel::default().show(context, |ui| {
                     let mut render_state = MarkdownRenderState {
+                        table_cells: TableCellPreparation::default(),
                         code_copy_caption: CodeCopyCaptionPreparation::default(),
                         mode: MarkdownViewerMode::Preview,
                         outline_open: true,
@@ -5484,8 +9882,10 @@ mod tests {
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
                         source_syntax: &mut None,
+                        source_preparation: &mut SourcePreparation::default(),
+                        outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
-                        heading_tops: &mut heading_tops,
+                        heading_tops: Some(&mut heading_tops),
                     };
                     layout = Some(render_state.show_document(ui, &document));
                 });
@@ -5539,6 +9939,7 @@ mod tests {
             |context| {
                 egui::CentralPanel::default().show(context, |ui| {
                     let mut render_state = MarkdownRenderState {
+                        table_cells: TableCellPreparation::default(),
                         code_copy_caption: CodeCopyCaptionPreparation::default(),
                         mode: MarkdownViewerMode::Preview,
                         // The user's own toggle stays on; only this frame
@@ -5553,8 +9954,10 @@ mod tests {
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
                         source_syntax: &mut None,
+                        source_preparation: &mut SourcePreparation::default(),
+                        outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
-                        heading_tops: &mut heading_tops,
+                        heading_tops: Some(&mut heading_tops),
                     };
                     layout = Some(render_state.show_document(ui, &document));
                 });

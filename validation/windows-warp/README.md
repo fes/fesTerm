@@ -16,13 +16,24 @@ live/read-only selection, OSC 8 link, frozen enabled/disabled path and history
 menus; live-close/risky-paste/final-dirty-document confirmations; and actual-task
 small/large/error Open File and small/large/error/overwrite Save As states.
 
-**Initial status: scaffolding, awaiting the exclusive validation slot.**
-No new measurements, captures or native acceptance are claimed here. Missing
+**Bounded status:** earlier complete construction/completed-render evidence is
+retained in #349. The source-bound comparisons below add current measurements
+for eight picker and four actual large Markdown controls, not a newer-head
+rerun of the entire matrix or native acceptance. Missing
 updater variants, empty picker readiness (which needs a model-state accessor),
 filter/sort/final-row/reopen interactions, aggregate quit/drop/reset safety
 variants and all native-platform evidence remain explicit prerequisites in
 [`surface-matrix.json`](surface-matrix.json). No existing CP-16/CP-17 budget is
 extended to About or menus, and no favorable menu latency threshold is invented.
+
+The semantic fixture regression covers all 52 variants at both widths.
+Chip preparation settles actual target bounds within 32 frames and uses at
+most eight real scroll-control clicks before secondary-clicking a visible
+target. It preserves active identity, movement/Close assertions and zero
+transport input. This repairs #346's stale-coordinate race during initial
+active-chip scroll reveal, including inactive-middle/read-only-last targets;
+it neither disables production scroll animations nor qualifies completed
+WARP or native input/presentation.
 
 The [existing gallery generator](../../scripts/build_ui_state_doc.py) also
 expands that reconciled audit into a machine-readable report. It lists every
@@ -43,7 +54,444 @@ python scripts\build_ui_state_doc.py --surface-matrix-report target\evidence\sur
 
 Both probes remain under their existing optional-runner flags
 `FESTERM_RUN_SURFACE_PROFILE=1` / `FESTERM_RUN_WARP_UI_PROBE=1`; neither becomes
-a default benchmark or snapshot gate. Gallery generation uses
+a default benchmark or snapshot gate. The construction probe alone accepts
+`FESTERM_SURFACE_PROFILE_SCENES=original-controls` for its original twelve
+document/list controls and model diagnostics. This explicit subset excludes
+all 52 appended variants, records that scope in its report and aggregate
+runner result, and changes no semantic guard or WARP replay selection.
+Unset the selector (or use `all`) for the full construction matrix.
+No missing variant or native row gains coverage from the controls-only result.
+
+### 2026-10-06 balanced live Preview controls
+
+The qualified frame-local Preview preparation leaf `d055061` is ordinarily
+composed after #366 at clean `f51c88fdee80d10599f2ba2d3bbae9671de4a172`, tree
+`d7c640a202b290f1b75aa480d8854d90898cebb3`. Its archived release executable
+SHA-256 is `945daa0a3ace0ba54426ebcb165ac985235647a1b3ee227c529396a5d9c394e7`.
+The immediate clean before source is
+`46eb139ab4ab6a33781b1fa5ba3720d571b42845`, tree
+`33c631411cb7b5c717d662820a3e99ef365667fa`, archived executable SHA-256
+`006e7dea88f2a796679c0e4c60bec01c75fba80ec41543dc5be133e5b32ea0e2`.
+The earlier Source bounds and current picker diagnostics remain in both.
+
+Six alternating process pairs (three before-first, three after-first) use
+Windows x64 DX12 CPU `Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2,
+the same physical cumulative fixture path and all four actual 400-section
+Markdown controls. Every child has explicit bounded completion waiting,
+actual exit 0 and stable source/tree/hash. Both agents released all owned
+build/test commands before the timing slot. The branch is restored normally.
+
+All 24 paired encoded PNG comparisons and 240 measured original-renderer
+pixel guards pass. Submitted geometry, callback count and target/image/
+padded-readback payloads match exactly; one existing panel executes in every
+draw. Each source/scene has 120 UI and thirty completed-draw samples, pooled
+with `sorted[(len - 1) * percentile / 100]`, not a median of pair medians.
+
+| Actual viewer | Pooled UI before ms | Pooled UI after ms | Pooled draw/readback before ms | Pooled draw/readback after ms | After draw slower pairs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Preview | 14.100 | 12.872 | 344.216 | 319.671 | 2/6 |
+| Preview narrow | 11.590 | 11.177 | 74.903 | 74.234 | 2/6 |
+| Source | 4.417 | 4.396 | 303.626 | 451.110 | 4/6 |
+| Source narrow | 3.367 | 3.074 | 100.286 | 104.343 | 3/6 |
+
+Preview pooled UI observations are 8.7/3.6% lower, alongside the separate
+deterministic 1600-to-403 preparation/layout-request control (802 with Find
+highlighting every `Item`). Two normal and three narrow UI pair medians are
+adverse. Source drawing has large adverse movement despite unchanged Source
+implementation and identical frozen output/work. That is retained evidence,
+not a strict regression repair, universal speedup or demonstrated host cause.
+Seven completion buckets, ordered samples and all pair-level reversals remain.
+
+Private artifacts under the session root are `fleet-v5-baseline-binary`,
+`fleet-v5-preview-binary` and `fleet-v5-balanced-preview-controls-v1`
+(twelve source/hash/exit receipts, 48 scene reports/PNGs and
+`verified-balanced-summary.json`). The existing independent pair/campaign
+verifiers retain all source, pixel, order, callback, payload and percentile
+guards. The first prepared coordinator AST check rejected misplaced multiline
+PowerShell operators before any runtime; the repaired coordinator parses and
+all twelve actual runs complete. No failed attempt is treated as measurements.
+Shared-host comparisons do not accept isolated GPU timestamps, native
+input/presentation/physical latency, font/process memory or resource retirement.
+
+### 2026-10-06 source-bound picker and Markdown observations
+
+The actual release replay compared clean cumulative
+`5fa487c635b4b43f0aed8017d85d42d9f142f565` against preserved before controls:
+`abb4a018373bd1469f92d534c7bce0dad52ac26c` for Markdown and
+`cbdc2aab6e499656e98f6da8ed2768297f421c56` for pickers. All use Windows x64
+DX12 CPU `Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2, and the same
+physical picker fixture paths where origin/breadcrumb text is visible.
+The four Markdown controls render the same owned 400-section document,
+not a substitute editor or untrusted external document.
+
+All twelve cross-revision reference PNGs are byte-identical. Every measured
+draw also passes the same-frame original-renderer oracle: twenty Markdown and
+forty picker guards. Ordered samples, finite timing buckets, adapter/format,
+source identity, dimensions, percentile convention and dimension-derived
+target/image/padded-readback payloads were checked independently.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:WGPU_BACKEND = 'dx12'
+# Set a fresh absolute FESTERM_WARP_UI_OUT and the preserved matching
+# FESTERM_WARP_UI_REFERENCE directory for each separately executed subset.
+$env:FESTERM_WARP_UI_SCENES = 'markdown-controls' # Passed: 10.88 seconds.
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+$env:FESTERM_WARP_UI_SCENES = 'picker-controls' # Passed: 46.40 seconds.
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+```
+
+| Scene | Before UI median (ms) | Current UI median (ms) | Before completed draw/readback median (ms) | Current median (ms) | Actual panel paints before/current |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Markdown Preview normal | 15.750 | 13.678 | 779.833 | 320.413 | 0 / 1 |
+| Markdown Preview narrow | 14.495 | 12.062 | 168.096 | 58.947 | 0 / 1 |
+| Markdown Source normal | 5.777 | 5.774 | 912.492 | 435.244 | 0 / 1 |
+| Markdown Source narrow | 5.463 | 5.101 | 206.244 | 69.948 | 0 / 1 |
+| Open File small ready normal | 0.702 | 0.667 | 1000.309 | 1074.010 | 4 / 4 |
+| Open File small ready narrow | 0.815 | 0.561 | 409.098 | 372.818 | 2 / 2 |
+| Open File error normal | 0.566 | 0.489 | 1005.937 | 1070.618 | 4 / 4 |
+| Open File error narrow | 0.574 | 0.560 | 396.448 | 368.457 | 2 / 2 |
+| Save As small ready normal | 0.558 | 0.740 | 1535.852 | 1017.992 | 2 / 3 |
+| Save As small ready narrow | 0.577 | 0.623 | 473.023 | 369.525 | 2 / 3 |
+| Save As error normal | 0.409 | 0.436 | 1511.286 | 1011.733 | 2 / 3 |
+| Save As error narrow | 0.423 | 0.457 | 461.132 | 339.882 | 2 / 3 |
+
+These shared-host samples show 52-66% lower Markdown and 22-34% lower Save As
+completed draw/readback medians on the combined source. Normal Source UI
+construction is effectively unchanged; zero preparation jobs do not prove a
+net live-UI improvement. Open File's unchanged paint route has opposite wide/
+narrow movement, so no gain or regression is established from that variance.
+Substantial completed drawing cost remains, without attributing it to a modal,
+shadow, font or individual paint operation.
+
+The seven buckets exclude small instrumentation/inter-bucket overhead included
+in the completed total; they need not sum exactly to it. CPU-observed completion
+waiting is not a GPU timestamp. Submitted geometry and temporary pixel/readback
+payloads are not actual rasterized-pixel counts, total GPU allocations or process
+peaks. This comparison does not isolate each cumulative optimization, qualify a
+quiet host, native presentation, input-to-display, real scrolling, Find or omitted
+variants. No syntax-colour normalization or reference-pixel exception was used.
+
+### 2026-10-06 bounded Source geometry observations
+
+Clean cumulative `a295d6596664362e86b31cf7dc56421d22bac432` completed the four
+actual 400-section Markdown controls after the Source/Outline font-metadata
+admission repair. The preserved comparison source is
+`5fa487c635b4b43f0aed8017d85d42d9f142f565`, which already executes the same
+single outer-panel callback. This is not another zero-to-one panel comparison.
+The exact measured release test executable SHA256 is
+`8818649d835fc4a34d9fc123e8abf225925d3b327268602f577844e457738a44`;
+an archived copy was checked against all four report hashes.
+
+The Windows x64 DX12 CPU adapter remains `Microsoft Basic Render Driver`,
+driver `10.0.26100.9278`, target `Rgba8Unorm`, scale 2. All four cross-revision
+reference PNGs are identical, all twenty measured original-renderer guards pass,
+and every baseline/current draw executes one panel callback. Source cleanliness,
+actual fixture readiness, adapter/format, dimensions, ordered samples,
+percentiles, finite completion buckets and dimension-derived payload equations
+were independently checked. The existing release replay command above was used
+with `FESTERM_WARP_UI_SCENES=markdown-controls`, fresh output and the preserved
+current reference directory; the picker-backdrop option was unset.
+
+| Actual viewer | Previous UI median (ms) | Bounded Source UI median (ms) | Previous completed draw/readback median (ms) | Current median (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Preview normal | 13.678 | 10.061 | 320.413 | 332.295 |
+| Preview narrow | 12.062 | 10.217 | 58.947 | 74.529 |
+| Source normal | 5.774 | 3.684 | 435.244 | 457.205 |
+| Source narrow | 5.101 | 2.766 | 69.948 | 103.971 |
+
+Normal/narrow Source construction medians are lower by 36.2%/45.8%, but Preview
+construction also moved and all four completed drawing medians increased
+by 3.7-48.6%. Those adverse samples remain in the record. The measurements are
+noncontemporaneous shared-host observations, not balanced isolated attribution,
+a proven drawing regression cause, or a net latency acceptance. No other owned
+build/probe was active when the replay acquired its runtime slot; this does not
+establish quietness of the shared machine.
+
+Focused CPU controls separately preserve all 4800 live responses/accessibility
+nodes while reducing warm actual layout requests to 34/31 normal/narrow.
+Geometry remains inside the existing 8192-job/4-MiB admission bounds; metadata
+is admitted before cloning at 128 entries per font/family map, 8192 charged
+name bytes and 256 family-reference capacity slots. Exact-limit, over-limit,
+ordinary-fallback and cold-to-warm recovery controls passed. These are specific
+callsite/layout/capacity observations, not global allocator, total-font or RSS
+accounting. Full traversal, Preview work, native scrolling/Find/presentation,
+physical latency, resource caps and broader platform evidence remain open.
+
+### 2026-10-06 balanced Source controls
+
+Six contemporaneous source-frozen process pairs alternate three before/after
+and three after/before orders. Before is exact clean
+`5fa487c635b4b43f0aed8017d85d42d9f142f565`, release executable SHA256
+`8fbaf53b6d1982ac8e85afdb7455f81dfefb0be70d6051b0581ea08a113d390c`;
+after is exact clean `a295d6596664362e86b31cf7dc56421d22bac432`, executable
+`8818649d835fc4a34d9fc123e8abf225925d3b327268602f577844e457738a44`.
+Each archived executable runs the existing exact ignored replay above with
+`markdown-controls`, its matching source held unchanged in the same physical
+fixture worktree, fresh output and the preserved current reference directory.
+The new production picker route is outside this Markdown-only comparison.
+
+All twelve processes complete with actual exit zero, source/binary/cleanliness
+checks before and after execution, and captured stdout/stderr. All four viewer
+controls in every pair preserve the exact encoded PNG: 24 cross-source
+comparisons and 240 measured original-renderer guards across both sources.
+Common submitted geometry/payload counts and the existing one-panel callback
+are identical. Adapter/format/scale remain Windows x64 DX12 CPU
+`Microsoft Basic Render Driver`, driver `10.0.26100.9278`, `Rgba8Unorm`, scale 2.
+No other owned build/probe runs in this slot; other shared-host activity is
+not controlled.
+
+| Actual viewer | Pooled before UI median (ms) | Pooled after UI median (ms) | Before completed draw/readback median (ms) | After median (ms) | After drawing slower in matched pairs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Preview normal | 12.902 | 15.460 | 342.924 | 338.484 | 4 / 6 |
+| Preview narrow | 11.594 | 12.423 | 76.284 | 76.747 | 2 / 6 |
+| Source normal | 6.028 | 4.263 | 463.637 | 468.603 | 2 / 6 |
+| Source narrow | 4.210 | 2.913 | 106.215 | 105.428 | 1 / 6 |
+
+Each pooled UI median covers 120 retained samples per source/scene; each pooled
+completed median covers 30, using `sorted[(len - 1) * percentile / 100]`.
+All six per-pair medians, orders and raw vectors remain available; pooled
+medians are not medians of the six pair medians. Source construction medians
+are 29.3%/30.8% lower, but individual reversals and adverse Preview construction
+remain. Normal Source pooled drawing is 1.1% higher despite four faster
+pair medians, illustrating why aggregate and paired observations both matter.
+The earlier large Source drawing increase is not consistently reproduced.
+These results do not establish its cause, a strict drawing-regression repair,
+isolated GPU timing, a quiet host or native latency/resource acceptance.
+
+An earlier coordinator attempted direct PowerShell invocation of the archived
+Windows-subsystem release tests. The launcher returned before process
+completion, and no complete reports existed at independent verification.
+That attempt is invalid and retained. The corrected driver uses `Start-Process`
+with separate stdout/stderr capture, a 240-second owned-process deadline,
+explicit completion/actual exit status, immutable executable hashes and
+source restoration. Successful launch is never substituted for completion.
+The existing source-bound observations above are not overwritten or relabeled.
+
+### Optional same-frame black-backdrop attribution
+
+After reserving the exclusive runtime slot, set
+`FESTERM_WARP_UI_SCENES=picker-controls` and
+`FESTERM_WARP_UI_PICKER_BACKDROP=textureless-black`, then use the same release
+replay command and a fresh output directory. Unset the backdrop variable for
+the unchanged default replay; other values, selectors and non-Windows-x64
+requests fail explicitly before fixture execution.
+
+When the default picker uses the measured backdrop route, this test-only option
+first selects its ordinary painting through a per-context fixture control.
+The frozen-frame conversion then measures the same original rectangle and
+balanced pairs. No production environment variable disables the optimization;
+an unset option measures the actual default application path.
+
+Each actual picker must have exactly one full-root translucent black,
+untextured, unrounded, unblurred and unstroked backdrop with full viewport
+clipping coverage. Only that original white-UV mesh uses the existing installed
+panel shader; production guards/shaders and all other frozen shapes remain
+unchanged. Missing or ambiguous geometry is not a successful observation.
+`backdrop-attribution.json` preserves six balanced ordered ordinary/textureless
+pairs, exact pixels, the observed additional callback, original geometry/alpha,
+source/adapter/format and the same seven completed-render buckets.
+
+This is an opt-in targeted whole-frame/batching attribution, not a production
+optimization or permission to accept changed pixels. Callback construction is
+outside timed drawing. No shadow, font, native presentation, physical-latency,
+resource-cap or multi-day cause is inferred. Small normal-CI controls check
+selection/matcher refusal and full-frame pixel/order fidelity at two scales;
+actual eight-picker execution remains separately required.
+
+#### 2026-10-06 completed same-frame picker attribution
+
+Clean cumulative `90c0ed5df4920cbf40e3ea96e609ce6f19df1417` completed all eight
+actual picker controls in 109.07 seconds on the same Windows x64 DX12 CPU
+`Microsoft Basic Render Driver`, `Rgba8Unorm`, scale 2. No other owned build or
+probe was active at slot acquisition; this does not establish an otherwise
+quiet shared host. The release test binary SHA256 is
+`b4242be38ffd06ec9fbf680cbbd87e76b53805390735bcfd9022cadbfae057af`.
+
+All eight preserved `5fa487c` reference PNGs are identical. Forty ordinary
+measured original-renderer guards and all ninety-six paired measured pixel
+guards passed. Each backdrop retains RGBA `[0, 0, 0, 100]`, eight vertices and
+thirty indices. The additional panel actually executes once: normal Open File
+4 to 5, narrow Open File 2 to 3, and Save As 3 to 4. Ordered six-pair samples,
+three AB/three BA orders, source/adapter/format, viewport/scale, percentile
+convention, finite completion buckets and dimension-derived payload equations
+were checked independently.
+
+| Actual picker | Ordinary median (ms) | Textureless-black median (ms) | Lower completed draw/readback |
+| --- | ---: | ---: | ---: |
+| Open File ready normal | 1023.614 | 381.466 | 62.7% |
+| Open File ready narrow | 408.965 | 315.784 | 22.8% |
+| Open File error normal | 907.726 | 528.335 | 41.8% |
+| Open File error narrow | 394.636 | 302.896 | 23.2% |
+| Save As ready normal | 1103.716 | 688.421 | 37.6% |
+| Save As ready narrow | 382.145 | 293.165 | 23.3% |
+| Save As error normal | 1078.298 | 657.809 | 39.0% |
+| Save As error narrow | 366.816 | 279.036 | 23.9% |
+
+These same-frame shared-host observations establish a material contribution
+from the backdrop's existing textured route plus its batching, without removing
+dimming, changing its geometry/alpha, or substituting a different fixture.
+They do not isolate shader instructions, qualify strict CPU/native latency,
+or demonstrate a shipping fix: the production backdrop remains unchanged.
+Substantial drawing cost remains. The separate two-scale full-frame fidelity
+regression passed in 0.37 seconds; no native/manual row or budget is accepted.
+
+#### Default picker backdrop route
+
+Only Open File and Save As opt into the installed supported Windows DX12 CPU
+panel renderer for their exact unique full-root translucent black backdrop.
+The ordinary Modal owns content, allocation, IDs, responses and input handling.
+The caller replaces only its newly emitted backdrop shape after checking
+root/visibility/painter opacity/origin/transform, original alpha/clip and
+untextured/unrounded/unstroked/unblurred geometry. Other shapes, modals,
+opaque-frame guards, renderer ownership and unsupported fallback stay intact.
+The two-scale regression compares full pixels and modal/content/backdrop
+responses plus no-renderer, nonzero-origin, transform and colored fallbacks.
+The cumulative default-path record follows; the `90c0ed5` table remains the
+earlier diagnostic source, not a relabeled default-path measurement.
+
+#### 2026-10-06 default picker backdrop observations
+
+Clean cumulative `675a007f7e0b21b7c470e7cd77fdb22d16f2d02c` follows the bounded
+Source successor and completed all eight actual default picker controls in
+30.19 seconds. Comparison controls are the preserved ordinary default replay
+at `90c0ed5df4920cbf40e3ea96e609ce6f19df1417`. Both use the same physical
+fixture paths, Windows x64 DX12 CPU `Microsoft Basic Render Driver`,
+driver `10.0.26100.9278`, `Rgba8Unorm`, scale 2.
+The archived measured release test executable SHA256 is
+`4ffe027ebfb16bbd0e63690c651cae8f86c8e9904b8aee06b7e845c98f15437c`.
+
+All eight reference PNGs are identical and all forty measured original-renderer
+guards pass. Every completed default draw executes exactly one additional
+panel callback: normal Open File 4 to 5, narrow Open File 2 to 3, Save As 3 to 4.
+The independent verifier requires these counts as well as source/adapter/format,
+actual readiness, viewport/scale, ordered finite samples, percentiles,
+completion buckets and dimension-derived payload equations. Its negative
+ordinary control fails the callback requirement despite unchanged pixels.
+
+| Actual picker | Previous UI median (ms) | Default-route UI median (ms) | Previous completed draw/readback median (ms) | Current median (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Open File ready normal | 0.649 | 0.722 | 1032.611 | 550.592 |
+| Open File ready narrow | 0.523 | 0.836 | 404.382 | 284.395 |
+| Open File error normal | 0.474 | 0.553 | 1010.600 | 537.367 |
+| Open File error narrow | 0.375 | 0.442 | 393.196 | 307.779 |
+| Save As ready normal | 0.588 | 0.689 | 1104.993 | 650.405 |
+| Save As ready narrow | 0.565 | 0.632 | 386.072 | 278.477 |
+| Save As error normal | 0.428 | 0.726 | 1083.305 | 623.611 |
+| Save As error narrow | 0.436 | 0.511 | 364.908 | 263.923 |
+
+Completed draw/readback medians are 21.7-46.8% lower, while UI medians increase
+0.067-0.313 ms. UI construction includes the extra callback's original-geometry
+tessellation/preparation; that tradeoff is not removed from the record.
+These noncontemporaneous shared-host observations agree with the earlier
+same-frame route attribution, but are not quiet-host precision, isolated
+shader instructions, physical input/presentation or hardware-platform evidence.
+No other owned build/probe was active at runtime-slot acquisition; shared-host
+quietness is not established. Substantial drawing cost remains.
+
+The opted-in legacy attribution then passed on the same source/binary in
+110.28 seconds, preserving eight PNGs, forty ordinary and ninety-six measured
+balanced paired guards, original alpha/geometry and the one additional callback.
+It explicitly uses the per-context test-only ordinary selector before converting
+the frozen frame; production has no environment switch. The two-scale complete
+pixel/response/fallback regression also passed, explicitly selecting DX12
+without relying on a shell backend setting. Other modals, original dimming,
+opaque-frame guards, shaders and renderer ownership remain unchanged.
+Native interaction, screen-reader, mixed-DPI/hardware, physical latency,
+device/driver retirement, resource caps and multi-day qualification stay open.
+
+### 2026-10-06 opaque picker-frame observations
+
+Clean cumulative `2056b48e7f41598f3a0e48aff4e5133d97264e8e`, tree
+`99763cbd476990ded55cc7c5b84e1ac89254d5f4`, ordinarily composes the frame
+diagnostic after #365 and the preceding bounded Source/default-backdrop fixes.
+The exact archived release executable has SHA-256
+`006e7dea88f2a796679c0e4c60bec01c75fba80ec41543dc5be133e5b32ea0e2`.
+The replay used Windows x64 DX12 CPU `Microsoft Basic Render Driver`,
+`Rgba8Unorm`, scale 2 and the same physical cumulative picker fixture path.
+Explicit bounded owned-process waiting retained actual exit 0, stable source
+and binary, and the complete 67.05-second execution.
+
+All eight actual ready/error normal/narrow pickers preserve the default
+predecessor's encoded PNG bytes. Forty ordinary and ninety-six paired measured
+original-renderer pixel guards pass. Six pairs per scene alternate three
+ordinary-first and three converted-first draws; every converted draw executes
+exactly one additional callback (Open normal 5 to 6, Open narrow 3 to 4, Save As
+4 to 5). The ordinary default backdrop remains converted in both arms. All
+48 converted draws are faster within their pairs:
+
+| Actual picker | Ordinary median ms | Converted frame median ms | Reduction |
+| --- | ---: | ---: | ---: |
+| Open File ready | 552.351 | 206.397 | 62.6% |
+| Open File ready narrow | 307.869 | 144.807 | 53.0% |
+| Open File error | 545.380 | 190.383 | 65.1% |
+| Open File error narrow | 298.463 | 135.824 | 54.5% |
+| Save As ready | 690.796 | 238.464 | 65.5% |
+| Save As ready narrow | 301.157 | 127.549 | 57.6% |
+| Save As error | 656.524 | 207.043 | 68.5% |
+| Save As error narrow | 282.875 | 110.349 | 61.0% |
+
+All raw vectors, seven finite completion buckets, original fill/stroke/
+rounding/blur, viewport/physical dimensions and submitted payload counts remain
+in the reports. Independent checking also requires exact removal of the
+attributed white-UV geometry from ordinary mesh counters, preserved image/
+padded-readback bytes and the original sorted-percentile convention.
+The same unchanged source and executable then complete the earlier actual
+eight-picker backdrop attribution in 101.66 seconds, retaining eight reference
+PNGs, forty ordinary and ninety-six paired guards and its original schema.
+
+Private artifacts are `followup-picker-frame-attribution-warp-v1` (archived
+binary, completion receipt, reports/PNGs and `verified-frame-summary.json`) and
+`followup-picker-frame-legacy-backdrop-warp-v1` (completion receipt and
+`verified-backdrop-summary.json`), under the existing session artifact root.
+The independent frame and legacy verifiers run after actual child completion.
+The first focused-test launcher attempt lacked the actual Python interpreter
+on PATH and selected the Windows Store alias; it is retained as a failed
+launcher, not passing tests. The unchanged-source corrected attempt passes all
+six frame/backdrop admission and two-scale pixel controls; scoped Clippy passes.
+
+These are one shared-host same-frame route/batching observations, not isolated
+shadow cost, shader-instruction attribution or GPU timestamps. Callback
+construction is excluded from drawing; no construction tradeoff is accepted
+from this timing alone. The shadow and dimming are not removed. Production
+frame routing is unchanged; a shipping owned-frame route still needs its own
+live Modal/fallback, pixels, construction and default-path qualification.
+Native presentation, physical latency and total/driver-private memory remain
+open.
+
+### Optional same-frame opaque picker-frame attribution
+
+Set `FESTERM_WARP_UI_SCENES=picker-controls` and
+`FESTERM_WARP_UI_PICKER_FRAME=textureless-frame` after acquiring the exclusive
+runtime slot, then use the existing exact release replay and fresh output.
+The backdrop-attribution option must be unset: the current default optimized
+backdrop stays live, and simultaneous options fail before creating evidence.
+Other selectors, values and non-Windows-x64 requests fail explicitly.
+Unset this option for the unchanged default replay; production reads no new
+environment variable.
+
+Each frozen actual picker must have exactly one complete opaque frame and
+untextured black shadow pair, with finite positive geometry, an opaque frame
+inside the zero-origin root viewport and its complete frame clipping coverage.
+The existing palette-frame structural predicate is shared, not independently
+reimplemented. Missing, clipped, unsupported or ambiguous candidates fail.
+Original fill, stroke, rounding, shadow alpha/blur and tessellated white-UV
+geometry remain; neither shadow nor dimming is omitted.
+
+`frame-attribution.json` supplements the ordinary report. Six balanced ordered
+pairs require exact original-renderer pixels and one additional executed panel
+callback, preserving the seven completion buckets, geometry/payload counts
+and source/adapter/format/scale identity. Callback construction is outside
+timed drawing. This is targeted whole-frame route/batching attribution for the
+combined shadow/frame geometry, not isolated shadow cost or GPU timestamps,
+a production optimization, native presentation or a total-resource claim.
+The small two-scale complete-frame regression and device-free option/matcher
+controls are distinct from the actual eight-picker execution requirement.
+Historical backdrop fields/oracles remain available through shared mechanics.
+
+### Gallery capture and shared fixture identity
+
+Gallery generation uses
 `FESTERM_UI_GALLERY_OUT` pointed at a fresh owned directory before updating
 the reviewed document/images. `capture_surface_gallery(SurfaceKind, narrow)`
 is the shared full-root themed fixture API for style review.
@@ -178,6 +626,58 @@ and five completed draw/sync/readback samples with median/p95/min/max and the
 exact percentile rule. That draw bucket includes renderer tessellation,
 submission, synchronization and CPU image readback. **It is not native
 input-to-display, OS presentation latency or actual idle scheduling.**
+
+Expanded scenes additionally retain five ordered `steady_draw_buckets`
+samples: CPU tessellation, callback preparation/encoding/target creation,
+submission, draw completion wait, readback preparation/submission, readback
+wait and CPU image copying. Each sample records submitted mesh/vertex/index/
+callback counts and the temporary framebuffer, padded readback and image byte
+payloads. Actual textureless-panel paint calls are counted when that production
+pipeline is installed; `null` means no eligible installed panel pipeline,
+not zero-cost rendering. These are not total allocator traffic, actual rasterized pixels,
+driver allocations or GPU timestamps. Completion waits can include driver
+work; they do not isolate GPU execution from scheduling.
+
+The instrumented rendering path uses the same renderer, texture format,
+transparent clear, callback order and readback layout as the original probe.
+Every expanded scene compares all pixels with an original-renderer draw of
+the identical settled frame before measuring, and preserves equality on each
+sample. Two small normal-CI scale cases also cover translucent geometry,
+glyphs and non-aligned readback rows, without new stored snapshot baselines.
+This instrumentation attributes the combined #350 bucket; it changes no
+production picker rendering and makes no efficiency claim by itself.
+
+`FESTERM_WARP_UI_SCENES=picker-controls` selects only the small-ready/error
+Open File and Save As fixtures at both widths (eight scenes).
+`FESTERM_WARP_UI_SCENES=markdown-controls` selects four actual large Markdown
+Preview/Source scenes at normal/narrow widths. Each uses the same owned
+400-section remote-origin snapshot with 400 Rust fences, with no images,
+network, user files or clipboard. Readiness checks the actual rendered heading
+or raw Source marker and the final section's code; it never substitutes the
+text editor or a loading placeholder. Find is explicitly unmeasured.
+
+Unset or `all` retains all four original controls and the 52 existing expanded
+variants, and adds these four Markdown variants. The gallery/construction
+catalog remains unchanged. Empty, unknown,
+composite and non-UTF-8 selections fail before creating output. Reports and
+the Windows optional-suite receipt name the selected scene set; omitted
+variants remain unmeasured. For a bounded diagnostic:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_WARP_UI_SCENES = 'picker-controls'
+$env:FESTERM_WARP_UI_OUT = 'C:\evidence\picker-buckets-attempt-01'
+$env:WGPU_BACKEND = 'dx12'
+cargo test --release --locked -p festerm --bin festerm ui_gallery::replay_warp_ui_surfaces -- --ignored --exact --nocapture --test-threads=1
+```
+
+Use a fresh output path and `markdown-controls` instead for the four Markdown
+scenes. They retain the same seven draw buckets, original-renderer pixel
+guards, actual installed-panel counts and bounded temporary-payload reporting.
+The constructor/steady UI samples include real Preview or Source traversal;
+preparation-cache counters are not a proxy for this measured work. These
+controls do not qualify Find, scrolling interaction, native presentation,
+physical input-to-photon latency or a net gain without matched measurements.
 
 Cold-process start is explicitly `null/not measured`: a fresh context in an
 already-running test process is not a cold application. Package/revision,
