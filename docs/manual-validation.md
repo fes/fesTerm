@@ -479,7 +479,10 @@ aliases and confirm every spelling reuses one document; after Save As rebinding,
 retarget an old alias and confirm it is revalidated rather than returning the
 old document. Repeat while the original generation is stale and confirm it
 cannot establish a new alias; verify retained identity handles prevent deleted
-file identifiers from being recycled into equivalence. On macOS, separately grant another account
+file identifiers from being recycled into equivalence. Save As through a
+different hard-link pathname and confirm only the saving view follows the new
+destination while sibling views remain on the original; repeat with pending
+manual recovery and confirm refusal preserves its exact breadcrumb. On macOS, separately grant another account
 child mutation, ACL mutation, and ownership-change rights and confirm every
 case refuses before staging. On Windows, confirm an untrusted parent owner or
 a DACL granting an unprivileged principal child deletion, DACL mutation,

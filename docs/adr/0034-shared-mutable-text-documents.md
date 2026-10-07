@@ -147,7 +147,12 @@ terminal.
   recorded exact generation to the conditional write; if it is explicitly
   unavailable because the file is missing, it can instead accept a
   picker-confirmed absent destination. The saving view then
-  rebinds with its source buffer and undo history intact. Save As stays
+  rebinds with its source buffer and undo history intact. A different hard-link
+  pathname is not an in-place move of the shared source document: conditional
+  publication splits that directory entry from the original inode, creates a
+  new destination document, and rebinds only the saving view. Pending manual
+  recovery refuses even an identity-equivalent hard-link destination so its
+  exact recovery breadcrumb cannot be cleared. Save As stays
   available when Save cannot run — conflict, an unavailable source, an offline
   origin, or lost permissions — because it is the escape hatch for all of them.
 - **Find/Replace** operate on the in-memory buffer including unsaved text.

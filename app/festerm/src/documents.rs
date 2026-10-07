@@ -628,13 +628,21 @@ impl DocumentRegistry {
             }
             return Some((SaveOutcome::Failed(error), None));
         }
+        let source_is_exact_destination = self.documents.get(&id).is_some_and(|source| {
+            matches!(
+                source.origin(),
+                DocumentOrigin::Local(local)
+                    if confirmed.matches_requested_path(local.path())
+            )
+        });
         if let Some(source) = self.documents.get(&id) {
             if let Some(error) = source.recovery_error.clone() {
-                if matches!(
-                    source.origin(),
-                    DocumentOrigin::Local(local)
-                        if confirmed.matches_requested_path(local.path())
-                ) {
+                if source_is_exact_destination
+                    || source
+                        .source_authority
+                        .as_ref()
+                        .is_some_and(|authority| confirmed.matches_source_authority(authority))
+                {
                     return Some((SaveOutcome::Failed(error), None));
                 }
             }
@@ -652,12 +660,19 @@ impl DocumentRegistry {
                 return Some((SaveOutcome::Failed(error), None));
             }
         };
-        let keyed = self.by_key.get(&origin.key()).copied();
+        let keyed = self
+            .by_key
+            .get(&origin.key())
+            .copied()
+            .filter(|candidate| *candidate != id || source_is_exact_destination);
         let mut matching = Vec::new();
         if let Some(keyed) = keyed {
             matching.push(keyed);
         }
         for (candidate, document) in &self.documents {
+            if *candidate == id && !source_is_exact_destination {
+                continue;
+            }
             let authority_matches = document
                 .source_authority
                 .as_ref()
@@ -1458,6 +1473,75 @@ mod tests {
             registry.get(existing).unwrap().text().text(),
             "alpha\n",
             "the source edit remains undoable after the view rebinds"
+        );
+    }
+
+    #[test]
+    fn save_as_to_a_hard_link_rebinds_only_the_saving_view_to_a_new_document() {
+        let directory = TemporaryDirectory::new("save-as-hard-link");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.path.join("destination.md");
+        fs::hard_link(&source, &destination).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        assert_eq!(registry.open_local(&destination).unwrap(), source_id);
+        type_into(&mut registry, source_id, "edited\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        let destination_id = moved.expect("saving view destination");
+        assert_ne!(destination_id, source_id);
+        assert_eq!(fs::read_to_string(&source).unwrap(), "source\n");
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "source\nedited\n"
+        );
+        assert!(registry.get(source_id).unwrap().text().is_dirty());
+        assert!(!registry.get(destination_id).unwrap().text().is_dirty());
+        assert_eq!(
+            registry.get(source_id).unwrap().origin().file_name(),
+            "source.md"
+        );
+        assert_eq!(
+            registry.get(destination_id).unwrap().origin().file_name(),
+            "destination.md"
+        );
+    }
+
+    #[test]
+    fn save_as_refuses_a_hard_link_alias_of_a_recovery_pending_source() {
+        let directory = TemporaryDirectory::new("save-as-hard-link-recovery");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.path.join("destination.md");
+        fs::hard_link(&source, &destination).unwrap();
+        let recovery = directory.path.join(".festerm-save-recovery.stage");
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+        let error = SaveError::new(
+            "Saving needs manual recovery",
+            format!("Recover retained versions from {}.", recovery.display()),
+        );
+        let document = registry.get_mut(source_id).unwrap();
+        document.recovery_path = Some(recovery.clone());
+        document.recovery_error = Some(error.clone());
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Failed(error));
+        assert!(moved.is_none());
+        assert_eq!(fs::read_to_string(&source).unwrap(), "source\n");
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "source\n");
+        assert_eq!(
+            registry.get(source_id).unwrap().recovery_path.as_ref(),
+            Some(&recovery)
         );
     }
 
