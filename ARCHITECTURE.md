@@ -246,6 +246,10 @@ gate so the frontend cannot overwrite detached geometry or encode input before
 it has adopted the daemon's snapshot. The app still flushes the actual current
 viewport after adoption, so recovered state and the live frontend converge
 without a race while preserving single-client steal-on-reconnect semantics.
+Snapshot encoding sizes the bounded payload before writing directly into one
+fixed header-prefixed wire buffer; decoded payload storage retires before
+terminal allocation-capacity restoration. This reduces managed wire overlap,
+not the accepted mirror/display ownership or a total process-memory budget.
 The old client is retired only after candidate adoption; a failed candidate
 leaves it usable. The daemon quiesces PTY/input processing for this handshake,
 bounded by a 15-second adoption deadline. Full output queues retain controls,

@@ -775,6 +775,16 @@ visual recovery during rapid resizing remain native evidence, not implied by
 these tests. A replacement handshake can pause daemon processing for up to
 15 seconds; CLI attach is a text projection rather than full styled rendering.
 
+CP-11 snapshot-buffer ownership now has portable deterministic evidence:
+large old/new payloads are byte-identical, the encoder owns one full wire
+buffer, the receiver retires its decoded payload before restoring terminal
+capacities, and exact-size admission plus malformed/trailing/truncated
+refusals remain enforced. Source-reviewed lifetime observations count known
+wire-vector capacity only before encoder handoff and during payload decoding;
+they are not process-memory or allocator-fragmentation measurements.
+The mirror and sanitized clone remain, and signed-package/native visual
+recovery and a total attach-memory budget remain separate acceptance work.
+
 Windows attachment-backlog checks are now automated with the production
 broker and owned local pipes: 16 waiting connections, EOF/refusal on the 17th,
 unchanged active bidirectional bytes, admission after consuming a slot, and

@@ -2096,7 +2096,8 @@
         "PROF-*"
       ],
       "requirements": [
-        "docs/gui-design.md#profile-editing"
+        "docs/gui-design.md#profile-editing",
+        "docs/adr/0038-sessiond-terminal-recovery-snapshots.md#recovery-buffer-lifetimes"
       ],
       "decisions": [
         "ADR-0002",
@@ -2138,6 +2139,12 @@
         "native_recovery_primary_ui_does_not_promote_raw_disconnect_details",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
         "native_daemon_snapshot_matches_fresh_terminal_after_large_output",
+        "recovery_encoding_uses_one_wire_buffer_and_preserves_legacy_bytes",
+        "recovery_decoding_retires_wire_before_restoring_capacities",
+        "recovery_encoding_refuses_before_owning_an_over_limit_wire_buffer",
+        "recovery_encoding_enforces_the_exact_payload_limit",
+        "recovery_wire_refuses_invalid_state_before_capacity_restoration",
+        "recovery_wire_refuses_trailing_truncated_and_oversized_payloads",
         "native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable",
         "native_windows_versioned_helper_installs_beside_a_live_legacy_daemon",
         "windows_packaged_helper_prefers_the_immutable_release_name",
