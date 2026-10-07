@@ -49,6 +49,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static AFTER_SAVE_REPLACEMENT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    #[cfg(unix)]
     static AFTER_SECURITY_METADATA_COPY: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     #[cfg(windows)]
@@ -128,21 +129,22 @@ fn after_target_capture() {
     });
 }
 
+#[cfg(unix)]
 fn after_security_metadata_copy() {
     #[cfg(test)]
     AFTER_SECURITY_METADATA_COPY.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
+    });
+}
 
-        #[cfg(windows)]
-        fn before_original_recovery_verification() {
-            #[cfg(test)]
-            BEFORE_ORIGINAL_RECOVERY_VERIFICATION.with(|slot| {
-                if let Some(hook) = slot.borrow_mut().take() {
-                    hook();
-                }
-            });
+#[cfg(windows)]
+fn before_original_recovery_verification() {
+    #[cfg(test)]
+    BEFORE_ORIGINAL_RECOVERY_VERIFICATION.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
         }
     });
 }
@@ -473,7 +475,7 @@ impl SaveFailure {
                 "The previous contents are unchanged. Try saving again, or use Save As…."
             }
             Self::RecoveryRequired => {
-                "Publication could not be verified. The destination may contain the new bytes or be absent. In the private .festerm-save-* folder beside it, original is the private prior version, displaced (if present) is Windows' captured prior file, and prepared or payload contains the new bytes. Compare every retained version before recovering or saving there again."
+                "Publication could not be verified. The destination may contain the new bytes, another process's bytes, or the prior bytes with access metadata that still needs review; it may also be absent. In the private .festerm-save-* folder beside it, original is the private prior version, displaced (if present) is Windows' captured prior file, and prepared or payload contains the new bytes. Compare every retained version and its access metadata before recovering or saving there again."
             }
             Self::MetadataPreservation => {
                 "The file's owner, group, ACL, security labels, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a destination with compatible access metadata."
@@ -846,7 +848,7 @@ fn open_named_file(directory: &cap_std::fs::Dir, target: &Path) -> Result<File, 
     #[cfg(windows)]
     {
         let directory = directory.try_clone()?.into_std_file();
-        return festerm_windows_security::open_file_no_reparse(&directory, target);
+        festerm_windows_security::open_file_no_reparse(&directory, target)
     }
     #[cfg(unix)]
     {
@@ -1294,7 +1296,7 @@ impl<'a> TemporaryFile<'a> {
     fn finish(&mut self) {
         self.close_file();
         #[cfg(windows)]
-        let cleanup_names = ["original", "displaced", "prepared"].as_slice();
+        let cleanup_names = ["payload", "original", "displaced", "prepared"].as_slice();
         #[cfg(not(windows))]
         let cleanup_names = ["original", "prepared"].as_slice();
         for name in cleanup_names {
@@ -1383,11 +1385,10 @@ impl<'a> TemporaryFile<'a> {
             // Native relative creation already binds this exact non-reparse
             // handle to the retained staging directory. Reopening by name
             // would require sharing reads and writes with a staged payload.
-            return self
-                .file
+            self.file
                 .as_ref()
                 .map(|_| ())
-                .ok_or(SaveFailure::Interrupted);
+                .ok_or(SaveFailure::Interrupted)
         }
         #[cfg(not(windows))]
         {
@@ -2793,7 +2794,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn published_target_cannot_be_deleted_during_final_verification() {
-        use windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
 
         let directory = TemporaryDirectory::new("post-publication-lock");
         let path = directory.file("notes.md", "loaded\n");
@@ -2802,7 +2803,7 @@ mod tests {
         AFTER_SAVE_REPLACEMENT.with(|slot| {
             *slot.borrow_mut() = Some(Box::new(move || {
                 let error = fs::remove_file(&target).unwrap_err();
-                assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+                assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION));
             }));
         });
 

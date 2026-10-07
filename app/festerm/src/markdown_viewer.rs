@@ -3921,7 +3921,7 @@ impl MarkdownPreviewPane {
         self.loaded_images.contains_key(&index)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn image_error_for_test(&self, index: usize) -> Option<&str> {
         self.image_errors.get(&index).map(String::as_str)
     }
