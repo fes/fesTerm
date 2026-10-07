@@ -1729,6 +1729,17 @@ would have moved fesTerm's own scrollback, so a trackpad's stream of
 pixel-sized events is not reported as a full notch each, and the preference
 is not silently bypassed by the programs a user is most likely to scroll.
 
+The **Markdown images** card exposes **Image memory budget**: 64, 128, 256,
+512 (default), 1024 or 2048 MiB, without an unlimited option. The managed
+allowance applies immediately across windows, viewers and saved-local editor
+Preview; it preserves admitted images when lowered and explains that new loads
+are blocked while usage exceeds the limit. Four actual manual/automatic image
+workers share the same application quota. The choice autosaves; a failed save
+reports failure but preserves the live choice without broadcasting an unsaved
+configuration. Reset restores 512 MiB without evicting existing images.
+This allowance excludes decoder-private/native-GPU allocations and is not a
+process-RAM cap (ADR 0030).
+
 The **Terminal typography** card exposes the bundled terminal-family selector
 plus the default-on ligature toggle. The **Quick switch** card currently
 exposes the on-by-default quick-switch-number overlay preference; it no
@@ -3152,6 +3163,20 @@ unqualified; see the evidence boundaries in `docs/manual-validation.md`.
 Byte-identical [focused BEFORE/AFTER review images](images/dialog-style-review/style-pair-20261002-r2/)
 retain their exact [source/physical-input provenance](images/dialog-style-review/style-pair-20261002-r2/provenance.json);
 they are separate from the original gallery and are not platform snapshots.
+
+Only the owned Open File and Save As callers also use the existing installed
+Windows DX12 CPU panel renderer for their unique complete opaque popup frame
+and original black shadow. The ordinary live Modal still owns sizing, content,
+IDs, focus, input and responses. Fill, stroke, rounding, shadow blur and the
+existing backdrop/dimming remain unchanged. Unsupported, clipped, ambiguous,
+translucent, shadowless or ineligible frames retain ordinary painting; no other
+modal is opted in. The cumulative production successor now preserves all
+eight actual default picker PNGs and measured guards; native interaction remains
+separate. The two-scale
+pixel/response/callback regression passes after giving every comparison arm
+its own fresh test RenderState; this is correctness evidence distinct from the
+actual default-path execution and native qualification. See
+the [qualification boundary](../validation/windows-warp/README.md#prepared-owned-picker-frame-production-successor).
 
 ## Future Populated Launcher Example
 

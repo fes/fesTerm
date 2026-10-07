@@ -139,6 +139,23 @@ mod native {
         pub(super) font_atlas_samples: Mutex<Vec<(festerm_ui_egui::FontAtlasCapture, usize)>>,
     }
 
+    impl Status {
+        fn report_unsupported(&self, error: &str) {
+            self.first_failure.get_or_init(|| error.to_owned());
+            if !self.unsupported_frame.swap(true, Ordering::Relaxed) {
+                tracing::warn!(target: "festerm::rendering", %error,
+                    "unsupported Direct2D frame; retaining egui-wgpu for this frame");
+            }
+        }
+
+        fn report_resumed(&self) {
+            if self.unsupported_frame.swap(false, Ordering::Relaxed) {
+                tracing::info!(target: "festerm::rendering",
+                    "Direct2D terminal painting resumed after unsupported content");
+            }
+        }
+    }
+
     struct Paint {
         pipeline: Arc<wgpu::RenderPipeline>,
         bindings: wgpu::BindGroup,
@@ -214,10 +231,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 TimingConfig::Disabled
             }
         };
-        let renderer = Mutex::new(festerm_windows_direct2d::CachedRenderer::new(
+        let renderer = Arc::new(Mutex::new(festerm_windows_direct2d::CachedRenderer::new(
             state.device.clone(),
             state.queue.clone(),
-        )?);
+        )?));
         let device = state.device.clone();
         let bindings_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("festerm Direct2D composite"),
@@ -296,6 +313,25 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             font_atlas_samples: Mutex::new(Vec::new()),
         });
         let observed = status.clone();
+        let admission_renderer = renderer.clone();
+        let admission_status = status.clone();
+        let admission = move |context: &egui::Context, dimensions| {
+            if festerm_windows_direct2d::texture_dimensions_supported(dimensions) {
+                return true;
+            }
+            match admission_renderer.lock() {
+                Ok(mut renderer) => renderer.invalidate(),
+                Err(_) => {
+                    admission_status.active.store(false, Ordering::Relaxed);
+                    festerm_ui_egui::remove_root_terminal_painter(context);
+                    tracing::error!(target: "festerm::rendering",
+                        "Direct2D state poisoned; retaining egui-wgpu");
+                    return false;
+                }
+            }
+            admission_status.report_unsupported("invalid texture dimensions");
+            false
+        };
         painter_options.capture_font_atlas_timings |= timings.enabled();
         let capture_timings = painter_options.capture_font_atlas_timings;
         let paint = move |context: &egui::Context, frame: festerm_ui_egui::TerminalPaintFrame| {
@@ -335,11 +371,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 Ok(Some(surface)) => surface,
                 Ok(None) => return None,
                 Err(error) if error.is_unsupported_frame() => {
-                    let _ = observed.first_failure.set(error.to_string());
-                    if !observed.unsupported_frame.swap(true, Ordering::Relaxed) {
-                        tracing::warn!(target: "festerm::rendering", %error,
-                            "unsupported Direct2D frame; retaining egui-wgpu for this frame");
-                    }
+                    observed.report_unsupported(&error.to_string());
                     return None;
                 }
                 Err(error) => {
@@ -351,10 +383,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                     return None;
                 }
             };
-            if observed.unsupported_frame.swap(false, Ordering::Relaxed) {
-                tracing::info!(target: "festerm::rendering",
-                    "Direct2D terminal painting resumed after unsupported content");
-            }
+            observed.report_resumed();
             let updated_regions = rendered.updated_regions;
             let updated_pixels = rendered.updated_pixels;
             let surface = rendered.surface;
@@ -458,9 +487,10 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 },
             ))
         };
-        festerm_ui_egui::install_root_terminal_painter_with_options(
+        festerm_ui_egui::install_root_terminal_painter_with_admission(
             context,
             painter_options,
+            admission,
             paint,
         );
         state.renderer.write().final_callback_copy_enabled = host_copy;
@@ -469,6 +499,41 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 "final-target host copy enabled; ineligible frames retain shader composition");
         }
         Ok(status)
+    }
+
+    #[cfg(test)]
+    mod admission_tests {
+        use super::*;
+
+        #[test]
+        fn native_atlas_refusal_keeps_backend_available_and_resumes() {
+            let status = Status {
+                active: AtomicBool::new(true),
+                frames: AtomicU64::new(0),
+                reused_frames: AtomicU64::new(0),
+                first_failure: OnceLock::new(),
+                unsupported_frame: AtomicBool::new(false),
+                last_updated_pixels: AtomicU64::new(0),
+                last_surface_pixels: AtomicU64::new(0),
+                last_surface: Mutex::new(None),
+                font_atlas_samples: Mutex::new(Vec::new()),
+            };
+            status.report_unsupported("invalid texture dimensions");
+            assert!(status.unsupported_frame.load(Ordering::Relaxed));
+            assert!(status.active.load(Ordering::Relaxed));
+            let first = status.first_failure.get().unwrap().as_ptr();
+            status.report_unsupported("another unsupported frame");
+            assert_eq!(status.first_failure.get().unwrap().as_ptr(), first);
+            assert_eq!(
+                status.first_failure.get().unwrap(),
+                "invalid texture dimensions"
+            );
+            status.report_resumed();
+            assert!(!status.unsupported_frame.load(Ordering::Relaxed));
+            assert!(status.active.load(Ordering::Relaxed));
+            status.report_unsupported("next refusal episode");
+            assert!(status.unsupported_frame.load(Ordering::Relaxed));
+        }
     }
 }
 

@@ -6,6 +6,7 @@ pub(crate) const PHYSICAL_SIZE: [u32; 2] = [2058, 1658];
 
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Frame {
+    pub wgpu_submission_completed: bool,
     pub native_calls: u64,
     pub updated_pixels: u64,
     pub surface_pixels: u64,
@@ -118,6 +119,9 @@ impl Renderer {
         assert!(samples.len() <= 1, "one root terminal per frame");
         let stats = self.retained.stats();
         let mut frame = Frame {
+            // draw_composed waits for this submission. This says nothing about
+            // driver-private allocations or resources retained by other owners.
+            wgpu_submission_completed: true,
             native_calls,
             updated_pixels: if native_calls > 0 {
                 self.status.last_updated_pixels.load(Ordering::Relaxed)
