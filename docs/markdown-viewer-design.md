@@ -156,14 +156,38 @@ activation:
   does not become a generic file launcher.
 - Dangerous or unsupported schemes are inert and explained.
 
-No secondary resource loads implicitly. Images render as compact placeholders
-showing alt text and source class. For a local document, **Load local image**
-may read an explicitly requested bounded raster file after canonical path and
-size checks. For a remote document, **Load remote image** performs an explicit
-bounded fetch through the same verified SFTP origin/generation. Network images,
-data URLs, SVG, fonts, scripts, stylesheets, iframes, and includes never load in
-the viewer. Resource approval is per item for the current viewer lifetime, not
-a persisted trust grant.
+Only bounded relative raster images of saved local documents load automatically,
+up to 64 distinct references per snapshot; later references keep **Load local
+image**. Both standalone viewers and editor Preview share four actual running
+loads and the Settings **Image memory budget** (512 MiB default). Existing
+admissions survive lowering/saturation; additional growth is visibly refused,
+and temporary refusals recover when their required space or slot is available.
+Permanent failures do not retry every frame; explicit retry remains available.
+
+The complete canonical saved Markdown file identity grants reads, never its
+lexical symlink-file parent, a presentation label or a fallback path. A source
+that cannot be resolved keeps its text Preview and visibly disables image reads.
+Actual encoded input is bounded to 8 MiB, dimensions to 16 Mi-pixels and
+the live texture-axis limit, before owned expansion. Canonical image destinations
+must stay inside the opened file's canonical parent directory; filesystem-rooted
+paths and traversal/symlink escapes are blocked. Root acquisition walks the
+already-authorized canonical parent without following newly inserted aliases;
+final image resolution stays beneath that directory handle even when names or
+intermediate components are rebound. Opened-handle metadata must identify a
+regular file before any content read. Authorized in-root image aliases remain
+readable. Directory capabilities belong only to active reads, not open tabs.
+Unix nonblocking opens reject
+special files without waiting for a FIFO writer. Reservations track actual
+worker/result/texture/CPU-upload owners through close and snapshot replacement.
+See ADR 0030 for the conservative envelope and bounded retirement traversal.
+
+Remote, untitled and terminal-history Preview never read local images. Remote
+resource fetch remains unimplemented and may only be added through the same
+verified SFTP origin/generation. Network images, data URLs, SVG, fonts, scripts,
+stylesheets, iframes, and includes never load. Approval is per snapshot/view,
+not a persisted trust grant. The shared allowance is not a process-RAM/VRAM
+cap: decoder-private allocation, native renderer/GPU retirement and allocator
+fragmentation are outside it.
 
 ## Find, selection, Copy, and keyboard behavior
 
@@ -177,6 +201,121 @@ does not cap or truncate the result set. Ordered source-position lookups reuse
 the already-counted Unicode prefix, and highlighting visits only the matches
 overlapping each text run. These are internal cost reductions, not changes to
 match counts, current-match selection, clipping, or Unicode source offsets.
+
+The standalone viewer retains exact wrapped outline-row geometry for at most
+4096 headings in its current snapshot. An unchanged offscreen row reuses its
+height and text ink bounds instead of cloning its heading into another layout
+job. Every row still has a live response, focus identity and accessibility node;
+visible rows always prepare normally. Actual width, pixels per point, explicit
+font, active font definitions and text options invalidate geometry; successful
+snapshot replacement clears it. Theme/selection colors remain live and cannot
+affect the stored dimensions. Rows beyond the cap prepare normally, never
+disappear. No galley or atlas UV survives a frame in this cache.
+
+The shared editor Preview also reuses its existing heading-position vector,
+clearing positions before each render; the standalone viewer no longer collects
+unused positions. These are bounded preparation/allocation reductions, not
+Preview block virtualization. Full Source traversal, full Preview traversal,
+and the editor's separate outline remain follow-up work. Deterministic
+old-control/candidate layout counts and visible-shape/navigation/accessibility
+oracles do not establish native latency, GPU drawing or total-memory gains.
+
+Source also retains bounded **unwrapped formatting instructions**, not laid-out
+text: at most 8192 line jobs and 4 MiB of their actual string/section-vector
+capacities per loaded viewer snapshot. Entry/Arc/map metadata is separately
+bounded by the entry count; this is not a process-memory cap. Snapshot replacement
+and Find-query changes discard the jobs. Moving the current match refreshes
+cached lines overlapping its old/new location; all matches remain available.
+Queries over 4096 UTF-8 bytes use ordinary preparation without truncating Find,
+and lines that exceed either cache bound use the ordinary path.
+
+The existing egui 0.36.1 `WidgetText::LayoutJob(Arc<LayoutJob>)` API is already
+used here. Sharing the formatting job does not avoid its live `Label` clone:
+`Label::layout_in_ui` unwraps/clones the shared job before applying UI wrapping
+and alignment, and `FontsView::layout_job` takes an owned job even on a cache
+hit. The lower-level `epaint::text::layout` accepts an Arc, but bypasses that
+memoization and does not keep the ordinary Label layout path untouched. It is
+not a smaller exact replacement for warm Source labels. No dependency API or
+font-cache ownership change is part of this candidate.
+
+Every Source line retains its live identity, response and accessibility node.
+For admitted jobs in the ordinary top-down, left-aligned, non-grid layout,
+fully clipped-offscreen rows can reuse their exact measured local size and
+intrinsic size. This finite geometry belongs to the existing bounded job;
+there is no second text copy, persistent galley, atlas UV or separate row map.
+The new per-entry metadata is one `Option<SourceRowGeometry>` (five f32 values
+plus its discriminant/padding); its actual Rust size is counted independently
+of the unchanged charged text/section payload. One active dependency key also
+owns cloned font-definition map/family metadata and shared font-data Arcs, not
+another font-byte copy. Source and Outline each admit at most one dependency
+key. Before any definition clone, each font-data/family map must have at most
+128 entries; summed owned key/name String capacities plus the UTF-8 lengths of
+shared custom `FontFamily::Name` keys must fit 8192 bytes. Total family Vec
+**capacity**, not only length, must fit 256 name-reference slots (6144 bytes
+when `String` is 24 bytes). Spare capacity is conservatively charged. Checked
+addition protects every cumulative count. Actual cloned capacities are checked
+again before retention; font bytes and custom-family name bytes remain shared.
+Map-node storage is bounded by the two map cardinalities, not an asserted
+allocator-byte total. These allowances are separate from the unchanged 4 MiB
+instruction payload; they are internal cache eligibility, not user settings.
+
+Pre-admission overflow drops the owner's previous key and clears all stale row
+geometry before rendering ordinary live labels, without cloning rejected
+definitions. A failed actual cloned-capacity verification also drops the
+candidate. Neither case retains new geometry; valid definitions must rebuild
+cold before warm reuse resumes. Replacement drops the old key **before** construction:
+there is no old/new cloned-key overlap per owner. An unchanged frame performs
+bounded borrowed admission/comparison, not key reconstruction. One admission
+scan visits at most 128 font keys, 128 family entries and 256 names; replacement
+uses at most three such scans including actual cloned-capacity verification.
+Comparison uses font-data Arc identity, never traversing large font bytes;
+equal-byte replacement is conservatively invalidated. String comparisons stay
+within admitted name bounds. Source key reset/rejection/clone counts and actual
+cloned String/Vec capacities are reported separately from label/layout work.
+The earlier 140/168-byte fixture observations were **not admission ceilings**;
+the missing bound was found during handoff and repaired before publication.
+Visible, cold, unsupported-layout and uncached rows use ordinary label behavior.
+Width, pixels per point, explicit source font, active font definitions and text
+options invalidate geometry. Snapshot/query replacement and current-match job
+refresh discard it with its job. Theme, opacity, selection and screen-reader/
+touch interaction remain live; no approximate heights or omitted widgets are
+allowed. Source spans remain tied to the immutable snapshot, and no helper
+rewrites decoded text, line endings or raw Copy payloads.
+
+The geometry candidate's focused CPU regressions compare
+complete clipped shapes, every response (including intrinsic size and
+sense), accessibility, selection/Copy and offscreen byte/heading navigation to
+the descriptor-cached ordinary path. Cold/warm/scroll/width/font/scale/options/
+theme/revision controls count actual layout requests and their text payloads,
+not job-cache hits. Font-map cardinality, owned-name bytes (including custom
+family keys) and family-reference overflow require ordinary work with identical
+full shapes/responses/accessibility and raw Unicode Copy. Recovery and exact
+128/8192/256 admission-boundary controls require cold rebuilding followed by
+warm reuse without another key clone. The warm 400-section narrow/normal controls
+retain all 4800 rows while reducing 4800 ordinary requests to 31/34 (34/37 after scrolling),
+below the required limit of 96. Cloned candidate String/Vec capacities are
+4408/4822 bytes versus the ordinary shared Label inputs' 680870-byte clone
+payload. The ordinary clone condition follows the pinned Label implementation;
+candidate capacities are captured after its actual unwrap/clone. These are
+specific owned-buffer payloads, not allocator usable-size or total allocations.
+The fixture's geometry slots add 115200 bytes (24 per admitted job; at most
+196608 at 8192), plus a 112-byte inline key and separately reported font map/
+family/string/vector metadata. Map-node allocator overhead is not claimed.
+Real dependency changes relayout every row, including the width settling one
+frame after a scale change; only an actually stable key qualifies as warm.
+Total UI time, GPU drawing, native latency and total memory remain separately
+unqualified. Full live Source traversal and Preview work remain open under #348.
+
+The standalone viewer's ordinary opaque `SURFACE_WINDOW` outer frame goes
+through the existing `software_background::show_frame`, just like other
+eligible application surfaces. Only that frame changes painting route; child
+Preview/Source frames, text, controls and resource policy are unchanged.
+The helper retains its existing renderer/opacity/visibility/root-viewport/
+transform/frame guards and ordinary fallback. Real Preview/Source caller
+pixels are compared exactly on Windows DX12 CPU `Rgba8Unorm`, at narrow/wide
+widths and 1/1.25x scale with fractional clipping; 0.5 opacity must stay ordinary.
+This qualifies rendering fidelity and callback execution, not draw time or
+native latency. Completed real Markdown workload attribution remains separate.
 
 Preview code-byte navigation forwards the existing selected row's vertical
 target after its horizontal code scroller closes. Find and the shared editor

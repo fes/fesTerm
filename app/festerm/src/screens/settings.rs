@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
-    EmojiPresentationPreference, ScrollSpeedPreference, ScrollbackLimitPreference,
-    SftpPaneOrderPreference, TerminalFontPreference,
+    EmojiPresentationPreference, ImageMemoryBudgetPreference, ScrollSpeedPreference,
+    ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
 };
 use festerm_ui_egui::{chrome::ChipLayout, theme};
 
@@ -35,6 +35,8 @@ pub(crate) struct SettingsViewModel {
     pub emoji_presentation: EmojiPresentationPreference,
     pub scroll_speed: ScrollSpeedPreference,
     pub scrollback_limit: ScrollbackLimitPreference,
+    pub image_memory_budget: ImageMemoryBudgetPreference,
+    pub image_memory_over_budget: bool,
     pub quick_switch_overlay: bool,
     pub compact_launcher_grid: bool,
     pub show_resumable_sessions: bool,
@@ -71,6 +73,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         emoji_presentation,
         scroll_speed,
         scrollback_limit,
+        image_memory_budget,
+        image_memory_over_budget,
         quick_switch_overlay,
         compact_launcher_grid,
         show_resumable_sessions,
@@ -358,6 +362,44 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             }
                             if selected_speed != scroll_speed {
                                 command = Some(AppCommand::SetScrollSpeed(selected_speed));
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Markdown images", |ui| {
+                            let mut selected = image_memory_budget;
+                            egui::Sides::new().show(
+                                ui,
+                                |ui| {
+                                    ui.set_max_width((ui.available_width() - 190.0).max(SETTINGS_MIN_DESCRIPTION_WIDTH));
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new("Image memory budget").color(theme::TEXT_PRIMARY));
+                                        ssh_paragraph(ui, "Shared image storage and load reservations across all windows. \
+                                            Lowering the limit keeps existing images but blocks new loads \
+                                            until space is available. Decoder-private and renderer memory are not capped.");
+                                    });
+                                },
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("image-memory-budget")
+                                        .selected_text(selected.label())
+                                        .width(160.0)
+                                        .show_ui(ui, |ui| {
+                                            for budget in ImageMemoryBudgetPreference::ALL {
+                                                ui.selectable_value(&mut selected, budget, budget.label());
+                                            }
+                                        })
+                                        .response
+                                        .widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, ui.is_enabled(), "Image memory budget"));
+                                },
+                            );
+                            if selected != image_memory_budget {
+                                command = Some(AppCommand::SetImageMemoryBudget(selected));
+                            }
+                            if image_memory_over_budget {
+                                ui.add_space(6.0);
+                                ssh_paragraph(ui, "Current image reservations exceed this limit. \
+                                    Existing images are kept; new image loads are refused until space is released.");
                             }
                         });
 
@@ -970,6 +1012,8 @@ mod tests {
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
+                            image_memory_budget: ImageMemoryBudgetPreference::MiB512,
+                            image_memory_over_budget: false,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
                             show_resumable_sessions: false,
@@ -1554,6 +1598,24 @@ mod tests {
     }
 
     #[test]
+    fn image_budget_settings_dropdown_dispatches_the_typed_bounded_preference() {
+        let mut harness = settings_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::ComboBox, "Image memory budget")
+            .click();
+        harness.run();
+        harness.get_by_label("128 MiB").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SetImageMemoryBudget(
+                ImageMemoryBudgetPreference::MiB128
+            ))
+        ));
+    }
+
+    #[test]
     fn settings_exposes_scrollback_limit_for_future_sessions() {
         let mut harness = settings_harness();
         harness.run();
@@ -1616,6 +1678,8 @@ mod tests {
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
                             scrollback_limit: ScrollbackLimitPreference::MiB64,
+                            image_memory_budget: ImageMemoryBudgetPreference::MiB512,
+                            image_memory_over_budget: false,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
                             show_resumable_sessions: false,
