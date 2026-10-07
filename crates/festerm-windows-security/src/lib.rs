@@ -767,13 +767,13 @@ mod imp {
         open_file_no_reparse_with_access(directory, name, GENERIC_READ)
     }
 
-    /// Opens a no-follow file handle that can be moved into private recovery
-    /// storage, protected there, and restored with its original metadata.
-    pub fn open_file_no_reparse_for_rename(directory: &File, name: &Path) -> io::Result<File> {
+    /// Retains a no-follow file for generation, content, and security checks
+    /// without holding delete access; a separate exact move handle can coexist.
+    pub fn open_file_no_reparse_for_capture(directory: &File, name: &Path) -> io::Result<File> {
         open_file_no_reparse_with_access(
             directory,
             name,
-            GENERIC_READ | DELETE | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER,
+            GENERIC_READ | FILE_WRITE_ATTRIBUTES | WRITE_DAC | WRITE_OWNER,
         )
     }
 
@@ -1294,6 +1294,39 @@ mod imp {
         }
 
         #[test]
+        fn captured_file_uses_transient_moves_and_a_final_pathname_lock() {
+            let directory = TemporaryDirectory::new();
+            fs::write(directory.0.join("original.md"), b"original").unwrap();
+            let directory_handle = directory.handle();
+            let captured =
+                open_file_no_reparse_for_capture(&directory_handle, Path::new("original.md"))
+                    .unwrap();
+            let mover =
+                open_file_no_reparse_for_move(&directory_handle, Path::new("original.md")).unwrap();
+            assert!(same_file_identity(&captured, &mover).unwrap());
+
+            let staging_handle =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+            rename_file_noreplace(&mover, &staging_handle, Path::new("displaced")).unwrap();
+            drop(mover);
+            restrict_to_current_user(&captured).unwrap();
+
+            let restorer =
+                open_file_no_reparse_for_move(&staging_handle, Path::new("displaced")).unwrap();
+            assert!(same_file_identity(&captured, &restorer).unwrap());
+            rename_file_noreplace(&restorer, &directory_handle, Path::new("original.md")).unwrap();
+            drop(restorer);
+            let lock =
+                open_file_no_reparse_for_verification(&directory_handle, Path::new("original.md"))
+                    .unwrap();
+            assert!(same_file_identity(&captured, &lock).unwrap());
+            let error = open_file_no_reparse_for_move(&directory_handle, Path::new("original.md"))
+                .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+        }
+
+        #[test]
         fn private_creation_and_conditional_publication_keep_the_current_user_only_dacl() {
             let directory = TemporaryDirectory::new();
             let directory_handle = directory.handle();
@@ -1414,7 +1447,7 @@ mod imp {
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     create_current_user_only_file_exclusive, disable_std_handle_inheritance, is_current_user_only,
-    open_file_no_reparse, open_file_no_reparse_for_move, open_file_no_reparse_for_rename,
+    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_verification, rename_file_noreplace,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
     security_metadata, security_metadata_matches, DefaultDaclGuard, SecurityMetadata,

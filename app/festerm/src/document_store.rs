@@ -1646,15 +1646,31 @@ fn publish_temporary(
 #[cfg(windows)]
 fn restore_windows_displaced(
     displaced: &File,
+    staging: &File,
     destination: &File,
     target: &Path,
-    security_metadata: &festerm_windows_security::SecurityMetadata,
-) -> bool {
-    festerm_windows_security::rename_file_noreplace(displaced, destination, target)
-        .and_then(|()| {
-            festerm_windows_security::apply_security_metadata(displaced, security_metadata)
-        })
-        .is_ok()
+    security_metadata: Option<&festerm_windows_security::SecurityMetadata>,
+) -> Result<File, std::io::Error> {
+    let mover =
+        festerm_windows_security::open_file_no_reparse_for_move(staging, Path::new("displaced"))?;
+    if !festerm_windows_security::same_file_identity(displaced, &mover)? {
+        return Err(std::io::Error::other(
+            "the displaced recovery name no longer identifies its retained handle",
+        ));
+    }
+    festerm_windows_security::rename_file_noreplace(&mover, destination, target)?;
+    drop(mover);
+    let published =
+        festerm_windows_security::open_file_no_reparse_for_verification(destination, target)?;
+    if !festerm_windows_security::same_file_identity(displaced, &published)? {
+        return Err(std::io::Error::other(
+            "the restored target name no longer identifies the displaced original",
+        ));
+    }
+    if let Some(security_metadata) = security_metadata {
+        festerm_windows_security::apply_security_metadata(displaced, security_metadata)?;
+    }
+    Ok(published)
 }
 
 #[cfg(windows)]
@@ -1743,7 +1759,7 @@ fn publish_temporary(
         .map(cap_std::fs::Dir::into_std_file)
         .map_err(classify_write_error)?;
     let mut current =
-        festerm_windows_security::open_file_no_reparse_for_rename(&directory_handle, target)
+        festerm_windows_security::open_file_no_reparse_for_capture(&directory_handle, target)
             .map_err(|error| {
                 if error.kind() == std::io::ErrorKind::NotFound {
                     SaveFailure::Gone
@@ -1759,12 +1775,20 @@ fn publish_temporary(
     {
         return Err(SaveFailure::Conflict(current_generation));
     }
+    let mover = festerm_windows_security::open_file_no_reparse_for_move(&directory_handle, target)
+        .map_err(classify_write_error)?;
+    if !festerm_windows_security::same_file_identity(&current, &mover)
+        .map_err(classify_write_error)?
+    {
+        return Err(SaveFailure::Conflict(current_generation));
+    }
     festerm_windows_security::rename_file_noreplace(
-        &current,
+        &mover,
         &staging_handle,
         Path::new("displaced"),
     )
     .map_err(classify_write_error)?;
+    drop(mover);
     let displaced = match Generation::from_file(&current) {
         Ok(generation) => generation,
         Err(_) => return Err(temporary.recovery_required()),
@@ -1773,29 +1797,52 @@ fn publish_temporary(
         festerm_windows_security::security_metadata_matches(&current, security_metadata)
             .unwrap_or(false);
     if displaced != original_generation || !displaced_security_matches {
-        if festerm_windows_security::rename_file_noreplace(&current, &directory_handle, target)
-            .is_ok()
+        if let Ok(_restored_lock) =
+            restore_windows_displaced(&current, &staging_handle, &directory_handle, target, None)
         {
+            temporary.finish();
             return Err(SaveFailure::Conflict(displaced));
         }
         return Err(temporary.recovery_required());
     }
     if let Err(error) = festerm_windows_security::restrict_to_current_user(&current) {
         tracing::error!(%error, "the displaced Windows original could not be made private");
-        if restore_windows_displaced(&current, &directory_handle, target, security_metadata) {
+        if let Ok(_restored_lock) = restore_windows_displaced(
+            &current,
+            &staging_handle,
+            &directory_handle,
+            target,
+            Some(security_metadata),
+        ) {
+            temporary.finish();
             return Err(classify_metadata_error(error));
         }
+        let _ = festerm_windows_security::restrict_to_current_user(&current);
         return Err(temporary.recovery_required());
     }
     if !temporary.original_recovery_copy_matches(&mut current)? {
-        if restore_windows_displaced(&current, &directory_handle, target, security_metadata) {
+        if let Ok(_restored_lock) = restore_windows_displaced(
+            &current,
+            &staging_handle,
+            &directory_handle,
+            target,
+            Some(security_metadata),
+        ) {
+            temporary.finish();
             return Err(SaveFailure::Conflict(displaced));
         }
         return Err(temporary.recovery_required());
     }
     after_target_capture();
     if let Err(error) = temporary.publish_new(target) {
-        if restore_windows_displaced(&current, &directory_handle, target, security_metadata) {
+        if let Ok(_restored_lock) = restore_windows_displaced(
+            &current,
+            &staging_handle,
+            &directory_handle,
+            target,
+            Some(security_metadata),
+        ) {
+            temporary.finish();
             return Err(classify_write_error(error));
         }
         tracing::error!(%error, "a concurrent target prevented conditional save publication");

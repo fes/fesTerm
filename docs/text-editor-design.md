@@ -136,7 +136,9 @@ The editor never resolves a divergence silently.
   owner/group/mode/ACL/xattr snapshot, and the Windows
   owner/group/DACL/attribute snapshot on the exact retained payload are
   verified; Windows also compares the private prior-byte copy with the exact
-  displaced original. A late or ambiguous change
+  displaced original. A successful rollback is identity-checked and
+  non-delete-locked through private-staging cleanup; an ambiguous rollback
+  retains recovery instead. A late or ambiguous change
   is never deleted by pathname rollback: every recoverable version remains in
   the private `.festerm-save-*.stage` directory and the editor reports manual
   recovery. Access-metadata or publication-identity failure is a failed save,

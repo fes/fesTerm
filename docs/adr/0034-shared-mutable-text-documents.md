@@ -269,7 +269,9 @@ against a no-follow opening of the current target immediately before
 publication and against both the exact retained payload and retained original
 afterward. Windows additionally compares the private original byte copy with
 the exact displaced handle and holds a non-delete-sharing pathname lock through
-final success. A mismatch never triggers an unconditional second
+final success. A rollback likewise uses an identity-checked transient move,
+then pins and verifies the restored pathname while private staging is cleaned;
+failed rollback instead retains private recovery. A mismatch never triggers an unconditional second
 pathname replacement: the later visible winner remains visible where one
 exists, and prepared/displaced versions remain in the private
 `.festerm-save-*.stage` directory with a visible manual-recovery error. This
