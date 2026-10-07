@@ -76,7 +76,7 @@ fn white_mesh_geometry(mesh: &egui::Mesh) -> bool {
         && mesh.is_valid()
 }
 
-fn opaque_window_frame(shape: &egui::Shape) -> bool {
+pub(crate) fn opaque_window_frame(shape: &egui::Shape) -> bool {
     matches!(shape, egui::Shape::Vec(shapes) if matches!(
         shapes.as_slice(),
         [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)]

@@ -1337,6 +1337,12 @@ fn replay_warp_ui_surfaces() {
         selected,
     )
     .expect("valid bounded picker backdrop attribution");
+    let attribute_frame = warp_profile::picker_frame_attribution(
+        std::env::var_os("FESTERM_WARP_UI_PICKER_FRAME").as_deref(),
+        selected,
+        attribute_backdrop,
+    )
+    .expect("valid exclusive bounded picker frame attribution");
     let output =
         PathBuf::from(std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"));
     assert!(
@@ -1616,9 +1622,23 @@ fn replay_warp_ui_surfaces() {
             draw_buckets.push(sample);
         }
         #[cfg(all(windows, target_arch = "x86_64"))]
-        if attribute_backdrop {
-            let mut attribution =
-                warp_profile::attribute_picker_backdrop(&state, &probe.context, &frame, &expected);
+        if attribute_backdrop || attribute_frame {
+            let (mut attribution, filename) = if attribute_backdrop {
+                (
+                    warp_profile::attribute_picker_backdrop(
+                        &state,
+                        &probe.context,
+                        &frame,
+                        &expected,
+                    ),
+                    "backdrop-attribution.json",
+                )
+            } else {
+                (
+                    warp_profile::attribute_picker_frame(&state, &probe.context, &frame, &expected),
+                    "frame-attribution.json",
+                )
+            };
             attribution["scene"] = serde_json::json!(scene.id);
             attribution["scene_set"] = serde_json::json!(selected.name());
             attribution["provenance"] = serde_json::json!(provenance);
@@ -1627,13 +1647,13 @@ fn replay_warp_ui_surfaces() {
             attribution["physical_pixels"] = serde_json::json!([dimensions.0, dimensions.1]);
             attribution["fixture_state_verified"] = serde_json::json!(true);
             fs::write(
-                scene_output.join("backdrop-attribution.json"),
+                scene_output.join(filename),
                 serde_json::to_string_pretty(&attribution).unwrap(),
             )
             .unwrap();
         }
         #[cfg(not(all(windows, target_arch = "x86_64")))]
-        assert!(!attribute_backdrop);
+        assert!(!attribute_backdrop && !attribute_frame);
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
             "scene_set": selected.name(),

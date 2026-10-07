@@ -71,6 +71,68 @@ pub(super) fn picker_backdrop_attribution(
     }
 }
 
+pub(super) fn picker_frame_attribution(
+    value: Option<&OsStr>,
+    selected: SceneSet,
+    backdrop_enabled: bool,
+) -> Result<bool, &'static str> {
+    match value {
+        None => Ok(false),
+        Some(value)
+            if value == OsStr::new("textureless-frame")
+                && selected == SceneSet::PickerControls
+                && !backdrop_enabled
+                && cfg!(all(windows, target_arch = "x86_64")) =>
+        {
+            Ok(true)
+        }
+        Some(_) => Err(
+            "FESTERM_WARP_UI_PICKER_FRAME requires textureless-frame, picker-controls and Windows x64 without backdrop attribution",
+        ),
+    }
+}
+
+fn opaque_frame_index(
+    shapes: &[egui::epaint::ClippedShape],
+    viewport: egui::Rect,
+) -> Result<usize, &'static str> {
+    if !viewport.is_finite() || viewport.min != egui::Pos2::ZERO || !viewport.is_positive() {
+        return Err("frame attribution requires a finite positive root viewport");
+    }
+    let mut matched = None;
+    for (index, shape) in shapes.iter().enumerate() {
+        if !crate::software_background::opaque_window_frame(&shape.shape) {
+            continue;
+        }
+        let egui::Shape::Vec(parts) = &shape.shape else {
+            unreachable!("matched a shadow/frame pair");
+        };
+        let [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)] = parts.as_slice() else {
+            unreachable!("matched two rectangles");
+        };
+        if !frame.rect.is_finite()
+            || !frame.rect.is_positive()
+            || !shadow.rect.is_finite()
+            || !shadow.rect.is_positive()
+            || !viewport.contains_rect(frame.rect)
+            || !shape.clip_rect.contains_rect(frame.rect)
+            || shadow.fill.r() != 0
+            || shadow.fill.g() != 0
+            || shadow.fill.b() != 0
+            || shadow.fill.a() == 0
+            || shadow.fill.is_opaque()
+            || shadow.stroke != egui::Stroke::NONE
+            || !shadow.blur_width.is_finite()
+        {
+            continue;
+        }
+        if matched.replace(index).is_some() {
+            return Err("frame attribution found multiple opaque shadow/frame pairs");
+        }
+    }
+    matched.ok_or("frame attribution requires exactly one complete opaque shadow/frame pair")
+}
+
 fn black_backdrop_index(
     shapes: &[egui::epaint::ClippedShape],
     viewport: egui::Rect,
@@ -320,21 +382,104 @@ pub(super) fn attribute_picker_backdrop(
     let egui::Shape::Rect(backdrop) = &source.shape else {
         unreachable!("matched a rectangle");
     };
+    let mut report = attribute_picker_shape(
+        state,
+        context,
+        output,
+        expected,
+        index,
+        "textureless-black",
+        "textureless_black",
+    );
+    report["schema"] = serde_json::json!("festerm-picker-backdrop-attribution-v1");
+    report["backdrop_color_rgba"] = serde_json::json!(backdrop.fill.to_array());
+    report["backdrop_vertices"] = report["geometry_vertices"].clone();
+    report["backdrop_indices"] = report["geometry_indices"].clone();
+    report["scope"] = serde_json::json!(
+        "Same unchanged actual frame and white-UV geometry; only its unique full-root translucent black backdrop uses the existing installed panel shader. Six balanced ordered pairs and every exact pixel retained. Callback construction is outside render timing. Not a shipping optimization, isolated GPU timestamp, native presentation, physical latency or total-resource claim."
+    );
+    report
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub(super) fn attribute_picker_frame(
+    state: &egui_wgpu::RenderState,
+    context: &egui::Context,
+    output: &egui::FullOutput,
+    expected: &image::RgbaImage,
+) -> serde_json::Value {
+    let viewport = context.viewport_rect();
+    let index = opaque_frame_index(&output.shapes, viewport)
+        .expect("actual picker has one complete opaque shadow/frame pair");
+    let egui::Shape::Vec(parts) = &output.shapes[index].shape else {
+        unreachable!("matched a shadow/frame pair");
+    };
+    let [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)] = parts.as_slice() else {
+        unreachable!("matched two rectangles");
+    };
+    let mut report = attribute_picker_shape(
+        state,
+        context,
+        output,
+        expected,
+        index,
+        "textureless-frame",
+        "textureless_frame",
+    );
+    report["schema"] = serde_json::json!("festerm-picker-frame-attribution-v1");
+    report["frame_fill_rgba"] = serde_json::json!(frame.fill.to_array());
+    report["frame_rect"] = serde_json::json!([
+        frame.rect.min.x,
+        frame.rect.min.y,
+        frame.rect.max.x,
+        frame.rect.max.y
+    ]);
+    report["frame_stroke_rgba"] = serde_json::json!(frame.stroke.color.to_array());
+    report["frame_stroke_width"] = serde_json::json!(frame.stroke.width);
+    report["frame_corner_radii"] = serde_json::json!([
+        frame.corner_radius.nw,
+        frame.corner_radius.ne,
+        frame.corner_radius.sw,
+        frame.corner_radius.se
+    ]);
+    report["shadow_rgba"] = serde_json::json!(shadow.fill.to_array());
+    report["shadow_rect"] = serde_json::json!([
+        shadow.rect.min.x,
+        shadow.rect.min.y,
+        shadow.rect.max.x,
+        shadow.rect.max.y
+    ]);
+    report["shadow_blur_width"] = serde_json::json!(shadow.blur_width);
+    report
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn attribute_picker_shape(
+    state: &egui_wgpu::RenderState,
+    context: &egui::Context,
+    output: &egui::FullOutput,
+    expected: &image::RgbaImage,
+    index: usize,
+    mode: &str,
+    key: &str,
+) -> serde_json::Value {
+    let viewport = context.viewport_rect();
+    let source = &output.shapes[index];
     let primitives = context.tessellate(vec![source.clone()], context.pixels_per_point());
     let [egui::ClippedPrimitive {
         primitive: egui::epaint::Primitive::Mesh(mesh),
         ..
     }] = primitives.as_slice()
     else {
-        panic!("actual picker backdrop must tessellate to exactly one mesh");
+        panic!("attributed picker shape must tessellate to exactly one mesh");
     };
     let mut converted = output.clone();
     converted.shapes[index].shape = crate::software_background::PanelTestProbe::existing(context)
         .white_mesh_shape(viewport, mesh)
-        .expect("attributed backdrop has valid white-UV geometry and eligible installed pipeline");
+        .expect("attributed picker shape has valid white-UV geometry and eligible pipeline");
     for frame in [output, &converted] {
         let (image, _) = render(state, context, frame);
-        assert_eq!(&image, expected, "backdrop attribution warmup pixels");
+        assert_eq!(&image, expected, "picker attribution warmup pixels");
     }
     let mut pairs = Vec::new();
     let mut ordinary_times = Vec::new();
@@ -348,8 +493,8 @@ pub(super) fn attribute_picker_backdrop(
         };
         let (first_image, first_sample) = render(state, context, first);
         let (second_image, second_sample) = render(state, context, second);
-        assert_eq!(&first_image, expected, "first measured backdrop pixels");
-        assert_eq!(&second_image, expected, "second measured backdrop pixels");
+        assert_eq!(&first_image, expected, "first measured picker pixels");
+        assert_eq!(&second_image, expected, "second measured picker pixels");
         let (ordinary, textureless) = if converted_first {
             (second_sample, first_sample)
         } else {
@@ -361,32 +506,126 @@ pub(super) fn attribute_picker_backdrop(
                 .work
                 .executed_panel_paints
                 .map(|count| count.checked_add(1).expect("bounded panel paint count")),
-            "the attributed backdrop callback must execute exactly once",
+            "the attributed picker callback must execute exactly once",
         );
         assert!(ordinary.work.executed_panel_paints.is_some());
         ordinary_times.push(ordinary.total_ms);
         converted_times.push(textureless.total_ms);
-        pairs.push(serde_json::json!({
-            "order": if converted_first { ["textureless-black", "ordinary"] } else { ["ordinary", "textureless-black"] },
+        let mut sample = serde_json::json!({
+            "order": if converted_first { [mode, "ordinary"] } else { ["ordinary", mode] },
             "ordinary": ordinary,
-            "textureless_black": textureless,
             "pixels_equal": true,
-        }));
+        });
+        sample[key] = serde_json::to_value(textureless).unwrap();
+        pairs.push(sample);
     }
-    serde_json::json!({
-        "schema": "festerm-picker-backdrop-attribution-v1",
+    let mut report = serde_json::json!({
         "shape_index": index,
-        "backdrop_color_rgba": backdrop.fill.to_array(),
         "viewport_points": [viewport.width(), viewport.height()],
         "pixels_per_point": context.pixels_per_point(),
-        "backdrop_vertices": mesh.vertices.len(),
-        "backdrop_indices": mesh.indices.len(),
+        "geometry_vertices": mesh.vertices.len(),
+        "geometry_indices": mesh.indices.len(),
         "paired_samples": pairs,
         "ordinary_completed_draw_readback": crate::surface_performance::timing_distribution(&ordinary_times),
-        "textureless_black_completed_draw_readback": crate::surface_performance::timing_distribution(&converted_times),
         "pixels_equal": true,
-        "scope": "Same unchanged actual frame and white-UV geometry; only its unique full-root translucent black backdrop uses the existing installed panel shader. Six balanced ordered pairs and every exact pixel retained. Callback construction is outside render timing. Not a shipping optimization, isolated GPU timestamp, native presentation, physical latency or total-resource claim.",
-    })
+        "scope": "Same unchanged actual picker and original white-UV shadow/frame geometry; only one exact opaque shadow/frame pair uses the existing installed panel shader. Six balanced ordered pairs preserve every pixel and require one additional callback. Construction excluded from draw timing; not isolated GPU timestamps, native latency, production enablement or resource acceptance.",
+    });
+    report[format!("{key}_completed_draw_readback")] = serde_json::to_value(
+        crate::surface_performance::timing_distribution(&converted_times),
+    )
+    .unwrap();
+    report
+}
+
+#[test]
+fn picker_frame_attribution_requires_exclusive_bounded_selection() {
+    for selected in [
+        SceneSet::All,
+        SceneSet::PickerControls,
+        SceneSet::MarkdownControls,
+    ] {
+        assert_eq!(picker_frame_attribution(None, selected, false), Ok(false));
+        for value in ["1", "textureless-frame ", "textureless-black"] {
+            assert!(picker_frame_attribution(Some(OsStr::new(value)), selected, false).is_err());
+        }
+        assert!(
+            picker_frame_attribution(Some(OsStr::new("textureless-frame")), selected, true)
+                .is_err()
+        );
+    }
+    assert!(
+        picker_frame_attribution(Some(OsStr::new("textureless-frame")), SceneSet::All, false)
+            .is_err()
+    );
+    assert!(picker_frame_attribution(
+        Some(OsStr::new("textureless-frame")),
+        SceneSet::MarkdownControls,
+        false
+    )
+    .is_err());
+    assert_eq!(
+        picker_frame_attribution(
+            Some(OsStr::new("textureless-frame")),
+            SceneSet::PickerControls,
+            false
+        )
+        .is_ok(),
+        cfg!(all(windows, target_arch = "x86_64"))
+    );
+}
+
+#[test]
+fn picker_frame_attribution_requires_unique_complete_shadow_frame() {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 180.0));
+    let rect = egui::Rect::from_min_max(egui::pos2(20.0, 20.0), egui::pos2(210.0, 150.0));
+    let original = egui::epaint::ClippedShape {
+        clip_rect: viewport,
+        shape: egui::Frame::window(&egui::Style::default()).paint(rect),
+    };
+    assert_eq!(
+        opaque_frame_index(std::slice::from_ref(&original), viewport),
+        Ok(0)
+    );
+    assert!(opaque_frame_index(&[], viewport).is_err());
+    assert!(opaque_frame_index(&[original.clone(), original.clone()], viewport).is_err());
+    for case in [
+        "clip",
+        "outside",
+        "translucent",
+        "colored-shadow",
+        "invisible-shadow",
+        "nonfinite",
+    ] {
+        let mut invalid = original.clone();
+        if case == "clip" {
+            invalid.clip_rect.max.x = rect.center().x;
+        }
+        let egui::Shape::Vec(parts) = &mut invalid.shape else {
+            unreachable!()
+        };
+        let [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)] = parts.as_mut_slice() else {
+            unreachable!()
+        };
+        match case {
+            "outside" => frame.rect.min.x = -1.0,
+            "translucent" => frame.fill = egui::Color32::from_black_alpha(100),
+            "colored-shadow" => {
+                shadow.fill = egui::Color32::from_rgba_unmultiplied(31, 43, 61, 128)
+            }
+            "invisible-shadow" => shadow.fill = egui::Color32::TRANSPARENT,
+            "nonfinite" => shadow.blur_width = f32::NAN,
+            _ => {}
+        }
+        assert!(
+            opaque_frame_index(std::slice::from_ref(&invalid), viewport).is_err(),
+            "{case}"
+        );
+    }
+    assert!(opaque_frame_index(
+        std::slice::from_ref(&original),
+        viewport.translate(egui::vec2(1.0, 0.0))
+    )
+    .is_err());
 }
 
 #[test]
@@ -551,6 +790,68 @@ fn warp_scene_selection_preserves_full_default_and_bounds_picker_controls() {
         use std::os::unix::ffi::OsStringExt;
         let invalid = std::ffi::OsString::from_vec(vec![0xff]);
         assert!(SceneSet::parse(Some(&invalid)).is_err());
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn picker_frame_attribution_preserves_pixels_and_balanced_order() {
+    use egui_kittest::{wgpu::WgpuTestRenderer, TestRenderer};
+    for scale in [1.0, 1.25] {
+        let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+        let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
+            unreachable!()
+        };
+        options.instance_descriptor.backends = wgpu::Backends::DX12;
+        let state =
+            egui_kittest::wgpu::create_render_state(setup, egui_wgpu::RendererOptions::default());
+        let context = egui::Context::default();
+        context.set_visuals(egui::Visuals::dark());
+        context.all_styles_mut(|style| style.animation_time = 0.0);
+        let _probe = crate::software_background::PanelTestProbe::install(&context, &state);
+        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(224.0, 160.0));
+        let mut input = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(scale);
+        let mut frame = egui::FullOutput::default();
+        for _ in 0..5 {
+            frame = context.run_ui(input.clone(), |ui| {
+                ui.label("Underlying content");
+                egui::Modal::new(egui::Id::new("frame-attribution-modal")).show(&context, |ui| {
+                    ui.set_min_size(egui::vec2(100.0, 50.0));
+                    ui.label("Original picker");
+                    ui.button("Choose").on_hover_text("Live response");
+                });
+            });
+            renderer.handle_delta(&mut frame.textures_delta);
+        }
+        let expected = renderer.render(&context, &frame).unwrap();
+        let report = attribute_picker_frame(&state, &context, &frame, &expected);
+        assert_eq!(report["schema"], "festerm-picker-frame-attribution-v1");
+        let pairs = report["paired_samples"].as_array().unwrap();
+        assert_eq!(pairs.len(), 6);
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|pair| pair["order"][0] == "ordinary")
+                .count(),
+            3
+        );
+        for pair in pairs {
+            assert_eq!(pair["pixels_equal"], true);
+            assert_eq!(pair["ordinary"]["work"]["executed_panel_paints"], 0);
+            assert_eq!(
+                pair["textureless_frame"]["work"]["executed_panel_paints"],
+                1
+            );
+        }
     }
 }
 
