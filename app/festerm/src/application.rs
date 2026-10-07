@@ -610,6 +610,22 @@ impl FesTermApplication {
             context.request_repaint();
         }
     }
+
+    fn refresh_application_close_context(&mut self) {
+        let counts = self.windows.iter().fold(
+            crate::tabs::LiveSessionCounts::default(),
+            |mut total, window| {
+                let current = window.app.live_session_counts();
+                total.local += current.local;
+                total.ssh += current.ssh;
+                total.serial += current.serial;
+                total
+            },
+        );
+        self.windows[0]
+            .app
+            .set_application_live_session_counts(counts);
+    }
 }
 
 /// How far left of the pointer a detached window's origin is placed, so the
@@ -619,6 +635,7 @@ const DETACH_POINTER_INSET: f32 = 60.0;
 
 impl eframe::App for FesTermApplication {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        self.refresh_application_close_context();
         eframe::App::logic(self.primary_mut(), context, frame);
     }
 
@@ -1588,6 +1605,62 @@ mod tests {
 
         assert_eq!(application.window_count(), 2);
         assert!(!application.window_mut(1).window_close_accepted());
+    }
+
+    #[test]
+    fn primary_quit_refuses_a_dirty_document_owned_by_a_secondary_window() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("secondary-only.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let document = documents.borrow().find_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("unsaved\n")
+            .unwrap();
+        application.refresh_application_close_context();
+
+        assert!(!application
+            .window_mut(0)
+            .evaluate_close_request_for_test(&context));
+
+        assert!(!application.window_mut(0).window_close_accepted());
+        assert_eq!(
+            application.window_mut(0).open_refusal_headline_for_test(),
+            Some("Quitting is waiting for unsaved documents")
+        );
+    }
+
+    #[test]
+    fn primary_quit_counts_sessions_owned_by_secondary_windows() {
+        let primary = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let (secondary, _tab, _transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut application = FesTermApplication::new(primary);
+        application.windows.push(Window {
+            id: WindowId(1),
+            app: secondary,
+            placement: None,
+        });
+        let context = egui::Context::default();
+        application.refresh_application_close_context();
+
+        assert!(!application
+            .window_mut(0)
+            .evaluate_close_request_for_test(&context));
+
+        let counts = application
+            .window_mut(0)
+            .pending_quit_counts_for_test()
+            .expect("the secondary SSH session must be included in primary quit");
+        assert_eq!(counts.ssh, 1);
     }
 
     #[test]

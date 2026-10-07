@@ -3858,6 +3858,17 @@ impl MarkdownPreviewPane {
         generation: Generation,
         parent_identity: DirectoryIdentity,
     ) {
+        if self.source_generation != Some(generation)
+            || self.source_parent_identity != Some(parent_identity)
+        {
+            self.pending_image_loads.clear();
+            self.resource_approvals.clear();
+            self.loaded_images.clear();
+            self.image_errors.clear();
+            self.image_retries.clear();
+            self.automatic_image_loads = 0;
+            self.automatic_image_references.clear();
+        }
         self.source_generation = Some(generation);
         self.source_parent_identity = Some(parent_identity);
     }

@@ -513,6 +513,13 @@ cancel close until the notice is explicitly acknowledged. Complete several async
 refusals through worker-result channels while that modal remains visible and
 confirm their bounded FIFO delivers each refusal rather than overwriting an
 earlier one.
+Press Escape on an unrelated confirmation while a recovery notice is queued;
+the first Escape may cancel only that visible confirmation, and the newly
+promoted recovery notice must remain until a later explicit acknowledgement.
+Keep a dirty document or live session only in a secondary window, and keep a
+second dirty document open in multiple views; primary-window Quit and updater
+install/restart must include the secondary session and refuse the unresolved
+documents rather than closing the process.
 
 CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.
@@ -528,7 +535,10 @@ Preview and explain image refusal. Save and Save As must capture the destination
 parent identity before writing and perform temporary creation/replacement
 through that retained directory capability. Ordinary Save of a file opened
 through a symlink must update the loaded canonical target without replacing the
-alias or granting its lexical parent; Save As intentionally captures the newly
+alias or granting its lexical parent, and its new generation must discard old
+image approvals, decoded textures, pending receivers, errors, and retries
+without resetting Preview scroll/find/outline presentation; Save As
+intentionally captures the newly
 selected destination. Inability to establish authority refuses before mutation
 rather than recovering against a later replacement parent.
 Review keyboard retry after repairing a failed file and screen-reader/refusal

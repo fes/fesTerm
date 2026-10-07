@@ -158,7 +158,11 @@ impl FesTermApp {
             self.request_document_close(tab, AfterDocumentClose::ResumeClose(purpose));
             return false;
         }
-        let counts = self.state.live_session_counts();
+        if self.refuse_application_action_for_dirty_document("Quitting") {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            return false;
+        }
+        let counts = self.close_session_counts();
         if counts.total() == 0 {
             // Nothing would be lost: let the close proceed untouched.
             return true;
@@ -204,7 +208,10 @@ impl FesTermApp {
             );
             return;
         }
-        let counts = self.state.live_session_counts();
+        if self.refuse_application_action_for_dirty_document("Installing the update") {
+            return;
+        }
+        let counts = self.close_session_counts();
         if counts.total() == 0 {
             self.update_restart_authorized = true;
             self.updates.begin_install();
@@ -236,7 +243,10 @@ impl FesTermApp {
             );
             return;
         }
-        let counts = self.state.live_session_counts();
+        if self.refuse_application_action_for_dirty_document("Restarting after the update") {
+            return;
+        }
+        let counts = self.close_session_counts();
         if counts.total() == 0 {
             self.finish_update_restart(context);
             return;
@@ -253,6 +263,39 @@ impl FesTermApp {
         self.quit_confirmed = true;
         crate::diagnostics::record_exit_intent(crate::diagnostics::ExitIntent::UpdateRestart);
         context.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn close_session_counts(&self) -> crate::tabs::LiveSessionCounts {
+        if self.role == crate::app::WindowRole::Primary {
+            self.application_live_session_counts
+                .unwrap_or_else(|| self.state.live_session_counts())
+        } else {
+            self.state.live_session_counts()
+        }
+    }
+
+    fn refuse_application_action_for_dirty_document(&mut self, action: &str) -> bool {
+        if self.role != crate::app::WindowRole::Primary {
+            return false;
+        }
+        let Some(dirty) = self.state.first_dirty_document() else {
+            return false;
+        };
+        self.overlays.about_open = false;
+        self.overlays.about_licenses_open = false;
+        if self.overlays.open_refusal.is_none() {
+            self.overlays.open_refusal =
+                Some(crate::overlay_state::OpenRefusalNotice {
+                    title: Some("Unsaved documents are still open".into()),
+                    acknowledgement_path: None,
+                    name: dirty.title,
+                    path: dirty.origin,
+                    headline: format!("{action} is waiting for unsaved documents"),
+                    detail: "Save or close every unsaved document in its owning window, then try again. fesTerm will not discard a document merely because another window requested an application-wide close.".to_owned(),
+                });
+            self.overlays.open_refusal_focused = false;
+        }
+        true
     }
 
     pub(super) fn show_close_confirmation(&mut self, context: &egui::Context, escape: bool) {
@@ -538,7 +581,7 @@ impl FesTermApp {
             notice.headline.clone(),
             notice.detail.clone(),
         );
-        let mut dismiss = escape;
+        let mut dismiss = escape && self.overlays.open_refusal_focused;
         egui::Modal::new(egui::Id::new("open_refusal_notice"))
             .backdrop_color(egui::Color32::from_black_alpha(160))
             .show(context, |ui| {
@@ -628,7 +671,7 @@ impl FesTermApp {
         if self.overlays.pending_quit.is_none() {
             return;
         }
-        let counts = self.state.live_session_counts();
+        let counts = self.close_session_counts();
         if counts.total() == 0 {
             let purpose = self
                 .overlays

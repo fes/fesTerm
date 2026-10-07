@@ -288,7 +288,9 @@ impersonation token installed on the saving thread and never on the
 process-wide token. Standard and UAC-filtered Windows accounts commonly lack
 this privilege, so their existing-target Save attempts refuse safely rather
 than weakening metadata preservation; Save As to an absent destination remains
-available. A new Save As target keeps
+available. Failure to restore the saving thread's exact prior token removes the
+privileged impersonation token if possible and aborts the process before that
+thread can execute more application work. A new Save As target keeps
 the private DACL. Names are cryptographically unpredictable and live beneath
 an owner-only staging directory on the destination filesystem. Unix verifies
 the prepared inode through both its handle and staging name; Windows relies on
@@ -456,6 +458,13 @@ A cancelled native window close never marks that window as accepted for
 teardown. Update installation and the post-install restart both run the same
 dirty-document, manual-recovery, and live-session checks; installation or
 restart waits rather than setting a quit bypass before those checks complete.
+The primary window uses application-wide live-session counts and the shared
+document registry, so work owned only by another window is not omitted. A dirty
+document whose final view belongs to the current window gets the ordinary
+Save/Discard/Cancel prompt. If a dirty document has multiple views or is owned
+only by another window, the application-wide action refuses with the exact
+document identity and directs the user to save or close it there rather than
+routing a destructive prompt to the wrong view.
 
 Because the control sits with the document, it is presented in the command bar
 beside Save rather than beside the per-view `Edit | Preview | Split` toggle.

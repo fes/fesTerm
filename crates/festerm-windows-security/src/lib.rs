@@ -114,10 +114,14 @@ mod imp {
                 .as_ref()
                 .map_or(ptr::null_mut(), |token| token.as_raw_handle());
             if unsafe { SetThreadToken(ptr::null(), previous) } == 0 {
+                let restore_error = io::Error::last_os_error();
+                let removed = unsafe { SetThreadToken(ptr::null(), ptr::null_mut()) } != 0;
                 tracing::error!(
-                    error = %io::Error::last_os_error(),
-                    "the saving thread's prior Windows security token could not be restored"
+                    error = %restore_error,
+                    privileged_token_removed = removed,
+                    "the saving thread's prior Windows security token could not be restored; aborting before privileged execution can continue"
                 );
+                std::process::abort();
             }
         }
     }

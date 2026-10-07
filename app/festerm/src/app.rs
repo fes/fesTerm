@@ -474,6 +474,10 @@ pub struct FesTermApp {
     /// persistence, and the application quit path; a secondary window owns
     /// only its own tabs.
     role: WindowRole,
+    /// Application-wide session counts supplied by the multi-window
+    /// composition root. Primary-window quit and updater flows use these
+    /// rather than silently ignoring sessions in secondary windows.
+    application_live_session_counts: Option<crate::tabs::LiveSessionCounts>,
     /// A configuration document this window has just committed to disk, held
     /// for the composition root to broadcast to sibling windows (ADR 0032).
     /// Set only after a successful save, so a sibling can never adopt a
@@ -897,6 +901,7 @@ impl FesTermApp {
             update_restart_authorized: false,
             quit_confirmed: false,
             role: WindowRole::Primary,
+            application_live_session_counts: None,
             pending_configuration_broadcast: None,
             window_close_accepted: false,
             workspace_save_requested: false,
@@ -1415,6 +1420,17 @@ impl FesTermApp {
     /// committed, so it can be applied to every sibling window (ADR 0032).
     pub(crate) fn take_configuration_broadcast(&mut self) -> Option<Configuration> {
         self.pending_configuration_broadcast.take()
+    }
+
+    pub(crate) fn live_session_counts(&self) -> crate::tabs::LiveSessionCounts {
+        self.state.live_session_counts()
+    }
+
+    pub(crate) fn set_application_live_session_counts(
+        &mut self,
+        counts: crate::tabs::LiveSessionCounts,
+    ) {
+        self.application_live_session_counts = Some(counts);
     }
 
     /// Adopts a configuration a sibling window committed. Deliberately narrow:
@@ -3881,8 +3897,32 @@ impl FesTermApp {
                             .small()
                             .color(theme::TEXT_MUTED),
                         );
-                        if action_button(ui, ActionButtonRole::Accent, "Install and Restart").clicked() {
+                        let recovery_blocks_install = self.state.has_recovery_notices()
+                            || self
+                                .overlays
+                                .open_refusal
+                                .as_ref()
+                                .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement);
+                        let install = ui
+                            .add_enabled_ui(!recovery_blocks_install, |ui| {
+                                action_button(
+                                    ui,
+                                    ActionButtonRole::Accent,
+                                    "Install and Restart",
+                                )
+                            })
+                            .inner;
+                        if install.clicked() {
                             update_action = Some(UpdateAction::Install);
+                        }
+                        if recovery_blocks_install {
+                            ui.label(
+                                egui::RichText::new(
+                                    "A save-recovery notice must be acknowledged before installing.",
+                                )
+                                .small()
+                                .color(theme::TEXT_SECONDARY),
+                            );
                         }
                     }
                     UpdateStatus::Installing(summary) => {
@@ -6503,6 +6543,24 @@ impl FesTermApp {
         self.state.queue_recovery_notice_for_test(path, error);
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_refusal_headline_for_test(&self) -> Option<&str> {
+        self.overlays
+            .open_refusal
+            .as_ref()
+            .map(|notice| notice.headline.as_str())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_quit_counts_for_test(&self) -> Option<crate::tabs::LiveSessionCounts> {
+        self.overlays.pending_quit.map(|pending| pending.counts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn evaluate_close_request_for_test(&mut self, context: &egui::Context) -> bool {
+        self.evaluate_close_request(context)
+    }
+
     /// Lets the screenshot gallery arrange a real application state -- an
     /// open document, a real close request -- rather than drawing a modal by
     /// hand that nothing else in the product would ever produce.
@@ -6718,6 +6776,7 @@ impl FesTermApp {
             update_restart_authorized: false,
             quit_confirmed: false,
             role: WindowRole::Primary,
+            application_live_session_counts: None,
             pending_configuration_broadcast: None,
             window_close_accepted: false,
             workspace_save_requested: false,
@@ -9544,6 +9603,35 @@ mod tests {
     }
 
     #[test]
+    fn escape_cancels_one_modal_without_acknowledging_a_new_recovery_notice() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.overlays.pending_settings_reset =
+            Some(crate::overlay_state::PendingSettingsResetConfirmation {
+                cancel_focus_requested: false,
+            });
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(560.0, 520.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+
+        assert!(harness.state().overlays.pending_settings_reset.is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .open_refusal
+            .as_ref()
+            .is_some_and(crate::overlay_state::OpenRefusalNotice::requires_acknowledgement));
+        assert!(harness.state().state.has_recovery_notices());
+    }
+
+    #[test]
     fn window_close_waits_for_explicit_recovery_notice_acknowledgement() {
         let context = egui::Context::default();
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
@@ -10234,6 +10322,41 @@ mod tests {
             "answering it resumes the quit rather than ending there"
         );
         assert!(!harness.state().quit_confirmed);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn quitting_refuses_a_dirty_document_that_has_multiple_views() {
+        let context = egui::Context::default();
+        let (mut app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let document = app.state.active_document().unwrap();
+        app.state
+            .documents()
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("unsaved\n")
+            .unwrap();
+        app.state
+            .dispatch(AppCommand::OpenAnotherEditorView, &context);
+        assert_eq!(
+            app.state
+                .documents()
+                .borrow()
+                .get(document)
+                .unwrap()
+                .views(),
+            2
+        );
+
+        assert!(!app.evaluate_close_request(&context));
+
+        assert_eq!(
+            app.open_refusal_headline_for_test(),
+            Some("Quitting is waiting for unsaved documents")
+        );
+        assert!(!app.window_close_accepted);
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -13017,6 +13140,33 @@ mod tests {
             .flat_map(|viewport| &viewport.commands)
             .all(|command| !matches!(command, egui::ViewportCommand::Close)));
         recovery_frame.textures_delta.clear();
+    }
+
+    #[test]
+    fn update_install_explains_when_recovery_acknowledgement_blocks_it() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.updates = UpdateController::ready_to_install_for_test();
+        app.overlays.about_open = true;
+        app.state.queue_recovery_notice_for_test(
+            PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(560.0, 700.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.get_by_label("A save-recovery notice must be acknowledged before installing.");
+        harness.get_by_label("Install and Restart").click();
+        harness.step();
+
+        assert!(!harness.state().update_restart_authorized);
+        assert!(matches!(
+            harness.state().updates.status(),
+            UpdateStatus::ReadyToInstall(_)
+        ));
+        assert!(harness.state().state.has_recovery_notices());
     }
 
     #[test]

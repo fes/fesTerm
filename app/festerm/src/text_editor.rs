@@ -3487,15 +3487,32 @@ mod tests {
     #[test]
     fn saving_markdown_rebinds_preview_authority_without_resetting_the_pane() {
         let directory = TemporaryDirectory::new("preview-save-authority");
-        let path = directory.file("readme.md", "# Heading\n");
+        let path = directory.file("readme.md", "# Heading\n\n![Image](image.png)\n");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+            .save(directory.path.join("image.png"))
+            .unwrap();
         let documents = DocumentRegistry::shared();
         let id = documents.borrow_mut().open_local(&path).unwrap();
         let mut editor = TextEditorTab::new(id, &documents);
         let context = egui::Context::default();
-        let mut output =
-            context.run_ui(Default::default(), |ui| editor.show_preview_pane(ui, 400.0));
-        output.textures_delta.clear();
-        assert!(editor.preview.is_some());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let mut output =
+                context.run_ui(Default::default(), |ui| editor.show_preview_pane(ui, 400.0));
+            output.textures_delta.clear();
+            if editor
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.image_loaded_for_test(0))
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the initial Preview image should load before authority changes"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
         editor.buffer.push_str("\nMore text.\n");
         editor.commit_buffer_for_test(&documents);
 
@@ -3508,6 +3525,10 @@ mod tests {
         assert!(
             editor.preview.is_some(),
             "a generation-only authority update must preserve Preview state"
+        );
+        assert!(
+            !editor.preview.as_ref().unwrap().image_loaded_for_test(0),
+            "decoded image state from the old Markdown generation must be discarded"
         );
     }
 

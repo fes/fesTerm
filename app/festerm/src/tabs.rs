@@ -3893,6 +3893,17 @@ impl AppState {
             .collect()
     }
 
+    pub(crate) fn first_dirty_document(&self) -> Option<DirtyDocumentClose> {
+        self.documents
+            .borrow()
+            .first_dirty_document()
+            .map(|(document, title, origin)| DirtyDocumentClose {
+                document,
+                title,
+                origin,
+            })
+    }
+
     /// Writes a document to its source, reporting what happened so a caller
     /// that is closing the tab afterwards can decline to close on a failure.
     pub(crate) fn save_document(&mut self, document: DocumentId) -> Option<SaveOutcome> {

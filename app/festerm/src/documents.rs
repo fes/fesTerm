@@ -522,6 +522,18 @@ impl DocumentRegistry {
             || self.active_recovery_notice.is_some()
     }
 
+    pub(crate) fn first_dirty_document(&self) -> Option<(DocumentId, String, String)> {
+        self.documents.iter().find_map(|(id, document)| {
+            document.text.is_dirty().then(|| {
+                (
+                    *id,
+                    document.origin.file_name().to_owned(),
+                    document.origin.qualified_label(),
+                )
+            })
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn queue_recovery_notice(&mut self, path: PathBuf, error: SaveError) {
         self.queue_recovery_notice_record(path, error);
