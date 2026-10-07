@@ -29,9 +29,10 @@ mod imp {
     use windows_sys::Win32::{
         Foundation::{
             CloseHandle, GetLastError, LocalFree, RtlNtStatusToDosError, SetHandleInformation,
-            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
-            INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
-            STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
+            ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED, ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ,
+            HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE,
+            STATUS_BUFFER_OVERFLOW, STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH,
+            STATUS_SUCCESS, UNICODE_STRING,
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx,
@@ -850,7 +851,20 @@ mod imp {
             )
         };
         if renamed == 0 {
-            Err(io::Error::last_os_error())
+            let error = io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(code)
+                    if code == ERROR_INVALID_PARAMETER as i32
+                        || code == ERROR_NOT_SUPPORTED as i32
+            ) {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "the filesystem cannot perform a no-overwrite rename",
+                ))
+            } else {
+                Err(error)
+            }
         } else {
             Ok(())
         }

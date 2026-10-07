@@ -493,14 +493,20 @@ mod imp {
 
         type Acl = *mut c_void;
         type AclEntry = *mut c_void;
+        type AclPermset = *mut c_void;
         const ACL_TYPE_EXTENDED: i32 = 0x0000_0100;
         const ACL_FIRST_ENTRY: i32 = 0;
         const ACL_NEXT_ENTRY: i32 = -1;
         const ACL_EXTENDED_ALLOW: i32 = 1;
+        const ACL_ADD_FILE: i32 = 1 << 2;
+        const ACL_DELETE: i32 = 1 << 4;
+        const ACL_DELETE_CHILD: i32 = 1 << 6;
         unsafe extern "C" {
             fn acl_get_fd_np(fd: RawFd, acl_type: i32) -> Acl;
             fn acl_get_entry(acl: Acl, entry_id: i32, entry: *mut AclEntry) -> i32;
             fn acl_get_tag_type(entry: AclEntry, tag_type: *mut i32) -> i32;
+            fn acl_get_permset(entry: AclEntry, permset: *mut AclPermset) -> i32;
+            fn acl_get_perm_np(permset: AclPermset, permission: i32) -> i32;
             fn acl_free(object: *mut c_void) -> i32;
         }
 
@@ -535,7 +541,16 @@ mod imp {
                 let _ = unsafe { acl_free(acl) };
                 return Err(error);
             }
-            if tag_type == ACL_EXTENDED_ALLOW {
+            let mut permset = std::ptr::null_mut();
+            if unsafe { acl_get_permset(entry, &raw mut permset) } != 0 {
+                let error = io::Error::last_os_error();
+                let _ = unsafe { acl_free(acl) };
+                return Err(error);
+            }
+            let permits_substitution = [ACL_ADD_FILE, ACL_DELETE, ACL_DELETE_CHILD]
+                .into_iter()
+                .any(|permission| unsafe { acl_get_perm_np(permset, permission) } == 1);
+            if tag_type == ACL_EXTENDED_ALLOW && permits_substitution {
                 if unsafe { acl_free(acl) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
@@ -973,6 +988,20 @@ mod tests {
         let directory = TemporaryDirectory::new();
         let status = Command::new("chmod")
             .args(["+a", "everyone deny delete"])
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(secure_staging_parent(&directory.open()).is_ok());
+
+        let status = Command::new("chmod")
+            .arg("-N")
+            .arg(&directory.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = Command::new("chmod")
+            .args(["+a", "everyone allow read"])
             .arg(&directory.0)
             .status()
             .unwrap();

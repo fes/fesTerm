@@ -149,7 +149,8 @@ The editor never resolves a divergence silently.
   **unsupported for safe saving**. The error directs Save As to a different
   local disk rather than suggesting a retry that cannot succeed.
 - On Unix, a non-sticky shared-writable destination directory is likewise
-  unsupported because another account could substitute the staging name.
+  refused with folder-specific guidance because another account could
+  substitute the staging name.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit
   is refused whole, not applied without undo or retained as an oversized
   exception. Text, revision, saved/dirty state, undo and redo are unchanged.

@@ -120,20 +120,7 @@ def changed_files(root: Path, base: str) -> set[str]:
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
-def commit_changed_files(root: Path, commit: str) -> set[str]:
-    result = subprocess.run(
-        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
-        cwd=root,
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise TraceabilityError(result.stderr.strip() or "git diff-tree failed")
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
-
-
-def validation_impact_trailers(root: Path, base: str) -> list[tuple[str, list[str]]]:
+def validation_impact_trailers(root: Path, base: str) -> list[str]:
     result = subprocess.run(
         [
             "git",
@@ -149,22 +136,17 @@ def validation_impact_trailers(root: Path, base: str) -> list[tuple[str, list[st
     if result.returncode != 0:
         raise TraceabilityError(result.stderr.decode().strip() or "git log failed")
     fields = result.stdout.split(b"\x00")
-    commits: list[tuple[str, list[str]]] = []
+    trailers: list[str] = []
     for index in range(0, len(fields) - 1, 2):
         commit = fields[index].strip().decode()
         if not commit:
             continue
-        commits.append(
-            (
-                commit,
-                [
-                    trailer.strip()
-                    for trailer in fields[index + 1].decode().split("\x1f")
-                    if trailer.strip()
-                ],
-            )
+        trailers.extend(
+            trailer.strip()
+            for trailer in fields[index + 1].decode().split("\x1f")
+            if trailer.strip()
         )
-    return commits
+    return trailers
 
 
 def validation_impact_ids(trailer: str) -> set[str]:
@@ -184,55 +166,47 @@ def validate_changed_impact(
     changed = changed_files(root, base)
     if not changed:
         return
-    commits = validation_impact_trailers(root, base)
-    if not commits:
+    trailers = validation_impact_trailers(root, base)
+    if not trailers:
         errors.append(
             "changed commits need a 'Validation-Impact:' trailer naming graph/ADR IDs "
             "or 'none - <reason>'"
         )
         return
-    normative = set(registry.get("normative_documents", []))
-    trace_paths = {
-        str(registry["graph"]),
-        str(registry["manual_registry"]),
-        "validation/traceability.json",
-    }
-    for commit, trailers in commits:
-        if not trailers:
-            errors.append(
-                f"{commit[:12]} lacks a parsed Validation-Impact trailer"
-            )
+    for trailer in trailers:
+        if trailer.lower().startswith("none"):
+            if len(trailer.partition("-")[2].strip()) < 8:
+                errors.append("Validation-Impact: none requires a meaningful reason after '-'")
             continue
-        for trailer in trailers:
-            if trailer.lower().startswith("none"):
-                if len(trailer.partition("-")[2].strip()) < 8:
-                    errors.append(
-                        f"{commit[:12]}: Validation-Impact none requires a meaningful reason after '-'"
-                    )
-                continue
-            references = validation_impact_ids(trailer)
-            unknown = references - graph_edges - adr_identifiers
-            if unknown:
-                errors.append(
-                    f"{commit[:12]}: Validation-Impact trailer has unknown IDs: {sorted(unknown)}"
-                )
-            if not references:
-                errors.append(
-                    f"{commit[:12]}: Validation-Impact trailer must name GUI:<edge>/ADR-<number> IDs or use none"
-                )
-        commit_files = commit_changed_files(root, commit)
-        normative_changed = {
-            path
-            for path in commit_files
-            if path in normative or path.startswith("docs/adr/")
-        }
-        trace_changed = bool(commit_files & trace_paths)
-        no_impact = any(trailer.lower().startswith("none") for trailer in trailers)
-        if normative_changed and not trace_changed and not no_impact:
+        references = validation_impact_ids(trailer)
+        unknown = references - graph_edges - adr_identifiers
+        if unknown:
+            errors.append(f"Validation-Impact trailer has unknown IDs: {sorted(unknown)}")
+        if not references:
             errors.append(
-                f"{commit[:12]}: normative documents changed without the action graph/"
-                "trace registry/manual registry changing or an explicit no-impact reason"
+                "Validation-Impact trailer must name GUI:<edge>/ADR-<number> IDs or use none"
             )
+
+    normative = set(registry.get("normative_documents", []))
+    normative_changed = {
+        path
+        for path in changed
+        if path in normative or path.startswith("docs/adr/")
+    }
+    trace_changed = bool(
+        changed
+        & {
+            str(registry["graph"]),
+            str(registry["manual_registry"]),
+            "validation/traceability.json",
+        }
+    )
+    no_impact = any(trailer.lower().startswith("none") for trailer in trailers)
+    if normative_changed and not trace_changed and not no_impact:
+        errors.append(
+            "normative documents changed without the action graph/trace registry/manual "
+            "registry changing or an explicit no-impact reason"
+        )
 
 
 def validate_registry(root: Path, registry_path: Path, base: str | None = None) -> dict[str, int]:

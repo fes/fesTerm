@@ -414,6 +414,7 @@ pub enum SaveFailure {
     NamedStreams,
     UnsupportedFilesystem,
     CrossVolume,
+    UnsafeDestinationFolder,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -438,6 +439,7 @@ impl SaveFailure {
             Self::NamedStreams => "This file's Windows data streams cannot be preserved",
             Self::UnsupportedFilesystem => "This disk cannot support safe saving",
             Self::CrossVolume => "This destination crossed a filesystem boundary",
+            Self::UnsafeDestinationFolder => "This folder cannot protect save staging",
         }
     }
 
@@ -461,7 +463,7 @@ impl SaveFailure {
                 "Publication could not be verified. The destination may contain the new bytes or be absent. In the private .festerm-save-* folder beside it, original (if present) is the prior file, while prepared or payload contains the new bytes. Compare every retained version before recovering or saving there again."
             }
             Self::MetadataPreservation => {
-                "The file's owner, group, ACL, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a file you own."
+                "The file's owner, group, ACL, security labels, attributes, or extended metadata cannot be preserved safely. Use Save As to choose a destination with compatible access metadata."
             }
             Self::EncryptedFile => {
                 "fesTerm cannot safely preserve Windows EFS encryption during replacement. Use Save As to choose a new destination, or edit it with an EFS-aware tool."
@@ -474,6 +476,9 @@ impl SaveFailure {
             }
             Self::CrossVolume => {
                 "Nothing was written. A mount point, junction, or reparse point redirected the destination to another disk. Choose a regular destination on the intended disk."
+            }
+            Self::UnsafeDestinationFolder => {
+                "Nothing was written. Another account may be able to replace temporary save entries in this folder. Use Save As to choose a folder protected from other writers."
             }
         }
     }
@@ -1013,7 +1018,13 @@ impl<'a> TemporaryFile<'a> {
                 .try_clone()
                 .map(cap_std::fs::Dir::into_std_file)
                 .map_err(classify_write_error)?;
-            festerm_unix_security::secure_staging_parent(&parent).map_err(classify_write_error)?
+            festerm_unix_security::secure_staging_parent(&parent).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::Unsupported {
+                    SaveFailure::UnsafeDestinationFolder
+                } else {
+                    classify_write_error(error)
+                }
+            })?
         };
         for _ in 0..TEMPORARY_FILE_ATTEMPTS {
             let staging_directory = temporary_directory_path()?;
@@ -1061,9 +1072,15 @@ impl<'a> TemporaryFile<'a> {
                     .try_clone()
                     .map(cap_std::fs::Dir::into_std_file)
                     .map_err(classify_write_error)?;
-                if !festerm_unix_security::staging_parent_matches(&parent, &parent_security)
-                    .map_err(classify_write_error)?
-                {
+                let matches = match festerm_unix_security::staging_parent_matches(
+                    &parent,
+                    &parent_security,
+                ) {
+                    Ok(matches) => matches,
+                    Err(error) if error.kind() == std::io::ErrorKind::Unsupported => false,
+                    Err(error) => return Err(classify_write_error(error)),
+                };
+                if !matches {
                     drop(staging);
                     tracing::warn!(
                         path = %staging_directory.display(),
@@ -1859,9 +1876,36 @@ mod tests {
         let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
 
         fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(failure, SaveFailure::UnsupportedFilesystem);
+        assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
+        assert!(failure.detail().contains("folder"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_security_change_after_staging_refuses_and_retains_the_private_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TemporaryDirectory::new("parent-security-change");
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        let parent = directory.path.clone();
+        AFTER_STAGING_DIRECTORY_CREATE.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();
+            }));
+        });
+
+        let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+        fs::set_permissions(&directory.path, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(failure, SaveFailure::Interrupted);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert!(fs::read_dir(&directory.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .any(|candidate| candidate.is_dir()));
     }
 
     #[test]

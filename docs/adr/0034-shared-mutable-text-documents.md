@@ -293,9 +293,9 @@ Volumes that cannot enforce private staging or capability-relative
 no-overwrite moves are refused with a dedicated, non-retryable filesystem
 explanation. fesTerm does not silently weaken confidentiality or publication
 semantics for FAT/exFAT and unsupported network/FUSE filesystems. Unix also
-refuses private staging in a non-sticky shared-writable destination directory,
-where another account could substitute the random staging name before its
-handle is retained. Cross-volume redirection has a separate mount,
+refuses private staging with folder-specific guidance in a non-sticky
+shared-writable destination directory, where another account could substitute
+the random staging name before its handle is retained. Cross-volume redirection has a separate mount,
 junction, or reparse-point refusal rather than being misdiagnosed as a missing
 filesystem capability.
 
