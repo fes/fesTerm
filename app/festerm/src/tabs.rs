@@ -3987,6 +3987,15 @@ impl AppState {
         let opened = self.documents.borrow_mut().open_local(path);
         match opened {
             Ok(document) => {
+                if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+                    TabContent::TextEditor(editor) if editor.document() == document => Some(tab.id),
+                    _ => None,
+                }) {
+                    self.documents.borrow_mut().release(document);
+                    self.set_active(existing);
+                    self.workspace_dirty = true;
+                    return None;
+                }
                 self.open_text_document(document);
                 None
             }
@@ -4371,6 +4380,56 @@ impl AppState {
         self.documents
             .borrow_mut()
             .queue_recovery_notice(path, error);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn induce_recovery_notice_for_test(&mut self, path: &Path) -> PathBuf {
+        let id = self.documents.borrow_mut().open_local(path).unwrap();
+        {
+            let mut documents = self.documents.borrow_mut();
+            let document = documents.get_mut(id).unwrap();
+            let end = document.text().text().len();
+            document.text_mut().replace(end..end, "recovery\n").unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            let target = path.to_path_buf();
+            let replacement = path.with_extension("replacement");
+            crate::document_store::set_after_save_replacement_hook(move || {
+                std::fs::write(&replacement, "later\n").unwrap();
+                std::fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = path.to_path_buf();
+            crate::document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = std::fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                std::fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+        assert!(matches!(
+            self.documents.borrow_mut().save(id),
+            Some(SaveOutcome::Failed(_))
+        ));
+        let recovery = self
+            .documents
+            .borrow()
+            .get(id)
+            .unwrap()
+            .recovery_path()
+            .map(Path::to_path_buf)
+            .expect("real save retained a recovery directory");
+        #[cfg(windows)]
+        {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+        assert!(self.documents.borrow_mut().release(id));
+        recovery
     }
 
     pub(crate) fn take_sftp_cleanup_notice(
@@ -7345,6 +7404,35 @@ mod tests {
     }
 
     #[test]
+    fn recovery_notice_overflow_preserves_oldest_paths_and_surfaces_a_count() {
+        let mut state = AppState::for_test();
+        for index in 0..(crate::documents::MAX_PENDING_RECOVERY_NOTICES + 2) {
+            state.queue_recovery_notice_for_test(
+                PathBuf::from(format!("/tmp/.festerm-save-{index}.stage")),
+                festerm_document::SaveError::new(
+                    format!("Recovery {index}"),
+                    format!("detail {index}"),
+                ),
+            );
+        }
+
+        for index in 0..crate::documents::MAX_PENDING_RECOVERY_NOTICES {
+            let notice = state.take_open_refusal_notice().expect("retained notice");
+            assert_eq!(notice.path, format!("/tmp/.festerm-save-{index}.stage"));
+        }
+        let overflow = state.take_open_refusal_notice().expect("overflow summary");
+        assert_eq!(
+            overflow.path,
+            format!(
+                "/tmp/.festerm-save-{}.stage",
+                crate::documents::MAX_PENDING_RECOVERY_NOTICES + 1
+            )
+        );
+        assert!(overflow.detail.contains("2 additional recovery notice(s)"));
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
     fn queued_remote_refusals_are_delivered_without_overwriting_each_other() {
         let mut state = AppState::for_test();
         for index in 1..=3 {
@@ -7359,6 +7447,39 @@ mod tests {
 
         for index in 1..=3 {
             let notice = state.take_open_refusal_notice().expect("queued refusal");
+            assert_eq!(notice.headline, format!("Refusal {index}"));
+        }
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
+    fn asynchronous_remote_refusals_are_collected_in_worker_completion_order() {
+        let mut state = AppState::for_test();
+        for index in 1..=3 {
+            let (sender, receiver) = mpsc::channel();
+            sender
+                .send(TerminalPathWorkerResult::OpenRefusal(
+                    crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        name: format!("remote-{index}.md"),
+                        path: format!("host:/remote-{index}.md"),
+                        headline: format!("Refusal {index}"),
+                        detail: format!("detail {index}"),
+                    },
+                ))
+                .unwrap();
+            state
+                .pending_terminal_path_opens
+                .push(PendingTerminalPathOpen {
+                    receiver,
+                    handle: None,
+                });
+        }
+
+        state.update_pending_terminal_path_opens(&egui::Context::default());
+
+        for index in 1..=3 {
+            let notice = state.take_open_refusal_notice().expect("worker refusal");
             assert_eq!(notice.headline, format!("Refusal {index}"));
         }
         assert!(state.take_open_refusal_notice().is_none());
@@ -7433,6 +7554,58 @@ mod tests {
             .close()
             .expect("Markdown fixture cleanup failed");
         assert!(!other_directory_path.exists());
+    }
+
+    #[test]
+    fn opening_a_hard_link_alias_raises_the_existing_text_editor_tab() {
+        let (directory, first, _) = two_markdown_files();
+        let alias = directory.path().join("alias.md");
+        std::fs::hard_link(&first, &alias).unwrap();
+        let mut state = AppState::for_test();
+
+        assert!(state.open_text_editor(&first).is_none());
+        let document = state.active_document().unwrap();
+        assert!(state.open_text_editor(&alias).is_none());
+
+        let text_editor_tabs = state
+            .tabs
+            .iter()
+            .filter(|tab| matches!(tab.content, TabContent::TextEditor(_)))
+            .count();
+        assert_eq!(text_editor_tabs, 1);
+        assert_eq!(state.active_document(), Some(document));
+        assert_eq!(state.documents.borrow().get(document).unwrap().views(), 1);
+    }
+
+    #[test]
+    fn hard_link_save_as_rebinds_only_the_active_text_editor_view() {
+        let (directory, source, _) = two_markdown_files();
+        let destination = directory.path().join("destination.md");
+        std::fs::hard_link(&source, &destination).unwrap();
+        let mut state = AppState::for_test();
+        assert!(state.open_text_editor(&source).is_none());
+        let source_document = state.active_document().unwrap();
+        state.documents.borrow_mut().retain(source_document);
+        state.open_text_document(source_document);
+        let saving_tab = state.active();
+        let confirmed = crate::document_store::observe_destination(&destination).unwrap();
+
+        state.save_active_text_document_to(&destination, &confirmed);
+
+        let destination_document = state.active_document().unwrap();
+        assert_ne!(destination_document, source_document);
+        assert_eq!(state.active(), saving_tab);
+        assert_eq!(
+            state
+                .tabs
+                .iter()
+                .filter_map(|tab| match &tab.content {
+                    TabContent::TextEditor(editor) => Some(editor.document()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![source_document, destination_document]
+        );
     }
 
     #[test]

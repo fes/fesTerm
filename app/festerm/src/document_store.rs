@@ -189,6 +189,7 @@ pub(crate) enum DestinationExpectation {
 #[derive(Clone, Debug)]
 pub(crate) struct ConfirmedDestination {
     authority: LocalSourceAuthority,
+    identity: Option<FileIdentity>,
     expectation: DestinationExpectation,
 }
 
@@ -198,7 +199,16 @@ impl ConfirmedDestination {
     }
 
     pub(crate) fn matches_source_authority(&self, authority: &LocalSourceAuthority) -> bool {
-        self.authority == *authority
+        match (
+            self.identity,
+            authority
+                .retained_identity
+                .as_ref()
+                .map(|retained| retained.identity),
+        ) {
+            (Some(confirmed), Some(source)) => confirmed == source,
+            _ => self.authority.matches(authority),
+        }
     }
 
     pub(crate) fn matches_requested_path(&self, path: &Path) -> bool {
@@ -298,8 +308,8 @@ pub(crate) struct LocalSourceAuthority {
     retained_identity: Option<RetainedFileIdentity>,
 }
 
-impl PartialEq for LocalSourceAuthority {
-    fn eq(&self, other: &Self) -> bool {
+impl LocalSourceAuthority {
+    pub(crate) fn matches(&self, other: &Self) -> bool {
         match (&self.retained_identity, &other.retained_identity) {
             (Some(left), Some(right)) => left.identity == right.identity,
             _ => {
@@ -308,11 +318,7 @@ impl PartialEq for LocalSourceAuthority {
             }
         }
     }
-}
 
-impl Eq for LocalSourceAuthority {}
-
-impl LocalSourceAuthority {
     pub(crate) fn canonical_path(&self) -> &Path {
         &self.canonical_path
     }
@@ -321,6 +327,23 @@ impl LocalSourceAuthority {
         self.parent_identity
     }
 }
+
+impl PartialEq for LocalSourceAuthority {
+    fn eq(&self, other: &Self) -> bool {
+        self.canonical_path == other.canonical_path
+            && self.parent_identity == other.parent_identity
+            && self
+                .retained_identity
+                .as_ref()
+                .map(|retained| retained.identity)
+                == other
+                    .retained_identity
+                    .as_ref()
+                    .map(|retained| retained.identity)
+    }
+}
+
+impl Eq for LocalSourceAuthority {}
 
 impl Generation {
     #[cfg(not(windows))]
@@ -730,18 +753,18 @@ pub fn freshness(path: &Path, known: Generation) -> Freshness {
 /// Observes the exact Save As destination at confirmation time.
 pub(crate) fn observe_destination(path: &Path) -> Result<ConfirmedDestination, SaveFailure> {
     let parent = parent_directory(path)?;
-    let mut save_directory = source_authority_for_save(path, parent)?;
+    let save_directory = source_authority_for_save(path, parent)?;
+    let mut identity = None;
     let expectation = match open_original_file(&save_directory.directory, &save_directory.target)? {
         Some(original) => {
-            save_directory.source_authority.retained_identity =
-                retain_file_identity(&original.file, original.generation.identity)
-                    .map_err(classify_write_error)?;
+            identity = original.generation.identity;
             DestinationExpectation::Existing(original.generation)
         }
         None => DestinationExpectation::Absent,
     };
     Ok(ConfirmedDestination {
         authority: save_directory.source_authority,
+        identity,
         expectation,
     })
 }
@@ -1199,7 +1222,11 @@ impl<'a> TemporaryFile<'a> {
                     Ok(staging) => cap_std::fs::Dir::from_std_file(staging),
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => {
-                        let _ = directory.remove_dir(&staging_directory);
+                        tracing::warn!(
+                            path = %staging_directory.display(),
+                            %error,
+                            "save staging may have been retained after private directory creation failed"
+                        );
                         return Err(classify_write_error(error));
                     }
                 }
@@ -1216,7 +1243,14 @@ impl<'a> TemporaryFile<'a> {
                 Ok(identity) => identity,
                 Err(error) => {
                     drop(staging);
+                    #[cfg(unix)]
                     let _ = directory.remove_dir(&staging_directory);
+                    #[cfg(windows)]
+                    tracing::warn!(
+                        path = %staging_directory.display(),
+                        %error,
+                        "save staging was retained after its identity could not be verified"
+                    );
                     return Err(classify_write_error(error));
                 }
             };
@@ -1227,7 +1261,11 @@ impl<'a> TemporaryFile<'a> {
                     Ok(parent) => parent,
                     Err(error) => {
                         drop(staging);
-                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                        tracing::warn!(
+                            path = %staging_directory.display(),
+                            %error,
+                            "save staging was retained after the parent security state could not be revalidated"
+                        );
                         return Err(classify_write_error(error));
                     }
                 };
@@ -1239,13 +1277,20 @@ impl<'a> TemporaryFile<'a> {
                     Err(error) if error.kind() == std::io::ErrorKind::Unsupported => false,
                     Err(error) => {
                         drop(staging);
-                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                        tracing::warn!(
+                            path = %staging_directory.display(),
+                            %error,
+                            "save staging was retained after the parent security state could not be revalidated"
+                        );
                         return Err(classify_write_error(error));
                     }
                 };
                 if !matches {
                     drop(staging);
-                    remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                    tracing::warn!(
+                        path = %staging_directory.display(),
+                        "save staging was retained after the parent security state changed"
+                    );
                     return Err(SaveFailure::UnsafeDestinationFolder);
                 }
             }
@@ -1293,8 +1338,13 @@ impl<'a> TemporaryFile<'a> {
                 }
             }
             if let Err(error) = sync_directory_durably(directory) {
-                drop(staging);
-                remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                #[cfg(windows)]
+                remove_staging_by_handle(&staging, &staging_directory);
+                #[cfg(not(windows))]
+                {
+                    drop(staging);
+                    remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                }
                 return Err(classify_write_error(error));
             }
             let payload = Path::new("payload");
@@ -1358,14 +1408,24 @@ impl<'a> TemporaryFile<'a> {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     let _ = staging.remove_file(payload);
-                    drop(staging);
-                    remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                    #[cfg(windows)]
+                    remove_staging_by_handle(&staging, &staging_directory);
+                    #[cfg(not(windows))]
+                    {
+                        drop(staging);
+                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                    }
                     continue;
                 }
                 Err(error) => {
                     let _ = staging.remove_file(payload);
-                    drop(staging);
-                    remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                    #[cfg(windows)]
+                    remove_staging_by_handle(&staging, &staging_directory);
+                    #[cfg(not(windows))]
+                    {
+                        drop(staging);
+                        remove_staging_if_matches(directory, &staging_directory, staging_identity);
+                    }
                     return Err(classify_write_error(error));
                 }
             }
@@ -1599,6 +1659,7 @@ impl<'a> TemporaryFile<'a> {
     }
 }
 
+#[cfg(not(windows))]
 fn remove_staging_if_matches(
     directory: &cap_std::fs::Dir,
     staging_directory: &Path,
@@ -1608,6 +1669,21 @@ fn remove_staging_if_matches(
         .is_ok_and(|current| expected.matches_directory(&current))
     {
         let _ = directory.remove_dir(staging_directory);
+    }
+}
+
+#[cfg(windows)]
+fn remove_staging_by_handle(staging: &cap_std::fs::Dir, staging_directory: &Path) {
+    let result = staging
+        .try_clone()
+        .map(cap_std::fs::Dir::into_std_file)
+        .and_then(|staging| festerm_windows_security::delete_directory_by_handle(&staging));
+    if let Err(error) = result {
+        tracing::warn!(
+            path = %staging_directory.display(),
+            %error,
+            "an unpublished save staging directory could not be removed by handle"
+        );
     }
 }
 
@@ -1630,6 +1706,9 @@ impl Drop for TemporaryFile<'_> {
                     }
                 }
             }
+            #[cfg(windows)]
+            remove_staging_by_handle(&self.staging, &self.staging_directory);
+            #[cfg(not(windows))]
             if self.staging_name_matches() {
                 if let Err(error) = self.directory.remove_dir(&self.staging_directory) {
                     tracing::warn!(
@@ -2300,13 +2379,18 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn grant_everyone_full_control(path: &Path) {
+    fn grant_everyone(path: &Path, rights: &str) {
         let status = process::Command::new("icacls")
             .arg(path)
-            .args(["/grant", "*S-1-1-0:(OI)(CI)F"])
+            .args(["/grant", &format!("*S-1-1-0:(OI)(CI){rights}")])
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    #[cfg(windows)]
+    fn grant_everyone_full_control(path: &Path) {
+        grant_everyone(path, "F");
     }
 
     #[cfg(windows)]
@@ -2326,7 +2410,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_parent_security_change_after_staging_refuses_and_cleans_staging() {
+    fn windows_parent_security_change_after_staging_refuses_and_retains_staging() {
         let directory = TemporaryDirectory::new("windows-parent-security-change");
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
@@ -2341,6 +2425,45 @@ mod tests {
 
         assert_eq!(failure, SaveFailure::UnsafeDestinationFolder);
         assert_eq!(fs::read_to_string(&path).unwrap(), "before\n");
+        assert!(fs::read_dir(&directory.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .any(|candidate| candidate.is_dir()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_save_route_refuses_each_untrusted_parent_mutation_right() {
+        for (name, rights) in [
+            ("delete-child", "(DC)"),
+            ("write-dacl", "(WDAC)"),
+            ("write-owner", "(WO)"),
+            ("generic-all", "(GA)"),
+        ] {
+            let directory = TemporaryDirectory::new(name);
+            let path = directory.file("notes.md", "before\n");
+            let loaded = load(&path, bounds()).unwrap();
+            grant_everyone(&directory.path, rights);
+
+            let failure = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap_err();
+
+            assert_eq!(failure, SaveFailure::UnsafeDestinationFolder, "{name}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "before\n", "{name}");
+            assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1, "{name}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_save_route_accepts_shared_modify_without_child_mutation_rights() {
+        let directory = TemporaryDirectory::new("shared-modify-parent");
+        let path = directory.file("notes.md", "before\n");
+        let loaded = load(&path, bounds()).unwrap();
+        grant_everyone(&directory.path, "(AD,WD,DE)");
+
+        save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
         assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
@@ -2608,6 +2731,23 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
         assert_eq!(saved.generation.size(), 4);
+    }
+
+    #[test]
+    fn save_as_over_an_existing_destination_releases_confirmation_and_staging_handles() {
+        let directory = TemporaryDirectory::new("saveas-existing-cleanup");
+        let path = directory.file("existing.md", "before\n");
+        let destination = observe_destination(&path).unwrap();
+
+        save(
+            &path,
+            b"after\n",
+            SaveExpectation::Destination(&destination),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
+        assert_eq!(fs::read_dir(&directory.path).unwrap().count(), 1);
     }
 
     #[cfg(unix)]

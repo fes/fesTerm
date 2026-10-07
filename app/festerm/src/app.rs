@@ -6778,11 +6778,15 @@ mod tests {
     #[test]
     fn recovery_notices_wait_for_the_visible_modal_and_then_arrive_in_order() {
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let directory = tempfile::Builder::new()
+            .prefix("festerm-app-recovery-")
+            .tempdir()
+            .unwrap();
+        let path = directory.path().join("notes.md");
+        fs::write(&path, "before\n").unwrap();
         app.overlays.about_open = true;
-        app.state.queue_recovery_notice_for_test(
-            PathBuf::from("/tmp/.festerm-save-first.stage"),
-            festerm_document::SaveError::new("First recovery", "first detail"),
-        );
+        let recovery = app.state.induce_recovery_notice_for_test(&path);
+        let recovery_display = recovery.display().to_string();
         app.state.queue_recovery_notice_for_test(
             PathBuf::from("/tmp/.festerm-save-second.stage"),
             festerm_document::SaveError::new("Second recovery", "second detail"),
@@ -6801,7 +6805,10 @@ mod tests {
                 .open_refusal
                 .as_ref()
                 .map(|notice| (notice.title.as_deref(), notice.headline.as_str())),
-            Some((Some("Saving needs manual recovery"), "First recovery"))
+            Some((
+                Some("Saving needs manual recovery"),
+                "Saving needs manual recovery"
+            ))
         );
         assert_eq!(
             harness
@@ -6810,7 +6817,7 @@ mod tests {
                 .open_refusal
                 .as_ref()
                 .map(|notice| notice.path.as_str()),
-            Some("/tmp/.festerm-save-first.stage")
+            Some(recovery_display.as_str())
         );
 
         harness.state_mut().overlays.open_refusal = None;

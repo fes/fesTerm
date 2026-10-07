@@ -31,7 +31,7 @@ mod imp {
         Foundation::{
             CloseHandle, GetLastError, LocalFree, RtlNtStatusToDosError, SetHandleInformation,
             SetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_ALL_ASSIGNED, ERROR_NOT_SUPPORTED,
-            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
+            ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, HANDLE, HANDLE_FLAG_INHERIT,
             INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, STATUS_BUFFER_OVERFLOW,
             STATUS_BUFFER_TOO_SMALL, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS, UNICODE_STRING,
         },
@@ -53,12 +53,13 @@ mod imp {
             TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
-            FileBasicInfo, FileRenameInfoEx, GetFileInformationByHandle,
+            FileBasicInfo, FileDispositionInfo, FileRenameInfoEx, GetFileInformationByHandle,
             SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS,
             FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL,
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_DELETE_CHILD, FILE_READ_ATTRIBUTES,
-            FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            FILE_WRITE_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_DELETE_CHILD,
+            FILE_DISPOSITION_INFO, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE,
+            WRITE_DAC, WRITE_OWNER,
         },
         System::{
             Console::{
@@ -390,8 +391,7 @@ mod imp {
         const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
         const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
         const ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE: u8 = 11;
-        const DANGEROUS: u32 =
-            FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL | GENERIC_WRITE;
+        const DANGEROUS: u32 = FILE_DELETE_CHILD | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
 
         let mut token = ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
@@ -1269,6 +1269,25 @@ mod imp {
         Ok(file)
     }
 
+    /// Marks the exact retained directory object for deletion after its final
+    /// handle closes, without resolving its parent pathname again.
+    pub fn delete_directory_by_handle(directory: &File) -> io::Result<()> {
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        if unsafe {
+            SetFileInformationByHandle(
+                directory.as_raw_handle() as HANDLE,
+                FileDispositionInfo,
+                (&raw const disposition).cast(),
+                mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        } == 0
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
     /// Atomically publishes an open file under a target directory without
     /// replacing an existing target.
     pub fn rename_file_noreplace(
@@ -1464,9 +1483,9 @@ mod imp {
                 AclSizeInformation, AddAuditAccessAceEx,
                 Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
                 GetAce, GetAclInformation, GetSecurityDescriptorControl, SetSecurityDescriptorSacl,
-                ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
-                PROTECTED_SACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
-                SE_SACL_PROTECTED, SYSTEM_AUDIT_ACE,
+                WinNetworkServiceSid, ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION,
+                DACL_SECURITY_INFORMATION, PROTECTED_SACL_SECURITY_INFORMATION,
+                SACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SE_SACL_PROTECTED, SYSTEM_AUDIT_ACE,
             },
             Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS,
         };
@@ -1680,6 +1699,28 @@ mod imp {
             assert!(secure_staging_parent(&directory_handle).unwrap().is_none());
         }
 
+        #[test]
+        fn staging_parent_trust_excludes_other_well_known_service_owners() {
+            let mut token = ptr::null_mut();
+            assert_ne!(
+                unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
+                0
+            );
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let user = token_information(token.as_raw_handle(), TokenUser).unwrap();
+            let user = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() };
+            let system = well_known_sid(WinLocalSystemSid).unwrap();
+            let administrators = well_known_sid(WinBuiltinAdministratorsSid).unwrap();
+            let network_service = well_known_sid(WinNetworkServiceSid).unwrap();
+
+            assert!(!trusted_parent_sid(
+                network_service.as_ptr().cast_mut().cast(),
+                user.User.Sid,
+                &system,
+                &administrators,
+            ));
+        }
+
         fn make_unprotected(file: &File) {
             let mut descriptor = SECURITY_DESCRIPTOR::default();
             assert_ne!(
@@ -1724,6 +1765,25 @@ mod imp {
             assert_eq!(child.metadata().unwrap().len(), 0);
             assert!(stolen.join("unwritten.tmp").is_file());
             assert!(!staging.join("unwritten.tmp").exists());
+        }
+
+        #[test]
+        fn handle_bound_deletion_removes_only_the_retained_directory_object() {
+            let directory = TemporaryDirectory::new();
+            let directory_handle = directory.handle();
+            let staging = directory.0.join("private.stage");
+            let moved = directory.0.join("moved.stage");
+            let staging_handle =
+                create_current_user_only_directory(&directory_handle, Path::new("private.stage"))
+                    .unwrap();
+            fs::rename(&staging, &moved).unwrap();
+            fs::create_dir(&staging).unwrap();
+
+            delete_directory_by_handle(&staging_handle).unwrap();
+            drop(staging_handle);
+
+            assert!(!moved.exists());
+            assert!(staging.is_dir());
         }
 
         #[test]
@@ -1982,9 +2042,9 @@ mod imp {
 pub use imp::{
     apply_security_metadata, create_current_user_only_directory, create_current_user_only_file,
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
-    create_current_user_only_file_with_audit, disable_std_handle_inheritance,
-    enable_security_privilege, is_current_user_only, open_file_no_reparse,
-    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    create_current_user_only_file_with_audit, delete_directory_by_handle,
+    disable_std_handle_inheritance, enable_security_privilege, is_current_user_only,
+    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, rename_file_noreplace,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,

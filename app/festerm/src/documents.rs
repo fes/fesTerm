@@ -48,7 +48,7 @@ const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 /// and, on a remote origin, spend a round trip on text the user is still in
 /// the middle of typing.
 const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
-const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
+pub(crate) const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -114,6 +114,11 @@ impl OpenDocument {
 
     pub(crate) const fn views(&self) -> usize {
         self.views
+    }
+
+    #[cfg(test)]
+    pub(crate) fn recovery_path(&self) -> Option<&Path> {
+        self.recovery_path.as_deref()
     }
 
     pub(crate) const fn read_only(&self) -> bool {
@@ -231,6 +236,7 @@ pub(crate) struct DocumentRegistry {
     next_id: u64,
     next_untitled_by_prefix: HashMap<String, u64>,
     pending_recovery_notices: VecDeque<(PathBuf, SaveError)>,
+    recovery_notice_overflow: Option<(usize, PathBuf, SaveError)>,
     bounds: DocumentBounds,
 }
 
@@ -268,7 +274,10 @@ impl DocumentRegistry {
             .documents
             .iter()
             .filter(|(_, document)| {
-                document.source_authority.as_ref() == Some(&loaded.source_authority)
+                document
+                    .source_authority
+                    .as_ref()
+                    .is_some_and(|authority| authority.matches(&loaded.source_authority))
                     && document.generation.is_some_and(|generation| {
                         document_store::source_authority_is_current(
                             document.source_authority.as_ref().expect("checked above"),
@@ -306,7 +315,10 @@ impl DocumentRegistry {
             _ => return None,
         };
         let current = document_store::resolve_source_authority(path).ok();
-        let valid = authority.as_ref() == current.as_ref()
+        let valid = authority
+            .as_ref()
+            .zip(current.as_ref())
+            .is_some_and(|(authority, current)| authority.matches(current))
             && authority
                 .zip(generation)
                 .is_some_and(|(authority, generation)| {
@@ -449,28 +461,59 @@ impl DocumentRegistry {
         self.documents.remove(&id);
         self.by_key.retain(|_, document| *document != id);
         if let Some(recovery) = recovery {
-            if self.pending_recovery_notices.len() == MAX_PENDING_RECOVERY_NOTICES {
-                self.pending_recovery_notices.pop_front();
-            }
-            self.pending_recovery_notices.push_back(recovery);
+            self.queue_recovery_notice_record(recovery.0, recovery.1);
         }
         true
     }
 
     pub(crate) fn take_recovery_notice(&mut self) -> Option<(PathBuf, SaveError)> {
-        self.pending_recovery_notices.pop_front()
+        self.pending_recovery_notices.pop_front().or_else(|| {
+            self.recovery_notice_overflow
+                .take()
+                .map(|(count, path, error)| {
+                    (
+                        path.clone(),
+                        SaveError::new(
+                            "Additional saves need manual recovery",
+                            format!(
+                                "{count} additional recovery notice(s) exceeded the visible queue. \
+                                 The latest retained path is {}. {} Check the application logs for \
+                                 every retained path.",
+                                path.display(),
+                                error.detail()
+                            ),
+                        ),
+                    )
+                })
+        })
     }
 
     pub(crate) fn has_recovery_notices(&self) -> bool {
-        !self.pending_recovery_notices.is_empty()
+        !self.pending_recovery_notices.is_empty() || self.recovery_notice_overflow.is_some()
     }
 
     #[cfg(test)]
     pub(crate) fn queue_recovery_notice(&mut self, path: PathBuf, error: SaveError) {
-        if self.pending_recovery_notices.len() == MAX_PENDING_RECOVERY_NOTICES {
-            self.pending_recovery_notices.pop_front();
+        self.queue_recovery_notice_record(path, error);
+    }
+
+    fn queue_recovery_notice_record(&mut self, path: PathBuf, error: SaveError) {
+        if self.pending_recovery_notices.len() < MAX_PENDING_RECOVERY_NOTICES {
+            self.pending_recovery_notices.push_back((path, error));
+            return;
         }
-        self.pending_recovery_notices.push_back((path, error));
+        tracing::error!(
+            path = %path.display(),
+            "a save recovery notice exceeded the visible queue; its path remains in the logs"
+        );
+        match &mut self.recovery_notice_overflow {
+            Some((count, latest_path, latest_error)) => {
+                *count += 1;
+                *latest_path = path;
+                *latest_error = error;
+            }
+            overflow @ None => *overflow = Some((1, path, error)),
+        }
     }
 
     pub(crate) fn get(&self, id: DocumentId) -> Option<&OpenDocument> {
@@ -661,9 +704,7 @@ impl DocumentRegistry {
             }
         };
         let keyed = self
-            .by_key
-            .get(&origin.key())
-            .copied()
+            .current_keyed_local(&origin)
             .filter(|candidate| *candidate != id || source_is_exact_destination);
         let mut matching = Vec::new();
         if let Some(keyed) = keyed {
@@ -1222,6 +1263,52 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_unlinked_source_cannot_reuse_its_retained_identity_for_a_replacement() {
+        let directory = TemporaryDirectory::new("unlinked-retained-identity");
+        let path = directory.file("notes.md", "before\n");
+        let alias = directory.path.join("alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let stale = registry.open_local(&path).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), stale);
+
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, "replacement\n").unwrap();
+        let replacement = registry.open_local(&alias).unwrap();
+
+        assert_ne!(replacement, stale);
+        assert_eq!(
+            registry.get(replacement).unwrap().text().text(),
+            "replacement\n"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_symlink_aliases_are_revalidated_after_retargeting() {
+        use std::os::windows::fs::symlink_file;
+
+        let directory = TemporaryDirectory::new("windows-symlink-alias");
+        let first_path = directory.file("first.md", "first\n");
+        let second_path = directory.file("second.md", "second\n");
+        let alias = directory.path.join("alias.md");
+        symlink_file(&first_path, &alias)
+            .expect("Windows CI must permit the owned file-symlink fixture");
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&first_path).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), first);
+        fs::remove_file(&alias).unwrap();
+        symlink_file(&second_path, &alias).unwrap();
+
+        assert_eq!(registry.find_current_local(&alias), None);
+        let reopened = registry.open_local(&alias).unwrap();
+        assert_ne!(reopened, first);
+        assert_eq!(registry.get(reopened).unwrap().text().text(), "second\n");
+    }
+
     #[test]
     fn highlighting_is_read_only_over_the_document_it_describes() {
         let directory = TemporaryDirectory::new("syntax-read-only");
@@ -1518,17 +1605,50 @@ mod tests {
         let source = directory.file("source.md", "source\n");
         let destination = directory.path.join("destination.md");
         fs::hard_link(&source, &destination).unwrap();
-        let recovery = directory.path.join(".festerm-save-recovery.stage");
         let mut registry = DocumentRegistry::new();
         let source_id = registry.open_local(&source).unwrap();
         type_into(&mut registry, source_id, "edited\n");
-        let error = SaveError::new(
-            "Saving needs manual recovery",
-            format!("Recover retained versions from {}.", recovery.display()),
-        );
-        let document = registry.get_mut(source_id).unwrap();
-        document.recovery_path = Some(recovery.clone());
-        document.recovery_error = Some(error.clone());
+        #[cfg(not(windows))]
+        {
+            let target = source.clone();
+            let replacement = directory.path.join("replacement.md");
+            document_store::set_after_save_replacement_hook(move || {
+                fs::write(&replacement, "later\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = source.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+        assert!(matches!(
+            registry.save(source_id),
+            Some(SaveOutcome::Failed(_))
+        ));
+        let recovery = registry
+            .get(source_id)
+            .unwrap()
+            .recovery_path
+            .clone()
+            .expect("real save failure retained recovery");
+        let error = registry
+            .get(source_id)
+            .unwrap()
+            .recovery_error
+            .clone()
+            .expect("real save failure retained its error");
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&source).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(&source, permissions).unwrap();
+        }
         let expectation = document_store::observe_destination(&destination).unwrap();
 
         let (outcome, moved) = registry
@@ -1537,7 +1657,6 @@ mod tests {
 
         assert_eq!(outcome, SaveOutcome::Failed(error));
         assert!(moved.is_none());
-        assert_eq!(fs::read_to_string(&source).unwrap(), "source\n");
         assert_eq!(fs::read_to_string(&destination).unwrap(), "source\n");
         assert_eq!(
             registry.get(source_id).unwrap().recovery_path.as_ref(),
@@ -1573,6 +1692,35 @@ mod tests {
         assert_eq!(
             registry.get(unrelated).unwrap().text().text(),
             "unrelated\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_revalidates_a_retargeted_secondary_alias_before_destination_reuse() {
+        let directory = TemporaryDirectory::new("save-as-retargeted-secondary-alias");
+        let source = directory.file("source.md", "source\n");
+        let original = directory.file("original.md", "original\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&original, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let original_id = registry.open_local(&original).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), original_id);
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, "replacement\n").unwrap();
+        let expectation = document_store::observe_destination(&alias).unwrap();
+        let (outcome, moved) = registry.save_as(source_id, &alias, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert!(moved.is_some_and(|destination| destination != original_id));
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "source\nedited\n");
+        assert_eq!(fs::read_to_string(&original).unwrap(), "original\n");
+        assert_eq!(
+            registry.get(original_id).unwrap().text().text(),
+            "original\n"
         );
     }
 

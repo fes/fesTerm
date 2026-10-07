@@ -486,16 +486,24 @@ manual recovery and confirm refusal preserves its exact breadcrumb. On macOS, se
 child mutation, ACL mutation, and ownership-change rights and confirm every
 case refuses before staging. On Windows, confirm an untrusted parent owner or
 a DACL granting an unprivileged principal child deletion, DACL mutation,
-ownership mutation, generic write, or generic all refuses before document
-bytes; the current user, LocalSystem, and Builtin Administrators are the
-explicit trusted set. Mutate the owner/DACL after private staging is retained
-and confirm coherent-snapshot revalidation refuses. Confirm a stale Save As
+ownership mutation, or generic all refuses before document bytes; the current
+user, LocalSystem, and Builtin Administrators are the explicit trusted set.
+Confirm add-file/add-directory, generic-write-equivalent, and parent-delete
+grants alone remain usable because they cannot substitute the protected
+retained child. Mutate the owner/DACL after private staging is retained and
+confirm coherent-snapshot revalidation refuses, preserves the empty private
+stage for inspection, and never deletes through the untrusted pathname.
+Confirm a stale Save As
 explanation survives the automatic refresh until the next explicit Save press
 but clears on navigation. Queue two manual-recovery notices behind an
 unrelated visible modal; neither may replace it, and both must appear after
-dismissal in insertion order with the exact recovery paths. Complete several
-asynchronous remote-open refusals while that modal remains visible and confirm
-their bounded FIFO delivers each refusal rather than overwriting an earlier one.
+dismissal in insertion order with the exact recovery paths. Exercise every
+blocking modal/picker state. Overflow the bounded recovery queue and confirm
+the oldest exact paths remain visible plus a counted latest-path notice points
+to logs for all additional paths. Complete several asynchronous remote-open
+refusals through worker-result channels while that modal remains visible and
+confirm their bounded FIFO delivers each refusal rather than overwriting an
+earlier one.
 
 CP-15 saved-local images: open owned local Markdown fixtures in Preview
 and Split, exceed 64 automatic references and explicitly load the next image.
@@ -524,9 +532,10 @@ replacement, final/intermediate symlink races, captured-root rebinding and
 supported in-root aliases. Unprivileged Windows junction tests cover
 intermediate and root-acquisition races; portable tests cover visible
 source-resolution refusal, generation mismatch and directory-handle release
-after successful/refused reads. Windows file-symlink native presentation still
-needs an owned fixture on a Developer Mode or symlink-privileged machine; the
-unprivileged junction tests do not claim it. Native
+after successful/refused reads. Windows CI now owns a file-symlink fixture and verifies alias reuse plus
+retargeting when Developer Mode or symlink privilege is available; the test
+fails rather than silently skipping when the runner lacks that required
+capability. Native
 visual/focus/accessibility and filesystem-permission review remain pending;
 this is not total-RAM/VRAM or long-running RSS acceptance.
 

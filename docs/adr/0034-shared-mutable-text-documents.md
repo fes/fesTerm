@@ -238,7 +238,10 @@ and recovery file likewise has inherited ACLs cleared and is verified as mode
 reconstructing a pathname. Before any document bytes are written or copied,
 the Windows parent must be owned by the current user, LocalSystem, or Builtin
 Administrators and its DACL must not grant an unprivileged principal child
-deletion or access-policy mutation rights. The current user, LocalSystem, and
+deletion or access-policy mutation rights. Add-file/add-directory access,
+generic-write-equivalent creation, and deletion of the parent itself do not by
+themselves permit substitution of the retained private child and are not
+refused. The current user, LocalSystem, and
 Builtin Administrators are the explicit trusted set because the latter two can
 already control the process and host; the owner/DACL snapshot is captured
 coherently and revalidated after the private staging handle is retained. Then
@@ -300,7 +303,10 @@ If the last view closes or rebinds, the registry promotes that record to a
 bounded ordered application-level notice rather than discarding the only
 visible breadcrumb. A queued recovery notice never replaces an undismissed
 modal, and asynchronous open refusals use a bounded FIFO rather than
-overwriting one another while a modal is visible. This
+overwriting one another while a modal is visible. If the bounded recovery
+notice queue overflows, its oldest exact breadcrumbs remain visible and a
+final counted notice identifies the latest retained path and directs the user
+to the logs for every additional path. This
 also covers partial move failures; every ambiguous arrangement is retained for
 manual recovery. Failure to reproduce ownership/access metadata refuses before
 publication with an ownership-specific Save As explanation. Cleanup failure
@@ -336,7 +342,9 @@ could otherwise substitute the random staging name before its handle is
 retained. A parent-security change
 after handle retention refuses and may leave the empty private staging
 directory for inspection rather than deleting through the now-untrusted
-parent. Cross-volume redirection has a separate mount,
+parent. When the parent remains trusted, Windows cleanup marks the exact
+retained directory handle for deletion rather than resolving the staging
+pathname again. Cross-volume redirection has a separate mount,
 junction, or reparse-point refusal rather than being misdiagnosed as a missing
 filesystem capability.
 

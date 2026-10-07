@@ -427,4 +427,69 @@ mod tests {
         };
         assert!(overlays.blocks_terminal_input());
     }
+
+    #[test]
+    fn every_modal_overlay_blocks_deferred_application_notices() {
+        let tab = TabId::next_for_test();
+        let restore_tab = TabId::next_for_test();
+        let pending_close = OverlayState {
+            pending_close: Some(PendingCloseConfirmation {
+                tab,
+                identity: "test".to_owned(),
+                consequence: CloseConsequence::TerminateLocalProcess,
+                lifecycle_generation: 1,
+                restore_tab,
+                cancel_focus_requested: false,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(pending_close.blocks_terminal_input_except_paste());
+
+        let pending_document_close = OverlayState {
+            pending_document_close: Some(PendingDocumentCloseConfirmation {
+                tab,
+                document: DocumentId::from_raw(1),
+                title: "notes.md".to_owned(),
+                origin: "/tmp/notes.md".to_owned(),
+                restore_tab,
+                save_focus_requested: false,
+                then: AfterDocumentClose::CloseTab,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(pending_document_close.blocks_terminal_input_except_paste());
+
+        let pending_file_drop = OverlayState {
+            pending_file_drop: Some(PendingFileDropConfirmation {
+                tab,
+                identity: "test".to_owned(),
+                text: "/tmp/notes.md".to_owned(),
+                path_count: 1,
+                lifecycle_generation: 1,
+                cancel_focus_requested: false,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(pending_file_drop.blocks_terminal_input_except_paste());
+
+        let directory = tempfile::tempdir().unwrap();
+        let markdown_picker = OverlayState {
+            markdown_file_picker: Some(MarkdownFilePicker::new(
+                directory.path().to_path_buf(),
+                eframe::egui::Context::default(),
+            )),
+            ..OverlayState::default()
+        };
+        assert!(markdown_picker.blocks_terminal_input_except_paste());
+
+        let save_as_picker = OverlayState {
+            save_as_picker: Some(crate::save_as::SaveAsPicker::new(
+                directory.path().to_path_buf(),
+                "notes.md".to_owned(),
+                eframe::egui::Context::default(),
+            )),
+            ..OverlayState::default()
+        };
+        assert!(save_as_picker.blocks_terminal_input_except_paste());
+    }
 }
