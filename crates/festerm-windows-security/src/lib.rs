@@ -42,26 +42,26 @@ mod imp {
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
             CreateWellKnownSid, DuplicateTokenEx, EqualSid, GetAce, GetAclInformation,
             GetKernelObjectSecurity, GetLengthSid, GetSecurityDescriptorControl,
-            GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation,
-            InitializeAcl, InitializeSecurityDescriptor, SecurityImpersonation,
-            SetKernelObjectSecurity, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-            SetSecurityDescriptorOwner, SetTokenInformation, TokenDefaultDacl, TokenImpersonation,
-            TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid, ACCESS_ALLOWED_ACE,
-            ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION,
-            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, INHERIT_ONLY_ACE,
-            LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-            PROTECTED_DACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
-            SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME, TOKEN_ADJUST_DEFAULT,
-            TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_IMPERSONATE,
-            TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+            GetSecurityDescriptorDacl, GetSecurityDescriptorGroup, GetSecurityDescriptorOwner,
+            GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
+            SecurityImpersonation, SetKernelObjectSecurity, SetSecurityDescriptorControl,
+            SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, SetTokenInformation,
+            TokenDefaultDacl, TokenImpersonation, TokenUser, WinBuiltinAdministratorsSid,
+            WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION,
+            ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION,
+            GROUP_SECURITY_INFORMATION, INHERIT_ONLY_ACE, LABEL_SECURITY_INFORMATION,
+            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+            SACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME,
+            TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
+            TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
         },
         Storage::FileSystem::{
             FileBasicInfo, FileDispositionInfo, GetFileInformationByHandle,
-            GetFileInformationByHandleEx, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-            DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED,
-            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
-            FILE_DELETE_CHILD, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+            GetFileInformationByHandleEx, ReOpenFile, SetFileInformationByHandle,
+            BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
+            FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_BASIC_INFO, FILE_DELETE_CHILD, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_READ_EA, FILE_SHARE_DELETE,
             FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE,
             WRITE_DAC, WRITE_OWNER,
@@ -675,7 +675,10 @@ mod imp {
         expected: &SecurityMetadata,
     ) -> Option<&'static str> {
         if current.descriptor != expected.descriptor {
-            Some("owner, group, or DACL")
+            Some(security_descriptor_mismatch(
+                &current.descriptor,
+                &expected.descriptor,
+            ))
         } else if current.audit_sacl != expected.audit_sacl {
             Some("audit SACL")
         } else if current.mandatory_label != expected.mandatory_label {
@@ -699,6 +702,97 @@ mod imp {
         } else {
             None
         }
+    }
+
+    fn security_descriptor_mismatch(current: &[u8], expected: &[u8]) -> &'static str {
+        let current = current.as_ptr().cast_mut().cast();
+        let expected = expected.as_ptr().cast_mut().cast();
+        let mut current_owner = ptr::null_mut();
+        let mut expected_owner = ptr::null_mut();
+        let mut ignored = 0;
+        if unsafe { GetSecurityDescriptorOwner(current, &raw mut current_owner, &raw mut ignored) }
+            == 0
+            || unsafe {
+                GetSecurityDescriptorOwner(expected, &raw mut expected_owner, &raw mut ignored)
+            } == 0
+            || current_owner.is_null() != expected_owner.is_null()
+            || (!current_owner.is_null() && unsafe { EqualSid(current_owner, expected_owner) } == 0)
+        {
+            return "owner";
+        }
+
+        let mut current_group = ptr::null_mut();
+        let mut expected_group = ptr::null_mut();
+        if unsafe { GetSecurityDescriptorGroup(current, &raw mut current_group, &raw mut ignored) }
+            == 0
+            || unsafe {
+                GetSecurityDescriptorGroup(expected, &raw mut expected_group, &raw mut ignored)
+            } == 0
+            || current_group.is_null() != expected_group.is_null()
+            || (!current_group.is_null() && unsafe { EqualSid(current_group, expected_group) } == 0)
+        {
+            return "group";
+        }
+
+        let mut current_dacl_present = 0;
+        let mut expected_dacl_present = 0;
+        let mut current_dacl = ptr::null_mut();
+        let mut expected_dacl = ptr::null_mut();
+        if unsafe {
+            GetSecurityDescriptorDacl(
+                current,
+                &raw mut current_dacl_present,
+                &raw mut current_dacl,
+                &raw mut ignored,
+            )
+        } == 0
+            || unsafe {
+                GetSecurityDescriptorDacl(
+                    expected,
+                    &raw mut expected_dacl_present,
+                    &raw mut expected_dacl,
+                    &raw mut ignored,
+                )
+            } == 0
+            || current_dacl_present != expected_dacl_present
+            || current_dacl.is_null() != expected_dacl.is_null()
+        {
+            return "DACL presence";
+        }
+        if !current_dacl.is_null() {
+            // SAFETY: the validated security descriptors own both ACLs, whose
+            // headers declare the byte ranges returned by Windows.
+            let (current_acl, expected_acl) = unsafe {
+                (
+                    std::slice::from_raw_parts(
+                        current_dacl.cast::<u8>(),
+                        usize::from((*current_dacl).AclSize),
+                    ),
+                    std::slice::from_raw_parts(
+                        expected_dacl.cast::<u8>(),
+                        usize::from((*expected_dacl).AclSize),
+                    ),
+                )
+            };
+            if current_acl != expected_acl {
+                return "DACL";
+            }
+        }
+
+        let mut current_control = 0;
+        let mut expected_control = 0;
+        let mut revision = 0;
+        if unsafe {
+            GetSecurityDescriptorControl(current, &raw mut current_control, &raw mut revision)
+        } == 0
+            || unsafe {
+                GetSecurityDescriptorControl(expected, &raw mut expected_control, &raw mut revision)
+            } == 0
+            || current_control != expected_control
+        {
+            return "DACL control";
+        }
+        "owner, group, or DACL serialization"
     }
 
     fn apply_security_descriptor_if_changed(
@@ -1297,6 +1391,26 @@ mod imp {
     /// reparse point.
     pub fn open_file_no_reparse(directory: &File, name: &Path) -> io::Result<File> {
         open_file_no_reparse_with_access(directory, name, GENERIC_READ)
+    }
+
+    /// Retains the exact file object for identity comparisons without blocking
+    /// later rename or deletion of either the file or its parent directory.
+    pub fn reopen_file_for_identity(file: &File) -> io::Result<File> {
+        // SAFETY: `file` owns a live file handle. A successful call returns one
+        // newly owned handle to the same file object without resolving a path.
+        let reopened = unsafe {
+            ReOpenFile(
+                file.as_raw_handle(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+            )
+        };
+        if reopened == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: successful `ReOpenFile` returned one newly owned handle.
+        Ok(unsafe { File::from_raw_handle(reopened) })
     }
 
     /// Retains a no-follow file for generation, content, and security checks
@@ -2476,7 +2590,7 @@ pub use imp::{
     is_current_user_only, lock_directory_path_without_delete_sharing, open_file_no_reparse,
     open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
-    open_file_no_reparse_for_verification, rename_file_noreplace,
+    open_file_no_reparse_for_verification, rename_file_noreplace, reopen_file_for_identity,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
     secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
     DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard, StagingParentSecurity,

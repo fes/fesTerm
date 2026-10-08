@@ -285,7 +285,11 @@ fn retain_file_identity(
 ) -> Result<Option<RetainedFileIdentity>, std::io::Error> {
     identity
         .map(|identity| {
-            file.try_clone().map(|handle| RetainedFileIdentity {
+            #[cfg(windows)]
+            let handle = festerm_windows_security::reopen_file_for_identity(file)?;
+            #[cfg(not(windows))]
+            let handle = file.try_clone()?;
+            Ok(RetainedFileIdentity {
                 identity,
                 _handle: Arc::new(handle),
             })
