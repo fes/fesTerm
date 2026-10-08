@@ -666,7 +666,39 @@ mod imp {
 
     /// Reports whether a handle still has the captured security metadata.
     pub fn security_metadata_matches(file: &File, expected: &SecurityMetadata) -> io::Result<bool> {
-        security_metadata(file).map(|current| current == *expected)
+        security_metadata(file)
+            .map(|current| security_metadata_mismatch(&current, expected).is_none())
+    }
+
+    fn security_metadata_mismatch(
+        current: &SecurityMetadata,
+        expected: &SecurityMetadata,
+    ) -> Option<&'static str> {
+        if current.descriptor != expected.descriptor {
+            Some("owner, group, or DACL")
+        } else if current.audit_sacl != expected.audit_sacl {
+            Some("audit SACL")
+        } else if current.mandatory_label != expected.mandatory_label {
+            Some("mandatory label")
+        } else if current.resource_attributes != expected.resource_attributes {
+            Some("resource attributes")
+        } else if current.scoped_policy != expected.scoped_policy {
+            Some("central access policy")
+        } else if current.attributes != expected.attributes {
+            Some("file attributes")
+        } else if current.unsupported_integrity_attributes
+            != expected.unsupported_integrity_attributes
+        {
+            Some("integrity attributes")
+        } else if current.encrypted != expected.encrypted {
+            Some("EFS encryption state")
+        } else if current.has_named_streams != expected.has_named_streams {
+            Some("named streams")
+        } else if current.has_extended_attributes != expected.has_extended_attributes {
+            Some("extended attributes")
+        } else {
+            None
+        }
     }
 
     fn apply_security_descriptor_if_changed(
@@ -774,12 +806,12 @@ mod imp {
         {
             return Err(io::Error::last_os_error());
         }
-        if security_metadata_matches(file, metadata)? {
-            Ok(())
-        } else {
-            Err(io::Error::other(
-                "prepared Windows security metadata did not match its source",
-            ))
+        let current = security_metadata(file)?;
+        match security_metadata_mismatch(&current, metadata) {
+            None => Ok(()),
+            Some(field) => Err(io::Error::other(format!(
+                "prepared Windows {field} metadata did not match its source"
+            ))),
         }
     }
 
