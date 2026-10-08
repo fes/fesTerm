@@ -3311,6 +3311,10 @@ mod tests {
                         }
                         state.0.dispatch(command, ui.ctx());
                     }
+                    // Image completion must not depend on the whole UI becoming idle.
+                    if state.2 {
+                        ui.ctx().request_repaint();
+                    }
                 },
                 (state, None, false),
             );
@@ -3345,7 +3349,6 @@ mod tests {
         assert!(editor.preview.as_ref().unwrap().image_loaded_for_test(0));
         assert!(!editor.preview.as_ref().unwrap().image_loaded_for_test(64));
         harness.get_by_label("Load local image").click();
-        harness.run();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             harness.step();

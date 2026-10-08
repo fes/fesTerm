@@ -215,6 +215,14 @@ ConPTY cursor-position replies and resize rendering failures.
 
 ## Tier 4: Headless Egui Frames
 
+Asynchronous local-image commands use bounded frame pumping until the actual
+image-loaded predicate holds, not `Harness::run`'s global repaint-idle limit.
+The editor Preview/manual-load regression deliberately keeps requesting
+repaint after command dispatch: all 64 automatic admissions, the deferred
+65th image, real command routing and final image completion remain required.
+The Preview retry case uses the same completion-driven approach. Their stable
+test identities and `EDIT-18`/`ADR-0034` trace relationships are unchanged.
+
 The headless application harness covers the Session Inspector's exact
 desktop/narrow geometry, unchanged terminal dimensions while open, Escape
 consumption, non-session lifecycle, accessible Close control, and first-click

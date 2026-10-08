@@ -475,6 +475,24 @@ fallbacks remain keystroke-local. Ownership, limits and fidelity are unchanged;
 these localized construction/scan results do not certify allocator traffic,
 peak/retained RAM, fragmentation, native responsiveness or #297 causality.
 
+## Waiting for image completion instead of global UI idleness
+
+The bounded native-exit investigation for #345 exposed a separate, identified
+assertion in the third pair's bare app process after four successful controls:
+the real editor Preview/manual-image test exceeded `Harness::run`'s four-step
+settling limit. This was an ordinary status-101 test failure, not the unexplained
+native exit 2173.
+
+The test already waited on actual image completion with a deadline, but first
+asked the entire UI to stop repainting after the manual command. Continuous
+repaint demand now makes that old path fail deterministically. The repaired
+driver goes directly to its existing completion-predicate loop, retaining all
+64 automatic-image, deferred-image, real-command and final-load assertions.
+The closely related Preview retry test uses the same completion-driven pattern.
+No deadline is extended, assertion dropped or test serialized; production
+loading and rendering are unchanged. Native exit 2173 remains a separate,
+unresolved validation blocker.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged
