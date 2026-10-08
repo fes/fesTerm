@@ -293,6 +293,11 @@ opt-in allocation oracle protect the change. These are copy-stage allocation
 counts/requested bytes, not total retained RAM, allocator fragmentation,
 whole-frame CPU or evidence for #297.
 
+The C4 change was rebased onto main `dc287692` for integration review, retaining
+both upstream and presentation-cache narratives. The rebased range needs an
+explicit `Validation-Impact` trailer; unchanged implementation and prior-head
+evidence do not substitute for fresh exact-head tests and CI.
+
 ## Removing redundant recovery wire-buffer overlap
 
 The #320 lifecycle audit found that persistent-session recovery serialized a
