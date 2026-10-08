@@ -505,7 +505,8 @@
         "SSH-09"
       ],
       "requirements": [
-        "docs/gui-design.md#ssh-session-creation"
+        "docs/gui-design.md#ssh-session-creation",
+        "docs/sftp-ui-design.md#remote-to-local-name-admission"
       ],
       "decisions": [
         "ADR-0018",
@@ -1962,7 +1963,9 @@
       "requirements": [
         "docs/sftp-ui-design.md#layout-and-navigation",
         "docs/sftp-ui-design.md#transfer-behavior",
+        "docs/sftp-ui-design.md#remote-to-local-name-admission",
         "docs/sftp-ui-design.md#bounded-gui-backlog-and-history",
+        "docs/sftp-ui-design.md#bounded-recursive-planning",
         "docs/sftp-ui-design.md#owner-cancellation-and-cleanup",
         "docs/sftp-ui-design.md#collision-and-overwrite-policy"
       ],
@@ -2041,12 +2044,38 @@
         "transfer_capacity_rejections_are_typed_and_deterministic",
         "recursive_planning_rejects_item_and_memory_proxy_limit_overflow",
         "planning_limit_failure_is_terminal_and_observable",
+        "paused_recursive_plan_refuses_aggregate_growth_and_cancel_restores_admission",
+        "multiple_paused_plans_preserve_decisions_and_resume_releases_shared_admission",
+        "shared_planning_admission_is_atomic_and_restores_exact_credits",
+        "failed_and_overflowing_growth_never_changes_shared_accounting",
+        "planning_data_drops_before_its_credit_and_outlives_a_removed_queue",
+        "planning_queue_refuses_storage_before_allocation_and_preserves_admitted_rows",
+        "planning_queue_replacement_charges_actual_capacity_before_retiring_old_storage",
+        "sparse_planning_queue_retires_backing_and_keeps_a_collision_requeue_slot",
+        "keep_both_resolution_uses_admitted_envelope_after_budget_saturates",
+        "local_planning_refuses_oversized_enumeration_and_returns_sorted_rows",
+        "remote_planning_refuses_before_another_page_and_closes_the_directory",
+        "remote_planning_refuses_repeated_empty_pages_and_closes_the_directory",
+        "remote_planning_returns_sorted_budgeted_rows_without_recollecting_pages",
+        "remote_planning_reports_close_failure_without_losing_the_planning_error",
+        "canceled_remote_planning_closes_its_open_handle_without_closing_the_session",
+        "transfer_snapshot_updates_only_affected_rows_and_preserves_request_allocations",
+        "transfer_snapshot_keeps_batch_order_and_updates_resolved_collision",
+        "progress_saturation_coalesces_without_losing_terminal_events",
         "cancellation_interrupts_slow_recursive_enumeration",
         "local_directory_loader_coalesces_navigation_to_the_newest_pending_path",
         "directory_scroll_history_resets_new_entries_and_keeps_the_filter",
         "directory_scroll_history_restores_direct_parent_and_discards_reentry",
         "directory_scroll_history_discards_every_skipped_descendant",
         "bounded_transfer_rejection_is_exposed_without_disconnect",
+        "top_level_download_file_root_rejects_relative_backslash_before_local_io",
+        "top_level_download_directory_root_rejects_relative_backslash_before_local_io",
+        "top_level_download_file_root_rejects_drive_and_unc_before_local_io",
+        "top_level_download_directory_root_rejects_drive_and_unc_before_local_io",
+        "top_level_download_file_root_rejects_windows_filename_aliases_before_local_io",
+        "top_level_download_directory_root_rejects_windows_filename_aliases_before_local_io",
+        "top_level_download_can_use_an_explicit_safe_local_name",
+        "remote_local_name_admission_covers_windows_alias_families_and_near_misses",
         "recursive_download_rejects_malicious_remote_entry_names",
         "resolving_remaining_conflicts_after_cancelling_a_paused_item_does_not_panic",
         "is_markdown_file_recognizes_md_and_markdown_extensions_case_insensitively",
@@ -2077,7 +2106,7 @@
       "prerequisites": [
         "remote-disconnect recovery, the native Finder/Explorer drag gesture in both directions, and observing reveal-in-Finder/Explorer focus behavior still need native/manual evidence; native OS drag-out of a remote item is not implemented (egui/eframe has no drag-source primitive as of the pinned version)",
         "SFTP-01 packaged native close/quit, surviving shell/window behavior, cleanup notice accessibility and diagnostic visibility remain unqualified",
-        "SFTP-03 native long-history scrolling, collision decisions under saturation, OS drops, short-window notice readability and keyboard/screen-reader delivery remain unqualified; aggregate directory/plan byte budgets are separate work"
+        "SFTP-03 native long-history scrolling, shared-plan exhaustion and progress/cancel/Retry, collision decisions under saturation, OS drops, short-window notice readability and keyboard/screen-reader delivery remain unqualified; ordinary browsing snapshot and total payload-byte budgets remain separate scopes"
       ]
     },
     {

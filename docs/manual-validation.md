@@ -374,6 +374,25 @@ used by the keyboard-routing entrypoint. See the
 
 ### SFTP GUI backlog and transfer history
 
+`SFTP-03` also covers the shared per-worker recursive-planning allowance:
+with owned directory trees, pause one copy at a collision, exhaust admission
+with another, and verify visible failure without disconnecting browsing or
+discarding the existing paused decision. Progress/resume/cancel followed by
+Retry must work. Aggregate limits, actual-owner release, bounded local
+enumeration, real in-process paged SFTP refusal/closure, sparse capacity
+retirement and changed-row snapshot work are automated. Native failure/Retry
+presentation, keyboard/focus and assistive-technology behavior remain pending.
+The 64-MiB metadata proxy does not establish total process/RSS bounds or
+ordinary browsing-snapshot admission.
+
+For remote-to-local name refusal, `SFTP-03` also checks that the failed root
+row has a readable, actionable reason without a collision prompt or cleanup
+notice; an ordinary queued transfer and subsequent browsing must still work.
+Use only owned fixture names and destinations, never real system directories.
+Filename and checked-join safety belong to deterministic backend coverage;
+native failure/Details readability and keyboard/screen-reader delivery remain
+pending on Windows/macOS/Linux.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-03 | With owned files, finish more than 128 GUI transfers, including failures, while another item remains running or collision-paused. Retain the latest 128 finished records by finish order, preserve ongoing decisions, and show the retired-record count. Verify pre-start collision/Skip/failure rows remain visible. Scroll to recent failures and use Retry/Cancel/Clear in wide, narrow and short windows. Saturate the command bridge: navigation must preserve path/history/scroll/loading, a rejected reconnect must preserve connection/spinner state, a rejected drop must not claim success, a rejected Markdown read must preserve its previous request, and a refused collision decision must remain available. With more than 64 pending or paused rows, header Cancel must refuse the whole action when full and retry using one free slot. Close with the event bridge full; owner cancellation and the documented cleanup policy still apply. | Automated storage/admission/order/lifetime; native functional + accessibility/usability pending | Exact 64-command/128-event bounds, 64-event polling with repaint continuation, 256/257 batch admission, failed-history retirement, late completion, active-row preservation, duplicate finish/index consistency, exceptional capacity release, progress identity/barriers, refused navigation/reconnect/drop/Markdown state, queue-recovery navigation, full-event-queue owner cancellation and local-producer receiver retirement are automated. Compositional admission/history and real engine collision-before-start/Skip regressions cover missing-row paths; backend refusal creates no phantom history. A production header click covers whole-action refusal/one-slot retry for 96 rows, real engine cancellation covers 96 paused collisions, and manager-state admission covers 1,024 items across batches plus later-work ordering. Native long-history drawer reachability, collision-decision interaction under saturation, OS drop gestures, short-window/high-contrast notice readability, keyboard and screen-reader delivery remain manual on Windows/macOS/Linux. Rows are bounded and scrollable, not virtualized; queue counts do not prove total payload-byte bounds. |
