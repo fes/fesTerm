@@ -2368,6 +2368,16 @@ fn publish_temporary(
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
+    if let Err(error) = festerm_windows_security::finalize_security_metadata(
+        temporary.file_mut(),
+        security_metadata,
+    ) {
+        tracing::error!(
+            %error,
+            "the published Windows target inheritance state could not be finalized"
+        );
+        return Err(temporary.recovery_required());
+    }
     let published_file =
         match festerm_windows_security::open_file_no_reparse_for_security_verification(
             &directory_handle,
@@ -2667,7 +2677,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_save_route_accepts_inheritable_shared_modify_for_protected_children() {
+    fn windows_save_route_finalizes_inherited_modify_control_under_destination_parent() {
         let directory = TemporaryDirectory::new("shared-modify-parent");
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();

@@ -44,18 +44,18 @@ mod imp {
             GetKernelObjectSecurity, GetLengthSid, GetSecurityDescriptorControl,
             GetSecurityDescriptorDacl, GetSecurityDescriptorGroup, GetSecurityDescriptorOwner,
             GetSecurityDescriptorSacl, GetTokenInformation, InitializeAcl,
-            InitializeSecurityDescriptor, SecurityImpersonation, SetSecurityDescriptorControl,
-            SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, SetTokenInformation,
-            TokenDefaultDacl, TokenImpersonation, TokenUser, WinBuiltinAdministratorsSid,
-            WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION,
-            ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION,
-            GROUP_SECURITY_INFORMATION, INHERIT_ONLY_ACE, LABEL_SECURITY_INFORMATION,
-            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-            PROTECTED_SACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
-            SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SACL_PROTECTED, SE_SECURITY_NAME,
-            TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
-            TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+            InitializeSecurityDescriptor, SecurityImpersonation, SetKernelObjectSecurity,
+            SetSecurityDescriptorControl, SetSecurityDescriptorDacl, SetSecurityDescriptorOwner,
+            SetTokenInformation, TokenDefaultDacl, TokenImpersonation, TokenUser,
+            WinBuiltinAdministratorsSid, WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
+            ACL_REVISION, ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION,
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, INHERIT_ONLY_ACE,
+            LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, PROTECTED_SACL_SECURITY_INFORMATION,
+            SACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SACL_PROTECTED,
+            SE_SECURITY_NAME, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL,
+            TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
             UNPROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_SACL_SECURITY_INFORMATION,
         },
         Storage::FileSystem::{
@@ -79,9 +79,6 @@ mod imp {
             },
         },
     };
-
-    #[cfg(test)]
-    use windows_sys::Win32::Security::SetKernelObjectSecurity;
 
     #[cfg(test)]
     type PrivateVerificationHook = Box<dyn FnOnce(&File)>;
@@ -814,7 +811,16 @@ mod imp {
                 "the file's central access policy cannot be reproduced safely",
             ));
         }
-        set_file_security_descriptor(file, information, expected)?;
+        if unsafe {
+            SetKernelObjectSecurity(
+                file.as_raw_handle() as HANDLE,
+                information,
+                expected.as_ptr().cast_mut().cast(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
         if security_descriptor(file, information)? == expected {
             Ok(())
         } else {
@@ -966,7 +972,16 @@ mod imp {
             )
         })?;
         let handle = file.as_raw_handle() as HANDLE;
-        set_file_security_descriptor(file, INFORMATION, &metadata.descriptor)?;
+        if unsafe {
+            SetKernelObjectSecurity(
+                handle,
+                INFORMATION,
+                metadata.descriptor.as_ptr().cast_mut().cast(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
         apply_security_descriptor_if_changed(file, SACL_SECURITY_INFORMATION, audit_sacl)?;
         apply_security_descriptor_if_changed(
             file,
@@ -1000,10 +1015,25 @@ mod imp {
         }
         let current = security_metadata(file)?;
         match security_metadata_mismatch(&current, metadata) {
-            None => Ok(()),
+            None | Some("DACL control") => Ok(()),
             Some(field) => Err(io::Error::other(format!(
                 "prepared Windows {field} metadata did not match its source"
             ))),
+        }
+    }
+
+    /// Restores inheritance control after the prepared object has entered the
+    /// source object's parent, then verifies the complete captured metadata.
+    pub fn finalize_security_metadata(file: &File, metadata: &SecurityMetadata) -> io::Result<()> {
+        const INFORMATION: u32 =
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        set_file_security_descriptor(file, INFORMATION, &metadata.descriptor)?;
+        if security_metadata_matches(file, metadata)? {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "published Windows security metadata did not match its source",
+            ))
         }
     }
 
@@ -2685,8 +2715,8 @@ pub use imp::{
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
     create_current_user_only_file_with_audit, delete_directory_by_handle,
     disable_std_handle_inheritance, enable_security_privilege, file_change_time,
-    is_current_user_only, lock_directory_path_without_delete_sharing, open_file_no_reparse,
-    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    finalize_security_metadata, is_current_user_only, lock_directory_path_without_delete_sharing,
+    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, rename_file_noreplace, reopen_file_for_identity,
     restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
