@@ -1,5 +1,32 @@
 # Terminal TUI performance
 
+## CPU presentation-cache allocation oracle
+
+Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.
+Both global opt-in suite runners also invoke it. This standalone, single-thread
+benchmark uses `stats_alloc` over Rust's system allocator; its global allocator
+exists only in the benchmark executable, not the application or unit tests.
+It emits one JSON object per case with allocations, reallocations,
+deallocations and requested-byte counts. No GUI, PTY, GPU or installed
+configuration is used.
+
+The fixture warms an 80-by-24 cache before observing 4,096 one-row refreshes
+and 256 alternating same-dimension viewport refreshes. `--check` requires
+exactly two allocations per update (returned row IDs and shared revision token)
+and zero reallocations. A long-grapheme-to-ASCII case must actually free the old
+heap payload and returned row vector, with no cell/backing allocation.
+
+| Case | Legacy allocation calls | Inline/reused allocation calls | Legacy/new requested bytes |
+| --- | --- | --- | --- |
+| 4,096 dirty-row refreshes | 339,968 | 8,192 | 18,874,368 / 196,608 |
+| 256 viewport refreshes | 498,688 | 512 | 28,270,592 / 53,248 |
+
+These source-pinned Windows observations concern only CPU presentation copying.
+The same oracle is portable and counts Rust allocation requests, not allocator
+usable size, native allocations, fragmentation, RSS, GPU retirement, full-frame
+CPU or multi-day growth. Existing Criterion `interaction_rendering` benchmarks
+remain the timing surface; this oracle has no wall-clock acceptance threshold.
+
 ## Automatic WARP composition rollout
 
 PR #281 consolidates the stacked follow-on and reviewed shipping main. At the

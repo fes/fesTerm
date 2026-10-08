@@ -330,6 +330,12 @@ M4 exposes a borrowed `TerminalSnapshot` contract containing the visible
 screen, dimensions, cursor, and modes. `TerminalRenderCache` copies only rows
 identified by `Terminal::take_dirty_rows` (with a complete refresh on initial
 view or size change), so a GUI frame does not clone the entire core grid.
+Presentation cell text uses the core's existing `CompactString` representation:
+common graphemes stay inline, while replacing long text releases its old heap
+payload. Dirty rows and same-dimension viewport refreshes reuse cell-vector
+backing; dimension changes retire the old row storage rather than retaining an
+exceptional high-water capacity. Value copying, changed-row revision identities
+and the renderer's owned shaping-run strings remain unchanged.
 Cell metrics and point-to-cell helpers remain UI-owned and convert only to
 valid core dimensions. A selected bundled primary face alone determines cell
 metrics. The glyph cache is generation-keyed so replacing egui's font atlas

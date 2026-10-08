@@ -269,6 +269,34 @@ fragmentation measurements or a #297 causal finding. Protocol-private decode,
 ordinary browsing snapshots, other request/event/view storage and native
 SFTP-03 refusal/retry/accessibility qualification remain separate. This
 preserves the existing transport and application-command ownership boundary.
+## Removing presentation-cell allocation churn
+
+The allocation review in #320 found work left before the painted-row cache:
+presentation copies still owned a heap `String` per ordinary cell, every dirty
+row replaced its vector, and scrolling recreated row storage at unchanged
+dimensions. A compiled dirty-row backing regression failed against the old
+implementation. A CPU-only system-allocator probe measured 339,968 allocation
+calls for 4,096 one-row refreshes and 498,688 calls for 256 viewport refreshes.
+
+Presentation now uses the core's existing inline `CompactString` representation
+and reuses row backing at unchanged dimensions. Dimension changes still retire
+old capacity, and replacing exceptional long text drops its heap payload
+instead of keeping a high-water string buffer. Shaping runs remain ordinary
+owned strings; values, Unicode/continuations, styles, hyperlinks, selection and
+shared revision-token semantics are unchanged.
+
+The same fixtures now make 8,192 and 512 allocation calls respectively: only
+the update-row vector and shared revision token allocate. There are no
+reallocations. A separate long-to-short control observes the actual old payload
+being freed. Six portable regressions, existing rendering tests and the
+opt-in allocation oracle protect the change. These are copy-stage allocation
+counts/requested bytes, not total retained RAM, allocator fragmentation,
+whole-frame CPU or evidence for #297.
+
+The C4 change was rebased onto main `dc287692` for integration review, retaining
+both upstream and presentation-cache narratives. The rebased range needs an
+explicit `Validation-Impact` trailer; unchanged implementation and prior-head
+evidence do not substitute for fresh exact-head tests and CI.
 
 ## Removing redundant recovery wire-buffer overlap
 
