@@ -14,6 +14,23 @@ command observation and the ten-second deadline remain asserted. This repairs
 `EDIT-18`'s automated evidence without changing image policy, increasing the
 harness frame limit or claiming remaining native validation.
 
+## Preserving evidence for the resource diagnostic's native CI exit
+
+PR #353's Windows run `37653501894` terminated the parallel application test
+binary with exit 2173 without an identified assertion or native fault. Its
+snapshot-only artifacts could not establish a cause, matching the unresolved
+evidence boundary in #330. A successful local run would not repair that exit.
+
+The reviewed #351 content-free collector and its bare-heap parity correction
+are now backported without changing this slice's resource attribution or
+editor-readiness repair. Non-GPU calibration covers native exceptions, termination status,
+owned-child timeouts, bounded metadata and privacy refusals. Windows CI records
+only the JSON receipts while preserving original concurrency, failures and
+level-zero debug profiles; missing symbols retain module offsets. No retries,
+serialization, policy changes or weakened assertions hide the original failure.
+The next causal failure receipt remains a validation prerequisite, not a
+claimed fix or permission to merge.
+
 ## Separating picker rendering from readback
 
 The full WARP replay found sub-millisecond picker construction alongside a
@@ -482,6 +499,45 @@ Aggregate directory/plan
 bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.
+
+## Keeping a native observer from changing syntax budgets
+
+The new Windows collector correctly preserved a cumulative gate's Rust failure,
+but it also caused that failure: a 400-function syntax fixture exceeded its
+unchanged 40 ms parse budget under the debugger. Controls used the exact same
+retained executable, not a rebuilt or weakened test. Bare full and exact scopes
+passed, while the original collector failed both. Event-service measurements
+found no pause inside the failing test's work, pointing away from symbol/stack
+processing.
+
+Windows implicitly enabled extra heap validation for debugger-created processes.
+An owned native fixture measured flag mask 0 for bare execution, 0x70 under the
+original collector and 0 after the correction. Setting `_NO_DEBUG_HEAP=1` for
+the debuggee alone restored the original collector's full and exact syntax
+results. The runner now clones the native Unicode environment block, retaining
+hidden drive entries and surrogate pairs, and overrides only this debugger
+default. No parent environment, registry, syntax semantics, deadlines, test
+assertions or concurrency settings change. The failed gate remains retained;
+the fixed controls are causal evidence for collector interference, not a
+closure of the separate unexplained #330 exit 2173.
+
+## Retaining actionable Windows test-exit evidence
+
+The original #330 Windows UI-test exit 2173 left only snapshot images, while a
+same-head rerun passed without explaining the failure. Required Windows Cargo
+tests now use a root-process-only native debugger runner that preserves their
+parallel execution and original status, while retaining bounded, content-free
+exit/exception/termination, thread-stack, executable/source and module identity
+metadata. Non-GPU calibration proves both the controlled 2173 exit and native
+fault/timeout paths before the workspace tests run. No raw dumps, ordinary logs,
+user journals or WER registry changes are involved.
+
+The earlier CDB calibration fixture is reused, but its replay/quit behavior is
+not an acceptable substitute for original test-status propagation. Missing
+tools and diagnostic failures remain explicit nonzero outcomes, not green
+fallbacks. The new evidence can support the next causal investigation; it does
+not identify the cause of 2173 or relabel the separate Direct2D lifetime repair.
+See [the runner's privacy boundary and limitations](windows-test-diagnostics.md).
 
 ## Retiring imported Direct2D targets before teardown
 
