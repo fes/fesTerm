@@ -1599,7 +1599,7 @@
         "saving_refuses_an_unsafe_windows_parent_before_staging",
         "windows_parent_security_change_after_staging_refuses_and_cleans_by_handle",
         "windows_save_route_refuses_each_untrusted_parent_mutation_right",
-        "windows_save_route_finalizes_inherited_modify_control_under_destination_parent",
+        "windows_save_route_accepts_inheritable_shared_modify_for_protected_children",
         "save_as_refuses_a_symlink_destination_without_moving_it",
         "payload_creation_collision_is_cleaned_before_retry",
         "staging_symlink_substitution_before_open_is_refused_without_mutation",

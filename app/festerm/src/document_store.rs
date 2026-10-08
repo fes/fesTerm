@@ -285,11 +285,7 @@ fn retain_file_identity(
 ) -> Result<Option<RetainedFileIdentity>, std::io::Error> {
     identity
         .map(|identity| {
-            #[cfg(windows)]
-            let handle = festerm_windows_security::reopen_file_for_identity(file)?;
-            #[cfg(not(windows))]
-            let handle = file.try_clone()?;
-            Ok(RetainedFileIdentity {
+            file.try_clone().map(|handle| RetainedFileIdentity {
                 identity,
                 _handle: Arc::new(handle),
             })
@@ -2368,16 +2364,6 @@ fn publish_temporary(
         tracing::error!(%error, "a concurrent target prevented conditional save publication");
         return Err(temporary.recovery_required());
     }
-    if let Err(error) = festerm_windows_security::finalize_security_metadata(
-        temporary.file_mut(),
-        security_metadata,
-    ) {
-        tracing::error!(
-            %error,
-            "the published Windows target inheritance state could not be finalized"
-        );
-        return Err(temporary.recovery_required());
-    }
     let published_file =
         match festerm_windows_security::open_file_no_reparse_for_security_verification(
             &directory_handle,
@@ -2677,7 +2663,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_save_route_finalizes_inherited_modify_control_under_destination_parent() {
+    fn windows_save_route_accepts_inheritable_shared_modify_for_protected_children() {
         let directory = TemporaryDirectory::new("shared-modify-parent");
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
@@ -3170,13 +3156,6 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
         let saved = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
-        drop(loaded);
-        #[cfg(windows)]
-        let mut saved = saved;
-        #[cfg(windows)]
-        saved
-            .source_authority
-            .release_identity_pin_for_parent_rebind_test();
 
         fs::rename(&directory.path, &retained.path).unwrap();
         fs::create_dir(&directory.path).unwrap();
