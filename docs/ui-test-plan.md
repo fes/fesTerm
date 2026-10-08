@@ -311,6 +311,17 @@ The optional `replay_warp_ui_surfaces_shared_panels` uses eframe's root entry
 point and balanced ordinary/textureless repeats; its measurement plan and
 pending qualification are in `validation/windows-warp/README.md`.
 
+The bounded non-terminal fixture semantic test exercises all 52 normal/narrow
+variants. Chip-menu preparation waits for observed target bounds to settle
+within 32 frames, then uses at most eight real chip-scroll clicks to reveal a
+clipped target before secondary-clicking it. Cases whose chip row scrolls
+assert the target reaches the actual scroll viewport. The single first-chip
+case has no movement items, the middle case has both directions, and the
+read-only last case has only Move left; all retain Close and assert that active
+identity and transport input are unchanged.
+This addresses a scroll-animation/query-coordinate race without changing
+production animations, arbitrary sleeps or weaker readiness guards.
+
 Windows native probes must exclude visible event-broker/tool HWNDs rather
 than trusting `Process.MainWindowHandle`. The Win32 selector regression creates
 small offscreen fixtures without activating windows or sending input. CPU

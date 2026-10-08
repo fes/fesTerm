@@ -55,7 +55,7 @@ use festerm_ssh::{
     SftpDirectoryItem, SftpDirectorySnapshot, SftpEntryType, SftpLocation, SftpPath,
 };
 use festerm_ui_egui::{
-    chrome::{self, ChipId, ChipLayout, ChipStatus, ChipViewModel},
+    chrome::{self, ChipId, ChipLayout, ChipStatus, ChipViewModel, CHIP_SCROLL_ITEM_SPACING},
     EncodedInputSink, TerminalContextMenuAction, TerminalView, TerminalViewOptions,
 };
 
@@ -697,6 +697,9 @@ impl SurfaceDriver for SurfaceProbe {
         } else {
             self.node().get_by_label(label).click();
         }
+    }
+    fn rect(&self, label: &str) -> egui::Rect {
+        self.node().get_by_label(label).rect()
     }
     fn event(&self, event: egui::Event) {
         self.events.lock().push(event);
@@ -1603,7 +1606,7 @@ fn replay_warp_ui_surfaces() {
             "steady_tessellation": crate::surface_performance::timing_distribution(&tessellation_times),
             "steady_completed_draw_readback": crate::surface_performance::timing_distribution(&draw_times),
             "ui_scope": "raw production Dark Context::run_ui, AccessKit enabled; excludes query-tree updates and texture uploads",
-            "preparation_scope": "owned synthetic fixture creation and actual model construction; readiness separately includes interaction frames and actual picker worker completion",
+            "preparation_scope": "owned synthetic fixture creation and actual model construction; readiness separately includes interaction frames, bounded chip settle/scroll reveal, and actual picker worker completion",
             "draw_scope": "completed drawing, tessellation, submission, synchronization and CPU readback; NOT native input-to-display or presentation latency",
             "cold_process_start_ms": serde_json::Value::Null,
             "cold_process_start_status": "not measured inside a running test process; caches may be warm from earlier scenes",
@@ -3304,6 +3307,7 @@ trait SurfaceDriver {
     fn has_label_containing(&self, label: &str) -> bool;
     fn focused(&self, label: &str) -> bool;
     fn click(&self, label: &str, secondary: bool);
+    fn rect(&self, label: &str) -> egui::Rect;
     fn event(&self, event: egui::Event);
 }
 
@@ -3330,6 +3334,9 @@ impl SurfaceDriver for Harness<'_, SurfaceFixture> {
             self.get_by_label(label).click();
         }
     }
+    fn rect(&self, label: &str) -> egui::Rect {
+        self.get_by_label(label).rect()
+    }
     fn event(&self, event: egui::Event) {
         Harness::event(self, event);
     }
@@ -3349,20 +3356,133 @@ fn surface_cell(driver: &impl SurfaceDriver, column: usize) -> egui::Pos2 {
         )
 }
 
-fn prepare_surface(kind: SurfaceKind, driver: &mut impl SurfaceDriver) {
-    use SurfaceKind as K;
-    // Fixed settling is bounded even for a widget that requests animation.
+fn settled_chip_rect(driver: &mut impl SurfaceDriver) -> egui::Rect {
+    let mut previous = driver.rect("Synthetic SSH chip");
+    let mut stable_frames = 0;
+    for _ in 0..32 {
+        driver.step();
+        let current = driver.rect("Synthetic SSH chip");
+        if current == previous {
+            stable_frames += 1;
+            if stable_frames == 2 {
+                return current;
+            }
+        } else {
+            stable_frames = 0;
+        }
+        previous = current;
+    }
+    panic!("chip fixture bounds did not settle within 32 frames");
+}
+
+fn chip_scroll_viewport(driver: &impl SurfaceDriver) -> Option<egui::Rect> {
+    if !driver.has_label("Scroll chips left") {
+        return None;
+    }
+    let left = driver.rect("Scroll chips left");
+    let right = driver.rect("Scroll chips right");
+    // The chip row uses zero item spacing between these controls and its
+    // horizontal ScrollArea, so their inner edges bound the real viewport.
+    let viewport = egui::Rect::from_min_max(
+        egui::pos2(left.right() + CHIP_SCROLL_ITEM_SPACING, left.top()),
+        egui::pos2(right.left() - CHIP_SCROLL_ITEM_SPACING, right.bottom()),
+    )
+    .shrink(1.0);
+    assert!(
+        viewport.is_positive(),
+        "chip fixture scroll viewport must have positive extent: {viewport:?}"
+    );
+    Some(viewport)
+}
+
+fn horizontal_distance_to_viewport(viewport: egui::Rect, target: egui::Rect) -> f32 {
+    let center = target.center().x;
+    if center < viewport.left() {
+        viewport.left() - center
+    } else if center > viewport.right() {
+        center - viewport.right()
+    } else {
+        0.0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ChipReveal {
+    had_viewport: bool,
+    clicks: usize,
+    target: egui::Rect,
+}
+
+fn reveal_chip_target(driver: &mut impl SurfaceDriver) -> ChipReveal {
+    let mut previous_distance = None;
+    for clicks in 0..=8 {
+        let target = settled_chip_rect(driver);
+        let Some(viewport) = chip_scroll_viewport(driver) else {
+            return ChipReveal {
+                had_viewport: false,
+                clicks,
+                target,
+            };
+        };
+        let distance = horizontal_distance_to_viewport(viewport, target);
+        if let Some(previous) = previous_distance {
+            assert!(
+                distance < previous,
+                "chip fixture scroll control did not move the target closer to the viewport: \
+                 previous distance {previous}, current distance {distance}"
+            );
+        }
+        if distance == 0.0 {
+            return ChipReveal {
+                had_viewport: true,
+                clicks,
+                target,
+            };
+        }
+        if clicks == 8 {
+            break;
+        }
+        let direction = if target.center().x < viewport.left() {
+            "Scroll chips left"
+        } else {
+            "Scroll chips right"
+        };
+        driver.click(direction, false);
+        driver.step();
+        previous_distance = Some(distance);
+    }
+    panic!("chip fixture target was not revealed by 8 real scroll-control clicks");
+}
+
+fn settle_surface(driver: &mut impl SurfaceDriver) {
     for _ in 0..3 {
         driver.step();
     }
+}
+
+fn prepare_chip_surface(driver: &mut impl SurfaceDriver) -> ChipReveal {
+    let revealed = reveal_chip_target(driver);
+    driver.click("Synthetic SSH chip", true);
+    driver.step();
+    assert_eq!(
+        driver.rect("Synthetic SSH chip"),
+        revealed.target,
+        "chip fixture target moved while secondary-click events were delivered"
+    );
+    revealed
+}
+
+fn prepare_surface(kind: SurfaceKind, driver: &mut impl SurfaceDriver) {
+    use SurfaceKind as K;
+    // Fixed settling is bounded even for a widget that requests animation.
+    settle_surface(driver);
     match kind {
         K::ChromeMenu => {
             driver.click("More actions", false);
             driver.step();
         }
         K::ChipFirst | K::ChipMiddle | K::ChipLastReadOnly => {
-            driver.click("Synthetic SSH chip", true);
-            driver.step();
+            prepare_chip_surface(driver);
         }
         K::TerminalSelection
         | K::TerminalReadOnlySelection
@@ -3488,8 +3608,10 @@ fn assert_surface(kind: SurfaceKind, driver: &impl SurfaceDriver) {
     }
     if kind == K::ChipFirst {
         assert!(!driver.has_label("Move left"));
+        assert!(!driver.has_label("Move right"));
     }
     if kind == K::ChipLastReadOnly {
+        assert!(driver.has_label("Move left"));
         assert!(!driver.has_label("Move right"));
     }
     if kind == K::ChipMiddle {
@@ -3673,6 +3795,9 @@ impl SurfaceProbe {
                 } else {
                     self.probe.node().get_by_label(label).click();
                 }
+            }
+            fn rect(&self, label: &str) -> egui::Rect {
+                self.probe.node().get_by_label(label).rect()
             }
             fn event(&self, event: egui::Event) {
                 self.probe.events.lock().push(event);
@@ -5360,11 +5485,45 @@ pub(crate) fn capture_surface_gallery(kind: SurfaceKind, narrow: bool) -> image:
 }
 
 #[test]
+fn chip_surface_fixtures_reveal_real_targets_without_activating_them() {
+    let mut exercised_scroll = false;
+    for scene in bounded_surface_scenes().into_iter().filter(|scene| {
+        matches!(
+            scene.kind,
+            SurfaceKind::ChipFirst | SurfaceKind::ChipMiddle | SurfaceKind::ChipLastReadOnly
+        )
+    }) {
+        let directory = unique_surface_fixture_directory();
+        let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
+        probe.first_output.textures_delta.clear();
+        settle_surface(&mut probe);
+        let revealed = prepare_chip_surface(&mut probe);
+        if scene.id == "chip-context-middle-inactive-narrow" {
+            assert!(
+                revealed.had_viewport,
+                "{}: real viewport required",
+                scene.id
+            );
+            assert!(revealed.clicks >= 1, "{}: real scroll required", scene.id);
+            exercised_scroll = true;
+        }
+        for _ in 0..2 {
+            probe.step();
+        }
+        assert_surface(scene.kind, &probe);
+        probe.fixture.assert_no_transport_input();
+        drop(probe);
+        fs::remove_dir_all(directory).unwrap();
+    }
+    assert!(
+        exercised_scroll,
+        "the inactive narrow middle chip must require a real scroll-control click"
+    );
+}
+
+#[test]
 fn bounded_surface_fixtures_preserve_ready_state_focus_selection_and_targets() {
-    for scene in bounded_surface_scenes()
-        .into_iter()
-        .filter(|scene| !scene.narrow)
-    {
+    for scene in bounded_surface_scenes() {
         let directory = unique_surface_fixture_directory();
         let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
         probe.prepare(scene.kind, |delta| delta.clear());

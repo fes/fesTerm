@@ -136,6 +136,8 @@ pub const fn chrome_band_center_from_top(show_session_details: bool) -> f32 {
 
 const CHROME_CONTROL_SIZE: f32 = 22.0;
 const CHIP_SCROLL_CONTROL_WIDTH: f32 = 20.0;
+#[doc(hidden)]
+pub const CHIP_SCROLL_ITEM_SPACING: f32 = 0.0;
 /// Corner rounding shared by the chip shape and the new-chip button (which
 /// visually matches a chip). Stored as `u8` since that's what
 /// `paint_chip`'s corner radius is inferred as; the new-chip button casts
@@ -582,7 +584,7 @@ pub fn show(
                 ChipLayout::SingleRowScroll => {
                     if allocation.scrolling {
                         ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
+                            ui.spacing_mut().item_spacing.x = CHIP_SCROLL_ITEM_SPACING;
                             let scroll_left =
                                 controls::paint_chip_scroll_control(ui, false, chip_row_height);
                             let viewport_width =

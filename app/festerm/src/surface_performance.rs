@@ -537,7 +537,7 @@ fn profile_interactive_surfaces() {
         "warmup_frames": WARMUP_FRAMES,
         "measured_frames": MEASURED_FRAMES,
         "scope": "forced first UI call, warmup and steady UI construction/tessellation; no GPU draw, native scheduling, input-to-display or presentation",
-        "preparation_scope": "original controls retain model preparation after synthetic input writes; added matrix scenes include owned fixture creation/model setup; readiness separately includes interaction frames and real picker worker wait",
+        "preparation_scope": "original controls retain model preparation after synthetic input writes; added matrix scenes include owned fixture creation/model setup; readiness separately includes interaction frames, bounded chip settle/scroll reveal, and real picker worker wait",
         "first_ui_scope": "one fresh-context UI call per scene, possibly loading/font-atlas setup; not cold-process start or first-ready latency; shared process caches can already be warm",
         "expanded_accessibility_scope": "expanded scenes enable AccessKit for semantic fixture guards; query-tree updates are excluded from UI timings; original controls retain their original context policy",
         "cold_process_start_ms": serde_json::Value::Null,
