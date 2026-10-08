@@ -266,11 +266,12 @@ document cannot turn one open into unbounded work:
 
 - **Maximum automatic loads per document:** **64**. References past that budget
   fall back to explicit placeholders.
-- **Maximum concurrent automatic loads:** **4**. Each load owns a thread, so
-  the rest start only as earlier ones finish.
-- A reference that fails is recorded in the per-document error map and is never
-  retried automatically, so a missing file costs one attempt rather than one
-  attempt per frame.
+- **Maximum concurrent loads:** **4**, shared by manual and automatic loads
+  across viewer and editor Preview panes in the application's egui context.
+- Permanent failures are attempted once per snapshot unless explicitly retried.
+  Temporary worker or memory refusals retry only when the required slot or
+  whole-load allowance is available, without spending another distinct
+  automatic-load attempt.
 
 The budget is spent per snapshot and is reset by a reload, matching how
 approvals are cleared.
@@ -288,9 +289,81 @@ The first implementation will ship with these concrete limits:
 - **Maximum explicit image/resource payload:** **8 MiB** compressed input per
   item.
 
-In addition, image decoding should enforce a raster-area cap (for example,
-16 megapixels) so a highly compressed image cannot expand into an unreasonable
-texture allocation after passing the byte-size limit.
+Image dimensions are checked before application-owned pixel expansion:
+**16 Mi-pixels** and the live renderer's texture-axis limit. Actual encoded
+reading stops at **8 MiB plus one overflow-probe byte**, independently of
+metadata. Open-handle metadata must identify a regular file; Unix opens are
+nonblocking and do not acquire a controlling terminal, so a FIFO cannot hold
+a worker waiting for a writer. Filesystem-absolute/rooted targets and canonical
+destinations outside the opened Markdown file's canonical parent directory
+are refused before content is read, including parent traversal and symlink
+escapes.
+
+The complete saved Markdown filename is canonicalized before establishing
+editor Preview's resource root. If that fails, text Preview remains available
+with a visible image-refusal explanation; a display fallback never grants
+filesystem access.
+
+Image-root acquisition uses `cap-std` and `cap-fs-ext` 4.0.3. Starting at the
+filesystem root, each component of the already-authorized canonical parent is
+opened with `DirExt::open_dir_nofollow`; the parent is not recanonicalized into
+a different grant after the source identity is bound. Image-path
+canonicalization preserves supported in-root aliases and checks containment,
+but is not sufficient authority: `Dir::open_with` resolves the admitted
+relative destination beneath the captured directory handle, enforcing the
+library's sandboxed traversal contract. Regular-file and length checks, and
+bounded reading, use the resulting file handle without reopening its name.
+No directory capability is retained by a tab, decoded image or texture; the
+root handle is dropped immediately after file acquisition and on every
+refusal. This closes final/intermediate symlink and Windows reparse races
+without adding hand-written native filesystem primitives.
+
+### Amendment: shared managed-image allowance and editor Preview
+
+The allocation/lifecycle audit in #320 found that per-image limits did not
+bound combined image ownership, and manual loads bypassed the automatic
+worker cap. It also found that ordinary local Markdown opens in the shared
+text editor, whose Preview rendered image placeholders but never invoked the
+loader. Connecting **saved local-file Preview** was explicitly approved;
+remote, untitled and terminal-history snapshots gain no local-file authority.
+
+One context-owned controller admits **512 MiB by default**, shared across
+windows, standalone viewers and editor Preview panes. Settings exposes
+**Image memory budget** with 64, 128, 256, 512, 1024 and 2048 MiB choices;
+there is no unlimited option. Lowering the allowance preserves existing
+admissions and visibly refuses new growth. Raising it can unblock temporary
+refusals. The live shared policy is authoritative, including after a reported
+configuration-save failure; stale window initialization or an unrelated
+unchanged-budget configuration broadcast cannot undo that choice.
+
+Admission reserves a conservative whole-load envelope atomically: bounded
+encoded/scratch/captured input, decoder-declared native output, RGBA conversion,
+and retained texture/upload allowance. Owned RGBA conversion avoids an
+unconditional raster clone. Worker slots end with actual work, independently
+of result polling. Byte reservations follow running work, queued decoded
+results and retained images, rather than disappearing when a pane closes.
+Texture retirement follows weak references to actual CPU upload owners; a
+rotating, 128-entry scan prevents an unbounded reclamation traversal or one
+live upload pinning later dead entries. The controller stores neither its
+own reservations nor an egui Context.
+Exceptional retirement-ledger capacity is discarded once sparse; that copy
+visits at most 128 retained entries rather than moving an arbitrarily large
+live ledger.
+
+Preview authority comes only from `DocumentOrigin::Local` and its real path,
+never a presentation label or the `preview.md` fallback. First Save and
+Save As/rebinding establish the new origin and drop old approvals, caches
+and receivers. Reparsing invalidates snapshot-specific image state; a failed
+parse releases hidden image owners without loading the retained old document.
+Both surfaces use the same admission/poll/retry implementation and typed
+`LoadMarkdownLocalImage` command. Nonlocal Preview explains the saved-local
+requirement without offering a non-working local-load button.
+
+This is a **managed allowance**, not a process-RAM or VRAM guarantee.
+Decoder-private allocations may ignore `image::Limits.max_alloc`; native
+renderer/GPU staging and retirement, allocator fragmentation, other document
+storage and total RSS are outside it. These repairs do not establish the
+cause of #297's long-running growth.
 
 These numbers follow the same repository conventions already used elsewhere:
 explicit powers-of-two, limits materially below the much larger 64 MiB
@@ -394,3 +467,32 @@ previously valid snapshot.
 - **Coverage superseded:** The manual "explicit local image load" scenario no
   longer exercises the default path for a local document; it remains valid for
   over-budget references and for every non-local-relative class.
+
+### Validation impact of the shared allowance and Preview amendment
+
+- **Invariants introduced or changed:** combined managed-image ownership and
+  actual running work are bounded across both presentation surfaces;
+  saved-local Preview alone gains the existing relative-image policy.
+  Complete canonical source identity, no-follow root acquisition,
+  directory-handle-contained final resolution and nonblocking Unix special-file
+  refusal enforce that policy before content reading.
+- **GUI/action edges affected:** `MD-05`, `SET-13`, `EDIT-18` and the
+  origin-rebinding part of `EDIT-04`.
+- **Automated evidence:** `image_budget_*` lifecycle/admission/retirement
+  regressions, the actual editor/file-open/manual-button command test,
+  nonlocal path-looking origins, first Save/Save As rebinding, stale-worker
+  results, failed parses, explicit retry, shared bytes/worker slots, bounded
+  read/header controls and Settings/save/restart/reset/failed-save coverage
+  are registered in `validation/traceability.json`. Symlink-file source
+  identity, final/intermediate symlink rebinding, captured-root name rebinding
+  and supported relative/absolute in-root aliases are covered on Unix.
+  Windows uses unprivileged junction fixtures for intermediate and
+  root-acquisition rebinding. Portable tests cover visible unresolvable-source
+  refusal and directory-handle release after success/failure. The FIFO
+  regression remains Unix-only.
+- **Native/manual evidence required:** `CP-06` and `CP-15` retain cross-platform
+  visual, focus, accessibility, path/symlink and refusal/recovery review.
+  Deterministic headless tests do not count as native acceptance or RSS evidence.
+- **Coverage superseded:** local Preview placeholders were not evidence that
+  the ordinary editor invoked the standalone viewer's loader; the production
+  editor workflow now has its own automated evidence.

@@ -23,6 +23,7 @@ mod environment;
 mod inspector;
 mod keyboard;
 mod local_command;
+mod markdown_images;
 mod markdown_viewer;
 mod multiplexer_sessions;
 mod native_smoke;
