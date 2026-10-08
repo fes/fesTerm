@@ -483,6 +483,11 @@ retire the test-owned pin to exercise independent parent-identity refusal.
 The shared security-capture access recipe also has an unprivileged displaced
 original regression for private restriction, exact owner/group/DACL and
 attribute restoration, handle-relative rollback, and final pathname locking.
+Inherited-Modify and protected descriptor copies now exercise the production
+owner/group/DACL setter without audit privilege; comparison permits only the
+observed automatic-inheritance completion marker difference and rejects
+access-bearing mutations. The saved-authority fixture proves live pin
+protection before test-only retirement and independent parent rejection.
 These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.

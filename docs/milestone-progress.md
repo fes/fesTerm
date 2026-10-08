@@ -49,6 +49,19 @@ denial, then proves private restriction, exact access/attribute restoration,
 handle-relative rollback, and final pathname locking. It does not claim to
 exercise audit-SACL access without the required privilege.
 
+The final two Windows application failures separated another test-owned pin
+from an ACL-comparison false positive. Saved-parent authority now proves its
+live Windows identity pin blocks rebinding, then explicitly retires that
+test-owned pin to exercise the independent parent check. A native,
+unprivileged copy through the production owner/group/DACL setter reproduced
+the inherited-Modify refusal: source control `0x8404` became `0x8004`, and
+every other descriptor byte was identical. Comparison now disregards only
+that automatic-inheritance completion marker on private in-memory copies;
+the setter and real object policy are unchanged. Protected and inherited
+copies, private restriction/restoration, and access-bearing mutation refusal
+have focused regressions. Inheritance requests, protection, defaulting,
+ordered ACEs, owners/groups, and every other metadata component remain strict.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory

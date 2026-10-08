@@ -666,39 +666,98 @@ mod imp {
 
     /// Reports whether a handle still has the captured security metadata.
     pub fn security_metadata_matches(file: &File, expected: &SecurityMetadata) -> io::Result<bool> {
-        security_metadata(file)
-            .map(|current| security_metadata_mismatch(&current, expected).is_none())
+        let current = security_metadata(file)?;
+        Ok(security_metadata_mismatch(&current, expected)?.is_none())
+    }
+
+    fn normalize_captured_access_descriptor(descriptor: &[u8]) -> io::Result<Vec<u8>> {
+        use windows_sys::Win32::Security::{
+            SECURITY_DESCRIPTOR_RELATIVE, SE_DACL_AUTO_INHERITED, SE_SELF_RELATIVE,
+        };
+        if descriptor.len() < mem::size_of::<SECURITY_DESCRIPTOR_RELATIVE>() {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        let mut control = 0;
+        let mut revision = 0;
+        if unsafe {
+            GetSecurityDescriptorControl(
+                descriptor.as_ptr().cast_mut().cast(),
+                &raw mut control,
+                &raw mut revision,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if revision != 1 || control & SE_SELF_RELATIVE == 0 {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        let mut normalized = descriptor.to_vec();
+        // Windows drops this completion marker when copying otherwise identical ACL bytes.
+        // Normalize only a comparison copy, never the object's access policy.
+        if unsafe {
+            SetSecurityDescriptorControl(normalized.as_mut_ptr().cast(), SE_DACL_AUTO_INHERITED, 0)
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(normalized)
+    }
+
+    fn access_descriptors_match(current: &[u8], expected: &[u8]) -> io::Result<bool> {
+        Ok(normalize_captured_access_descriptor(current)?
+            == normalize_captured_access_descriptor(expected)?)
+    }
+
+    const ACCESS_INFORMATION: u32 =
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+
+    fn apply_owner_group_dacl(file: &File, descriptor: &[u8]) -> io::Result<()> {
+        if unsafe {
+            SetKernelObjectSecurity(
+                file.as_raw_handle() as HANDLE,
+                ACCESS_INFORMATION,
+                descriptor.as_ptr().cast_mut().cast(),
+            )
+        } == 0
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
     fn security_metadata_mismatch(
         current: &SecurityMetadata,
         expected: &SecurityMetadata,
-    ) -> Option<&'static str> {
-        if current.descriptor != expected.descriptor {
-            Some("owner, group, or DACL")
-        } else if current.audit_sacl != expected.audit_sacl {
-            Some("audit SACL")
-        } else if current.mandatory_label != expected.mandatory_label {
-            Some("mandatory label")
-        } else if current.resource_attributes != expected.resource_attributes {
-            Some("resource attributes")
-        } else if current.scoped_policy != expected.scoped_policy {
-            Some("central access policy")
-        } else if current.attributes != expected.attributes {
-            Some("file attributes")
-        } else if current.unsupported_integrity_attributes
-            != expected.unsupported_integrity_attributes
-        {
-            Some("integrity attributes")
-        } else if current.encrypted != expected.encrypted {
-            Some("EFS encryption state")
-        } else if current.has_named_streams != expected.has_named_streams {
-            Some("named streams")
-        } else if current.has_extended_attributes != expected.has_extended_attributes {
-            Some("extended attributes")
-        } else {
-            None
-        }
+    ) -> io::Result<Option<&'static str>> {
+        Ok(
+            if !access_descriptors_match(&current.descriptor, &expected.descriptor)? {
+                Some("owner, group, or DACL")
+            } else if current.audit_sacl != expected.audit_sacl {
+                Some("audit SACL")
+            } else if current.mandatory_label != expected.mandatory_label {
+                Some("mandatory label")
+            } else if current.resource_attributes != expected.resource_attributes {
+                Some("resource attributes")
+            } else if current.scoped_policy != expected.scoped_policy {
+                Some("central access policy")
+            } else if current.attributes != expected.attributes {
+                Some("file attributes")
+            } else if current.unsupported_integrity_attributes
+                != expected.unsupported_integrity_attributes
+            {
+                Some("integrity attributes")
+            } else if current.encrypted != expected.encrypted {
+                Some("EFS encryption state")
+            } else if current.has_named_streams != expected.has_named_streams {
+                Some("named streams")
+            } else if current.has_extended_attributes != expected.has_extended_attributes {
+                Some("extended attributes")
+            } else {
+                None
+            },
+        )
     }
 
     fn apply_security_descriptor_if_changed(
@@ -737,8 +796,6 @@ mod imp {
     /// Applies captured access-control metadata and file attributes to a
     /// prepared replacement before it can become visible.
     pub fn apply_security_metadata(file: &File, metadata: &SecurityMetadata) -> io::Result<()> {
-        const INFORMATION: u32 =
-            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
         if let Some(reason) = metadata.unsupported_reason() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -765,16 +822,7 @@ mod imp {
             )
         })?;
         let handle = file.as_raw_handle() as HANDLE;
-        if unsafe {
-            SetKernelObjectSecurity(
-                handle,
-                INFORMATION,
-                metadata.descriptor.as_ptr().cast_mut().cast(),
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        apply_owner_group_dacl(file, &metadata.descriptor)?;
         apply_security_descriptor_if_changed(file, SACL_SECURITY_INFORMATION, audit_sacl)?;
         apply_security_descriptor_if_changed(
             file,
@@ -807,7 +855,7 @@ mod imp {
             return Err(io::Error::last_os_error());
         }
         let current = security_metadata(file)?;
-        match security_metadata_mismatch(&current, metadata) {
+        match security_metadata_mismatch(&current, metadata)? {
             None => Ok(()),
             Some(field) => Err(io::Error::other(format!(
                 "prepared Windows {field} metadata did not match its source"
@@ -2339,6 +2387,113 @@ mod imp {
                 fs::read(directory.0.join("original.md")).unwrap(),
                 b"original"
             );
+        }
+
+        fn copied_access_descriptor_fixture(shared_inheritance: bool) -> (Vec<u8>, Vec<u8>) {
+            let directory = TemporaryDirectory::new();
+            let root = directory.handle();
+            let source = if shared_inheritance {
+                fs::write(directory.0.join("source.md"), b"source").unwrap();
+                let output = Command::new("icacls")
+                    .arg(&directory.0)
+                    .args(["/grant", "*S-1-1-0:(OI)(CI)(M)"])
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "icacls failed: {output:?}");
+                open_file_no_reparse_for_capture(&root, Path::new("source.md")).unwrap()
+            } else {
+                create_current_user_only_file_exclusive(&root, Path::new("source.md")).unwrap()
+            };
+            let expected = security_descriptor(&source, ACCESS_INFORMATION).unwrap();
+            let other_descriptors = [
+                LABEL_SECURITY_INFORMATION,
+                ATTRIBUTE_SECURITY_INFORMATION,
+                SCOPE_SECURITY_INFORMATION,
+            ]
+            .map(|information| {
+                (
+                    information,
+                    security_descriptor(&source, information).unwrap(),
+                )
+            });
+            let staging =
+                create_current_user_only_directory(&root, Path::new("private.stage")).unwrap();
+            let payload =
+                create_current_user_only_file_exclusive(&staging, Path::new("payload")).unwrap();
+            apply_owner_group_dacl(&payload, &expected).unwrap();
+            let actual = security_descriptor(&payload, ACCESS_INFORMATION).unwrap();
+            for (information, descriptor) in &other_descriptors {
+                assert_eq!(
+                    security_descriptor(&payload, *information).unwrap(),
+                    *descriptor,
+                    "unrelated security descriptor {information:#x} changed"
+                );
+            }
+            restrict_to_current_user(&payload).unwrap();
+            assert!(is_current_user_only(&payload).unwrap());
+            apply_owner_group_dacl(&payload, &expected).unwrap();
+            let restored = security_descriptor(&payload, ACCESS_INFORMATION).unwrap();
+            assert!(access_descriptors_match(&restored, &expected).unwrap());
+            (expected, actual)
+        }
+
+        #[test]
+        fn inherited_modify_access_descriptor_copy_matches_source() {
+            let (expected, actual) = copied_access_descriptor_fixture(true);
+            assert!(access_descriptors_match(&actual, &expected).unwrap());
+        }
+
+        #[test]
+        fn protected_access_descriptor_copy_matches_source() {
+            let (expected, actual) = copied_access_descriptor_fixture(false);
+            assert!(access_descriptors_match(&actual, &expected).unwrap());
+        }
+
+        #[test]
+        fn access_descriptor_comparison_rejects_access_bearing_mutations() {
+            let (expected, actual) = copied_access_descriptor_fixture(false);
+            assert!(access_descriptors_match(&actual, &expected).unwrap());
+            let offset =
+                |at: usize| u32::from_le_bytes(expected[at..at + 4].try_into().unwrap()) as usize;
+            let owner = offset(4);
+            let group = offset(8);
+            let dacl = offset(16);
+            assert!(owner != 0 && group != 0 && dacl != 0);
+            let first_ace = dacl + 8;
+            assert_eq!(expected[first_ace], 0);
+            assert_eq!(
+                u16::from_le_bytes(expected[dacl + 4..dacl + 6].try_into().unwrap()),
+                1
+            );
+            for (label, position, bit) in [
+                ("owner SID", owner + 8, 1u8),
+                ("group SID", group + 8, 1),
+                ("ACE access mask", first_ace + 4, 2),
+                (
+                    "ACE inherit-only flag",
+                    first_ace + 1,
+                    INHERIT_ONLY_ACE as u8,
+                ),
+                ("DACL protection", 3, (SE_DACL_PROTECTED >> 8) as u8),
+                ("DACL defaulting", 2, 0x08),
+                ("owner defaulting", 2, 0x01),
+                ("group defaulting", 2, 0x02),
+                ("auto-inheritance request", 3, 0x01),
+                ("unexpected descriptor control", 2, 0x80),
+            ] {
+                let mut changed = expected.clone();
+                changed[position] ^= bit;
+                assert!(
+                    !access_descriptors_match(&changed, &expected).unwrap(),
+                    "{label} mutation was accepted"
+                );
+            }
+            let mut null_dacl = expected.clone();
+            null_dacl[16..20].fill(0);
+            assert!(!access_descriptors_match(&null_dacl, &expected).unwrap());
+            let mut changed_revision = expected.clone();
+            changed_revision[dacl] = if expected[dacl] == 2 { 4 } else { 2 };
+            assert!(!access_descriptors_match(&changed_revision, &expected).unwrap());
         }
 
         #[test]

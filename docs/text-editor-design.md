@@ -125,6 +125,11 @@ The editor never resolves a divergence silently.
   DACL-write, and owner-write access for private restriction and rollback,
   plus system-security access for its audit SACL. It holds no delete access;
   identity-checked transient movers remain separate.
+  Owner/group/DACL comparison ignores only the automatic-inheritance
+  completion marker on in-memory comparison copies: Windows can drop
+  `SE_DACL_AUTO_INHERITED` while copying otherwise identical descriptor bytes.
+  SIDs, ordered ACEs, inheritance-request/defaulting/protection controls,
+  descriptor layout, and all other security metadata must still match exactly.
   The displaced original is
   immediately restricted to the current user and also has a separately written
   private byte copy. An NTFS EFS-encrypted target is

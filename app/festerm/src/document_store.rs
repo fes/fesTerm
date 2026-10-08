@@ -3153,9 +3153,33 @@ mod tests {
         let directory = TemporaryDirectory::new("saved-parent");
         let retained = TemporaryDirectory::new("saved-parent-retained");
         fs::remove_dir(&retained.path).unwrap();
+        #[cfg(not(windows))]
         let path = directory.file("notes.md", "before\n");
+        #[cfg(windows)]
+        let path = directory.path.join("notes.md");
+        #[cfg(not(windows))]
         let loaded = load(&path, bounds()).unwrap();
+        #[cfg(not(windows))]
         let saved = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
+        #[cfg(windows)]
+        let mut saved = {
+            let destination = absent_destination(&path);
+            save(
+                &path,
+                b"after\n",
+                SaveExpectation::Destination(&destination),
+            )
+            .unwrap()
+        };
+
+        #[cfg(windows)]
+        {
+            let error = fs::rename(&directory.path, &retained.path).unwrap_err();
+            assert!(matches!(error.raw_os_error(), Some(5) | Some(32)));
+            saved
+                .source_authority
+                .release_identity_pin_for_parent_rebind_test();
+        }
 
         fs::rename(&directory.path, &retained.path).unwrap();
         fs::create_dir(&directory.path).unwrap();
