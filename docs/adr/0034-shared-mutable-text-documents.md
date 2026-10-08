@@ -272,8 +272,10 @@ prepared file while its retained handle denies every other read or write open.
 The exact DACL bytes are present before publication. When the source DACL
 inherits, its control state is finalized through the retained handle immediately
 after the payload enters the destination parent, where Windows can reproduce
-that parent's inheritance; complete metadata must then match before Save can
-succeed. A separately opened, identity-checked delete handle performs
+that parent's inheritance. Verification requires the same owner, group, DACL
+bytes, presence/defaulting and protected state; only Windows-regenerated
+`AUTO_INHERIT_REQ`/`AUTO_INHERITED` bookkeeping may differ before Save succeeds.
+A separately opened, identity-checked delete handle performs
 publication and closes; a metadata-only final pathname
 handle that does not share delete access then pins the visible name while the
 published security snapshot is verified. The displaced original is immediately

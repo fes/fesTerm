@@ -53,9 +53,10 @@ mod imp {
             LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
             PROTECTED_DACL_SECURITY_INFORMATION, PROTECTED_SACL_SECURITY_INFORMATION,
             SACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
-            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SACL_PROTECTED,
-            SE_SECURITY_NAME, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL,
-            TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+            SECURITY_DESCRIPTOR, SE_DACL_AUTO_INHERITED, SE_DACL_AUTO_INHERIT_REQ,
+            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SACL_PROTECTED, SE_SECURITY_NAME,
+            TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
+            TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
             UNPROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_SACL_SECURITY_INFORMATION,
         },
         Storage::FileSystem::{
@@ -677,11 +678,13 @@ mod imp {
         expected: &SecurityMetadata,
     ) -> Option<&'static str> {
         if current.descriptor != expected.descriptor {
-            Some(security_descriptor_mismatch(
-                &current.descriptor,
-                &expected.descriptor,
-            ))
-        } else if current.audit_sacl != expected.audit_sacl {
+            if let Some(field) =
+                security_descriptor_mismatch(&current.descriptor, &expected.descriptor)
+            {
+                return Some(field);
+            }
+        }
+        if current.audit_sacl != expected.audit_sacl {
             Some("audit SACL")
         } else if current.mandatory_label != expected.mandatory_label {
             Some("mandatory label")
@@ -706,7 +709,7 @@ mod imp {
         }
     }
 
-    fn security_descriptor_mismatch(current: &[u8], expected: &[u8]) -> &'static str {
+    fn security_descriptor_mismatch(current: &[u8], expected: &[u8]) -> Option<&'static str> {
         let current = current.as_ptr().cast_mut().cast();
         let expected = expected.as_ptr().cast_mut().cast();
         let mut current_owner = ptr::null_mut();
@@ -720,7 +723,7 @@ mod imp {
             || current_owner.is_null() != expected_owner.is_null()
             || (!current_owner.is_null() && unsafe { EqualSid(current_owner, expected_owner) } == 0)
         {
-            return "owner";
+            return Some("owner");
         }
 
         let mut current_group = ptr::null_mut();
@@ -733,7 +736,7 @@ mod imp {
             || current_group.is_null() != expected_group.is_null()
             || (!current_group.is_null() && unsafe { EqualSid(current_group, expected_group) } == 0)
         {
-            return "group";
+            return Some("group");
         }
 
         let mut current_dacl_present = 0;
@@ -759,7 +762,7 @@ mod imp {
             || current_dacl_present != expected_dacl_present
             || current_dacl.is_null() != expected_dacl.is_null()
         {
-            return "DACL presence";
+            return Some("DACL presence");
         }
         if !current_dacl.is_null() {
             // SAFETY: the validated security descriptors own both ACLs, whose
@@ -777,7 +780,7 @@ mod imp {
                 )
             };
             if current_acl != expected_acl {
-                return "DACL";
+                return Some("DACL");
             }
         }
 
@@ -790,11 +793,16 @@ mod imp {
             || unsafe {
                 GetSecurityDescriptorControl(expected, &raw mut expected_control, &raw mut revision)
             } == 0
-            || current_control != expected_control
         {
-            return "DACL control";
+            return Some("DACL control");
         }
-        "owner, group, or DACL serialization"
+        const AUTOMATIC_INHERITANCE_BOOKKEEPING: u16 =
+            SE_DACL_AUTO_INHERIT_REQ | SE_DACL_AUTO_INHERITED;
+        if (current_control ^ expected_control) & !AUTOMATIC_INHERITANCE_BOOKKEEPING != 0 {
+            Some("DACL control")
+        } else {
+            None
+        }
     }
 
     fn apply_security_descriptor_if_changed(
