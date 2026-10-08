@@ -24,6 +24,16 @@ variants and all native-platform evidence remain explicit prerequisites in
 [`surface-matrix.json`](surface-matrix.json). No existing CP-16/CP-17 budget is
 extended to About or menus, and no favorable menu latency threshold is invented.
 
+The semantic fixture regression covers all 52 variants at both widths.
+Chip preparation settles actual target bounds within 32 frames and, when the
+row scrolls, uses at most eight real scroll-control clicks to put the target
+inside the viewport before secondary-clicking it. It preserves active identity,
+the exact edge-applicable movement/Close assertions and zero transport input.
+This repairs #346's stale-coordinate race during initial active-chip scroll
+reveal, including inactive-middle/read-only-last targets; it neither disables
+production scroll animations nor qualifies completed WARP or native
+input/presentation.
+
 The [existing gallery generator](../../scripts/build_ui_state_doc.py) also
 expands that reconciled audit into a machine-readable report. It lists every
 audited state group and reusable state-profile dimension, with a named
