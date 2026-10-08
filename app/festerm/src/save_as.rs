@@ -20,6 +20,7 @@ use festerm_ssh::{
 };
 use festerm_ui_egui::theme;
 
+use crate::document_store::{self, ConfirmedDestination, DestinationExpectation};
 use crate::sftp_file_manager::{
     breadcrumb_segments, font_for_text_role, format_modified, format_size, item_glyph,
     local_home_directory, paint_sftp_glyph, path_key, show_table_header_cell, show_table_text_cell,
@@ -65,7 +66,10 @@ pub(crate) enum SaveAsOutcome {
     Pending,
     /// The user pressed Save. `path` is the absolute local destination,
     /// already joined from the browsed directory and the file-name field.
-    Save { path: PathBuf },
+    Save {
+        path: PathBuf,
+        destination: Box<ConfirmedDestination>,
+    },
     /// Dismissed with Cancel or Escape.
     Cancelled,
 }
@@ -96,6 +100,7 @@ pub(crate) struct SaveAsPicker {
     repaint: egui::Context,
     local_loader: LocalDirectoryLoader,
     next_request_id: u64,
+    refresh_notice: Option<(String, String)>,
 }
 
 impl SaveAsPicker {
@@ -112,6 +117,7 @@ impl SaveAsPicker {
             repaint,
             local_loader,
             next_request_id: 0,
+            refresh_notice: None,
         };
         let start = picker.pane.current_path.clone();
         picker.load(start);
@@ -119,6 +125,7 @@ impl SaveAsPicker {
     }
 
     fn load(&mut self, path: SftpPath) {
+        self.refresh_notice = None;
         self.pane.loading = true;
         self.pane.error = None;
         self.pane.details = None;
@@ -162,6 +169,9 @@ impl SaveAsPicker {
                 } => {
                     if request_id == self.pane.pending_request_id {
                         self.pane.set_snapshot(snapshot, metadata);
+                        if let Some((summary, details)) = &self.refresh_notice {
+                            self.pane.set_error(summary.clone(), details.clone());
+                        }
                     }
                 }
                 SaveAsEvent::Failed {
@@ -546,9 +556,36 @@ impl SaveAsPicker {
             }
             let should_save = save_enabled && (save.clicked() || enter_saves);
             if let Some(directory) = self.current_directory().filter(|_| should_save) {
-                outcome = SaveAsOutcome::Save {
-                    path: directory.join(&trimmed),
-                };
+                self.refresh_notice = None;
+                self.pane.error = None;
+                self.pane.details = None;
+                let path = directory.join(&trimmed);
+                match document_store::observe_destination(&path) {
+                    Ok(destination) => {
+                        let observed_exists = matches!(
+                            destination.expectation(),
+                            DestinationExpectation::Existing(_)
+                        );
+                        if observed_exists == file_collision {
+                            outcome = SaveAsOutcome::Save {
+                                path,
+                                destination: Box::new(destination),
+                            };
+                        } else {
+                            self.load(SftpPath::Local(directory));
+                            let notice = (
+                                "Destination changed after the folder was listed".to_owned(),
+                                "The folder is refreshing. Review the destination, then press Save again. Nothing was written.".to_owned(),
+                            );
+                            self.pane.set_error(notice.0.clone(), notice.1.clone());
+                            self.refresh_notice = Some(notice);
+                        }
+                    }
+                    Err(failure) => {
+                        self.pane
+                            .set_error(failure.headline().to_owned(), failure.detail().to_owned());
+                    }
+                }
             }
         });
 
@@ -847,11 +884,69 @@ mod tests {
         harness.run();
 
         match harness.state().1.as_ref().expect("an outcome") {
-            SaveAsOutcome::Save { path } => {
+            SaveAsOutcome::Save { path, destination } => {
                 assert_eq!(path, &directory.path.join("draft.md"));
+                assert_eq!(destination.expectation(), DestinationExpectation::Absent);
             }
             other => panic!("expected Save, got {}", describe(other)),
         }
+    }
+
+    #[test]
+    fn save_as_refuses_a_file_that_appears_after_the_folder_was_listed() {
+        let directory = TemporaryDirectory::new("appeared-after-listing");
+        let mut harness = harness_for(&directory, "");
+
+        type_name(&mut harness, "winner.md");
+        directory.file("winner.md", "newer\n");
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert!(harness.state().1.is_none());
+        assert_eq!(
+            fs::read_to_string(directory.path.join("winner.md")).unwrap(),
+            "newer\n"
+        );
+
+        settle(&mut harness);
+        assert_eq!(
+            harness.state().0.pane.error.as_deref(),
+            Some("Destination changed after the folder was listed")
+        );
+        harness.get_by_label("Save").click();
+        harness.run();
+        match harness.state().1.as_ref().expect("an outcome") {
+            SaveAsOutcome::Save { destination, .. } => {
+                assert!(matches!(
+                    destination.expectation(),
+                    DestinationExpectation::Existing(_)
+                ));
+            }
+            other => panic!("expected refreshed Save, got {}", describe(other)),
+        }
+    }
+
+    #[test]
+    fn stale_destination_notice_clears_when_navigating_to_another_folder() {
+        let directory = TemporaryDirectory::new("stale-notice-navigation");
+        let mut harness = harness_for(&directory, "");
+
+        type_name(&mut harness, "winner.md");
+        directory.file("winner.md", "newer\n");
+        harness.get_by_label("Save").click();
+        harness.run();
+        settle(&mut harness);
+        assert!(harness.state().0.pane.error.is_some());
+
+        harness.state_mut().0.navigate_up();
+        settle(&mut harness);
+
+        assert_ne!(
+            harness.state().0.pane.error.as_deref(),
+            Some("Destination changed after the folder was listed"),
+            "navigation must clear the stale-destination notice even if the new folder reports its own error"
+        );
+        assert!(harness.state().0.refresh_notice.is_none());
     }
 
     #[test]
@@ -942,7 +1037,7 @@ mod tests {
         harness.run_steps(2);
         assert!(matches!(
             harness.state().1.as_ref(),
-            Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("NOTES.md")
+            Some(SaveAsOutcome::Save { path, .. }) if path == &directory.path.join("NOTES.md")
         ));
     }
 
@@ -1047,6 +1142,7 @@ mod tests {
     #[test]
     fn virtualized_save_as_picker_reaches_and_selects_the_final_row() {
         let directory = TemporaryDirectory::new("virtual-rows");
+        directory.file("row-00999.txt", "x");
         let mut harness = harness_for(&directory, "new.txt");
         harness.state_mut().0.pane.set_snapshot(
             SftpDirectorySnapshot {
@@ -1088,7 +1184,7 @@ mod tests {
         harness.run();
         assert!(matches!(
             harness.state().1.as_ref(),
-            Some(SaveAsOutcome::Save { path }) if path == &directory.path.join("row-00999.txt")
+            Some(SaveAsOutcome::Save { path, .. }) if path == &directory.path.join("row-00999.txt")
         ));
     }
 
@@ -1107,8 +1203,12 @@ mod tests {
         harness.run();
 
         match harness.state().1.as_ref().expect("an outcome") {
-            SaveAsOutcome::Save { path } => {
+            SaveAsOutcome::Save { path, destination } => {
                 assert_eq!(path, &directory.path.join("NOTES.md"));
+                assert!(matches!(
+                    destination.expectation(),
+                    DestinationExpectation::Existing(_)
+                ));
             }
             other => panic!("expected Save, got {}", describe(other)),
         }

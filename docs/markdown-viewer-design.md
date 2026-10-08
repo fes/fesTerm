@@ -15,21 +15,22 @@ tables, task lists, code, links, selection, Copy, Find, and accessibility. It
 does not promise browser-identical rendering or become an editor, preview
 server, web browser, notebook, or general IDE.
 
-The viewer is a first-class non-terminal application surface in the existing
-chip row. Each open document owns one viewer chip labeled with its basename and
-a secondary origin (`Local` or the stable SSH/SFTP session or profile name).
-Opening the same canonical source again focuses its existing viewer; opening a
-different document creates another chip. Viewer lifecycles never resize, split,
-or take ownership of a terminal viewport.
+The standalone viewer is a first-class non-terminal application surface for
+bounded remote snapshots that have no editable local file behind them. Saved
+local Markdown instead owns one shared text-editor document and opens in that
+tab's Preview mode, with `Edit | Preview | Split` selecting its presentation.
+Opening the same canonical local source again focuses its existing editor view
+without discarding unsaved text. Neither surface resizes, splits, or takes
+ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
 - **Desktop Open With:** installed desktop packages advertise `.md` and
   `.markdown` without replacing the user's default application. Finder document
   events and `festerm --open -- <paths...>` enter a bounded application queue,
-  not terminal drag-and-drop or SFTP upload handling. New documents open in the
-  last-active window's Preview mode; an already-open document focuses its
-  existing view across windows without reloading unsaved text. Requests wait
+  not terminal drag-and-drop or SFTP upload handling. New local documents open
+  in the last-active window's editor Preview mode; an already-open document
+  focuses its existing view across windows without reloading unsaved text. Requests wait
   while a blocking dialog or open-error notice is active. Multiple files are
   opened in order, with ordinary local-document load failures shown explicitly.
   A file-bearing second launch forwards to the process owning the per-user
@@ -42,9 +43,10 @@ or take ownership of a terminal viewport.
   **Open path** opens a regular file or navigates into a directory; invalid paths
   retain the input and show the error. Ctrl+L (Command+L on macOS) focuses the
   field. Metadata lookup shares the bounded background directory loader, and
-  edits/navigation invalidate stale lookup results. A Markdown file lands here; anything else
-  opens in the text editor, which has nothing to render it as. An explicitly activated local `file:` link may offer **Preview
-  Markdown** when it resolves to a readable Markdown file.
+  edits/navigation invalidate stale lookup results. Every regular text file
+  opens in the shared editor; Markdown starts in Preview and other text starts
+  in Edit. An explicitly activated local `file:` link may offer **Open file**
+  when it resolves to a readable text document.
 - **SFTP:** a selected `.md`/`.markdown` row offers **Preview Markdown**. The
   viewer receives a bounded read-only snapshot through the SFTP/application
   layer; a remote path never becomes a local path.
@@ -71,9 +73,11 @@ document byte cap. Shell input/output and lifecycle commands continue while
 SFTP is pending. Manual or automatic transport replacement invalidates queued
 requests; no late result is relabelled as belonging to the new connection.
 
-## Viewer layout
+## Standalone viewer and shared Preview layout
 
-The application chrome remains unchanged. The viewer content contains:
+The application chrome remains unchanged. The standalone remote viewer content
+contains the following controls; saved-local editor Preview reuses the same
+bounded renderer inside its `Edit | Preview | Split` workflow:
 
 1. A compact document toolbar with origin icon/label, elided full path, manual
    Reload, Preview/Source switch, Find, Outline toggle, and overflow.
@@ -156,14 +160,40 @@ activation:
   does not become a generic file launcher.
 - Dangerous or unsupported schemes are inert and explained.
 
-No secondary resource loads implicitly. Images render as compact placeholders
-showing alt text and source class. For a local document, **Load local image**
-may read an explicitly requested bounded raster file after canonical path and
-size checks. For a remote document, **Load remote image** performs an explicit
-bounded fetch through the same verified SFTP origin/generation. Network images,
-data URLs, SVG, fonts, scripts, stylesheets, iframes, and includes never load in
-the viewer. Resource approval is per item for the current viewer lifetime, not
-a persisted trust grant.
+Only bounded relative raster images of saved local documents load automatically,
+up to 64 distinct references per snapshot; later references keep **Load local
+image**. Both standalone viewers and editor Preview share four actual running
+loads and the Settings **Image memory budget** (512 MiB default). Existing
+admissions survive lowering/saturation; additional growth is visibly refused,
+and temporary refusals recover when their required space or slot is available.
+Permanent failures do not retry every frame; explicit retry remains available.
+
+The complete canonical saved Markdown file identity grants reads, never its
+lexical symlink-file parent, a presentation label or a fallback path. A source
+that cannot be resolved keeps its text Preview and visibly disables image reads.
+The document store records canonical path and identity/size/modification
+generation from the no-follow handle that supplied the editor bytes.
+Reload/save generation changes retire old image state before reparsing. Each
+image read walks that canonical parent without following newly inserted
+aliases, verifies the Markdown file through the captured directory against the
+loaded generation, and resolves the canonical in-root image destination
+beneath the same handle. Source replacement, component rebinding and
+symlink/reparse-point escapes therefore cannot retarget a load; authorized
+in-root aliases remain readable. Directory capabilities belong only to active
+reads, not open tabs. Actual encoded input is bounded to 8 MiB, dimensions to
+16 Mi-pixels and the live texture-axis limit, before owned expansion. Opened
+metadata must identify a regular file, and Unix nonblocking opens reject
+special files without waiting for a FIFO writer. Reservations track actual
+worker/result/texture/CPU-upload owners through close and snapshot replacement.
+See ADR 0030 for the conservative envelope and bounded retirement traversal.
+
+Remote, untitled and terminal-history Preview never read local images. Remote
+resource fetch remains unimplemented and may only be added through the same
+verified SFTP origin/generation. Network images, data URLs, SVG, fonts, scripts,
+stylesheets, iframes, and includes never load. Approval is per snapshot/view,
+not a persisted trust grant. The shared allowance is not a process-RAM/VRAM
+cap: decoder-private allocation, native renderer/GPU retirement and allocator
+fragmentation are outside it.
 
 ## Find, selection, Copy, and keyboard behavior
 
@@ -195,7 +225,7 @@ Keyboard paths:
 - `Ctrl/Cmd+F` opens Find; Enter/Shift+Enter moves next/previous; Escape clears
   Find before closing the viewer.
 - `Ctrl/Cmd+R` manually reloads the source after revalidating identity.
-- `Ctrl/Cmd+Shift+M` toggles Preview/Source when it does not conflict with a
+- `Ctrl/Cmd+Shift+V` toggles Preview/Source when it does not conflict with a
   platform-reserved binding; the command palette is authoritative.
 - `Ctrl/Cmd+Shift+O` toggles the heading outline.
 - Tab traverses toolbar, outline, links, resource actions, table regions, and
@@ -260,15 +290,17 @@ reading order, platform UI scaling, high contrast, and reduced motion.
 
 ## Acceptance sequence
 
-1. From `dev-shell`, select **Open Markdown File…** from More actions and select a local README;
-   a sibling viewer chip opens without changing the terminal session.
+1. From `dev-shell`, select **Open File…** from More actions and select
+   a local README; a sibling editor chip opens in Preview without changing the
+   terminal session.
 2. Navigate the heading outline, a table, task list, link, and code block using
-   keyboard and screen reader; Copy a code block and verify exact plain text.
-3. Find `security`, move between matches, then switch Preview/Source while
-   preserving the current section and match.
-4. Reach a relative image placeholder and explicitly load a bounded local
-   raster; verify network/data/SVG resources remain blocked and nothing loads
-   before the action.
+   keyboard and screen reader; switch through `Edit | Preview | Split`, Copy a
+   code block, and verify exact plain text.
+3. Find `security`, move between matches, and preserve the current section and
+   match while changing editor modes.
+4. Verify the first 64 bounded relative raster references load automatically,
+   explicitly load an over-budget reference, and confirm network/data/SVG
+   resources remain blocked.
 5. Preview a remote Markdown file from SFTP, disconnect, and verify the complete
    snapshot remains readable but visibly stale; reconnect/reload only against
    the same verified origin.

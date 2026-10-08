@@ -114,9 +114,13 @@ Every behavior-bearing change must declare its validation impact before merge:
   and
 - editorial or behavior-preserving changes use an explicit no-impact reason.
 
-Commits use `Validation-Impact: GUI:<edge>, ADR-<number>` trailers. A no-impact
-trailer uses `Validation-Impact: none - <meaningful reason>`. The trailer is a
-review declaration, not evidence and not an alternative to updating the
+The proposed integration range must contain a Git-parsed
+`Validation-Impact: GUI:<edge>, ADR-<number>` trailer that declares the impact
+of the complete changed range. A no-impact declaration uses
+`Validation-Impact: none - <meaningful reason>`. Individual commits may carry
+more specific declarations, but the checker does not reject imported or
+historical commits merely because each one lacks its own trailer. The trailer
+is a review declaration, not evidence and not an alternative to updating the
 registry.
 
 `scripts/check_validation_traceability.py` validates complete graph coverage,

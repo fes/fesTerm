@@ -3,6 +3,220 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Repairing native Windows conditional save publication
+
+The later privileged low-label copy exposed an audit-only representation
+change, not lost policy: the audit query returned a 28-byte descriptor with
+an empty eight-byte ACL, while the copied file returned a 20-byte descriptor
+with a present null SACL. The only header changes were the observed
+completion bit and SACL offset. Audit comparison now equates only this
+canonical revision-2 empty/null form on comparison copies. Presence, other
+controls, actual audit ACEs and noncanonical/additional layout remain strict;
+the rule never reaches DACL or LABEL/ATTRIBUTE/SCOPE comparison. SDK-built
+regressions exercise that distinction without claiming privileged full-copy
+acceptance, which fresh native CI must establish.
+The same real unprivileged low-label fixture then exposed the shared
+completion bit in ATTRIBUTE and SCOPE queries: each source/copied pair was
+28 bytes and differed only at that header bit. Their early and final
+comparisons now use the same completion-only rule, preserving every actual
+resource/policy byte and retaining refusal for a real central-policy change.
+The SDK fixture proves these marker-only routes do not invoke a mutating
+setter or change either object's descriptors. Empty/null normalization
+remains audit-only, and the privileged audit diagnostic uses the actual
+audit comparator.
+
+The isolated Windows save check in #337 finally separated a publication
+failure from the earlier extended-attribute diagnosis: ordinary handle-relative
+moves were reported as an unsupported filesystem. Native
+`NtSetInformationFile` now submits `FileRenameInformation` with replacement
+disabled against the exact retained destination directory. The aligned buffer
+includes the complete native structure even for a one-character filename.
+
+Reaching final verification exposed two related access-mask errors. EA
+inspection requires EA-read access, and a metadata-only handle does not
+participate in delete-sharing checks. Verification now requests EA-read and
+delete access without delete sharing, while still requesting no payload data
+access. Existing exclusive-payload and captured-original regressions prove
+that the final name is pinned. Application verification hashes the retained
+readable payload and compares the locked published name's metadata and
+identity; it never attempts a data read through the metadata-only lock.
+Native DACL mutation fixtures explicitly request DACL-write access, and an
+audit fixture releases its delete-bearing mover before final verification.
+A Windows generation regression proves that the final verifier cannot read
+payload bytes while the retained readable handle supplies the digest and
+matches the locked name's metadata.
+Directory refusals also keep their typed classification: native save opens
+preserve the directory NTSTATUS, while canonical reads use cap-std backup
+semantics to inspect and reject directory handles. The sandbox, canonical
+checks, and ordinary Cloud Files hydration path remain unchanged.
+Windows parent-substitution fixtures now prove the live identity/save locks
+block ordinary directory renames. The source-authority tests explicitly retire
+only their test-owned identity pin before exercising the independent
+parent-identity rejection; production pins and save locks remain unchanged.
+A new unprivileged native regression renames
+and substitutes the destination directory, publishes a short filename into
+the retained directory, and proves a collision leaves both versions intact.
+Audit-privilege and unsupported-EA refusals remain unchanged; local endpoint
+protection and native crash/power-loss evidence are not bypassed or accepted.
+
+The next native Windows run passed the rename stage but retained recovery:
+the audit-capable original handle had only read access even though capture
+must make the displaced object private and restore its metadata on rollback.
+Audit and ordinary capture now share the same attribute-, DACL-, and
+owner-write recipe, with only the audit variant adding system-security access.
+An unprivileged regression uses that shared recipe to reproduce the old access
+denial, then proves private restriction, exact access/attribute restoration,
+handle-relative rollback, and final pathname locking. It does not claim to
+exercise audit-SACL access without the required privilege.
+
+The final two Windows application failures separated another test-owned pin
+from an ACL-comparison false positive. Saved-parent authority now proves its
+live Windows identity pin blocks rebinding, then explicitly retires that
+test-owned pin to exercise the independent parent check. A native,
+unprivileged copy through the production owner/group/DACL setter reproduced
+the inherited-Modify refusal: source control `0x8404` became `0x8004`, and
+every other descriptor byte was identical. Comparison now disregards only
+that automatic-inheritance completion marker on private in-memory copies;
+the setter and real object policy are unchanged. Protected and inherited
+copies, private restriction/restoration, and access-bearing mutation refusal
+have focused regressions. Inheritance requests, protection, defaulting,
+ordered ACEs, owners/groups, and every other metadata component remain strict.
+
+That repair passed all 1,157 Windows application tests and exposed two later
+native-suite failures. The thread-scope fixture had mistaken Win32 privilege
+denial 1314 for Rust's `PermissionDenied` category; it now checks the measured
+native status without weakening the denied open. A separate unprivileged
+low-integrity-label copy reproduced a 48-byte descriptor difference at only
+the SACL automatic-inheritance completion bit (`0x0800`). Label comparison
+now disregards only that observed marker on comparison copies, preserving
+the integrity SID, policy mask, ordered ACEs and every other control/layout
+byte. Audit-SACL comparison is not broadened. Deterministic component tests
+cover the actual setter and significant label mutations; privileged full
+metadata copying still requires the native CI account.
+
+The next native run narrowed the remaining low-label failure to the audit-SACL
+selector (`0x8`) before LABEL application; the privilege-scope test passed.
+Both selectors describe the same SACL family, so their comparison copies now
+share only the completion-marker exception while retaining every other byte
+and audit-capture presence. An SDK-built audit descriptor exercises policy,
+principal, flag and control mutations without audit privilege. The real
+privileged low-label copy remains authoritative and records lengths, control
+XOR and bounded differing indices, never raw descriptors. This distinguishes
+selective comparator evidence from measured native copy compatibility.
+
+## Bounding image ownership and connecting saved-local Preview
+
+Review of #337 caught two filesystem-authority flaws alongside the memory
+repair: a symlinked Markdown filename granted its lexical parent, and a path
+could be rebound after containment checks but before opening. Three compiled
+old-path controls reproduced those failures. A further control showed that
+recanonicalizing the saved parent while acquiring a directory handle could
+still redirect the grant.
+
+Preview now resolves the complete saved file identity and reports resolution
+failure without losing readable text. Image reads acquire that canonical parent
+through a component-by-component no-follow directory walk, then use the
+`cap-std` sandboxed directory-handle resolver for the final file. Actual handle
+metadata and bounded reading follow, with no pathname reopen. Supported
+in-root aliases remain usable, and directory handles live only through file
+acquisition, including refusals. Nine new deterministic regressions cover real
+editor routing, Unix symlinks, unprivileged Windows junctions, root acquisition,
+compatibility, visible refusal and handle retirement. Native visual and
+Windows file-symlink presentation remain separate evidence; this repair does
+not establish total-memory or fragmentation conclusions.
+
+The allocation/lifecycle audit in #320 found that per-image limits left
+combined images unbounded, manual loads bypassed the four-worker cap, and
+decoder expansion began before raster dimensions were rejected. The review
+also uncovered a routing gap: ordinary local Markdown opens in the shared
+editor, whose Preview never invoked the standalone loader. Connecting only
+saved-local Preview was explicitly approved; displayed labels and fallback
+paths must not grant filesystem access.
+
+Both surfaces now borrow one admission/poll/retry implementation and share a
+512 MiB managed allowance plus four actual running workers. A bounded Settings
+choice applies live and survives save failures without an unsaved broadcast.
+Whole-load reservation happens atomically before owned expansion, and actual
+reading probes at most one byte beyond 8 MiB. Security review found that a
+symlinked Markdown filename selected its lexical parent and that canonical
+containment was followed by a pathname reopen. The complete Markdown source is now loaded through one handle beneath a
+captured canonical parent, recording its canonical path, exact file generation,
+and the parent's stable filesystem identity. Each image read reacquires that
+real parent without following changed aliases, verifies both parent identity
+and Markdown generation, then resolves the image beneath the same handle.
+Canonical final-name checks reject source name surrogates while ordinary
+Windows Cloud Files can still hydrate. Reload/save authority changes retire old
+image state before reparse. Ordinary Save reuses the canonical parent captured
+at load, while Save As captures the newly selected destination parent; both
+retain that capability through replacement and sync and refuse if they cannot
+establish authority rather than later adopting a replacement parent. A
+symlinked open therefore updates its canonical target without granting the
+alias's lexical parent. Component, hard-link parent, root-name and
+reparse-point rebinding cannot retarget a read. Nonblocking Unix opens still
+keep FIFOs from pinning a worker waiting for a writer.
+
+The same review found that save temporaries received bytes before their access
+metadata was secured. Save now clears inherited Unix staging/file ACLs and
+verifies `0700`/`0600`; Windows creates staging directories and children with
+`NtCreateFile` relative to exact retained handles, then rejects any exact
+handle that is reparse, cross-volume, not current-user-owned, or not protected
+current-user-only before writing or copying document bytes. Unix restores
+the destination owner, group, mode, ACL and user-managed xattrs from verified handles after
+the durable content write; Windows applies and verifies the original owner,
+group, DACL and attributes on the prepared file before publication while an
+exclusive retained handle blocks staged reads/writes; NTFS EFS targets refuse
+before staging rather than becoming plaintext, and targets with alternate data
+streams refuse rather than losing Mark-of-the-Web or other named content. A new target remains private. Temporary
+names use OS randomness beneath an owner-only same-filesystem staging directory
+and are checked against their open handles. Both platforms capture the
+no-follow current target into private staging with a no-overwrite move, verify
+it, then no-overwrite publish only if no concurrent winner claimed the briefly
+vacant name. Published/original generations, the Unix security snapshot,
+and the Windows owner/group/DACL/attribute snapshot are verified. macOS does not
+copy the old modification time, and Linux leaves matching kernel-managed
+security labels untouched. A prepared copy and private displaced/original copy
+remain on any late, ambiguous or partial failure; no unconditional pathname
+rollback can delete a later winner. Deterministic Unix coverage observes the
+empty private temporary before the write, preserves an extended ACL, detects
+mode/xattr races, substitutes the staging name, and changes the target before,
+during and after publication. Native Windows coverage inspects the protected
+staging/file owner and DACL, exact-handle substitution resistance, pre-write
+rejection, metadata application, no-follow opening and no-overwrite
+capture/publication. Save As now carries an absent-or-exact-generation
+expectation from picker confirmation through publication; a later destination
+appearance/change conflicts. An already-open dirty/conflicted destination
+refuses before disk mutation, while a clean one contributes its recorded
+generation, or its explicit missing state accepts a confirmed-absent
+destination, and receives the source buffer with undo history intact on
+successful rebind. Final symbolic-link/reparse-point destinations refuse
+without being moved. Unix refuses shared-writable parents unless they are
+sticky and current-user- or root-owned, and refuses extended ACL mutation
+grants to other accounts before
+staging while retaining restrictive ACL support. Windows existing-target
+saves preserve audit SACLs or refuse before staging when the required
+privilege is unavailable. Crash or power loss in the briefly absent-name window can
+leave private recovery versions without startup discovery and remains an
+explicit CP-15 native/manual residual.
+
+Reservations follow actual worker, decoded-result, texture and CPU-upload
+owners through close/reparse/rebinding; a rotating 128-entry retirement scan
+avoids an unbounded reclamation walk. Permanent failures need an explicit
+retry; sparse ledgers release exceptional backing capacity with at most
+128 retained entries copied. Temporary refusals wait for their whole required
+allowance rather than retrying one another's released scratch storage.
+Existing admissions survive saturation or lowering.
+
+Deterministic regressions exercise real editor Preview and its image button,
+shared bytes/workers, first Save/Save As and nonlocal origins, a symlinked
+Markdown source, replacement between load and authority, alias retarget plus
+reload, component/root rebinding, unchanged-image retention across prose
+reparse, stale results, failed parsing, retirement and Settings
+persistence/reset. CP-06 retains remote-viewer qualification; CP-15 retains
+saved-local visual/accessibility, Windows Cloud Files and reparse-point
+evidence. Decoder-private memory, native renderer and GPU
+retirement, allocator fragmentation and total RSS are outside this allowance;
+the repair does not establish #297's multi-day growth cause.
+
 ## Removing redundant recovery wire-buffer overlap
 
 The #320 lifecycle audit found that persistent-session recovery serialized a
@@ -61,6 +275,7 @@ the model and widget/vi/Find/substitution routes. Native input, focus/caret,
 narrow-pane and accessibility evidence remains CP-15. This bounds retained
 history, not candidate/staged/undo scratch, view allocation, allocator
 fragmentation or RSS, and does not establish #297's multi-day growth cause.
+
 ## Bounding live forwarding inventory without evicting tunnels
 
 The #320 allocation/lifecycle audit found that each requested SSH mapping

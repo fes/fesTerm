@@ -1662,6 +1662,8 @@ impl SftpCleanupReporter {
 
     fn report(&self, label: String, error: festerm_ssh::SftpSessionError, repaint: &egui::Context) {
         let notice = crate::overlay_state::OpenRefusalNotice {
+            title: None,
+            acknowledgement_path: None,
             name: label,
             path: String::new(),
             headline: "SFTP cleanup is incomplete".to_owned(),
@@ -2161,7 +2163,7 @@ impl SftpFileManagerTab {
     /// for this frame -- the synchronous local case from `open_item`, or
     /// the asynchronous remote case filled by `apply_event` earlier in this
     /// same `poll()` call -- and turns it into the `AppCommand` that opens
-    /// (or refreshes) the corresponding viewer tab.
+    /// local Markdown in editor Preview or a remote snapshot in the viewer.
     fn take_pending_markdown_command(&mut self) -> Option<crate::tabs::AppCommand> {
         if let Some(command) = self.pending_markdown_command.take() {
             return Some(command);
@@ -5311,9 +5313,6 @@ pub(crate) fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
     }
 }
 
-/// Whether double-clicking this item should open the Markdown viewer
-/// (issue #133), rather than being a no-op (or, for directories, handled
-/// separately in `open_item`).
 /// Whether the picker will open this item. Every file is: fesTerm cannot
 /// tell a `Makefile`, a `.service` or a `.hpp` from a `.txt` by its name, and
 /// hiding a file because of its extension makes it unopenable rather than
@@ -6158,9 +6157,8 @@ pub(crate) fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
 pub(crate) enum MarkdownPickerOutcome {
     /// Nothing decided yet; the picker stays open.
     Pending,
-    /// A Markdown file was picked (double-click or Enter); the caller
-    /// should dispatch `AppCommand::OpenLocalMarkdownFile` with this path
-    /// and close the picker.
+    /// A regular file was picked; the caller routes Markdown to Preview and
+    /// other bounded text to Edit, then closes the picker.
     Open(PathBuf),
     /// The user dismissed the picker (Cancel or Escape) without picking a
     /// file.
@@ -6237,7 +6235,7 @@ fn resolve_picker_path(text: &str, directory: &Path, home: &Path) -> Result<Path
     Ok(directory.join(path))
 }
 
-/// Local-filesystem-only file picker for "Open Markdown File…" (#132),
+/// Local-filesystem-only file picker for "Open File…" (#132),
 /// reusing the SFTP file manager's local-pane browsing model (breadcrumbs,
 /// up/home/refresh navigation, sortable columns, item icons, single
 /// selection) instead of the OS-native `rfd::FileDialog` previously used.

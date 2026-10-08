@@ -463,7 +463,7 @@ latency.
 | CP-03 | Exercise native secret store available/locked/unavailable/failure states; saved-password and saved-private-key flows store only opaque references and expose actionable non-secret feedback. | Native functional + usability | Disposable put/get/update/delete lifecycles are scheduled for Keychain, Credential Manager, and Secret Service; locked/unavailable presentation and saved-profile usability remain manual |
 | CP-04 | Configure/discover/open/close/reopen Serial devices including missing, busy, and permission-denied adapters; history, inspector line settings, and exclusive ownership follow session rules. | Native functional + hardware/permission validation (config parsing, app-layer failure paths, and Linux `socat` loopback are automated) | Linux virtual tests cover ordered bidirectional traffic, bounded shutdown/reopen, disconnect, busy/non-TTY/missing failures; Windows/macOS hardware and native permission states remain manual |
 | CP-05 | In signed packaged builds, review Check for Updates, current/available/failure states, explicit download and install/restart transitions, restart consent with live sessions, signature rejection, and package-managed guidance. Publish a newer release after discovery and again after download: each action must refresh, display and directly select the latest eligible version, verifying new bytes before install. Same-version refresh reuses verified bytes. Offline/withdrawn/older/invalid releases or verification failures must leave sessions running, with a retryable error and no cached-version install. Cancelling restart consent must leave the verified update installable; confirming must install, exit once without a second quit prompt, replace, and relaunch. Developer/incompletely configured builds must expose no network action. Track native release/update evidence in [#62](https://github.com/fes/fesTerm/issues/62). | Native functional + visual + security | State-machine freshness, same-version reuse, fail-closed refresh/verification, live-session consent/cancellation, one-shot authorized close, and eligibility rules automated; signed cross-platform replacement/relaunch and failure evidence pending |
-| CP-06 | Validate the native Markdown viewer against `docs/markdown-viewer-design.md`: More-actions local open/cancel; paste an absolute, home-relative, and folder-relative path into Open File (Ctrl+L/Command+L focuses it); correct an invalid path without retyping; Preview/Source toggle, Find (including offscreen fenced code), outline, local reload/stale states, inert raw HTML/resource policy, explicit bounded local image loads, accessibility/focus, and return-to-prior-surface behavior. From GUI SFTP, open a bounded remote Markdown snapshot tied to the verified host identity and confirm that reload after reconnect is truthfully unsupported. | Native functional + visual + accessibility + security | Repository-owned local/remote fixtures, bounds, identity, picker path resolution/paste/Enter/stale-result handling, and error-state probes are automated. CPU regressions cover 400-fence offscreen code-byte/Find navigation in viewer/shared Preview, wrapped-code geometry/offset, selection, raw Copy payload and keyboard activation; retain human review for native clipboard delivery, readability, focus, picker usability, and screen-reader behavior. Table-cell byte navigation remains a separate unimplemented gap |
+| CP-06 | Validate the standalone Markdown viewer against `docs/markdown-viewer-design.md` using GUI SFTP: open a bounded remote Markdown snapshot tied to the verified host identity; exercise Preview/Source, Find (including offscreen fenced code), outline, inert raw HTML/resource policy, accessibility/focus, return-to-prior-surface behavior, and truthful unsupported reload after reconnect. Saved-local opening, editing, reload/conflict, and relative images belong to CP-15. | Native functional + visual + accessibility + security | Remote fixtures, bounds, host identity, error-state probes, and shared-renderer regressions are automated where transport ownership permits. CPU regressions cover offscreen code-byte/Find navigation, wrapped-code geometry/offset, selection, raw Copy payload and keyboard activation; retain human review for native clipboard delivery, readability, focus, and screen-reader behavior. Table-cell byte navigation remains a separate unimplemented gap |
 | CP-07 | In two live sessions, zoom each to a different size through shortcuts and palette, switch repeatedly, reset one, move across DPI scales, and confirm only the active terminal grid changes while chrome, profile configuration, bottom/history anchoring, and the other session remain stable. | Native functional + visual + usability | Automate point-size/session-state assertions and resize-probe sequence; retain multi-DPI visual review |
 | CP-08 | Enter and exit Focus Mode from the palette with a live session; confirm chrome/footer hide and restore without changing the active session or zoom, the hint is readable, Escape reaches the terminal without exiting, exceptional overlays remain available, and switching to a non-session surface exits safely. | Native functional + visual + usability | Automate state/focus/grid assertions and screenshots; retain native window-control/accessibility review |
 | CP-09 | Open About from Launcher, Settings, and a live session at ordinary/narrow sizes; verify exact version/build/OS/architecture copy text, source link, license disclosure, no session/path/host/settings leakage, installation-appropriate update controls, keyboard reachability, and Close/Escape focus restoration. On each platform, quit normally and relaunch to verify the reason. With two isolated test-owned packaged instances, finish one, forcibly terminate only the other, and relaunch: the abandoned run remains unclean/unknown despite the unrelated clean exit; still-live instances are not classified as failed. | Native functional + visual + accessibility | Automated semantic content, redaction, update eligibility, journal transitions, same-process and concurrent owned-child lifetime locks, killed/abrupt child recovery, active retention/log protection, panic preservation, nonblocking hooks, atomic-write failure and unavailable-diagnostics initialization, narrow geometry, and screenshot. Cross-platform child regressions run in CI; they do not launch packaged GUIs. Retain native packaged teardown/relaunch and About presentation, power-loss/native-fault boundaries, link handoff, and screen-reader review |
@@ -472,7 +472,140 @@ latency.
 | CP-12 | Enable Running Sessions. Create unique test-owned native and available local tmux/screen sessions, detach the GUI, then verify provider/metadata/count/order and reattach a fresh challenge to the same shell PID/state. Native attached entries disappear; attached tmux/screen entries remain annotated. Delete/exit/recreate while refreshing; a stale click stays on Launcher with an actionable error and never creates a shell. Confirm empty groups disappear, unrelated sessions remain usable, and a large inventory scrolls/refreshes without stalling the window. | Native functional + usability | `python3 scripts/check_running_sessions.py --batch 8 --cycles 3` automates isolated native and Unix-provider process/state continuity, create/attach/detach/exit/delete/recreate, identity/count/order and stale-click refusal; both optional runners include it. `--batch 32 --cycles 10` increases stress. Missing binaries/native Windows tmux/screen are explicitly skipped, not passed; WSL remains separate Linux evidence. Native GUI interaction/focus and large-inventory feel still require recorded platform evidence; this does not close CP-11 package/security obligations or SSH recovery #49 |
 | CP-13 | Open a second window from File ▸ New Window, the command palette, and the keyboard binding. A distinctly titled native OS window must appear on the Launcher, render its own content, and leave the first window's tabs, active tab, focus, and scroll position untouched. With both windows open, commit an interface setting, a profile edit, and a keyboard rebinding in one window and confirm each reaches the other without a restart while its focus, scroll offset, and in-progress text entry survive. Closing a later window confirms only its own live sessions and leaves the application running; closing the first window quits with the usual aggregate confirmation. | Native functional + visual | Automated coverage is headless and stops at the Application/Window model (ADR 0032); native multi-viewport window lifecycle, macOS menu-bar ownership, and window chrome still need recorded platform evidence |
 | CP-14 | With two windows open, drag a live session's chip onto the other window's chip row and body, confirming the running shell, its scrollback, and its state survive the move and land where dropped. Drag a chip clear of every window and confirm a new window opens under the pointer owning that tab, sized like the one it left, and that detaching a later window's only tab does nothing. Move a later window's last tab away and confirm that window closes with no confirmation; do the same to the first window and confirm it falls back to the Launcher and keeps the menu bar and quit path. With workspace restore enabled, quit and restart and confirm both windows reopen with their own tabs and positions. Confirm the Launcher, Settings, and Profiles chips cannot be dragged into another window or detached into one. On macOS confirm that dragging a chip in a *later* window drags the chip rather than moving the window itself. On Wayland confirm a cross-window drag degrades to an in-window reorder rather than dropping a tab somewhere unexpected. | Native functional + visual | Automated coverage drives real press/move/release gestures against published window footprints and the Application-level move/detach/collapse and multi-window workspace round trip (ADR 0033); real cross-window pointer capture, native placement of a detached window, and Wayland's geometry refusal still need recorded platform evidence |
-| CP-15 | Validate the native text editor against `docs/text-editor-design.md` and ADR 0034. Create two documents through New File and confirm each is a separate blank, dirty `UNTITLED` editor, Auto-save is unavailable, and the first Save opens Save As. Open one file into two views in two windows; type in one and confirm the other shows the text, the unsaved marker, and a single shared undo history. Change the file underneath a clean view and confirm it adopts; repeat dirty and confirm Conflict offers Compare, Reload, Keep my version, and Save As without losing either version. Replace All, then undo with a toolbar button still focused. Narrow the window until the Find verbs collapse and confirm every action is still reachable. Set a fixed column count and confirm by reading the file on disk that no newline was written. Save As onto a new name and onto an already-open file, confirming the saving view follows the new file, other views keep the original, and one file remains one buffer. Exercise every state with a screen reader and a high-contrast theme, confirming shape and words alone carry it. | Native functional + visual + accessibility | New-file identity and first-save routing, document sharing, freshness/conflict transitions, bounds, Save As rebinding, Find behaviour, bounded body-widget history, view-scoped text-widget teardown, and sibling widget-state survival under repeated open/close are automated; retain human review for readability, caret and focus behaviour, screen-reader wording, conflict comprehension under time pressure, and the honesty of disabled-control explanations |
+| CP-15 | Validate the native text editor against `docs/text-editor-design.md` and ADR 0034. Create two documents through New File and confirm each is a separate blank, dirty `UNTITLED` editor, Auto-save is unavailable, and the first Save opens Save As. Open one file through direct and symlinked names and confirm one shared document, then open it into two views in two windows; type in one and confirm the other shows the text, the unsaved marker, and a single shared undo history. Change the file underneath a clean view and confirm it adopts; repeat dirty and confirm Conflict offers Compare, Reload, Keep my version, and Save As without losing either version. Replace All, then undo with a toolbar button still focused. Narrow the window until the Find verbs collapse and confirm every action is still reachable. Set a fixed column count and confirm by reading the file on disk that no newline was written. Save As onto a new name, then create/change that destination after confirmation and confirm refusal before displacement and automatic folder refresh. Save As onto an already-open dirty and conflicted file and confirm disk and both buffers/histories remain unchanged with actionable guidance; repeat with a clean destination, including one deleted after opening and confirmed absent, and confirm its recorded state gates the write, the saving view follows it, other source views stay on the original, and source undo remains available. Save As onto a final symlink/reparse point and confirm refusal leaves that entry untouched. On Unix, save a fixture with a nontrivial ACL and inspect the in-progress owner-only staging directory and final owner/group/mode/ACL/xattrs; confirm a restrictive or self-only macOS ACL remains supported, while a shared-writable parent refuses unless it is sticky and current-user- or root-owned, and an extended ACL mutation grant to another account refuses before staging. On Windows, rename/substitute staging pathnames while exact handles remain open and verify native handle-relative creation never follows them; inspect every exact staging/child handle before content for non-reparse type, destination volume, current-user owner, and protected current-user-only DACL, and confirm ACL-less/cross-volume objects refuse before bytes. After applying a shared target DACL to the staged payload, confirm a second read/write open is denied until a transient identity-checked move publishes it, then confirm both publication and successful rollback hold a final pathname lock that rejects delete access through verification and private-staging cleanup. Through a pre-opened original handle, concurrently change its DACL or attributes after capture and confirm the save retains a restricted displaced original plus an independent private original byte copy rather than reporting success with stale metadata. Confirm replacement preserves target owner/group/DACL, audit SACL, mandatory integrity labels, resource attributes, scoped policy and file attributes; without `SeSecurityPrivilege`, confirm existing-target replacement refuses before staging while Save As to an absent target remains available. Confirm refusal before publication when a scoped policy cannot be reproduced; an NTFS EFS-encrypted target, any target with a named stream such as `Zone.Identifier`, a target carrying integrity-stream/no-scrub attributes, or one with NTFS extended attributes such as WSL `$LXUID`/`$LXGID`/`$LXMOD` metadata likewise refuses before staging with explicit protection guidance. Replace the target immediately before and after publication; confirm no later version is deleted and manual-recovery failure retains private prepared/displaced copies, names their exact directory, remains visible after polling, and immediately becomes an application notice even while its document view remains open. Force process termination and power-loss-equivalent failure in the brief absent-name publication window; confirm `original` and `prepared` remain private in staging and can be recovered manually, noting that startup discovery is not implemented. On FAT/exFAT and an unsupported network/FUSE volume, confirm Save and Save As refuse with the dedicated safe-filesystem explanation rather than suggesting retry or weakening privacy. Exercise every state with a screen reader and a high-contrast theme, confirming shape and words alone carry it. | Native functional + visual + accessibility + security | New-file identity and first-save routing, document sharing, freshness/conflict transitions, typed Save As destination expectations and stale-list refresh, dirty/conflicted/recovery-pending open-destination refusal, history-preserving clean rebinding, bounds, unpredictable owner-only staging, native Windows handle-relative creation and pre-write exact-handle rejection, exclusive staged-payload sharing, transient move identity, metadata-only no-delete pathname locking, audit-SACL and mandatory-label preservation, EFS and alternate-stream refusal, Unix and Windows security-snapshot retention/race detection, non-destructive conditional publication/recovery, persistent exact-path document and application recovery notices, Windows current-user DACL retention, Find behaviour, bounded body-widget history, view-scoped text-widget teardown, and sibling widget-state survival under repeated open/close are automated; retain human review for packaged/native filesystem integration, crash/power-loss staging recovery, native NTFS/adversarial substitution execution, resource/scoped-policy fixtures, privilege-unavailable refusal, unsupported-volume refusal, readability, caret and focus behaviour, screen-reader wording, conflict comprehension under time pressure, and the honesty of disabled-control explanations |
+
+CP-15 conditional-publication regressions now automate short-name native
+no-overwrite moves through a retained directory, refusal without replacing a
+collision, retained-payload digest verification against a metadata-only
+pathname lock, and Windows save-parent rename prevention. Source-parent tests
+first prove the live Windows identity pin blocks rebinding, then explicitly
+retire the test-owned pin to exercise independent parent-identity refusal.
+The shared security-capture access recipe also has an unprivileged displaced
+original regression for private restriction, exact owner/group/DACL and
+attribute restoration, handle-relative rollback, and final pathname locking.
+Inherited-Modify and protected descriptor copies now exercise the production
+owner/group/DACL setter without audit privilege; comparison permits only the
+observed automatic-inheritance completion marker difference and rejects
+access-bearing mutations. The saved-authority fixture proves live pin
+protection before test-only retirement and independent parent rejection.
+An unprivileged explicit-low-label copy separately reproduces the SACL
+completion-marker difference; component tests preserve integrity SID, policy,
+ACE and SACL protection/defaulting/inheritance-request distinctions. The
+thread-scope fixture checks native privilege denial 1314 rather than Rust's
+version-dependent error-kind mapping.
+An SDK-built current-user audit descriptor additionally verifies that the
+completion-marker exception preserves capture presence, audit principal,
+success/failure and inheritance flags, access mask and SACL controls.
+This in-memory comparator evidence is not a privileged filesystem-copy
+measurement; the native low-label fixture reports only lengths, control XOR
+and bounded differing indices to establish that separate copy gate without
+exposing SID or ACE contents.
+Privileged CI then measured a canonical empty audit ACL versus present null
+SACL (28 versus 20 bytes, completion-bit XOR `0x0800`, differing indices 3
+and 12). SDK-built empty/null regressions prove the narrowly audit-only
+representation exception preserves capture presence, all other controls,
+nonempty/noncanonical ACLs and the stricter DACL/LABEL/ATTRIBUTE/SCOPE routes.
+Actual full-copy preservation remains a separate privileged native gate.
+The real unprivileged LABEL-copy fixture also measured ATTRIBUTE and SCOPE
+captures: both remained 28 bytes with only control XOR `0x0800` at index 3.
+Those individual selectors now share the completion-marker-only comparison,
+not the audit empty/null exception. The fixture verifies application leaves
+both source and copied descriptors unchanged; opaque policy-byte and other
+control mutations remain refused. Actual domain/resource-policy preservation
+and privileged full-copy evidence remain separate native gates.
+SDK-built nonempty resource-attribute and scoped-policy ACEs additionally
+verify claim-value/CAP-identifier and control changes remain significant,
+combined selectors stay strict, and a real policy difference refuses before
+mutation. These are in-memory/parser and refusal checks, not domain-policy
+deployment evidence.
+These unprivileged checks do not establish audit-SACL preservation, ordinary
+Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
+those platform prerequisites remain above.
+
+CP-15 parent/notice additions: open one file through symlink and hard-link
+aliases and confirm every spelling reuses one document; after Save As rebinding,
+retarget an old alias and confirm it is revalidated rather than returning the
+old document. Repeat while the original generation is stale and confirm it
+cannot establish a new alias; verify retained identity handles prevent deleted
+file identifiers from being recycled into equivalence. Save As through a
+different hard-link pathname and confirm only the saving view follows the new
+destination while sibling views remain on the original; repeat with pending
+manual recovery and confirm refusal preserves its exact breadcrumb. On macOS, separately grant another account
+child mutation, ACL mutation, and ownership-change rights and confirm every
+case refuses before staging. On Windows, confirm an untrusted parent owner or
+a DACL granting an unprivileged principal child deletion, DACL mutation,
+ownership mutation, or generic all refuses before document bytes; the current
+user, LocalSystem, and Builtin Administrators are the explicit trusted set.
+On Unix, make the destination folder private beneath a non-sticky
+shared-writable ancestor and confirm Save refuses before staging; a sticky
+current-user/root-owned chain remains usable. On Windows, confirm the retained
+non-delete-sharing parent lock rejects a concurrent parent rename until the
+save finishes.
+Confirm add-file/add-directory, inherited Modify/generic-write, and
+parent-delete grants alone remain usable because protected staging and new
+payload DACLs do not inherit them. Mutate the owner/DACL after private staging
+is retained and
+confirm coherent-snapshot revalidation refuses; Windows removes only the exact
+empty stage by handle while Unix may preserve it for inspection, and neither
+deletes through the untrusted pathname.
+Confirm a stale Save As
+explanation survives the automatic refresh until the next explicit Save press
+but clears on navigation. Queue two manual-recovery notices behind an
+unrelated visible modal; neither may replace it, and both must appear after
+dismissal in insertion order with the exact recovery paths. Exercise every
+blocking modal/picker state. Overflow the bounded recovery queue and confirm
+the first 80 exact paths remain visible plus a counted latest-path notice
+points to logs for all further paths. While a recovery notice is queued or
+displayed, native menu Quit, shortcuts, and the OS window close button must
+cancel close until the notice is explicitly acknowledged. Complete several asynchronous remote-open
+refusals through worker-result channels while that modal remains visible and
+confirm their bounded FIFO delivers each refusal rather than overwriting an
+earlier one.
+Press Escape on an unrelated confirmation while a recovery notice is queued;
+the first Escape may cancel only that visible confirmation, and the newly
+promoted recovery notice must remain until a later explicit acknowledgement.
+Keep a dirty document or live session only in a secondary window, and keep a
+second dirty document open in multiple views; primary-window Quit and updater
+install/restart must include the secondary session and refuse the unresolved
+documents rather than closing the process.
+
+CP-15 saved-local images: open owned local Markdown fixtures in Preview
+and Split, exceed 64 automatic references and explicitly load the next image.
+Across windows, lower **Image memory budget** below admitted usage, check that
+existing images remain and new growth is explained, then increase it and verify
+recovery. First Save/Save As must use the new real parent; remote, untitled and
+terminal-history labels must never grant local image reads. Inspect rooted and
+canonical traversal/symlink refusal, symlinked Markdown filenames, changed
+source-root/image/intermediate names, source retarget plus reload, and Windows
+reparse points, final source name surrogates, and parent replacement containing a hard
+link to the same source. A source that cannot be resolved must keep its text
+Preview and explain image refusal. Save and Save As must capture the destination
+parent identity before writing and perform temporary creation/replacement
+through that retained directory capability. Ordinary Save of a file opened
+through a symlink must update the loaded canonical target without replacing the
+alias or granting its lexical parent, and its new generation must discard old
+image approvals, decoded textures, pending receivers, errors, and retries
+without resetting Preview scroll/find/outline presentation; Save As
+intentionally captures the newly
+selected destination. Inability to establish authority refuses before mutation
+rather than recovering against a later replacement parent.
+Review keyboard retry after repairing a failed file and screen-reader/refusal
+wording. Shared allowances/workers, actual
+read/header limits, real editor/button routing, stale results, reparse/close,
+settings/save/restart/reset/failed-save, loaded-generation authority, reload
+invalidation and Unix FIFO refusal are automated. Deterministic
+production-route tests cover Unix symlink-file authority, source-generation
+replacement, final/intermediate symlink races, captured-root rebinding and
+supported in-root aliases. Unprivileged Windows junction tests cover
+intermediate and root-acquisition races; portable tests cover visible
+source-resolution refusal, generation mismatch and directory-handle release
+after successful/refused reads. Windows CI now owns a file-symlink fixture and verifies alias reuse plus
+retargeting when Developer Mode or symlink privilege is available; the test
+fails rather than silently skipping when the runner's
+`FESTERM_REQUIRE_WINDOWS_SYMLINKS=1` capability contract is unmet, while an
+ordinary unprivileged developer run may skip only error 1314. Native
+visual/focus/accessibility and filesystem-permission review remain pending;
+this is not total-RAM/VRAM or long-running RSS acceptance.
 
 CP-15 undo retention: exercise an owned large multiline file with widget
 paste, vi edit and toolbar/colon substitution. A whole change whose undo

@@ -840,7 +840,7 @@ to a known prior surface, and closing the final viewer returns to Launcher.
 
 Product review accepts extending the viewer into a bounded native text editor
 for supported local and SFTP text and Markdown files. The architecture — shared
-mutable documents, identity, write atomicity, freshness, conflict, auto-save,
+mutable documents, identity, conditional publication, freshness, conflict, auto-save,
 per-view presentation, and the vi subset — is decided in
 [ADR 0034](adr/0034-shared-mutable-text-documents.md), and the product/UI
 specification is [`text-editor-design.md`](text-editor-design.md).
@@ -874,9 +874,10 @@ The accepted shape is:
   application commands shared by toolbar, menus, palette, keyboard bindings, and
   vi's `:` equivalents. A disabled command explains why. Refresh never discards
   a dirty buffer.
-- **Saving.** Saves revalidate the source first and replace the file atomically;
-  an interrupted write never reports success, and nothing is ever overwritten or
-  merged silently. Auto-save belongs to the document, sits beside Save, is
+- **Saving.** Saves revalidate the source first, privately capture the current
+  target, and publish without overwrite; the target name can be briefly absent.
+  An interrupted write never reports success, and nothing is ever overwritten
+  or merged silently. Auto-save belongs to the document, sits beside Save, is
   debounced rather than per keystroke, and pauses on conflict, offline, or
   error. Closing the final view of a dirty document still prompts.
 - **Freshness.** An externally changed clean document reloads every view and
@@ -894,10 +895,12 @@ The accepted shape is:
 - **Presentation never edits.** Line numbers and fixed columns are per-view and
   change nothing on disk; fixed columns wraps visually at the chosen column and
   never inserts a line break.
-- **Save As.** One picker covers local and remote destinations, reuses the SFTP
-  file-browser pattern, states an existing target in words before the explicit
-  Save press, and binds to an already-open document rather than creating a
-  second buffer for one file. It stays available whenever Save cannot run.
+- **Save As.** The picker reuses the SFTP file-browser pattern for local
+  destinations. Its remote option remains visibly disabled in this release and
+  performs no remote listing or write. It states an existing target in words
+  before the explicit Save press and binds to an already-open document rather
+  than creating a second buffer for one file. It stays available whenever Save
+  cannot run.
 - **Closing.** Only the final view of a dirty document prompts. The prompt names
   the file and its origin, defaults to Save, treats Escape as Cancel, and makes
   Discard an explicit press that Return never triggers.
@@ -1728,6 +1731,17 @@ that captures the wheel is sent one wheel report per row the same gesture
 would have moved fesTerm's own scrollback, so a trackpad's stream of
 pixel-sized events is not reported as a full notch each, and the preference
 is not silently bypassed by the programs a user is most likely to scroll.
+
+The **Markdown images** card exposes **Image memory budget**: 64, 128, 256,
+512 (default), 1024 or 2048 MiB, without an unlimited option. The managed
+allowance applies immediately across windows, viewers and saved-local editor
+Preview; it preserves admitted images when lowered and explains that new loads
+are blocked while usage exceeds the limit. Four actual manual/automatic image
+workers share the same application quota. The choice autosaves; a failed save
+reports failure but preserves the live choice without broadcasting an unsaved
+configuration. Reset restores 512 MiB without evicting existing images.
+This allowance excludes decoder-private/native-GPU allocations and is not a
+process-RAM cap (ADR 0030).
 
 The **Terminal typography** card exposes the bundled terminal-family selector
 plus the default-on ligature toggle. The **Quick switch** card currently

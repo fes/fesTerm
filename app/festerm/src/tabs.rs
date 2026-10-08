@@ -12,6 +12,7 @@
 //! routes session output through the single-writer `Terminal` +
 //! `SessionController` pair defined in `session_controller.rs`.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -20,13 +21,16 @@ use std::sync::{
 };
 use std::thread::JoinHandle;
 
+const MAX_PENDING_OPEN_REFUSAL_NOTICES: usize = 16;
+
 use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, DurableSessionIdentity,
-    EmojiPresentationPreference, InterfaceSettings, PersistenceConfiguration,
-    PersistenceProviderKind, ScrollSpeedPreference, ScrollbackLimitPreference, SessionAlias,
-    SftpPaneOrderPreference, SshPortForwardDirection as ConfigSshPortForwardDirection,
-    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    EmojiPresentationPreference, ImageMemoryBudgetPreference, InterfaceSettings,
+    PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
+    ScrollbackLimitPreference, SessionAlias, SftpPaneOrderPreference,
+    SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
+    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{
     Dimensions, Terminal, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
@@ -1936,18 +1940,14 @@ pub enum AppCommand {
     CreateSshProfileFromDraft {
         draft: SshProfileDraftSeed,
     },
-    /// Opens the Markdown file picker and, once a file is chosen, a viewer
-    /// tab for it. Handled by the composition root because choosing the
-    /// file is host I/O, not state the tab layer owns.
+    /// Opens the shared file picker. The composition root routes Markdown to
+    /// editor Preview and other bounded text to Edit.
     OpenMarkdownWorkspace,
     OpenLocalMarkdownFile {
         path: PathBuf,
-        /// Retarget this already-open Markdown viewer at `path` in place
-        /// instead of focusing/opening a separate tab. `Ctrl+O` from inside
-        /// a viewer sets this so the picked document replaces the one the
-        /// user was reading, matching the "open in this window" behaviour of
-        /// every other document viewer; every other caller leaves it `None`
-        /// and gets the focus-or-open-a-new-tab behaviour.
+        /// Legacy caller context retained for command compatibility. Local
+        /// dispatch focuses or opens the one document registry entry for
+        /// `path`.
         replacing: Option<TabId>,
     },
     /// Opens a second editor view of the document the active editor holds.
@@ -2105,6 +2105,7 @@ pub enum AppCommand {
     /// confirmed, and moves this view onto it.
     SaveTextDocumentTo {
         path: PathBuf,
+        destination: crate::document_store::ConfirmedDestination,
     },
     /// Re-checks the active editor's document against its source.
     RefreshTextDocument,
@@ -2113,8 +2114,8 @@ pub enum AppCommand {
     ReloadTextDocument,
     /// Dismisses a conflict banner without writing anything.
     KeepMyTextVersion,
-    /// Opens, or focuses, a Markdown preview tab bound to the active
-    /// editor's document, so it renders unsaved text too (ADR 0034 §3).
+    /// Reloads the active standalone Markdown viewer. Saved-local editor
+    /// Preview follows the document refresh commands instead.
     ReloadMarkdown,
     ToggleMarkdownPreviewSource,
     ToggleMarkdownOutline,
@@ -2261,6 +2262,7 @@ pub enum AppCommand {
     /// Selects the retained primary-history budget for sessions created
     /// after this preference changes.
     SetScrollbackLimit(ScrollbackLimitPreference),
+    SetImageMemoryBudget(ImageMemoryBudgetPreference),
     /// Toggles whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) overlays each eligible chip's quick-switch number in
     /// place of its usual status presentation (feature request #69).
@@ -2546,6 +2548,7 @@ pub struct AppState {
     emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
     scrollback_limit: ScrollbackLimitPreference,
+    image_memory_budget: ImageMemoryBudgetPreference,
     /// How the next text editor view starts out. Options stay per-view once a
     /// view is open; this is only where a new one begins.
     editor: festerm_config::EditorSettings,
@@ -2582,7 +2585,7 @@ pub struct AppState {
     /// reader. A refusal that nobody reports is indistinguishable from a
     /// click that did nothing.
     open_refusal: Option<(PathBuf, OpenFailure)>,
-    pending_open_refusal_notice: Option<crate::overlay_state::OpenRefusalNotice>,
+    pending_open_refusal_notices: VecDeque<crate::overlay_state::OpenRefusalNotice>,
     sftp_cleanup_sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>,
     sftp_cleanup_receiver: Receiver<crate::overlay_state::OpenRefusalNotice>,
     pending_terminal_path_opens: Vec<PendingTerminalPathOpen>,
@@ -2660,6 +2663,7 @@ impl AppState {
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
             scrollback_limit: settings.scrollback_limit(),
+            image_memory_budget: settings.image_memory_budget(),
             editor: settings.editor(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
@@ -2678,7 +2682,7 @@ impl AppState {
             save_as_requested: false,
             history_snapshot_refusal: None,
             open_refusal: None,
-            pending_open_refusal_notice: None,
+            pending_open_refusal_notices: VecDeque::new(),
             sftp_cleanup_sender,
             sftp_cleanup_receiver,
             pending_terminal_path_opens: Vec::new(),
@@ -2934,6 +2938,7 @@ impl AppState {
         self.emoji_presentation = settings.emoji_presentation();
         self.scroll_speed = settings.scroll_speed();
         self.scrollback_limit = settings.scrollback_limit();
+        self.image_memory_budget = settings.image_memory_budget();
         self.editor = settings.editor();
         self.quick_switch_overlay = settings.quick_switch_overlay();
         self.compact_launcher_grid = settings.compact_launcher_grid();
@@ -3126,6 +3131,10 @@ impl AppState {
         self.scrollback_limit
     }
 
+    pub const fn image_memory_budget(&self) -> ImageMemoryBudgetPreference {
+        self.image_memory_budget
+    }
+
     pub const fn quick_switch_overlay(&self) -> bool {
         self.quick_switch_overlay
     }
@@ -3188,6 +3197,7 @@ impl AppState {
         .with_scroll_speed(self.scroll_speed)
         .with_editor(self.editor)
         .with_scrollback_limit(self.scrollback_limit)
+        .with_image_memory_budget(self.image_memory_budget)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_show_resumable_sessions(self.show_resumable_sessions)
@@ -3461,7 +3471,9 @@ impl AppState {
             AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
             AppCommand::SaveTextDocument => self.save_active_text_document(),
             AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
-            AppCommand::SaveTextDocumentTo { path } => self.save_active_text_document_to(&path),
+            AppCommand::SaveTextDocumentTo { path, destination } => {
+                self.save_active_text_document_to(&path, &destination)
+            }
             AppCommand::RefreshTextDocument => {
                 self.with_active_document(|registry, id| {
                     registry.refresh(id);
@@ -3494,10 +3506,17 @@ impl AppState {
             AppCommand::NavigateMarkdownFind { reverse } => {
                 self.with_active_markdown_viewer(|viewer| viewer.advance_find(reverse))
             }
-            AppCommand::LoadMarkdownLocalImage { reference_index } => self
-                .with_active_markdown_viewer(|viewer| {
-                    viewer.load_local_image(reference_index, context)
-                }),
+            AppCommand::LoadMarkdownLocalImage { reference_index } => {
+                match &mut self.active_tab_mut().content {
+                    TabContent::MarkdownViewer(viewer) => {
+                        viewer.load_local_image(reference_index, context)
+                    }
+                    TabContent::TextEditor(editor) => {
+                        editor.load_local_image(reference_index, context)
+                    }
+                    _ => {}
+                }
+            }
             AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id } => {
                 self.open_configured_sftp_file_manager_profile(&profile_id)
             }
@@ -3615,6 +3634,9 @@ impl AppState {
             AppCommand::SetScrollbackLimit(limit) => {
                 self.scrollback_limit = limit;
             }
+            AppCommand::SetImageMemoryBudget(budget) => {
+                self.image_memory_budget = budget;
+            }
             AppCommand::ToggleQuickSwitchOverlay => {
                 self.quick_switch_overlay = !self.quick_switch_overlay;
             }
@@ -3718,6 +3740,7 @@ impl AppState {
                 self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
                 self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
+                self.image_memory_budget = InterfaceSettings::DEFAULT.image_memory_budget();
                 self.editor = InterfaceSettings::DEFAULT.editor();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
@@ -3870,6 +3893,51 @@ impl AppState {
             .collect()
     }
 
+    /// A dirty document whose every remaining view belongs to this window.
+    ///
+    /// Window teardown drops all tabs as one batch, so two views in the same
+    /// window are collectively final even though neither tab is final alone.
+    pub(crate) fn dirty_document_lost_by_window_close(&self) -> Option<DirtyDocumentClose> {
+        let registry = self.documents.borrow();
+        let mut examined = Vec::new();
+        for tab in &self.tabs {
+            let Some(document) = view_document(&tab.content) else {
+                continue;
+            };
+            if examined.contains(&document) {
+                continue;
+            }
+            examined.push(document);
+            let Some(open) = registry.get(document) else {
+                continue;
+            };
+            let owned_views = self
+                .tabs
+                .iter()
+                .filter(|candidate| view_document(&candidate.content) == Some(document))
+                .count();
+            if open.text().is_dirty() && owned_views >= open.views() {
+                return Some(DirtyDocumentClose {
+                    document,
+                    title: open.origin().file_name().to_owned(),
+                    origin: open.origin().qualified_label(),
+                });
+            }
+        }
+        None
+    }
+
+    pub(crate) fn first_dirty_document(&self) -> Option<DirtyDocumentClose> {
+        self.documents
+            .borrow()
+            .first_dirty_document()
+            .map(|(document, title, origin)| DirtyDocumentClose {
+                document,
+                title,
+                origin,
+            })
+    }
+
     /// Writes a document to its source, reporting what happened so a caller
     /// that is closing the tab afterwards can decline to close on a failure.
     pub(crate) fn save_document(&mut self, document: DocumentId) -> Option<SaveOutcome> {
@@ -3911,11 +3979,18 @@ impl AppState {
     /// The original document is released by this view only; if another view
     /// still holds it, it stays open on its own file, which is the whole
     /// difference between Save As and a rename (ADR 0034 §3).
-    fn save_active_text_document_to(&mut self, path: &Path) {
+    fn save_active_text_document_to(
+        &mut self,
+        path: &Path,
+        destination: &crate::document_store::ConfirmedDestination,
+    ) {
         let Some(previous) = self.active_document() else {
             return;
         };
-        let saved = self.documents.borrow_mut().save_as(previous, path);
+        let saved = self
+            .documents
+            .borrow_mut()
+            .save_as(previous, path, destination);
         let Some((_, Some(document))) = saved else {
             return;
         };
@@ -3933,17 +4008,28 @@ impl AppState {
     /// Opens a file in the editor. A second view of a file that is already
     /// open shares its document rather than reading the file again, and a tab
     /// already showing that document is raised instead of duplicated.
-    pub(crate) fn local_document_tab(&self, path: &Path) -> Option<TabId> {
-        self.documents.borrow().find_local(path).and_then(|id| {
-            self.tabs.iter().find_map(|tab| match &tab.content {
-                TabContent::TextEditor(editor) if editor.document() == id => Some(tab.id),
-                _ => None,
-            })
+    pub(crate) fn local_document_tab(&mut self, path: &Path) -> Option<TabId> {
+        let document = self.documents.borrow_mut().find_current_local(path)?;
+        self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::TextEditor(editor) if editor.document() == document => Some(tab.id),
+            _ => None,
         })
     }
 
     pub(crate) fn has_pending_open_refusal(&self) -> bool {
-        self.open_refusal.is_some() || self.pending_open_refusal_notice.is_some()
+        self.open_refusal.is_some()
+            || !self.pending_open_refusal_notices.is_empty()
+            || self.documents.borrow().has_recovery_notices()
+    }
+
+    pub(crate) fn has_recovery_notices(&self) -> bool {
+        self.documents.borrow().has_recovery_notices()
+    }
+
+    pub(crate) fn acknowledge_recovery_notice(&mut self, path: &Path) -> bool {
+        self.documents
+            .borrow_mut()
+            .acknowledge_recovery_notice(path)
     }
 
     pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
@@ -3956,6 +4042,15 @@ impl AppState {
         let opened = self.documents.borrow_mut().open_local(path);
         match opened {
             Ok(document) => {
+                if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+                    TabContent::TextEditor(editor) if editor.document() == document => Some(tab.id),
+                    _ => None,
+                }) {
+                    self.documents.borrow_mut().release(document);
+                    self.set_active(existing);
+                    self.workspace_dirty = true;
+                    return None;
+                }
                 self.open_text_document(document);
                 None
             }
@@ -4158,7 +4253,9 @@ impl AppState {
                     |requestor| requestor.transport_generation(),
                 );
                 if generation != request.lifecycle_generation {
-                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        acknowledgement_path: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
@@ -4170,7 +4267,9 @@ impl AppState {
                     return;
                 }
                 let Some(requestor) = session.live_remote_file_requestor() else {
-                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        acknowledgement_path: None,
                         name: Path::new(&request.remote_path)
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
@@ -4184,17 +4283,21 @@ impl AppState {
                 let request = match bind_live_remote_request(requestor, request) {
                     Ok(request) => request,
                     Err(notice) => {
-                        self.pending_open_refusal_notice = Some(notice);
+                        self.queue_open_refusal_notice(notice);
                         return;
                     }
                 };
                 let display_path = request.request.display_path.clone();
                 if self.pending_terminal_path_opens.len() >= 4 {
-                    self.pending_open_refusal_notice = Some(crate::overlay_state::OpenRefusalNotice {
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        acknowledgement_path: None,
                         name: "remote path".to_owned(),
                         path: display_path,
                         headline: "Too many remote files are opening".to_owned(),
-                        detail: "Wait for an existing file request to finish before opening another.".to_owned(),
+                        detail:
+                            "Wait for an existing file request to finish before opening another."
+                                .to_owned(),
                     });
                     return;
                 }
@@ -4214,18 +4317,17 @@ impl AppState {
                             handle: Some(handle),
                         }),
                     Err(error) => {
-                        self.pending_open_refusal_notice =
-                            Some(crate::overlay_state::OpenRefusalNotice {
-                                name: Path::new(&display_path)
-                                    .file_name()
-                                    .map(|name| name.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| display_path.clone()),
-                                path: display_path,
-                                headline: "This remote path could not be opened".to_owned(),
-                                detail: format!(
-                                    "The background SFTP worker could not start: {error}"
-                                ),
-                            });
+                        self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                            title: None,
+                            acknowledgement_path: None,
+                            name: Path::new(&display_path)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| display_path.clone()),
+                            path: display_path,
+                            headline: "This remote path could not be opened".to_owned(),
+                            detail: format!("The background SFTP worker could not start: {error}"),
+                        });
                     }
                 }
             }
@@ -4248,7 +4350,7 @@ impl AppState {
                     if let Some(handle) = pending.handle.take() {
                         let _ = handle.join();
                     }
-                    self.pending_open_refusal_notice = Some(notice);
+                    self.queue_open_refusal_notice(notice);
                 }
                 Err(TryRecvError::Empty) => {
                     index += 1;
@@ -4258,14 +4360,15 @@ impl AppState {
                     if let Some(handle) = pending.handle.take() {
                         let _ = handle.join();
                     }
-                    self.pending_open_refusal_notice =
-                        Some(crate::overlay_state::OpenRefusalNotice {
-                            name: "remote path".to_owned(),
-                            path: "remote path".to_owned(),
-                            headline: "This remote path could not be opened".to_owned(),
-                            detail: "The background SFTP worker stopped before returning a result."
-                                .to_owned(),
-                        });
+                    self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        acknowledgement_path: None,
+                        name: "remote path".to_owned(),
+                        path: "remote path".to_owned(),
+                        headline: "This remote path could not be opened".to_owned(),
+                        detail: "The background SFTP worker stopped before returning a result."
+                            .to_owned(),
+                    });
                 }
             }
         }
@@ -4306,8 +4409,88 @@ impl AppState {
         self.open_refusal.take()
     }
 
+    fn queue_open_refusal_notice(&mut self, notice: crate::overlay_state::OpenRefusalNotice) {
+        if self.pending_open_refusal_notices.len() == MAX_PENDING_OPEN_REFUSAL_NOTICES {
+            self.pending_open_refusal_notices.pop_front();
+        }
+        self.pending_open_refusal_notices.push_back(notice);
+    }
+
     pub fn take_open_refusal_notice(&mut self) -> Option<crate::overlay_state::OpenRefusalNotice> {
-        self.pending_open_refusal_notice.take()
+        self.pending_open_refusal_notices.pop_front().or_else(|| {
+            self.documents
+                .borrow_mut()
+                .take_recovery_notice()
+                .map(|(path, error)| crate::overlay_state::OpenRefusalNotice {
+                    title: Some("Saving needs manual recovery".into()),
+                    acknowledgement_path: Some(Box::new(path.clone())),
+                    name: "Save recovery retained".to_owned(),
+                    path: path.display().to_string(),
+                    headline: error.headline().to_owned(),
+                    detail: error.detail().to_owned(),
+                })
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_recovery_notice_for_test(
+        &mut self,
+        path: PathBuf,
+        error: festerm_document::SaveError,
+    ) {
+        self.documents
+            .borrow_mut()
+            .queue_recovery_notice(path, error);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn induce_recovery_notice_for_test(&mut self, path: &Path) -> PathBuf {
+        let id = self.documents.borrow_mut().open_local(path).unwrap();
+        {
+            let mut documents = self.documents.borrow_mut();
+            let document = documents.get_mut(id).unwrap();
+            let end = document.text().text().len();
+            document.text_mut().replace(end..end, "recovery\n").unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            let target = path.to_path_buf();
+            let replacement = path.with_extension("replacement");
+            crate::document_store::set_after_save_replacement_hook(move || {
+                std::fs::write(&replacement, "later\n").unwrap();
+                std::fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = path.to_path_buf();
+            crate::document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = std::fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                std::fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+        assert!(matches!(
+            self.documents.borrow_mut().save(id),
+            Some(SaveOutcome::Failed(_))
+        ));
+        let recovery = self
+            .documents
+            .borrow()
+            .get(id)
+            .unwrap()
+            .recovery_path()
+            .map(Path::to_path_buf)
+            .expect("real save retained a recovery directory");
+        #[cfg(windows)]
+        {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+        assert!(self.documents.borrow_mut().release(id));
+        recovery
     }
 
     pub(crate) fn take_sftp_cleanup_notice(
@@ -7253,6 +7436,170 @@ mod tests {
         assert!(notice.detail.contains("different transport generation"));
     }
 
+    #[test]
+    fn queued_recovery_notices_are_delivered_in_order_with_recovery_titles() {
+        let mut state = AppState::for_test();
+        let first = PathBuf::from("/tmp/.festerm-save-first.stage");
+        let second = PathBuf::from("/tmp/.festerm-save-second.stage");
+        {
+            let mut documents = state.documents.borrow_mut();
+            documents.queue_recovery_notice(
+                first.clone(),
+                festerm_document::SaveError::new("First recovery", "first detail"),
+            );
+            documents.queue_recovery_notice(
+                second.clone(),
+                festerm_document::SaveError::new("Second recovery", "second detail"),
+            );
+        }
+
+        let first_notice = state.take_open_refusal_notice().expect("first notice");
+        assert_eq!(
+            first_notice.title.as_deref(),
+            Some("Saving needs manual recovery")
+        );
+        assert_eq!(first_notice.path, first.display().to_string());
+        assert!(state.take_open_refusal_notice().is_none());
+        assert!(state.has_recovery_notices());
+        assert!(state.acknowledge_recovery_notice(&first));
+        let second_notice = state.take_open_refusal_notice().expect("second notice");
+        assert_eq!(second_notice.path, second.display().to_string());
+        assert!(state.acknowledge_recovery_notice(&second));
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_acknowledgement_preserves_non_utf8_path_identity() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut state = AppState::for_test();
+        let path = PathBuf::from(std::ffi::OsString::from_vec(
+            b"/tmp/.festerm-save-\xff.stage".to_vec(),
+        ));
+        state.queue_recovery_notice_for_test(
+            path.clone(),
+            festerm_document::SaveError::new("Recovery", "Recover retained bytes."),
+        );
+
+        let notice = state.take_open_refusal_notice().expect("recovery notice");
+
+        assert_eq!(notice.acknowledgement_path.as_deref(), Some(&path));
+        assert!(state.acknowledge_recovery_notice(
+            notice
+                .acknowledgement_path
+                .as_deref()
+                .expect("exact acknowledgement path")
+        ));
+        assert!(!state.has_recovery_notices());
+    }
+
+    #[test]
+    fn recovery_notice_overflow_preserves_oldest_paths_and_surfaces_a_count() {
+        let mut state = AppState::for_test();
+        let exact_capacity = crate::documents::MAX_PENDING_RECOVERY_NOTICES
+            + crate::documents::MAX_OVERFLOW_RECOVERY_NOTICES;
+        for index in 0..(exact_capacity + 2) {
+            state.queue_recovery_notice_for_test(
+                PathBuf::from(format!("/tmp/.festerm-save-{index}.stage")),
+                festerm_document::SaveError::new(
+                    format!("Recovery {index}"),
+                    format!("detail {index}"),
+                ),
+            );
+        }
+
+        for index in 0..exact_capacity {
+            let notice = state.take_open_refusal_notice().expect("retained notice");
+            assert_eq!(notice.path, format!("/tmp/.festerm-save-{index}.stage"));
+            assert!(state.acknowledge_recovery_notice(Path::new(&notice.path)));
+        }
+        let overflow = state.take_open_refusal_notice().expect("overflow summary");
+        assert_eq!(
+            overflow.path,
+            format!("/tmp/.festerm-save-{}.stage", exact_capacity + 1)
+        );
+        assert!(overflow.detail.contains("2 additional recovery notice(s)"));
+        assert!(state.acknowledge_recovery_notice(Path::new(&overflow.path)));
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
+    fn queued_remote_refusals_are_delivered_without_overwriting_each_other() {
+        let mut state = AppState::for_test();
+        for index in 1..=3 {
+            state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                title: None,
+                acknowledgement_path: None,
+                name: format!("remote-{index}.md"),
+                path: format!("host:/remote-{index}.md"),
+                headline: format!("Refusal {index}"),
+                detail: format!("detail {index}"),
+            });
+        }
+
+        for index in 1..=3 {
+            let notice = state.take_open_refusal_notice().expect("queued refusal");
+            assert_eq!(notice.headline, format!("Refusal {index}"));
+        }
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
+    fn asynchronous_remote_refusals_are_collected_without_loss() {
+        let mut state = AppState::for_test();
+        for index in 1..=3 {
+            let (sender, receiver) = mpsc::channel();
+            sender
+                .send(TerminalPathWorkerResult::OpenRefusal(
+                    crate::overlay_state::OpenRefusalNotice {
+                        title: None,
+                        acknowledgement_path: None,
+                        name: format!("remote-{index}.md"),
+                        path: format!("host:/remote-{index}.md"),
+                        headline: format!("Refusal {index}"),
+                        detail: format!("detail {index}"),
+                    },
+                ))
+                .unwrap();
+            state
+                .pending_terminal_path_opens
+                .push(PendingTerminalPathOpen {
+                    receiver,
+                    handle: None,
+                });
+        }
+
+        state.update_pending_terminal_path_opens(&egui::Context::default());
+
+        for index in 1..=3 {
+            let notice = state.take_open_refusal_notice().expect("worker refusal");
+            assert_eq!(notice.headline, format!("Refusal {index}"));
+        }
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
+    #[test]
+    fn remote_refusal_queue_is_bounded_and_keeps_the_newest_in_order() {
+        let mut state = AppState::for_test();
+        for index in 0..=MAX_PENDING_OPEN_REFUSAL_NOTICES {
+            state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                title: None,
+                acknowledgement_path: None,
+                name: format!("remote-{index}.md"),
+                path: format!("host:/remote-{index}.md"),
+                headline: format!("Refusal {index}"),
+                detail: format!("detail {index}"),
+            });
+        }
+
+        for index in 1..=MAX_PENDING_OPEN_REFUSAL_NOTICES {
+            let notice = state.take_open_refusal_notice().expect("bounded refusal");
+            assert_eq!(notice.headline, format!("Refusal {index}"));
+        }
+        assert!(state.take_open_refusal_notice().is_none());
+    }
+
     /// A scratch directory with two Markdown files in it, for the routes that
     /// open a local document.
     fn two_markdown_files() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -7302,6 +7649,58 @@ mod tests {
             .close()
             .expect("Markdown fixture cleanup failed");
         assert!(!other_directory_path.exists());
+    }
+
+    #[test]
+    fn opening_a_hard_link_alias_raises_the_existing_text_editor_tab() {
+        let (directory, first, _) = two_markdown_files();
+        let alias = directory.path().join("alias.md");
+        std::fs::hard_link(&first, &alias).unwrap();
+        let mut state = AppState::for_test();
+
+        assert!(state.open_text_editor(&first).is_none());
+        let document = state.active_document().unwrap();
+        assert!(state.open_text_editor(&alias).is_none());
+
+        let text_editor_tabs = state
+            .tabs
+            .iter()
+            .filter(|tab| matches!(tab.content, TabContent::TextEditor(_)))
+            .count();
+        assert_eq!(text_editor_tabs, 1);
+        assert_eq!(state.active_document(), Some(document));
+        assert_eq!(state.documents.borrow().get(document).unwrap().views(), 1);
+    }
+
+    #[test]
+    fn hard_link_save_as_rebinds_only_the_active_text_editor_view() {
+        let (directory, source, _) = two_markdown_files();
+        let destination = directory.path().join("destination.md");
+        std::fs::hard_link(&source, &destination).unwrap();
+        let mut state = AppState::for_test();
+        assert!(state.open_text_editor(&source).is_none());
+        let source_document = state.active_document().unwrap();
+        state.documents.borrow_mut().retain(source_document);
+        state.open_text_document(source_document);
+        let saving_tab = state.active();
+        let confirmed = crate::document_store::observe_destination(&destination).unwrap();
+
+        state.save_active_text_document_to(&destination, &confirmed);
+
+        let destination_document = state.active_document().unwrap();
+        assert_ne!(destination_document, source_document);
+        assert_eq!(state.active(), saving_tab);
+        assert_eq!(
+            state
+                .tabs
+                .iter()
+                .filter_map(|tab| match &tab.content {
+                    TabContent::TextEditor(editor) => Some(editor.document()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![source_document, destination_document]
+        );
     }
 
     #[test]

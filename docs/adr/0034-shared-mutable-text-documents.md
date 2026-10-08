@@ -68,17 +68,22 @@ ADR 0032 already threads through every window, keyed by a canonical
 `DocumentId`:
 
 - **Local:** the resolved file identity where the platform reports one (device
-  plus inode on Unix; on Windows the file index is behind an unstable standard
-  library feature, so creation time stands in for it), falling back to the
-  canonicalized path. Symlinks resolve to their target, so a file reached by
-  two paths is one document. Path comparison respects the volume's case
+  plus inode on Unix; Windows document generations use a native handle query
+  for volume serial and file index, as does retained directory authority).
+  The registry retains an identity handle while using that identifier so an
+  unlinked object cannot lend a recycled identifier to a different file.
+  Where no stable identifier exists, identity falls back to the canonicalized
+  path. Symlinks resolve to their target, so a file reached by
+  two paths is one document. A cached secondary alias is re-resolved before
+  reuse, while the primary origin remains the stable document path described
+  below. Path comparison respects the volume's case
   sensitivity rather than assuming the platform's default.
 - **Remote:** the existing `HostIdentity` of the authenticated SFTP origin plus
   the normalized absolute remote path. A remote path is never canonicalized
   against the local filesystem, preserving ADR 0030's rule that a remote path
   never becomes a local one.
 
-A file atomically replaced at the same path keeps its `DocumentId` — identity
+A file replaced at the same path keeps its `DocumentId` — identity
 follows the path the user opened, and the replacement is a *content* event
 handled by §6, not a new document.
 
@@ -121,18 +126,32 @@ terminal.
 
 - **Save** writes to the document's existing origin after generation
   revalidation (§5). When it is unavailable it is disabled *and* states why.
-- **Save As…** writes to a chosen local or remote destination without silently
-  overwriting. The destination is chosen in a modal picker that reuses the SFTP
-  file-browser pattern — a `This host (local)` / `<host> (remote)` switch, a
-  breadcrumb path with up/home/refresh, a Name/Size/Modified listing, and a file
-  name field — so one control covers both origins and neither is privileged. An
+- **Save As…** writes to a chosen local destination without silently
+  overwriting. The modal picker reuses the SFTP file-browser pattern, but this
+  release leaves its `<host> (remote)` option visibly disabled and performs no
+  remote listing or write; only `This host (local)` is selectable. An
   existing target is stated in words before the fact ("A file with this name
   already exists here. Saving will replace it.") and still requires the explicit
-  Save press; the replacement itself is generation-validated and atomic (§5).
+  Save press. That press records a typed destination expectation: either the
+  name was absent or it held one exact generation. Publication requires that
+  expectation before any target displacement, so a file that appears or
+  changes after confirmation is a conflict, never a newly adopted overwrite
+  target (§5).
   On success the view follows the new document identity, and the original
   document remains open only if another view still holds it. If the chosen
   destination is already open, the view binds to that **existing** document
-  rather than creating a second buffer for one file (§1). Save As stays
+  rather than creating a second buffer for one file (§1). A dirty or conflicted
+  open destination is refused before disk mutation, with guidance to save or
+  resolve that document first. A clean open destination contributes its
+  recorded exact generation to the conditional write; if it is explicitly
+  unavailable because the file is missing, it can instead accept a
+  picker-confirmed absent destination. The saving view then
+  rebinds with its source buffer and undo history intact. A different hard-link
+  pathname is not an in-place move of the shared source document: conditional
+  publication splits that directory entry from the original inode, creates a
+  new destination document, and rebinds only the saving view. Pending manual
+  recovery refuses even an identity-equivalent hard-link destination so its
+  exact recovery breadcrumb cannot be cleared. Save As stays
   available when Save cannot run — conflict, an unavailable source, an offline
   origin, or lost permissions — because it is the escape hatch for all of them.
 - **Find/Replace** operate on the in-memory buffer including unsaved text.
@@ -155,6 +174,34 @@ reading it, writing it, and both. A separate read-only Markdown viewer tab
 remains only for what the editor cannot hold: a remote snapshot or an HTTP
 document with no local file behind it.
 
+Saved-local Preview uses ADR 0030's bounded relative-image loader and shared
+managed-image allowance. The grant is derived from the canonical file behind
+the document's typed local origin, not its displayed label or a symlink's
+lexical parent; remote, untitled and terminal-history origins never authorize
+local images. The document store records the canonical path, file generation, and stable
+parent-directory identity from the capability and handle that supplied the
+editor bytes. Each image read grants the canonical parent's directory
+capability only when both that parent identity and the Markdown file opened
+through it still match the loaded authority. Canonical final-name checks reject
+source name surrogates without disabling ordinary Windows Cloud Files
+hydration. Image opens then remain beneath that captured directory even if a
+path component or the directory's name is rebound during the read.
+External/explicit reload and successful save replace that source authority;
+the editor discards old approvals, image caches and pending
+receivers before reparsing the new bytes. First Save and Save As/rebinding do
+the same for a new origin. Ordinary Save uses the canonical source parent
+captured by the load, so opening through a symlink never turns the symlink's
+lexical parent into a write or Preview grant. Save As captures the newly chosen
+destination parent's identity. Both retain that directory capability through
+temporary creation, target validation, replacement, cleanup and directory
+sync. If authority cannot be established, the save refuses before mutation
+rather than later adopting whichever parent occupies the pathname. An ordinary
+edit reparse retains completed state
+only for an unchanged same-index image reference and discards pending or
+changed work; an unavailable parse releases hidden images without starting
+loads for the old snapshot. This does not move image ownership or terminal
+mutation into the document registry.
+
 The alternative — a viewer tab and an editor tab for one file — was what
 fesTerm did, and it made a Markdown file two places that could disagree, each
 with its own outline, find state and scroll, each needing to be told about the
@@ -169,7 +216,7 @@ already has well-defined per-view state. This keeps "view" as the single unit of
 presentation state rather than introducing a half-view that sometimes owns two
 of everything.
 
-### 5. Writes are generation-validated and replace atomically
+### 5. Writes are generation-validated and publish without overwrite
 
 Every load and successful save records a **generation**: the strongest reliable
 combination of identity, modification time, and size the origin reports, plus
@@ -177,17 +224,166 @@ any stronger attribute a server supplies. A save revalidates the generation
 first; if it changed, the write does not happen and the document enters Conflict
 — including when Auto-save is what triggered the save.
 
-Replacement is write-to-temporary-then-rename in the same directory, with the
-original's permissions and ownership carried over where the platform allows, and
-the data durably flushed before the rename. Where a remote server cannot rename
-over an existing file, the fallback is named explicitly in the design document
+Save As similarly revalidates the typed absent-or-exact-generation expectation
+captured by the picker. A target that appears, disappears, or changes after
+confirmation is refused before displacement rather than being adopted. An
+existing confirmed destination remains pinned by an exact identity handle
+until the save has reopened and verified that object; the pin is released
+before Windows publication so it cannot retain the displaced original.
+Generation checks include a content digest, so an in-place equal-size rewrite
+with a restored modification time still conflicts.
+On Unix, every ancestor directory is checked against the same trusted-owner,
+shared-write, sticky-directory, and ACL mutation policy so another account
+cannot rename the retained destination parent out from under the requested
+pathname. On Windows, a non-delete-sharing handle pins that exact parent
+directory against rename or deletion for the complete save.
+
+Replacement is write-to-temporary-then-rename in the same directory. Before
+any document bytes are written, the Unix staging directory has inherited
+access/default ACLs cleared and is verified as mode `0700`; each Unix payload
+and recovery file likewise has inherited ACLs cleared and is verified as mode
+`0600`. Windows creates both the staging directory and each child with
+`NtCreateFile` relative to the retained exact directory handle, not by
+reconstructing a pathname. Before any document bytes are written or copied,
+the Windows parent must be owned by the current user, LocalSystem, or Builtin
+Administrators and its DACL must not grant an unprivileged principal child
+deletion or access-policy mutation rights. Add-file/add-directory access,
+generic-write/Modify access, and deletion of the parent itself do not by
+themselves permit substitution of the retained private child and are not
+refused: staging and new payload children use protected DACLs and do not
+inherit those grants. The current user, LocalSystem, and
+Builtin Administrators are the explicit trusted set because the latter two can
+already control the process and host; the owner/DACL snapshot is captured
+coherently and revalidated after the private staging handle is retained. Then
+the exact returned handle is verified as a non-reparse object on the expected
+volume, owned by the current user, with a protected one-ACE current-user-only
+DACL; ACL-less and cross-volume results are refused. This removes the
+create/reopen substitution window while preserving random names and
+handle-based no-overwrite publication. Retained recovery payloads are
+re-privatized after failed publication. Unix writes and flushes
+while the temporary remains private, then copies the existing target's owner,
+group, mode and ACL from verified file handles and durably flushes that
+metadata before replacement without copying the old modification time. Linux
+rewrites only user-owned xattrs and the POSIX access ACL; kernel-managed
+security labels remain in place and must already match the verified source
+snapshot. Windows applies and verifies the captured owner, group, DACL, audit SACL,
+mandatory integrity label, resource attributes, scoped policy and file attributes on the
+prepared file while its retained handle
+denies every other read or write open. A separately opened, identity-checked
+delete handle performs publication and closes; a metadata-only final pathname
+handle that does not share delete access then pins the visible name while the
+published security snapshot is verified. The displaced original is immediately
+restricted to the current user and has an independently written
+current-user-only byte copy for recovery; only then do retained handles close. An
+individually NTFS EFS-encrypted target is refused before
+staging or writing because basic attribute restoration cannot reproduce its
+encryption. A target with any NTFS alternate data stream, including
+`Zone.Identifier` Mark-of-the-Web, is likewise refused before staging until
+complete handle-bound stream copying and verification exists;
+targets carrying integrity-stream or no-scrub attributes are also refused before
+staging because those policies cannot be reproduced through basic file metadata.
+Any NTFS extended attribute likewise refuses before staging until exact,
+handle-bound copying and verification exists, because WSL stores Linux owner,
+group, and mode metadata in `$LXUID`, `$LXGID`, and `$LXMOD` extended attributes;
+inability to apply them refuses before publication. Existing-target
+replacement also refuses before staging when `SeSecurityPrivilege` is
+unavailable, because the target's audit SACL cannot then be captured and
+reproduced exactly. The privilege is enabled only on a duplicated
+impersonation token installed on the saving thread and never on the
+process-wide token. Standard and UAC-filtered Windows accounts commonly lack
+this privilege, so their existing-target Save attempts refuse safely rather
+than weakening metadata preservation; Save As to an absent destination remains
+available. Failure to restore the saving thread's exact prior token removes the
+privileged impersonation token if possible and aborts the process before that
+thread can execute more application work. A new Save As target keeps
+the private DACL. Names are cryptographically unpredictable and live beneath
+an owner-only staging directory on the destination filesystem. Unix verifies
+the prepared inode through both its handle and staging name; Windows relies on
+exclusive native handle-relative creation so reopening by name cannot expose
+the staged bytes. An independently
+written private recovery copy exists before publication. Existing-target
+publication uses two capability-bound no-overwrite moves on both platforms:
+the no-follow current target is first moved into private staging and verified,
+then the prepared payload is moved into the now-vacant target name only if no
+concurrent winner has claimed it. The target name can therefore be briefly
+absent, but stale editor bytes can never displace a newer entry. The published
+generation and retained-original generation are validated after publication.
+Unix owner/group/mode/ACL/xattr
+snapshots and Windows owner/group/DACL/audit-SACL/label/resource/scoped-policy/attribute snapshots are revalidated
+against a no-follow opening of the current target immediately before
+publication and against both the exact retained payload and retained original
+afterward. Windows additionally compares the private original byte copy with
+the exact displaced handle and holds a non-delete-sharing pathname lock through
+final success. A rollback likewise uses an identity-checked transient move,
+then pins and verifies the restored pathname while private staging is cleaned;
+failed rollback instead retains private recovery. A mismatch never triggers an unconditional second
+pathname replacement: the later visible winner remains visible where one
+exists, and prepared/displaced versions remain in the private
+`.festerm-save-*.stage` directory with a visible manual-recovery error that
+names the exact retained directory and is not replaced by freshness polling.
+The registry immediately promotes that record to a bounded ordered
+application-level notice rather than leaving application close/update policy
+blind while a view remains open. A queued or displayed recovery notice blocks native menu,
+shortcut, and OS window-close paths until explicit acknowledgement. A queued
+recovery notice never replaces an undismissed modal, and asynchronous open
+refusals use a bounded FIFO rather than
+overwriting one another while a modal is visible. If the bounded recovery
+notice queue overflows, a second bounded queue preserves 64 additional exact
+breadcrumbs before a final counted notice identifies the latest retained path
+and directs the user to the logs for every further path. This
+also covers partial move failures; every ambiguous arrangement is retained for
+manual recovery. Failure to reproduce ownership/access metadata refuses before
+publication with an ownership-specific Save As explanation. Cleanup failure
+after verified publication is warned and may retain the private staging
+directory, but does not misreport successfully published bytes as a failed
+save. Creation and publication stay tied to
+the retained directory capability, and any identity or security-metadata
+failure refuses the save rather than silently weakening access. Where a
+final destination component is a symbolic link or reparse point, Save As
+refuses it rather than following or moving it; the user must choose the regular
+file they intend to replace.
+
+A process crash or power loss in the brief absent-name window can leave
+`original` and `prepared` only in the private sibling staging directory without
+an in-process notice. Startup discovery is not implemented in this milestone;
+this accepted residual risk remains a required native fault-injection and
+manual-recovery check, not a claim of crash-atomic replacement.
+
+Where a remote server cannot rename over an existing file, the fallback is named
+explicitly in the design document
 and surfaced to the user; fesTerm never truncates the only known-good copy
 before a complete replacement exists unless the user has explicitly accepted
 that server's limitation. An interrupted write never reports `Saved`.
 
+Volumes that cannot enforce private staging or capability-relative
+no-overwrite moves are refused with a dedicated, non-retryable filesystem
+explanation. fesTerm does not silently weaken confidentiality or publication
+semantics for FAT/exFAT and unsupported network/FUSE filesystems. Unix also
+refuses private staging with folder-specific guidance in a shared-writable
+destination directory unless it is sticky and owned by the current user or
+root. Another unprivileged account that owns a sticky directory
+could otherwise substitute the random staging name before its handle is
+retained. A parent-security change after handle retention refuses. Unix may leave the
+empty private staging directory for inspection rather than deleting through
+the now-untrusted parent; Windows deletes the exact empty staging object
+through its retained handle regardless of pathname trust. Other Windows
+cleanup likewise marks the retained directory handle for deletion rather than
+resolving the staging pathname again. Cross-volume redirection has a separate mount,
+junction, or reparse-point refusal rather than being misdiagnosed as a missing
+filesystem capability.
+
 fesTerm tags its own completed save generation so the watcher event it causes is
 recognized and ignored: no reload, no duplicate undo entry, no caret jump, no
 false conflict.
+
+Platform file authority is isolated behind two app-owned, platform-API-only
+workspace boundaries. `festerm-unix-security` owns no-follow file/directory
+opens, private staging and metadata snapshots, ACL handling, and native
+no-overwrite publication. `festerm-windows-security` owns native
+handle-relative creation and moves, exact file identity, current-user-only
+staging, access-policy capture/application (including audit SACLs), and final
+pathname locks. Neither crate owns document state, editor policy, or UI; the
+application orchestrates them according to this ADR.
 
 ### 6. Freshness is bounded, and conflict is never resolved silently
 
@@ -262,6 +458,18 @@ is raised by the close attempt itself, whichever route triggered it: the chip's
 close affordance, the window close, application quit, or vi's `:q`. Auto-save is
 not crash recovery — journals or drafts would need their own decision about
 storage, privacy, cleanup, and remote content.
+
+A cancelled native window close never marks that window as accepted for
+teardown. Update installation and the post-install restart both run the same
+dirty-document, manual-recovery, and live-session checks; installation or
+restart waits rather than setting a quit bypass before those checks complete.
+The primary window uses application-wide live-session counts and the shared
+document registry, so work owned only by another window is not omitted. A dirty
+document whose final view belongs to the current window gets the ordinary
+Save/Discard/Cancel prompt. If a dirty document has multiple views or is owned
+only by another window, the application-wide action refuses with the exact
+document identity and directs the user to save or close it there rather than
+routing a destructive prompt to the wrong view.
 
 Because the control sits with the document, it is presented in the command bar
 beside Save rather than beside the per-view `Edit | Preview | Split` toggle.
@@ -526,10 +734,18 @@ implementation rather than left contradicting it.
 **Security and privacy.** Writes travel back through the same authenticated SFTP
 origin and trust boundary that opened the file; no new credential path, no new
 network surface, and no document content in logs, diagnostics, or workspace
-metadata. Temporary files inherit the target's directory and permissions so a
-save never briefly exposes private content in a world-readable location.
+metadata. Temporary files are created private before receiving content. Unix
+owner/group/mode/ACL/xattr metadata is restored through verified handles only
+after the durable content write and while the file remains beneath an
+owner-only staging directory; Windows applies and verifies the destination
+owner/group/DACL/label/resource/scoped-policy/attributes before publication
+rather than inheriting broader
+access. Unpredictable names, pre-publication identity/security snapshots, a
+prepared recovery copy, and no-overwrite target capture/publication prevent a
+substituted temporary or late target replacement from being accepted or
+deleted.
 
-**Platform.** Watcher behaviour, atomic replacement, permission and ownership
+**Platform.** Watcher behaviour, conditional replacement, permission and ownership
 preservation, and file-identity reporting differ across macOS, Windows, and
 Linux; each needs its own evidence. Remote behaviour additionally depends on
 server support for rename-over-existing.
@@ -563,18 +779,19 @@ existing Markdown rendering stays out of scope.
   and conflict for an edited document are now specified here; `CLOSE-*` gains
   the final-view dirty-close prompt; `CHIP-*` gains the non-colour document
   state cue.
-- **Automated tests required:** none yet — this ADR is design-approval only, and
-  the `text-editing` coverage entry is `deferred` until implementation. The
-  implementation change must land tests for document identity and aliasing,
+- **Automated tests:** the `text-editing` coverage entry is `partial` and
+  registers deterministic coverage for the implemented local editor,
+  including document identity and aliasing,
   shared-edit propagation across views and windows, generation revalidation and
-  refused overwrite, atomic replacement and interrupted writes, own-save event
+  refused overwrite, conditional publication and interrupted writes, own-save event
   suppression, clean-reload and dirty-conflict paths, offline/reconnect
   revalidation, auto-save debounce and pause conditions, final-view dirty close,
   replace-all as one undo transaction, fixed-column and line-number
   view-independence, final-view close routing and default-action placement,
   read-only line-oriented comparison, Save As destination binding to an
   already-open document, and the vi subset's motions, operators, and `:` command
-  convergence. `EDIT-17` adds deterministic coverage for independent blank
+  convergence. Remaining native and remote behavior stays explicit in
+  `CP-15` and the traceability prerequisites. `EDIT-17` adds deterministic coverage for independent blank
   untitled documents, per-kind sequential names, first-save routing, More
   actions, and native-menu command convergence.
 - **Vi recording refinement:** `EDIT-07` now has deterministic engine and
@@ -583,6 +800,14 @@ existing Markdown rendering stays out of scope.
   partial/stale repeat, pure-navigation/yank preservation, next-change recovery,
   and repeated edits as one shared undo transaction. Native keyboard/IME,
   narrow-pane readability and screen-reader delivery remain in `CP-15`.
+- **Saved-local Preview refinement:** `EDIT-18`, `MD-05`, `SET-13` and
+  `EDIT-04` have deterministic production-editor/manual-command,
+  typed-origin denial, first-save/Save As rebinding, shared allowance/worker,
+  explicit-retry, failed-parse, stale-result, canonical symlinked-source,
+  source-generation replacement/reload, unchanged-image reparse retention and
+  capability-rebinding coverage. ADR 0030 owns the image-policy limits and
+  exclusions. Native image presentation,
+  refusal/recovery comprehension and accessibility remain `CP-15`.
 - **Undo retention refinement:** `EDIT-03`, `EDIT-05`, `EDIT-07`, `EDIT-13`,
   `EDIT-14` and `EDIT-17` add deterministic capacity/descriptor/slot accounting, exact-byte
   admission, churn/clone/clear, validated no-op, stable saved/base-token,
@@ -592,9 +817,9 @@ existing Markdown rendering stays out of scope.
   usability and screen-reader delivery remain `CP-15`; transient allocation
   peaks and allocator fragmentation are not certified by these tests.
 - **Native/manual evidence required:** a new manual scenario registered with the
-  implementation, covering real watcher behaviour, atomic replacement,
+  implementation, covering real watcher behaviour, conditional publication,
   permission preservation, and remote disconnect/reconnect on each platform.
   `CP-06` continues to cover the read-only viewer routes.
-- **Coverage superseded:** none yet. When the editor ships, `MD-06`'s "no
-  editing/conflict claim if read-only" oracle narrows to the viewer's own
-  routes.
+- **Coverage superseded:** `MD-06`'s "no editing/conflict claim if read-only"
+  oracle now applies only to the viewer's own routes; editor behavior is
+  registered under `text-editing`.

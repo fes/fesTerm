@@ -122,19 +122,31 @@ def changed_files(root: Path, base: str) -> set[str]:
 
 def validation_impact_trailers(root: Path, base: str) -> list[str]:
     result = subprocess.run(
-        ["git", "log", "--format=%B%x00", f"{base}..HEAD"],
+        [
+            "git",
+            "log",
+            "--format=%H%x00%(trailers:key=Validation-Impact,valueonly,separator=%x1f)%x00",
+            f"{base}..HEAD",
+        ],
         cwd=root,
         check=False,
-        text=True,
+        text=False,
         capture_output=True,
     )
     if result.returncode != 0:
-        raise TraceabilityError(result.stderr.strip() or "git log failed")
-    return [
-        line.split(":", 1)[1].strip()
-        for line in result.stdout.replace("\x00", "\n").splitlines()
-        if line.lower().startswith("validation-impact:")
-    ]
+        raise TraceabilityError(result.stderr.decode().strip() or "git log failed")
+    fields = result.stdout.split(b"\x00")
+    trailers: list[str] = []
+    for index in range(0, len(fields) - 1, 2):
+        commit = fields[index].strip().decode()
+        if not commit:
+            continue
+        trailers.extend(
+            trailer.strip()
+            for trailer in fields[index + 1].decode().split("\x1f")
+            if trailer.strip()
+        )
+    return trailers
 
 
 def validation_impact_ids(trailer: str) -> set[str]:

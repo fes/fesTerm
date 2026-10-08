@@ -13,8 +13,8 @@
 //! panics on loudly.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,10 @@ use festerm_document::{
 
 use festerm_syntax::{DocumentSyntax, SyntaxStatus};
 
-use crate::document_store::{self, Freshness, Generation, LoadFailure, SaveFailure};
+use crate::document_store::{
+    self, ConfirmedDestination, DestinationExpectation, Freshness, Generation, LoadFailure,
+    LocalSourceAuthority, SaveExpectation, SaveFailure,
+};
 
 /// How often an open local document is re-checked against its file. Short
 /// enough that a `git checkout` in the next window is noticed while the user
@@ -45,6 +48,8 @@ const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 /// and, on a remote origin, spend a round trip on text the user is still in
 /// the middle of typing.
 const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
+pub(crate) const MAX_PENDING_RECOVERY_NOTICES: usize = 16;
+pub(crate) const MAX_OVERFLOW_RECOVERY_NOTICES: usize = 64;
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -55,6 +60,7 @@ pub(crate) struct OpenDocument {
     origin: DocumentOrigin,
     text: TextDocument,
     generation: Option<Generation>,
+    source_authority: Option<LocalSourceAuthority>,
     views: usize,
     read_only: bool,
     availability: Availability,
@@ -62,6 +68,9 @@ pub(crate) struct OpenDocument {
     save: SaveProgress,
     auto_save_requested: bool,
     last_error: Option<SaveError>,
+    recovery_error: Option<SaveError>,
+    recovery_path: Option<PathBuf>,
+    recovery_notice_queued: bool,
     /// When this document's source was last checked, so metadata queries run
     /// once per interval, not per frame. Windows also opens a file handle to
     /// retrieve its stable identity; Unix obtains identity from the stat.
@@ -95,8 +104,23 @@ impl OpenDocument {
         &mut self.text
     }
 
+    pub(crate) fn local_source_generation(&self) -> Option<(&LocalSourceAuthority, Generation)> {
+        self.source_authority
+            .as_ref()
+            .zip(self.generation)
+            .filter(|_| {
+                matches!(self.origin, DocumentOrigin::Local(_))
+                    && matches!(self.availability, Availability::Available)
+            })
+    }
+
     pub(crate) const fn views(&self) -> usize {
         self.views
+    }
+
+    #[cfg(test)]
+    pub(crate) fn recovery_path(&self) -> Option<&Path> {
+        self.recovery_path.as_deref()
     }
 
     pub(crate) const fn read_only(&self) -> bool {
@@ -132,6 +156,7 @@ impl OpenDocument {
             conflict: self.conflict.clone(),
             auto_save_requested: self.auto_save_requested,
             last_error: self.last_error.clone(),
+            recovery_error: self.recovery_error.clone(),
             remote: self.origin.is_remote(),
             has_save_target: !matches!(self.origin, DocumentOrigin::Untitled(_)),
             recently_reloaded: self.reloaded.is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
@@ -212,6 +237,10 @@ pub(crate) struct DocumentRegistry {
     by_key: HashMap<DocumentKey, DocumentId>,
     next_id: u64,
     next_untitled_by_prefix: HashMap<String, u64>,
+    pending_recovery_notices: VecDeque<(PathBuf, SaveError)>,
+    overflow_recovery_notices: VecDeque<(PathBuf, SaveError)>,
+    recovery_notice_overflow_summary: Option<(usize, PathBuf, SaveError)>,
+    active_recovery_notice: Option<(PathBuf, SaveError)>,
     bounds: DocumentBounds,
 }
 
@@ -239,18 +268,72 @@ impl DocumentRegistry {
         let origin = LocalOrigin::new(path)
             .map(DocumentOrigin::Local)
             .map_err(OpenFailure::Origin)?;
-        if let Some(id) = self.by_key.get(&origin.key()).copied() {
+        if let Some(id) = self.current_keyed_local(&origin) {
             self.retain(id);
             return Ok(id);
         }
 
         let loaded = document_store::load(path, self.bounds).map_err(OpenFailure::Load)?;
+        if let Some(existing) = self
+            .documents
+            .iter()
+            .filter(|(_, document)| {
+                document
+                    .source_authority
+                    .as_ref()
+                    .is_some_and(|authority| authority.matches(&loaded.source_authority))
+                    && document.generation.is_some_and(|generation| {
+                        document_store::source_authority_is_current(
+                            document.source_authority.as_ref().expect("checked above"),
+                            generation,
+                        )
+                    })
+            })
+            .map(|(id, _)| *id)
+            .min()
+        {
+            self.by_key.insert(origin.key(), existing);
+            self.retain(existing);
+            return Ok(existing);
+        }
         Ok(self.insert(
             origin,
             loaded.document,
             Some(loaded.generation),
+            Some(loaded.source_authority),
             loaded.read_only,
         ))
+    }
+
+    fn current_keyed_local(&mut self, origin: &DocumentOrigin) -> Option<DocumentId> {
+        let key = origin.key();
+        let id = self.by_key.get(&key).copied()?;
+        let document = self.documents.get(&id)?;
+        if document.origin.key() == key {
+            return Some(id);
+        }
+        let authority = document.source_authority.clone();
+        let generation = document.generation;
+        let path = match origin {
+            DocumentOrigin::Local(origin) => origin.path(),
+            _ => return None,
+        };
+        let current = document_store::resolve_source_authority(path).ok();
+        let valid = authority
+            .as_ref()
+            .zip(current.as_ref())
+            .is_some_and(|(authority, current)| authority.matches(current))
+            && authority
+                .zip(generation)
+                .is_some_and(|(authority, generation)| {
+                    document_store::source_authority_is_current(&authority, generation)
+                });
+        if valid {
+            Some(id)
+        } else {
+            self.by_key.remove(&key);
+            None
+        }
     }
 
     /// Adds a document whose bytes were fetched by something other than the
@@ -265,7 +348,7 @@ impl DocumentRegistry {
             self.retain(id);
             return id;
         }
-        self.insert(origin, text, None, read_only)
+        self.insert(origin, text, None, None, read_only)
     }
 
     /// Replaces the bytes for an already-open remote document snapshot, or
@@ -288,7 +371,7 @@ impl DocumentRegistry {
             self.retain(id);
             return id;
         }
-        self.insert(origin, text, None, read_only)
+        self.insert(origin, text, None, None, read_only)
     }
 
     fn insert(
@@ -296,6 +379,7 @@ impl DocumentRegistry {
         origin: DocumentOrigin,
         text: TextDocument,
         generation: Option<Generation>,
+        source_authority: Option<LocalSourceAuthority>,
         read_only: bool,
     ) -> DocumentId {
         self.next_id += 1;
@@ -309,6 +393,7 @@ impl DocumentRegistry {
                 origin,
                 text,
                 generation,
+                source_authority,
                 views: 1,
                 read_only,
                 availability: Availability::Available,
@@ -316,6 +401,9 @@ impl DocumentRegistry {
                 save: SaveProgress::Idle,
                 auto_save_requested: false,
                 last_error: None,
+                recovery_error: None,
+                recovery_path: None,
+                recovery_notice_queued: false,
                 checked: Instant::now(),
                 reloaded: None,
                 settled: None,
@@ -354,7 +442,7 @@ impl DocumentRegistry {
             .expect("generated untitled origins are valid");
         let text = TextDocument::from_unsaved_bytes(bytes, self.bounds)
             .expect("untitled snapshots are preflighted against editor bounds");
-        self.insert(DocumentOrigin::from(origin), text, None, false)
+        self.insert(DocumentOrigin::from(origin), text, None, None, false)
     }
 
     /// Records one fewer view. The document is forgotten when the last view
@@ -371,10 +459,114 @@ impl DocumentRegistry {
         if document.views > 0 {
             return false;
         }
-        let key = document.origin.key();
+        let recovery = (!document.recovery_notice_queued)
+            .then(|| {
+                document
+                    .recovery_path
+                    .clone()
+                    .zip(document.recovery_error.clone())
+            })
+            .flatten();
         self.documents.remove(&id);
-        self.by_key.remove(&key);
+        self.by_key.retain(|_, document| *document != id);
+        if let Some(recovery) = recovery {
+            self.queue_recovery_notice_record(recovery.0, recovery.1);
+        }
         true
+    }
+
+    pub(crate) fn take_recovery_notice(&mut self) -> Option<(PathBuf, SaveError)> {
+        if self.active_recovery_notice.is_some() {
+            return None;
+        }
+        let notice = self
+            .pending_recovery_notices
+            .pop_front()
+            .or_else(|| self.overflow_recovery_notices.pop_front())
+            .or_else(|| {
+                self.recovery_notice_overflow_summary
+                    .take()
+                    .map(|(count, path, error)| {
+                        (
+                            path.clone(),
+                            SaveError::new(
+                                "Additional saves need manual recovery",
+                                format!(
+                                "{count} additional recovery notice(s) exceeded the visible queue. \
+                                 The latest retained path is {}. {} Check the application logs for \
+                                 every retained path.",
+                                path.display(),
+                                error.detail()
+                            ),
+                            ),
+                        )
+                    })
+            });
+        self.active_recovery_notice.clone_from(&notice);
+        notice
+    }
+
+    pub(crate) fn acknowledge_recovery_notice(&mut self, path: &Path) -> bool {
+        let Some((active, _)) = self.active_recovery_notice.as_ref() else {
+            return false;
+        };
+        if active != path {
+            tracing::warn!(
+                active = %active.display(),
+                acknowledged = %path.display(),
+                "a recovery notice acknowledgement key did not match the active path"
+            );
+        }
+        self.active_recovery_notice = None;
+        true
+    }
+
+    pub(crate) fn has_recovery_notices(&self) -> bool {
+        !self.pending_recovery_notices.is_empty()
+            || !self.overflow_recovery_notices.is_empty()
+            || self.recovery_notice_overflow_summary.is_some()
+            || self.active_recovery_notice.is_some()
+    }
+
+    pub(crate) fn first_dirty_document(&self) -> Option<(DocumentId, String, String)> {
+        self.documents.iter().find_map(|(id, document)| {
+            document.text.is_dirty().then(|| {
+                (
+                    *id,
+                    document.origin.file_name().to_owned(),
+                    document.origin.qualified_label(),
+                )
+            })
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_recovery_notice(&mut self, path: PathBuf, error: SaveError) {
+        self.queue_recovery_notice_record(path, error);
+    }
+
+    fn queue_recovery_notice_record(&mut self, path: PathBuf, error: SaveError) {
+        if self.pending_recovery_notices.len() < MAX_PENDING_RECOVERY_NOTICES {
+            self.pending_recovery_notices.push_back((path, error));
+            return;
+        }
+        if self.overflow_recovery_notices.len() < MAX_OVERFLOW_RECOVERY_NOTICES {
+            self.overflow_recovery_notices.push_back((path, error));
+            return;
+        }
+        tracing::error!(
+            path = %path.display(),
+            detail = %error.detail(),
+            "a save recovery notice exceeded the visible queue; its path remains in the logs"
+        );
+        match &mut self.recovery_notice_overflow_summary {
+            Some((count, latest_path, latest_error)) => {
+                *count += 1;
+                *latest_path = path;
+                *latest_error = error;
+            }
+            summary @ None => *summary = Some((1, path, error)),
+        }
     }
 
     pub(crate) fn get(&self, id: DocumentId) -> Option<&OpenDocument> {
@@ -395,6 +587,11 @@ impl DocumentRegistry {
     pub(crate) fn find_local(&self, path: &Path) -> Option<DocumentId> {
         let origin = LocalOrigin::new(path).ok().map(DocumentOrigin::Local)?;
         self.by_key.get(&origin.key()).copied()
+    }
+
+    pub(crate) fn find_current_local(&mut self, path: &Path) -> Option<DocumentId> {
+        let origin = LocalOrigin::new(path).ok().map(DocumentOrigin::Local)?;
+        self.current_keyed_local(&origin)
     }
 
     /// Every open document, for callers that must act on all of them.
@@ -422,6 +619,9 @@ impl DocumentRegistry {
     pub(crate) fn save(&mut self, id: DocumentId) -> Option<SaveOutcome> {
         let bounds = self.bounds;
         let document = self.documents.get_mut(&id)?;
+        if let Some(error) = document.recovery_error.clone() {
+            return Some(SaveOutcome::Failed(error));
+        }
         let DocumentOrigin::Local(origin) = &document.origin else {
             if matches!(document.origin, DocumentOrigin::Untitled(_)) {
                 let error = SaveError::new(
@@ -438,9 +638,25 @@ impl DocumentRegistry {
         let path = origin.path().to_path_buf();
         let bytes = document.text.to_bytes();
 
-        let outcome = match document_store::save(&path, &bytes, document.generation) {
-            Ok(generation) => {
-                document.generation = Some(generation);
+        let expectation = match (document.generation, document.source_authority.as_ref()) {
+            (Some(generation), Some(authority)) => SaveExpectation::Loaded {
+                generation,
+                authority,
+            },
+            _ => {
+                let error = SaveError::new(
+                    "Saving did not complete",
+                    "The document no longer has exact authority for its source. Use Save As… to choose a destination.",
+                );
+                document.last_error = Some(error.clone());
+                return Some(SaveOutcome::Failed(error));
+            }
+        };
+        let outcome = match document_store::save(&path, &bytes, expectation) {
+            Ok(saved) => {
+                document.generation = Some(saved.generation);
+                document.source_authority = Some(saved.source_authority);
+                document.read_only = saved.read_only;
                 document.text.mark_saved();
                 document.conflict = None;
                 document.last_error = None;
@@ -462,6 +678,15 @@ impl DocumentRegistry {
                 let _ = failure;
                 SaveOutcome::Unavailable(UnavailableReason::PermissionDenied)
             }
+            Err(failure @ SaveFailure::RecoveryRequired(_)) => {
+                let error = SaveError::new(failure.headline(), failure.detail());
+                if let SaveFailure::RecoveryRequired(path) = &failure {
+                    document.recovery_path = Some(path.clone());
+                    document.recovery_notice_queued = true;
+                }
+                document.recovery_error = Some(error.clone());
+                SaveOutcome::Failed(error)
+            }
             Err(failure) => {
                 let error = SaveError::new(failure.headline(), failure.detail());
                 document.last_error = Some(error.clone());
@@ -469,6 +694,28 @@ impl DocumentRegistry {
             }
         };
         document.save = SaveProgress::Idle;
+        let recovery = if document.recovery_notice_queued {
+            document
+                .recovery_path
+                .clone()
+                .zip(document.recovery_error.clone())
+        } else {
+            None
+        };
+        if let Some((path, error)) = recovery {
+            let already_queued = self
+                .pending_recovery_notices
+                .iter()
+                .chain(&self.overflow_recovery_notices)
+                .any(|(queued, _)| queued == &path)
+                || self
+                    .active_recovery_notice
+                    .as_ref()
+                    .is_some_and(|(active, _)| active == &path);
+            if !already_queued {
+                self.queue_recovery_notice_record(path, error);
+            }
+        }
         Some(outcome)
     }
 
@@ -482,13 +729,43 @@ impl DocumentRegistry {
     ///
     /// If the destination is already open, that document is what the view
     /// binds to. Two buffers for one file is precisely what the registry
-    /// exists to prevent (§1), so the open document is reloaded from the bytes
-    /// just written rather than a second copy being made.
+    /// exists to prevent (§1), so the open document adopts the saving buffer
+    /// and its undo history rather than a second copy being made.
     pub(crate) fn save_as(
         &mut self,
         id: DocumentId,
         path: &Path,
+        confirmed: &ConfirmedDestination,
     ) -> Option<(SaveOutcome, Option<DocumentId>)> {
+        if !confirmed.matches_requested_path(path) {
+            let error = SaveError::new(
+                "That destination changed after confirmation",
+                "Review the destination and confirm Save As again. Nothing was written.",
+            );
+            if let Some(source) = self.documents.get_mut(&id) {
+                source.last_error = Some(error.clone());
+            }
+            return Some((SaveOutcome::Failed(error), None));
+        }
+        let source_is_exact_destination = self.documents.get(&id).is_some_and(|source| {
+            matches!(
+                source.origin(),
+                DocumentOrigin::Local(local)
+                    if confirmed.matches_requested_path(local.path())
+            )
+        });
+        if let Some(source) = self.documents.get(&id) {
+            if let Some(error) = source.recovery_error.clone() {
+                if source_is_exact_destination
+                    || source
+                        .source_authority
+                        .as_ref()
+                        .is_some_and(|authority| confirmed.matches_source_authority(authority))
+                {
+                    return Some((SaveOutcome::Failed(error), None));
+                }
+            }
+        }
         let origin = match LocalOrigin::new(path).map(DocumentOrigin::Local) {
             Ok(origin) => origin,
             Err(_) => {
@@ -496,36 +773,191 @@ impl DocumentRegistry {
                     "That destination cannot be used",
                     "The chosen path is not a file this host can write to.",
                 );
-                return Some((SaveOutcome::Failed(error), None));
-            }
-        };
-        let document = self.documents.get(&id)?;
-        let bytes = document.text.to_bytes();
-        let text = document.text.clone();
-
-        let generation = match document_store::save(path, &bytes, None) {
-            Ok(generation) => generation,
-            Err(failure) => {
-                let error = SaveError::new(failure.headline(), failure.detail());
-                if let Some(document) = self.documents.get_mut(&id) {
-                    document.last_error = Some(error.clone());
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
                 }
                 return Some((SaveOutcome::Failed(error), None));
             }
         };
+        let keyed = self
+            .current_keyed_local(&origin)
+            .filter(|candidate| *candidate != id || source_is_exact_destination);
+        let mut matching = Vec::new();
+        if let Some(keyed) = keyed {
+            matching.push(keyed);
+        }
+        for (candidate, document) in &self.documents {
+            if *candidate == id && !source_is_exact_destination {
+                continue;
+            }
+            let authority_matches = document
+                .source_authority
+                .as_ref()
+                .zip(document.generation)
+                .is_some_and(|(authority, generation)| {
+                    confirmed.matches_source_authority(authority)
+                        && document_store::source_authority_is_current(authority, generation)
+                });
+            let origin_matches = matches!(
+                document.origin(),
+                DocumentOrigin::Local(local)
+                    if confirmed.matches_requested_path(local.path())
+            );
+            if (authority_matches || origin_matches) && !matching.contains(candidate) {
+                matching.push(*candidate);
+            }
+        }
+        matching.sort_unstable();
+        if let Some(error) = matching
+            .iter()
+            .filter(|candidate| **candidate != id)
+            .filter_map(|candidate| self.documents.get(candidate))
+            .find_map(|destination| destination.recovery_error.clone())
+        {
+            if let Some(source) = self.documents.get_mut(&id) {
+                source.last_error = Some(error.clone());
+            }
+            return Some((SaveOutcome::Failed(error), None));
+        }
+        if matching
+            .iter()
+            .filter(|candidate| **candidate != id)
+            .any(|candidate| {
+                self.documents.get(candidate).is_some_and(|destination| {
+                    destination.text.is_dirty() || destination.conflict.is_some()
+                })
+            })
+        {
+            let error = SaveError::new(
+                "That destination has unsaved work",
+                "Switch to the already-open destination, save or resolve its changes, then try Save As again. Nothing was written.",
+            );
+            if let Some(source) = self.documents.get_mut(&id) {
+                source.last_error = Some(error.clone());
+            }
+            return Some((SaveOutcome::Failed(error), None));
+        }
+        let existing = keyed.or_else(|| matching.first().copied());
+        if let Some(existing) = existing {
+            let Some(destination) = self.documents.get(&existing) else {
+                let error = SaveError::new(
+                    "That destination cannot be verified",
+                    "Refresh the open documents and try Save As again. Nothing was written.",
+                );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
+                return Some((SaveOutcome::Failed(error), None));
+            };
+            let expectation_matches = match confirmed.expectation() {
+                DestinationExpectation::Existing(expected) => {
+                    destination.generation == Some(expected)
+                }
+                DestinationExpectation::Absent => matches!(
+                    destination.availability,
+                    Availability::Unavailable(UnavailableReason::Missing)
+                ),
+            };
+            if !expectation_matches && destination.generation.is_none() {
+                let error = SaveError::new(
+                    "That destination cannot be verified",
+                    "Refresh or reopen the already-open destination, then try Save As again. Nothing was written.",
+                );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
+                return Some((SaveOutcome::Failed(error), None));
+            }
+            if !expectation_matches {
+                let error = SaveError::new(
+                    "That destination changed after confirmation",
+                    "Review the already-open destination and confirm Save As again. Nothing was written.",
+                );
+                if let Some(source) = self.documents.get_mut(&id) {
+                    source.last_error = Some(error.clone());
+                }
+                return Some((SaveOutcome::Failed(error), None));
+            }
+        }
+        let Some(document) = self.documents.get(&id) else {
+            let error = SaveError::new(
+                "This document cannot be verified",
+                "Refresh the open documents and try Save As again. Nothing was written.",
+            );
+            return Some((SaveOutcome::Failed(error), None));
+        };
+        let bytes = document.text.to_bytes();
+        let text = document.text.clone();
 
-        if let Some(existing) = self.by_key.get(&origin.key()).copied() {
+        let saved =
+            match document_store::save(path, &bytes, SaveExpectation::Destination(confirmed)) {
+                Ok(saved) => saved,
+                Err(failure @ SaveFailure::RecoveryRequired(_)) => {
+                    let error = SaveError::new(failure.headline(), failure.detail());
+                    if let Some(document) = self.documents.get_mut(&id) {
+                        if let SaveFailure::RecoveryRequired(path) = &failure {
+                            document.recovery_path = Some(path.clone());
+                            document.recovery_notice_queued = true;
+                        }
+                        document.recovery_error = Some(error.clone());
+                    }
+                    if let SaveFailure::RecoveryRequired(path) = failure {
+                        self.queue_recovery_notice_record(path, error.clone());
+                    }
+                    return Some((SaveOutcome::Failed(error), None));
+                }
+                Err(failure) => {
+                    let error = SaveError::new(failure.headline(), failure.detail());
+                    if let Some(document) = self.documents.get_mut(&id) {
+                        document.last_error = Some(error.clone());
+                    }
+                    return Some((SaveOutcome::Failed(error), None));
+                }
+            };
+
+        if let Some(existing) = existing {
             // The file the user chose is open elsewhere, and it now holds the
             // bytes just written, so that document is brought up to date
-            // rather than shadowed.
-            self.reload_from_source(existing);
-            self.retain(existing);
+            // from the exact save result rather than reopening a pathname that
+            // may already name a different parent.
+            let mut reloaded = text;
+            reloaded.mark_saved();
+            self.by_key.retain(|_, document| *document != existing);
+            self.by_key.insert(origin.key(), existing);
+            if let Some(document) = self.documents.get_mut(&existing) {
+                document.syntax = DocumentSyntax::new(origin.file_name(), reloaded.text());
+                document.origin = origin;
+                document.text = reloaded;
+                document.generation = Some(saved.generation);
+                document.source_authority = Some(saved.source_authority);
+                document.read_only = saved.read_only;
+                document.availability = Availability::Available;
+                document.conflict = None;
+                document.last_error = None;
+                document.recovery_error = None;
+                document.recovery_path = None;
+                document.recovery_notice_queued = false;
+                document.save = SaveProgress::Idle;
+                document.reloaded = Some(Instant::now());
+                document.checked = Instant::now();
+                document.settled = None;
+                document.auto_save_blocked_at = None;
+            }
+            if existing != id {
+                self.retain(existing);
+            }
             return Some((SaveOutcome::Saved, Some(existing)));
         }
 
         let mut text = text;
         text.mark_saved();
-        let new_id = self.insert(origin, text, Some(generation), false);
+        let new_id = self.insert(
+            origin,
+            text,
+            Some(saved.generation),
+            Some(saved.source_authority),
+            saved.read_only,
+        );
         Some((SaveOutcome::Saved, Some(new_id)))
     }
 
@@ -605,6 +1037,7 @@ impl DocumentRegistry {
                     // A conflict is the user's to resolve; re-checking would
                     // only replace their banner with the same banner.
                     && document.conflict.is_none()
+                    && document.recovery_error.is_none()
                     && now.duration_since(document.checked) >= POLL_INTERVAL
             })
             .map(|(id, _)| *id)
@@ -629,7 +1062,9 @@ impl DocumentRegistry {
             .documents
             .iter()
             .filter(|(_, document)| {
-                document.save == SaveProgress::Idle && document.conflict.is_none()
+                document.save == SaveProgress::Idle
+                    && document.conflict.is_none()
+                    && document.recovery_error.is_none()
             })
             .map(|(id, _)| *id)
             .collect();
@@ -659,11 +1094,30 @@ impl DocumentRegistry {
 
         document.checked = Instant::now();
         let outcome = match document_store::freshness(&path, known) {
-            Freshness::Unchanged => RefreshOutcome::Unchanged,
+            Freshness::Unchanged => {
+                let authority_current =
+                    document.source_authority.as_ref().is_some_and(|authority| {
+                        document_store::source_authority_identity_is_current(authority, known)
+                    });
+                if authority_current {
+                    document.availability = Availability::Available;
+                    RefreshOutcome::Unchanged
+                } else {
+                    let newly_unavailable =
+                        matches!(document.availability, Availability::Available);
+                    document.availability = Availability::Unavailable(UnavailableReason::Missing);
+                    if newly_unavailable {
+                        RefreshOutcome::Unavailable(UnavailableReason::Missing)
+                    } else {
+                        RefreshOutcome::Unchanged
+                    }
+                }
+            }
             Freshness::Changed(_) => match document_store::load(&path, bounds) {
                 Ok(loaded) if !document.text.is_dirty() => {
                     document.text = loaded.document;
                     document.generation = Some(loaded.generation);
+                    document.source_authority = Some(loaded.source_authority);
                     document.read_only = loaded.read_only;
                     document.availability = Availability::Available;
                     document.conflict = None;
@@ -725,6 +1179,7 @@ impl DocumentRegistry {
             Ok(loaded) => {
                 document.text = loaded.document;
                 document.generation = Some(loaded.generation);
+                document.source_authority = Some(loaded.source_authority);
                 document.read_only = loaded.read_only;
                 document.availability = Availability::Available;
                 document.conflict = None;
@@ -816,6 +1271,134 @@ mod tests {
         type_into(&mut registry, first, "beta\n");
         assert_eq!(registry.get(second).unwrap().text().text(), "alpha\nbeta\n");
         assert!(registry.get(second).unwrap().text().is_dirty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_a_symlink_alias_reuses_the_loaded_source_authority() {
+        let directory = TemporaryDirectory::new("symlink-alias");
+        let path = directory.file("notes.md", "alpha\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&path).unwrap();
+        let second = registry.open_local(&alias).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(first).unwrap().views(), 2);
+    }
+
+    #[test]
+    fn opening_a_hard_link_alias_reuses_the_loaded_file_identity() {
+        let directory = TemporaryDirectory::new("hard-link-alias");
+        let path = directory.file("notes.md", "alpha\n");
+        let alias = directory.path.join("alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&path).unwrap();
+        let second = registry.open_local(&alias).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(first).unwrap().views(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retargeted_cached_symlink_alias_does_not_reopen_the_old_document() {
+        let directory = TemporaryDirectory::new("retargeted-cached-alias");
+        let first_path = directory.file("first.md", "first\n");
+        let second_path = directory.file("second.md", "second\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&first_path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&first_path).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), first);
+        fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(&second_path, &alias).unwrap();
+        assert_eq!(registry.find_current_local(&alias), None);
+        assert_eq!(registry.find_local(&alias), None);
+
+        let reopened = registry.open_local(&alias).unwrap();
+
+        assert_ne!(reopened, first);
+        assert_eq!(registry.get(reopened).unwrap().text().text(), "second\n");
+    }
+
+    #[test]
+    fn stale_source_generation_cannot_establish_a_new_hard_link_alias() {
+        let directory = TemporaryDirectory::new("stale-hard-link-alias");
+        let path = directory.file("notes.md", "before\n");
+        let alias = directory.path.join("alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+
+        let stale = registry.open_local(&path).unwrap();
+        fs::write(&path, "after with a different size\n").unwrap();
+        let current = registry.open_local(&alias).unwrap();
+
+        assert_ne!(current, stale);
+        assert_eq!(
+            registry.get(current).unwrap().text().text(),
+            "after with a different size\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unlinked_source_cannot_reuse_its_retained_identity_for_a_replacement() {
+        let directory = TemporaryDirectory::new("unlinked-retained-identity");
+        let path = directory.file("notes.md", "before\n");
+        let alias = directory.path.join("alias.md");
+        fs::hard_link(&path, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let stale = registry.open_local(&path).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), stale);
+
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, "replacement\n").unwrap();
+        let replacement = registry.open_local(&alias).unwrap();
+
+        assert_ne!(replacement, stale);
+        assert_eq!(
+            registry.get(replacement).unwrap().text().text(),
+            "replacement\n"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_symlink_aliases_are_revalidated_after_retargeting() {
+        use std::os::windows::fs::symlink_file;
+
+        let directory = TemporaryDirectory::new("windows-symlink-alias");
+        let first_path = directory.file("first.md", "first\n");
+        let second_path = directory.file("second.md", "second\n");
+        let alias = directory.path.join("alias.md");
+        if let Err(error) = symlink_file(&first_path, &alias) {
+            if error.raw_os_error() == Some(1314)
+                && std::env::var_os("FESTERM_REQUIRE_WINDOWS_SYMLINKS")
+                    .is_none_or(|value| value.is_empty())
+            {
+                return;
+            }
+            panic!("Windows CI must permit the owned file-symlink fixture: {error}");
+        }
+        let mut registry = DocumentRegistry::new();
+
+        let first = registry.open_local(&first_path).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), first);
+        fs::remove_file(&alias).unwrap();
+        symlink_file(&second_path, &alias).unwrap();
+
+        assert_eq!(registry.find_current_local(&alias), None);
+        let reopened = registry.open_local(&alias).unwrap();
+        assert_ne!(reopened, first);
+        assert_eq!(registry.get(reopened).unwrap().text().text(), "second\n");
     }
 
     #[test]
@@ -948,6 +1531,76 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_refresh_restores_a_temporarily_unavailable_source() {
+        let directory = TemporaryDirectory::new("refresh-restores-authority");
+        let path = directory.file("notes.md", "alpha\n");
+        let held = directory.path.join("held.md");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+
+        fs::rename(&path, &held).unwrap();
+        assert!(matches!(
+            registry.refresh(id),
+            Some(RefreshOutcome::Unavailable(_))
+        ));
+        assert!(registry
+            .get(id)
+            .unwrap()
+            .local_source_generation()
+            .is_none());
+
+        fs::rename(&held, &path).unwrap();
+        assert_eq!(registry.refresh(id), Some(RefreshOutcome::Unchanged));
+        assert!(
+            registry
+                .get(id)
+                .unwrap()
+                .local_source_generation()
+                .is_some(),
+            "restoring the exact source and parent must restore Preview authority"
+        );
+    }
+
+    #[test]
+    fn unchanged_refresh_rejects_a_hard_link_in_a_replacement_parent() {
+        let directory = TemporaryDirectory::new("refresh-parent");
+        let retained = TemporaryDirectory::new("refresh-parent-retained");
+        fs::remove_dir(&retained.path).unwrap();
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+
+        #[cfg(windows)]
+        {
+            let error = fs::rename(&directory.path, &retained.path).unwrap_err();
+            assert!(matches!(error.raw_os_error(), Some(5) | Some(32)));
+            registry
+                .get_mut(id)
+                .unwrap()
+                .source_authority
+                .as_mut()
+                .unwrap()
+                .release_identity_pin_for_parent_rebind_test();
+        }
+        fs::rename(&directory.path, &retained.path).unwrap();
+        fs::create_dir(&directory.path).unwrap();
+        fs::hard_link(retained.path.join("notes.md"), &path).unwrap();
+
+        assert!(matches!(
+            registry.refresh(id),
+            Some(RefreshOutcome::Unavailable(_))
+        ));
+        assert!(
+            registry
+                .get(id)
+                .unwrap()
+                .local_source_generation()
+                .is_none(),
+            "the same file generation must not transfer authority to a replacement parent"
+        );
+    }
+
+    #[test]
     fn saving_somewhere_else_writes_there_and_leaves_the_original_alone() {
         let directory = TemporaryDirectory::new("save-as");
         let path = directory.file("notes.md", "alpha\n");
@@ -955,8 +1608,9 @@ mod tests {
         let mut registry = DocumentRegistry::new();
         let id = registry.open_local(&path).unwrap();
         type_into(&mut registry, id, "beta\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
 
-        let (outcome, moved) = registry.save_as(id, &destination).unwrap();
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
 
         assert_eq!(outcome, SaveOutcome::Saved);
         let moved = moved.expect("the view has somewhere to follow");
@@ -986,8 +1640,9 @@ mod tests {
         let id = registry.open_local(&source).unwrap();
         let existing = registry.open_local(&destination).unwrap();
         type_into(&mut registry, id, "beta\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
 
-        let (outcome, moved) = registry.save_as(id, &destination).unwrap();
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
 
         assert_eq!(outcome, SaveOutcome::Saved);
         assert_eq!(
@@ -1000,6 +1655,484 @@ mod tests {
             "alpha\nbeta\n",
             "and the document already open on it has to show what is now there"
         );
+        assert!(
+            registry.get(existing).unwrap().text().can_undo(),
+            "rebinding must preserve the source buffer's edit history"
+        );
+        assert!(registry.get_mut(existing).unwrap().text_mut().undo());
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "alpha\n",
+            "the source edit remains undoable after the view rebinds"
+        );
+    }
+
+    #[test]
+    fn save_as_to_a_hard_link_rebinds_only_the_saving_view_to_a_new_document() {
+        let directory = TemporaryDirectory::new("save-as-hard-link");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.path.join("destination.md");
+        fs::hard_link(&source, &destination).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        assert_eq!(registry.open_local(&destination).unwrap(), source_id);
+        type_into(&mut registry, source_id, "edited\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        let destination_id = moved.expect("saving view destination");
+        assert_ne!(destination_id, source_id);
+        assert_eq!(fs::read_to_string(&source).unwrap(), "source\n");
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "source\nedited\n"
+        );
+        assert!(registry.get(source_id).unwrap().text().is_dirty());
+        assert!(!registry.get(destination_id).unwrap().text().is_dirty());
+        assert_eq!(
+            registry.get(source_id).unwrap().origin().file_name(),
+            "source.md"
+        );
+        assert_eq!(
+            registry.get(destination_id).unwrap().origin().file_name(),
+            "destination.md"
+        );
+    }
+
+    #[test]
+    fn save_as_refuses_a_hard_link_alias_of_a_recovery_pending_source() {
+        let directory = TemporaryDirectory::new("save-as-hard-link-recovery");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.path.join("destination.md");
+        fs::hard_link(&source, &destination).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+        #[cfg(not(windows))]
+        {
+            let target = source.clone();
+            let replacement = directory.path.join("replacement.md");
+            document_store::set_after_save_replacement_hook(move || {
+                fs::write(&replacement, "later\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = source.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+        assert!(matches!(
+            registry.save(source_id),
+            Some(SaveOutcome::Failed(_))
+        ));
+        let recovery = registry
+            .get(source_id)
+            .unwrap()
+            .recovery_path
+            .clone()
+            .expect("real save failure retained recovery");
+        let error = registry
+            .get(source_id)
+            .unwrap()
+            .recovery_error
+            .clone()
+            .expect("real save failure retained its error");
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&source).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(&source, permissions).unwrap();
+        }
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Failed(error));
+        assert!(moved.is_none());
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "source\n");
+        assert_eq!(
+            registry.get(source_id).unwrap().recovery_path.as_ref(),
+            Some(&recovery)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_revalidates_an_old_alias_key_after_rebinding_the_destination() {
+        let directory = TemporaryDirectory::new("save-as-rekey-alias");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.file("destination.md", "destination\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&destination, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        let destination_id = registry.open_local(&alias).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(destination_id));
+
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, "unrelated\n").unwrap();
+        let unrelated = registry.open_local(&alias).unwrap();
+
+        assert_ne!(unrelated, destination_id);
+        assert_eq!(
+            registry.get(unrelated).unwrap().text().text(),
+            "unrelated\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_revalidates_a_retargeted_secondary_alias_before_destination_reuse() {
+        let directory = TemporaryDirectory::new("save-as-retargeted-secondary-alias");
+        let source = directory.file("source.md", "source\n");
+        let original = directory.file("original.md", "original\n");
+        let alias = directory.path.join("alias.md");
+        std::os::unix::fs::symlink(&original, &alias).unwrap();
+        let mut registry = DocumentRegistry::new();
+        let original_id = registry.open_local(&original).unwrap();
+        assert_eq!(registry.open_local(&alias).unwrap(), original_id);
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+
+        fs::remove_file(&alias).unwrap();
+        fs::write(&alias, "replacement\n").unwrap();
+        let expectation = document_store::observe_destination(&alias).unwrap();
+        let (outcome, moved) = registry.save_as(source_id, &alias, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert!(moved.is_some_and(|destination| destination != original_id));
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "source\nedited\n");
+        assert_eq!(fs::read_to_string(&original).unwrap(), "original\n");
+        assert_eq!(
+            registry.get(original_id).unwrap().text().text(),
+            "original\n"
+        );
+    }
+
+    #[test]
+    fn save_as_does_not_rebind_a_stale_primary_hard_link_document() {
+        let directory = TemporaryDirectory::new("save-as-stale-primary-hard-link");
+        let primary = directory.file("primary.md", "primary\n");
+        let destination = directory.path.join("destination.md");
+        fs::hard_link(&primary, &destination).unwrap();
+        let source = directory.file("source.md", "source\n");
+        let mut registry = DocumentRegistry::new();
+        let stale = registry.open_local(&primary).unwrap();
+        assert_eq!(registry.open_local(&destination).unwrap(), stale);
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+
+        let replacement = directory.file("replacement.md", "replacement\n");
+        #[cfg(windows)]
+        fs::remove_file(&primary).unwrap();
+        fs::rename(&replacement, &primary).unwrap();
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert!(moved.is_some_and(|destination_id| destination_id != stale));
+        assert_eq!(registry.get(stale).unwrap().text().text(), "primary\n");
+        assert_eq!(
+            registry.get(stale).unwrap().origin().file_name(),
+            "primary.md"
+        );
+        assert_eq!(fs::read_to_string(&primary).unwrap(), "replacement\n");
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "source\nedited\n"
+        );
+    }
+
+    #[test]
+    fn save_as_refuses_a_destination_with_pending_manual_recovery() {
+        let directory = TemporaryDirectory::new("save-as-recovery");
+        let source = directory.file("notes.md", "alpha\n");
+        let destination = directory.file("other.md", "protected\n");
+        let recovery = directory.path.join(".festerm-save-recovery.stage");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "beta\n");
+        let error = SaveError::new(
+            "Saving needs manual recovery",
+            format!("Recover retained versions from {}.", recovery.display()),
+        );
+        let destination_document = registry.get_mut(existing).unwrap();
+        destination_document.recovery_path = Some(recovery);
+        destination_document.recovery_error = Some(error.clone());
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Failed(error));
+        assert_eq!(moved, None);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "protected\n");
+        assert!(registry.get(existing).unwrap().recovery_error.is_some());
+    }
+
+    #[test]
+    fn save_as_recovery_is_promoted_while_the_source_view_remains_open() {
+        let directory = TemporaryDirectory::new("save-as-promotes-recovery");
+        let source = directory.file("source.md", "source\n");
+        let destination = directory.file("destination.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let source_id = registry.open_local(&source).unwrap();
+        type_into(&mut registry, source_id, "edited\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        #[cfg(not(windows))]
+        {
+            let target = destination.clone();
+            let replacement = directory.path.join("replacement.md");
+            document_store::set_after_save_replacement_hook(move || {
+                fs::write(&replacement, "later\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = destination.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+
+        let (outcome, moved) = registry
+            .save_as(source_id, &destination, &expectation)
+            .unwrap();
+
+        assert!(matches!(outcome, SaveOutcome::Failed(_)));
+        assert!(moved.is_none());
+        let recovery = registry
+            .get(source_id)
+            .unwrap()
+            .recovery_path()
+            .expect("save as retained exact recovery")
+            .to_owned();
+        let (notice_path, _) = registry
+            .take_recovery_notice()
+            .expect("save as immediately promoted its recovery notice");
+        assert_eq!(notice_path, recovery);
+        assert_eq!(registry.get(source_id).unwrap().views(), 1);
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&destination).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(&destination, permissions).unwrap();
+        }
+    }
+
+    #[test]
+    fn save_as_refuses_a_dirty_open_destination_without_mutating_either_buffer_or_disk() {
+        let directory = TemporaryDirectory::new("save-as-dirty-open");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        type_into(&mut registry, existing, "destination edit\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        let source_before = registry.get(id).unwrap().text().text().to_owned();
+        let destination_before = registry.get(existing).unwrap().text().text().to_owned();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        let error = match outcome {
+            SaveOutcome::Failed(error) => error,
+            other => panic!("expected visible refusal, got {other:?}"),
+        };
+        assert_eq!(moved, None);
+        assert_eq!(error.headline(), "That destination has unsaved work");
+        assert!(error.detail().contains("Nothing was written"));
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "destination\n");
+        assert_eq!(registry.get(id).unwrap().text().text(), source_before);
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            destination_before
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+        assert!(registry.get(id).unwrap().text().can_undo());
+        assert!(registry.get(existing).unwrap().text().is_dirty());
+        assert!(registry.get(existing).unwrap().text().can_undo());
+        assert_eq!(registry.get(id).unwrap().status().detail(), error.detail());
+    }
+
+    #[test]
+    fn save_as_refuses_a_conflicted_open_destination_without_mutation() {
+        let directory = TemporaryDirectory::new("save-as-conflicted-open");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        type_into(&mut registry, existing, "destination edit\n");
+        fs::write(&destination, b"outside\n").unwrap();
+        assert!(matches!(
+            registry.refresh(existing),
+            Some(RefreshOutcome::Conflict)
+        ));
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        let source_before = registry.get(id).unwrap().text().text().to_owned();
+        let destination_before = registry.get(existing).unwrap().text().text().to_owned();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert!(matches!(outcome, SaveOutcome::Failed(_)));
+        assert_eq!(moved, None);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "outside\n");
+        assert_eq!(registry.get(id).unwrap().text().text(), source_before);
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            destination_before
+        );
+        assert!(registry.get(existing).unwrap().conflict().is_some());
+    }
+
+    #[test]
+    fn save_as_uses_the_clean_open_destinations_recorded_generation() {
+        let directory = TemporaryDirectory::new("save-as-clean-generation");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        fs::write(&destination, b"outside and newer\n").unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert!(matches!(outcome, SaveOutcome::Failed(_)));
+        assert_eq!(moved, None);
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "outside and newer\n"
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+        assert!(!registry.get(existing).unwrap().text().is_dirty());
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "destination\n"
+        );
+    }
+
+    #[test]
+    fn save_as_can_recreate_a_clean_open_destination_confirmed_absent() {
+        let directory = TemporaryDirectory::new("save-as-clean-missing");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "source edit\n");
+        fs::remove_file(&destination).unwrap();
+        assert!(matches!(
+            registry.refresh(existing),
+            Some(RefreshOutcome::Unavailable(UnavailableReason::Missing))
+        ));
+        let expectation = document_store::observe_destination(&destination).unwrap();
+        assert_eq!(expectation.expectation(), DestinationExpectation::Absent);
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(existing));
+        assert_eq!(
+            fs::read_to_string(&destination).unwrap(),
+            "source\nsource edit\n"
+        );
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "source\nsource edit\n"
+        );
+    }
+
+    #[test]
+    fn save_as_chooses_the_lowest_matching_document_id_deterministically() {
+        let directory = TemporaryDirectory::new("save-as-deterministic-match");
+        let source = directory.file("notes.md", "source\n");
+        let destination = directory.file("other.md", "destination\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let first = registry.open_local(&destination).unwrap();
+        let (origin, text, generation, source_authority, read_only) = {
+            let document = registry.documents.get(&first).unwrap();
+            (
+                document.origin.clone(),
+                document.text.clone(),
+                document.generation,
+                document.source_authority.clone(),
+                document.read_only,
+            )
+        };
+        let second = registry.insert(origin, text, generation, source_authority, read_only);
+        registry.by_key.clear();
+        type_into(&mut registry, id, "source edit\n");
+        let expectation = document_store::observe_destination(&destination).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &destination, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(first.min(second)));
+    }
+
+    #[test]
+    fn clean_save_as_to_the_same_document_does_not_retain_a_phantom_view() {
+        let directory = TemporaryDirectory::new("save-as-same-clean");
+        let path = directory.file("notes.md", "source\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        let expectation = document_store::observe_destination(&path).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &path, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(id));
+        assert_eq!(registry.get(id).unwrap().views(), 1);
+    }
+
+    #[test]
+    fn dirty_save_as_to_the_same_document_uses_source_authority_without_self_conflict() {
+        let directory = TemporaryDirectory::new("save-as-same-dirty");
+        let path = directory.file("notes.md", "source\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "edit\n");
+        let expectation = document_store::observe_destination(&path).unwrap();
+
+        let (outcome, moved) = registry.save_as(id, &path, &expectation).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(moved, Some(id));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "source\nedit\n");
+        assert!(!registry.get(id).unwrap().text().is_dirty());
+        assert!(registry.get(id).unwrap().text().can_undo());
+        assert_eq!(registry.get(id).unwrap().views(), 1);
     }
 
     #[test]
@@ -1039,8 +2172,12 @@ mod tests {
             "Local Shell · terminal history snapshot",
             b"alpha\n",
         );
+        let confirmed =
+            document_store::observe_destination(&directory.path.join("snapshot.txt")).unwrap();
 
-        let (outcome, moved) = registry.save_as(id, directory.path.as_path()).unwrap();
+        let (outcome, moved) = registry
+            .save_as(id, directory.path.as_path(), &confirmed)
+            .unwrap();
         let error = match outcome {
             SaveOutcome::Failed(error) => error,
             other => panic!("expected save failure, got {other:?}"),
@@ -1159,6 +2296,77 @@ mod tests {
         assert!(document.conflict().unwrap().can_compare());
         assert_eq!(document.status().severity(), Severity::Blocking);
         assert!(!document.status().can_save());
+    }
+
+    #[test]
+    fn manual_recovery_notice_survives_polling_and_names_the_recovery_directory() {
+        let directory = TemporaryDirectory::new("manual-recovery");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "mine\n");
+        #[cfg(not(windows))]
+        {
+            let target = path.clone();
+            let replacement = directory.path.join("replacement.md");
+            document_store::set_after_save_replacement_hook(move || {
+                fs::write(&replacement, "later\n").unwrap();
+                fs::rename(&replacement, &target).unwrap();
+            });
+        }
+        #[cfg(windows)]
+        {
+            let target = path.clone();
+            document_store::set_after_save_replacement_hook(move || {
+                let mut permissions = fs::metadata(&target).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&target, permissions).unwrap();
+            });
+        }
+
+        assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
+        let recovery = registry
+            .get(id)
+            .unwrap()
+            .recovery_path
+            .clone()
+            .expect("exact retained recovery path");
+        assert!(
+            registry.has_recovery_notices(),
+            "an open document's retained recovery must block application close and update actions"
+        );
+        let (retained_path, retained_error) = registry
+            .take_recovery_notice()
+            .expect("the open document immediately promotes its application notice");
+        assert_eq!(retained_path, recovery);
+        assert!(retained_error
+            .detail()
+            .contains(&recovery.display().to_string()));
+        assert!(registry.acknowledge_recovery_notice(&retained_path));
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            fs::set_permissions(&path, permissions).unwrap();
+        }
+
+        assert!(registry.poll(Instant::now() + POLL_INTERVAL).is_empty());
+        assert!(matches!(registry.save(id), Some(SaveOutcome::Failed(_))));
+
+        let document = registry.get(id).unwrap();
+        assert!(document.conflict().is_none());
+        assert!(document
+            .status()
+            .detail()
+            .contains(&recovery.display().to_string()));
+        assert_eq!(document.status().severity(), Severity::Blocking);
+        assert!(!document.status().can_save());
+        assert!(registry.release(id));
+        assert!(
+            registry.take_recovery_notice().is_none(),
+            "final-view release must not duplicate an acknowledged notice"
+        );
     }
 
     #[test]

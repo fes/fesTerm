@@ -50,6 +50,8 @@ festerm-sessiond -----> festerm-core and festerm-session
 festerm-ssh ----------> festerm-session
 festerm-test-support -> festerm-core and session implementations
 festerm-document -----> (no workspace dependencies)
+festerm-unix-security -> (platform APIs only)
+festerm-windows-security -> (platform APIs only)
 ```
 
 `festerm-core` must not depend on GUI, PTY, SSH, operating-system keychain, cloud identity, or persistence implementations.
@@ -113,8 +115,9 @@ change, but the responsibilities should remain distinct.
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
     festerm-document/      # ADR-0034 GUI-free shared text document core
+    festerm-unix-security/ # ADR-0034 handle-bound save metadata/publication
     festerm-windows-job/   # Windows process-tree shutdown support
-    festerm-windows-security/ # current-user named-pipe DACL support
+    festerm-windows-security/ # named-pipe and ADR-0034 save access policy
     festerm-windows-runtime/ # trusted optional ConPTY sidecar loading
     festerm-windows-direct2d/ # experimental SDK/wgpu graphics interop, no terminal ownership
     festerm-test-support/
@@ -261,10 +264,14 @@ answers terminal queries exactly once for protocol-v2 sessions instead of
 dropping or replaying queued replies, clipboard actions, or stale user input
 across reattach.
 
-Platform-sensitive Windows DACL manipulation remains isolated in
-`festerm-windows-security`: each named-pipe instance is created while the
-daemon token temporarily has a current-user-only default DACL, and the
-original token DACL is restored before the shell is launched.
+Platform-sensitive file authority remains isolated in the two ADR 0034
+security crates. `festerm-unix-security` owns no-follow opens, private staging,
+metadata snapshots and no-overwrite publication. `festerm-windows-security`
+owns native handle-relative creation/publication and complete Windows access
+policy handling in addition to named-pipe DACL support. Each named-pipe
+instance is created while the daemon token temporarily has a current-user-only
+default DACL, and the original token DACL is restored before the shell is
+launched.
 
 ### `festerm-ssh`
 

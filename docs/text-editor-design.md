@@ -101,11 +101,110 @@ The editor never resolves a divergence silently.
 - A **dirty** document whose file changed underneath enters **Conflict**, and
   the banner offers Compare, Reload, Keep my version, and Save As. Nothing is
   overwritten and nothing is discarded until the user says which version wins.
-- A save is **generation-validated and atomic**: written to a temporary file in
-  the destination directory, flushed durably, permissions carried over on a
-  best-effort basis, then renamed over the target.
+- A save is **generation-validated and conditionally published**: written to a temporary file
+  created private in the retained destination directory, flushed durably, then
+  replaced only after access metadata is secured. Unix clears inherited ACLs
+  and verifies `0700` staging/`0600` files before writing, then restores target
+  owner/group/mode/ACL metadata through verified handles without copying the
+  previous modification time. macOS copies the target's full ACL and xattr
+  sets. Linux rewrites user xattrs/POSIX ACLs while
+  requiring kernel security labels to match in place. Windows applies and
+  verifies the target owner/group/DACL, mandatory integrity label, resource
+  attributes, scoped policy, and file attributes on the prepared file before
+  publication while the retained payload handle denies every other read/write
+  open. A transient identity-checked delete handle publishes it; after that
+  handle closes, a non-delete-sharing pathname handle pins the published name
+  through final identity and security verification. Windows no-overwrite moves
+  use native `NtSetInformationFile` with `FileRenameInformation` and
+  `ReplaceIfExists = false`, relative to the retained destination handle.
+  Verification requests EA-read and delete access without delete sharing;
+  metadata-only handles cannot enforce that pathname lock. Content digests
+  read the retained exclusive payload, while the locked published handle
+  supplies matching metadata and identity without gaining payload-read access.
+  The retained original's security-capture handle requests attribute-write,
+  DACL-write, and owner-write access for private restriction and rollback,
+  plus system-security access for its audit SACL. It holds no delete access;
+  identity-checked transient movers remain separate.
+  Owner/group/DACL comparison ignores only the automatic-inheritance
+  completion marker on in-memory comparison copies: Windows can drop
+  `SE_DACL_AUTO_INHERITED` while copying otherwise identical descriptor bytes.
+  All individually queried SACL-family descriptors similarly ignore only
+  `SE_SACL_AUTO_INHERITED` on their comparison copies. LABEL copying reproduced
+  that completion-marker difference; privileged audit-SACL copying remains a
+  separate native qualification gate. Audit comparison alone also equates a
+  canonical standalone empty revision-2 audit ACL with a present null SACL:
+  Windows can return the former when querying a low-label file, then store the
+  latter after copying no audit ACEs. The exact header, presence and control
+  flags remain significant; nonempty/noncanonical ACLs and additional layout
+  are never collapsed. This exception does not apply to DACL, LABEL, ATTRIBUTE
+  or SCOPE comparison, and unavailable audit capture remains distinct.
+  Integrity SIDs, ordered label ACEs, mandatory-policy masks and SACL
+  inheritance-request/defaulting/protection controls remain significant;
+  Audit capture presence and all audit ACE bytes remain significant;
+  Resource-attribute and scoped-policy comparisons retain every payload,
+  layout and control byte except that same completion marker: actual SDK
+  queries reproduced its difference after low-label copying. Real central
+  access policy differences still refuse before any attempted policy setter.
+  SIDs, ordered ACEs, inheritance-request/defaulting/protection controls,
+  descriptor layout outside that audited empty representation, and all other
+  security metadata must still match exactly.
+  The displaced original is
+  immediately restricted to the current user and also has a separately written
+  private byte copy. An NTFS EFS-encrypted target is
+  refused before staging because fesTerm cannot yet preserve that encryption;
+  so is any target with an alternate data stream such as the
+  `Zone.Identifier` Mark-of-the-Web stream.
+  Its private staging directory and every child are created
+  natively relative to exact retained handles; each returned handle must be
+  non-reparse, current-user-owned, protected current-user-only, and on the
+  expected volume before any document bytes are written or copied. ACL-less or
+  cross-volume redirection is refused with a distinct mount/junction/reparse
+  explanation. Inability to preserve target metadata
+  refuses before mutation. A new destination remains owner-only. Prepared files remain
+  beneath a private same-filesystem staging directory, with an independently
+  written private recovery copy before publication. Both platforms first move
+  the no-follow current target into private staging without overwrite, verify
+  it, then publish the prepared file into the vacant name without overwrite.
+  The name can be briefly absent, but a newer entry is never displaced by stale
+  editor bytes. A final no-follow target opening checks the old generation
+  immediately before capture; old/new generations, the Unix
+  owner/group/mode/ACL/xattr snapshot, and the Windows
+  owner/group/DACL/audit-SACL/label/resource/scoped-policy/attribute snapshot on the exact retained payload are
+  verified; Windows also compares the private prior-byte copy with the exact
+  displaced original. Replacing an existing Windows target refuses before
+  staging if `SeSecurityPrivilege` is unavailable, because its audit SACL
+  cannot otherwise be preserved; Save As to an absent destination remains
+  available. Standard and UAC-filtered Windows accounts commonly lack that
+  privilege, so this refusal is an expected safe default rather than silent
+  metadata degradation. A successful rollback is identity-checked and
+  non-delete-locked through private-staging cleanup; an ambiguous rollback
+  retains recovery instead. A late or ambiguous change
+  is never deleted by pathname rollback: every recoverable version remains in
+  the private `.festerm-save-*.stage` directory and the editor reports manual
+  recovery with the exact directory path. That notice remains authoritative
+  and is not replaced by polling; closing or rebinding the final view promotes
+  it to a dismissible application-level notice.
+  Access-metadata or publication-identity failure is a failed save,
+  never a best-effort success. Cleanup failure after verified publication may
+  retain the private staging directory but does not turn a successful save
+  into a false failure.
+- Save As refuses a final symbolic-link or reparse-point destination; choose
+  the regular file it points to instead.
+- A crash or power loss in the brief absent-name window can leave `original`
+  and `prepared` only in the private sibling staging directory. Automatic
+  startup discovery is not implemented yet, so native fault-injection must
+  verify manual recovery explicitly.
 - A document that breaches a bound is **refused before anything changes**, and
   the refusal says what the limit was, never what the content was.
+- A volume without private staging or no-overwrite publication support is
+  **unsupported for safe saving**. The error directs Save As to a different
+  local disk rather than suggesting a retry that cannot succeed.
+- On Unix, a shared-writable destination directory is likewise refused unless
+  it is sticky and owned by the current user or root. An unprivileged owner of
+  somebody else's sticky directory could still substitute the staging name. If the parent's
+  security changes after an empty
+  private staging directory is created, that directory is retained and named
+  in the refusal rather than removed through the now-untrusted parent.
 - An indivisible change whose undo record exceeds the existing 8-MiB limit
   is refused whole, not applied without undo or retained as an oversized
   exception. Text, revision, saved/dirty state, undo and redo are unchanged.
@@ -162,6 +261,24 @@ The shared Markdown Preview uses the same code-byte navigation as the viewer:
 the selected code row forwards its vertical target after the horizontal child
 closes. This keeps offscreen code reachable without changing per-view scroll,
 selection, source positions, or the original horizontal wrapping/targeting.
+
+Saved-local Preview and Split also use the viewer's bounded relative-image
+loader. The source is the real `DocumentOrigin::Local` path, never the origin
+label or a fallback filename. Remote, untitled and terminal-history documents
+cannot read local images, even when their labels resemble local paths. First
+Save and Save As/rebinding discard old image state and use the new real parent;
+reparses discard snapshot-specific caches and receivers, with running work
+remaining charged until it actually ends. Failed parsing releases hidden images
+and starts no loads for the retained old snapshot.
+
+The Settings **Image memory budget** is shared by all panes/windows (512 MiB
+default), with four actual manual/automatic workers globally and 64 automatic
+references per snapshot. Saturation preserves admitted images and visibly
+refuses new growth; temporary refusals recover after sufficient capacity
+returns or the budget increases. Failed images can be explicitly retried.
+Canonical directory confinement, byte/header limits and managed-allowance
+exclusions follow [ADR 0030](adr/0030-native-markdown-viewer.md); this is not
+a total-process memory claim.
 
 **Syntax highlighting** is on by default and colours source by what it means —
 keyword, string, comment, type — from the same engine and the same palette the
@@ -227,12 +344,23 @@ Save As is offered in every state, including — especially — the states in wh
 Save itself is disabled: a conflict, an unavailable source, an offline origin,
 lost permissions. It is the escape hatch for all of them.
 
-The destination sheet browses with the same widget the SFTP panes use, so one
-control covers both origins and neither is privileged. An existing target is
-stated in words before the fact — "A file with this name already exists here.
-Saving will replace it." — and a single Save press is still all it takes. It is
-a statement, not a second confirmation. Choosing a **directory** is different:
-that is refused, because a directory cannot be replaced by a document.
+The destination sheet browses local files with the same widget the SFTP panes
+use. Its remote option remains visible but disabled in this release and starts
+no remote listing or write. An existing target is stated in words before the
+fact — "A file with this name already exists here. Saving will replace it." —
+and a single Save press is still all it takes. It is a statement, not a second
+confirmation. Choosing a **directory** is different: that is refused, because a
+directory cannot be replaced by a document.
+
+The Save press records whether the destination was absent or the exact
+generation then present. A later appearance, disappearance, or generation
+change refuses before displacement. If that destination is already open, a
+dirty or conflicted buffer blocks the operation with a visible recovery
+instruction; a clean buffer supplies its recorded generation, while a clean
+buffer explicitly unavailable because its file is missing can accept a
+picker-confirmed absent destination. On success the
+saving view follows the existing destination document without discarding the
+source buffer's undo history.
 
 ## vi compatibility
 
@@ -327,9 +455,9 @@ the ordinary Save As sheet on the first write. No new shortcut is claimed:
 `Cmd`+`N` remains Start Local Shell and `Cmd`+`Shift`+`N` remains New Window.
 
 **Open File…** in More actions, or `Cmd`/`Ctrl`+`O`, browses the local
-filesystem. A Markdown file opens in the Markdown viewer, whose **Edit**
-action is one press away; every other text file opens straight in the editor,
-because the viewer would only show it back as its own source. The picker lists
+filesystem. A saved local Markdown file opens in the editor with **Preview**
+selected; every other text file opens straight in the editor's source view. The
+picker lists
 every file. An extension cannot tell a `Makefile`, a `.service` or a `.hpp`
 from a `.png`, and hiding a file because of its name makes it unopenable
 rather than merely unrecognised. What keeps that honest is the bounds check:

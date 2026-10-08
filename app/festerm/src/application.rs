@@ -216,7 +216,7 @@ impl FesTermApplication {
     fn open_external_document(&mut self, path: PathBuf, context: &egui::Context) {
         let index = self
             .windows
-            .iter()
+            .iter_mut()
             .position(|window| window.app.has_local_document(&path))
             .or_else(|| self.window_index(self.last_active_window))
             .unwrap_or(0);
@@ -610,6 +610,22 @@ impl FesTermApplication {
             context.request_repaint();
         }
     }
+
+    fn refresh_application_close_context(&mut self) {
+        let counts = self.windows.iter().fold(
+            crate::tabs::LiveSessionCounts::default(),
+            |mut total, window| {
+                let current = window.app.live_session_counts();
+                total.local += current.local;
+                total.ssh += current.ssh;
+                total.serial += current.serial;
+                total
+            },
+        );
+        self.windows[0]
+            .app
+            .set_application_live_session_counts(counts);
+    }
 }
 
 /// How far left of the pointer a detached window's origin is placed, so the
@@ -619,6 +635,7 @@ const DETACH_POINTER_INSET: f32 = 60.0;
 
 impl eframe::App for FesTermApplication {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        self.refresh_application_close_context();
         eframe::App::logic(self.primary_mut(), context, frame);
     }
 
@@ -1562,6 +1579,123 @@ mod tests {
         application.settle_windows(&context);
 
         assert_eq!(application.window_count(), 1);
+    }
+
+    #[test]
+    fn cancelled_recovery_close_keeps_the_secondary_window_alive() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        application.window_mut(1).queue_recovery_notice_for_test(
+            std::path::PathBuf::from("/tmp/.festerm-save-recovery.stage"),
+            festerm_document::SaveError::new("Recovery required", "Recover the retained bytes."),
+        );
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+        let mut output = context.run_ui(input, |ui| {
+            application.window_mut(1).frame_logic(ui.ctx());
+        });
+        output.textures_delta.clear();
+
+        application.close_finished_windows(&context);
+
+        assert_eq!(application.window_count(), 2);
+        assert!(!application.window_mut(1).window_close_accepted());
+    }
+
+    #[test]
+    fn primary_quit_refuses_a_dirty_document_owned_by_a_secondary_window() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("secondary-only.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let document = documents.borrow().find_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("unsaved\n")
+            .unwrap();
+        application.refresh_application_close_context();
+
+        assert!(!application
+            .window_mut(0)
+            .evaluate_close_request_for_test(&context));
+
+        assert!(!application.window_mut(0).window_close_accepted());
+        assert_eq!(
+            application.window_mut(0).open_refusal_headline_for_test(),
+            Some("Quitting is waiting for unsaved documents")
+        );
+    }
+
+    #[test]
+    fn primary_quit_counts_sessions_owned_by_secondary_windows() {
+        let primary = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let (secondary, _tab, _transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut application = FesTermApplication::new(primary);
+        application.windows.push(Window {
+            id: WindowId(1),
+            app: secondary,
+            placement: None,
+        });
+        let context = egui::Context::default();
+        application.refresh_application_close_context();
+
+        assert!(!application
+            .window_mut(0)
+            .evaluate_close_request_for_test(&context));
+
+        let counts = application
+            .window_mut(0)
+            .pending_quit_counts_for_test()
+            .expect("the secondary SSH session must be included in primary quit");
+        assert_eq!(counts.ssh, 1);
+    }
+
+    #[test]
+    fn secondary_window_close_refuses_all_dirty_views_it_owns() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("secondary-views.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::OpenAnotherEditorView, &context);
+        let documents = application.window_mut(0).documents_for_test().clone();
+        let document = documents.borrow().find_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("unsaved\n")
+            .unwrap();
+
+        assert!(!application
+            .window_mut(1)
+            .evaluate_close_request_for_test(&context));
+
+        assert_eq!(
+            application.window_mut(1).open_refusal_headline_for_test(),
+            Some("Closing this window is waiting for unsaved documents")
+        );
+        assert_eq!(documents.borrow().get(document).unwrap().views(), 2);
+        assert_eq!(application.window_count(), 2);
     }
 
     #[test]

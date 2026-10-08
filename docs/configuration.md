@@ -269,6 +269,8 @@ default `"jet-brains-mono"`), `terminal_ligatures` (default `true`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
 `scrollback_limit` (`"disabled"`, `"16-mib"`, `"64-mib"`, or `"256-mib"`;
 default `"64-mib"`),
+`image_memory_budget` (`"64-mib"`, `"128-mib"`, `"256-mib"`, `"512-mib"`,
+`"1024-mib"`, or `"2048-mib"`; default `"512-mib"`),
 `scroll_speed` (`"very-slow"`, `"slow"`, `"normal"`, `"fast"`, or
 `"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `true`),
 `compact_launcher_grid` (default `true`), and `show_resumable_sessions`
@@ -277,8 +279,9 @@ mirror the current Settings controls for chip layout, chip details, the
 status bar, live-session close confirmation, workspace restoration, compact
 Launcher layout, resumable local-session
 surfacing, terminal-only typography, keyboard quick-switch overlays, and
-scrollback scroll speed. Unread background output always uses a static
-ring-and-dot marker, independent of focus, renderer, and reduced motion. Tab
+scrollback scroll speed, plus the bounded Markdown image-memory budget. Unread
+background output always uses a static ring-and-dot marker, independent of
+focus, renderer, and reduced motion. Tab
 activation clears it. The retired `pulse_new_output_dot` boolean is accepted
 when loading older files, ignored, and omitted from subsequent saves.
 Software rendering adapters automatically select reduced motion for the

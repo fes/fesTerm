@@ -1170,6 +1170,8 @@ fn remote_open_refusal(
     detail: impl Into<String>,
 ) -> OpenRefusalNotice {
     OpenRefusalNotice {
+        title: None,
+        acknowledgement_path: None,
         name: Path::new(remote_path)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())

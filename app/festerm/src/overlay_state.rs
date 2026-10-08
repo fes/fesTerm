@@ -152,6 +152,7 @@ pub(crate) enum QuitConfirmationPurpose {
     /// wording and leaves every other window running.
     CloseWindow,
     InstallUpdate,
+    RestartAfterUpdate,
 }
 
 /// Aggregate confirmation shown once, for the whole application, before an
@@ -222,10 +223,18 @@ pub(crate) enum StoredCredentialLaunch {
 /// layer already uses.
 #[derive(Debug)]
 pub(crate) struct OpenRefusalNotice {
+    pub(crate) title: Option<Box<str>>,
+    pub(crate) acknowledgement_path: Option<Box<PathBuf>>,
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) headline: String,
     pub(crate) detail: String,
+}
+
+impl OpenRefusalNotice {
+    pub(crate) fn requires_acknowledgement(&self) -> bool {
+        self.acknowledgement_path.is_some()
+    }
 }
 
 /// The confirmation prompts, in-flight secure-storage lookup, and transient
@@ -252,7 +261,7 @@ pub(crate) struct OverlayState {
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
-    /// The "Open Markdown File…" picker (#132), reusing the SFTP file
+    /// The "Open File…" picker (#132), reusing the SFTP file
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
@@ -265,7 +274,7 @@ pub(crate) struct OverlayState {
     /// resolves, set when the picker was opened from inside a viewer
     /// (`Ctrl+O`). `None` means "open the picked file in a new tab".
     pub(crate) markdown_file_picker_replaces: Option<TabId>,
-    /// The directory the last "Open Markdown File…" picker was browsing when
+    /// The directory the last "Open File…" picker was browsing when
     /// it closed. The next picker resumes here instead of starting over at
     /// the home directory, which is the behaviour users expect from a file
     /// dialog when opening several files from the same folder.
@@ -306,6 +315,10 @@ impl OverlayState {
             || self.pending_quit.is_some()
             || self.markdown_file_picker.is_some()
             || self.save_as_picker.is_some()
+            || self
+                .open_refusal
+                .as_ref()
+                .is_some_and(OpenRefusalNotice::requires_acknowledgement)
             || self.about_open
     }
 }
@@ -425,5 +438,70 @@ mod tests {
             ..OverlayState::default()
         };
         assert!(overlays.blocks_terminal_input());
+    }
+
+    #[test]
+    fn every_modal_overlay_blocks_deferred_application_notices() {
+        let tab = TabId::next_for_test();
+        let restore_tab = TabId::next_for_test();
+        let pending_close = OverlayState {
+            pending_close: Some(PendingCloseConfirmation {
+                tab,
+                identity: "test".to_owned(),
+                consequence: CloseConsequence::TerminateLocalProcess,
+                lifecycle_generation: 1,
+                restore_tab,
+                cancel_focus_requested: false,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(pending_close.blocks_terminal_input_except_paste());
+
+        let pending_document_close = OverlayState {
+            pending_document_close: Some(PendingDocumentCloseConfirmation {
+                tab,
+                document: DocumentId::from_raw(1),
+                title: "notes.md".to_owned(),
+                origin: "/tmp/notes.md".to_owned(),
+                restore_tab,
+                save_focus_requested: false,
+                then: AfterDocumentClose::CloseTab,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(pending_document_close.blocks_terminal_input_except_paste());
+
+        let pending_file_drop = OverlayState {
+            pending_file_drop: Some(PendingFileDropConfirmation {
+                tab,
+                identity: "test".to_owned(),
+                text: "/tmp/notes.md".to_owned(),
+                path_count: 1,
+                lifecycle_generation: 1,
+                cancel_focus_requested: false,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(pending_file_drop.blocks_terminal_input_except_paste());
+
+        let directory = tempfile::tempdir().unwrap();
+        let markdown_picker = OverlayState {
+            markdown_file_picker: Some(MarkdownFilePicker::new(
+                directory.path().to_path_buf(),
+                eframe::egui::Context::default(),
+            )),
+            ..OverlayState::default()
+        };
+        assert!(markdown_picker.blocks_terminal_input_except_paste());
+
+        let save_as_picker = OverlayState {
+            save_as_picker: Some(crate::save_as::SaveAsPicker::new(
+                directory.path().to_path_buf(),
+                "notes.md".to_owned(),
+                eframe::egui::Context::default(),
+            )),
+            ..OverlayState::default()
+        };
+        assert!(save_as_picker.blocks_terminal_input_except_paste());
     }
 }

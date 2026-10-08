@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -34,6 +35,34 @@ class TraceabilityCheckerTests(unittest.TestCase):
             trace.validation_impact_ids("GUI:PASTE-05, GUI:A11Y-01, ADR-0014"),
             {"PASTE-05", "A11Y-01", "ADR-0014"},
         )
+
+    @patch.object(
+        trace,
+        "validation_impact_trailers",
+        return_value=["GUI:EDIT-04 ADR-0034"],
+    )
+    @patch.object(
+        trace,
+        "changed_files",
+        return_value={"docs/adr/0034-shared-mutable-text-documents.md", "validation/traceability.json"},
+    )
+    def test_one_parsed_trailer_covers_the_changed_range(self, _changed, _trailers):
+        errors = []
+
+        trace.validate_changed_impact(
+            Path("."),
+            "base",
+            {
+                "graph": "docs/gui-action-graph.md",
+                "manual_registry": "docs/manual-validation.md",
+                "normative_documents": [],
+            },
+            {"EDIT-04"},
+            {"ADR-0034"},
+            errors,
+        )
+
+        self.assertEqual(errors, [])
 
     def test_adr_ids_report_numbers_claimed_by_more_than_one_file(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -40,8 +40,8 @@ pub use session_names::{
     DurableSessionAlias, DurableSessionIdentity, SessionAlias, MAX_DURABLE_SESSION_ALIASES,
 };
 pub use settings::{
-    ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
-    ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
+    ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, ImageMemoryBudgetPreference,
+    InterfaceSettings, ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
     TerminalFontPreference,
 };
 pub use workspace::{
