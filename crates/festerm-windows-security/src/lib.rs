@@ -763,7 +763,9 @@ mod imp {
     ) -> io::Result<bool> {
         match information {
             SACL_SECURITY_INFORMATION => audit_descriptors_match(current, expected),
-            LABEL_SECURITY_INFORMATION => sacl_descriptors_match(current, expected),
+            LABEL_SECURITY_INFORMATION
+            | ATTRIBUTE_SECURITY_INFORMATION
+            | SCOPE_SECURITY_INFORMATION => sacl_descriptors_match(current, expected),
             _ => Ok(current == expected),
         }
     }
@@ -834,9 +836,17 @@ mod imp {
             } else if !sacl_descriptors_match(&current.mandatory_label, &expected.mandatory_label)?
             {
                 Some("mandatory label")
-            } else if current.resource_attributes != expected.resource_attributes {
+            } else if !queried_descriptors_match(
+                &current.resource_attributes,
+                &expected.resource_attributes,
+                ATTRIBUTE_SECURITY_INFORMATION,
+            )? {
                 Some("resource attributes")
-            } else if current.scoped_policy != expected.scoped_policy {
+            } else if !queried_descriptors_match(
+                &current.scoped_policy,
+                &expected.scoped_policy,
+                SCOPE_SECURITY_INFORMATION,
+            )? {
                 Some("central access policy")
             } else if current.attributes != expected.attributes {
                 Some("file attributes")
@@ -2015,6 +2025,14 @@ mod imp {
             let expected = security_descriptor(&source, LABEL_SECURITY_INFORMATION).unwrap();
             apply_security_descriptor_if_changed(&target, LABEL_SECURITY_INFORMATION, &expected)
                 .unwrap();
+            for information in [ATTRIBUTE_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION] {
+                let captured = security_descriptor(&source, information).unwrap();
+                let copied = security_descriptor(&target, information).unwrap();
+                assert!(queried_descriptors_match(&copied, &captured, information).unwrap());
+                apply_security_descriptor_if_changed(&target, information, &captured).unwrap();
+                assert!(security_descriptor(&target, information).unwrap() == copied);
+                assert!(security_descriptor(&source, information).unwrap() == captured);
+            }
             let actual = security_descriptor(&target, LABEL_SECURITY_INFORMATION).unwrap();
             assert_eq!(
                 security_descriptor(&source, LABEL_SECURITY_INFORMATION).unwrap(),
@@ -2051,6 +2069,9 @@ mod imp {
                     !sacl_descriptors_match(&changed, &expected).unwrap(),
                     "{field} mutation was accepted"
                 );
+                for information in [ATTRIBUTE_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION] {
+                    assert!(!queried_descriptors_match(&changed, &expected, information).unwrap());
+                }
             }
             for flag in [
                 SE_SACL_PROTECTED,
@@ -2061,13 +2082,16 @@ mod imp {
                 let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
                 changed[2..4].copy_from_slice(&control.to_le_bytes());
                 assert!(!sacl_descriptors_match(&changed, &expected).unwrap());
+                for information in [ATTRIBUTE_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION] {
+                    assert!(!queried_descriptors_match(&changed, &expected, information).unwrap());
+                }
             }
             let mut changed = expected.clone();
             changed[3] ^= 0x08;
             assert!(!queried_descriptors_match(
                 &changed,
                 &expected,
-                ATTRIBUTE_SECURITY_INFORMATION
+                SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION
             )
             .unwrap());
         }
@@ -2104,7 +2128,7 @@ mod imp {
             eprintln!(
                 "privileged low-label audit copy: {}; normalized_match={}",
                 descriptor_difference_summary(&copied, captured).unwrap(),
-                sacl_descriptors_match(&copied, captured).unwrap()
+                audit_descriptors_match(&copied, captured).unwrap()
             );
             assert!(security_metadata_matches(&target, &metadata).unwrap());
         }
@@ -2251,7 +2275,7 @@ mod imp {
             assert!(!queried_descriptors_match(
                 &completed,
                 &expected,
-                ATTRIBUTE_SECURITY_INFORMATION
+                SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION
             )
             .unwrap());
             let sacl = u32::from_le_bytes(expected[12..16].try_into().unwrap()) as usize;
@@ -2269,6 +2293,9 @@ mod imp {
                     !audit_sacls_match(Some(&changed), Some(&expected)).unwrap(),
                     "{field} mutation was accepted"
                 );
+                for information in [ATTRIBUTE_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION] {
+                    assert!(!queried_descriptors_match(&changed, &expected, information).unwrap());
+                }
             }
             for flag in [
                 SE_SACL_PROTECTED,
@@ -2279,6 +2306,9 @@ mod imp {
                 let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
                 changed[2..4].copy_from_slice(&control.to_le_bytes());
                 assert!(!audit_sacls_match(Some(&changed), Some(&expected)).unwrap());
+                for information in [ATTRIBUTE_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION] {
+                    assert!(!queried_descriptors_match(&changed, &expected, information).unwrap());
+                }
             }
         }
 
@@ -2374,6 +2404,139 @@ mod imp {
                 assert!(!audit_descriptors_match(&changed, &null).unwrap());
             }
             assert_eq!((empty, null), original);
+        }
+
+        fn resource_policy_descriptor(information: u32, mut value: u64) -> Vec<u8> {
+            use windows_sys::Win32::Security::{
+                AddResourceAttributeAce, AddScopedPolicyIDAce, GetSidSubAuthority, InitializeSid,
+                WinWorldSid, CLAIM_SECURITY_ATTRIBUTES_INFORMATION,
+                CLAIM_SECURITY_ATTRIBUTE_TYPE_UINT64, CLAIM_SECURITY_ATTRIBUTE_V1, SID,
+                SID_IDENTIFIER_AUTHORITY,
+            };
+            let mut storage = vec![0usize; 4096usize.div_ceil(mem::size_of::<usize>())];
+            let acl = storage.as_mut_ptr().cast::<ACL>();
+            assert_ne!(unsafe { InitializeAcl(acl, 4096, ACL_REVISION) }, 0);
+            match information {
+                ATTRIBUTE_SECURITY_INFORMATION => {
+                    let sid = well_known_sid(WinWorldSid).unwrap();
+                    let mut name: Vec<u16> = "fesTerm.fixture\0".encode_utf16().collect();
+                    let mut attribute = CLAIM_SECURITY_ATTRIBUTE_V1 {
+                        Name: name.as_mut_ptr(),
+                        ValueType: CLAIM_SECURITY_ATTRIBUTE_TYPE_UINT64,
+                        ValueCount: 1,
+                        ..Default::default()
+                    };
+                    attribute.Values.pUint64 = &raw mut value;
+                    let mut attributes = CLAIM_SECURITY_ATTRIBUTES_INFORMATION {
+                        Version: 1,
+                        AttributeCount: 1,
+                        ..Default::default()
+                    };
+                    attributes.Attribute.pAttributeV1 = &raw mut attribute;
+                    let mut used = 0;
+                    assert_ne!(
+                        unsafe {
+                            AddResourceAttributeAce(
+                                acl,
+                                ACL_REVISION,
+                                0,
+                                0,
+                                sid.as_ptr().cast_mut().cast(),
+                                &raw mut attributes,
+                                &raw mut used,
+                            )
+                        },
+                        0
+                    );
+                }
+                SCOPE_SECURITY_INFORMATION => {
+                    let authority = SID_IDENTIFIER_AUTHORITY {
+                        Value: [0, 0, 0, 0, 0, 17],
+                    };
+                    let mut sid = SID::default();
+                    assert_ne!(
+                        unsafe { InitializeSid((&raw mut sid).cast(), &raw const authority, 1) },
+                        0
+                    );
+                    let subauthority = unsafe { GetSidSubAuthority((&raw mut sid).cast(), 0) };
+                    assert!(!subauthority.is_null());
+                    unsafe { *subauthority = u32::try_from(value).unwrap() };
+                    assert_ne!(
+                        unsafe {
+                            AddScopedPolicyIDAce(acl, ACL_REVISION, 0, 0, (&raw mut sid).cast())
+                        },
+                        0
+                    );
+                }
+                _ => panic!("unexpected policy fixture selector"),
+            }
+            let mut descriptor = SECURITY_DESCRIPTOR::default();
+            assert_ne!(
+                unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) },
+                0
+            );
+            assert_ne!(
+                unsafe { SetSecurityDescriptorSacl((&raw mut descriptor).cast(), 1, acl, 0) },
+                0
+            );
+            self_relative_descriptor(&mut descriptor)
+        }
+
+        #[test]
+        fn sacl_family_comparison_preserves_resource_claims_and_central_policy() {
+            use windows_sys::Win32::Security::{
+                SE_SACL_AUTO_INHERITED, SE_SACL_AUTO_INHERIT_REQ, SE_SACL_DEFAULTED,
+                SE_SACL_PRESENT,
+            };
+            for information in [ATTRIBUTE_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION] {
+                let expected = resource_policy_descriptor(information, 1);
+                let changed_policy = resource_policy_descriptor(information, 2);
+                assert!(
+                    !queried_descriptors_match(&changed_policy, &expected, information).unwrap()
+                );
+                let mut completed = expected.clone();
+                assert_ne!(
+                    unsafe {
+                        SetSecurityDescriptorControl(
+                            completed.as_mut_ptr().cast(),
+                            SE_SACL_AUTO_INHERITED,
+                            SE_SACL_AUTO_INHERITED,
+                        )
+                    },
+                    0
+                );
+                assert!(queried_descriptors_match(&completed, &expected, information).unwrap());
+                assert!(!queried_descriptors_match(
+                    &completed,
+                    &expected,
+                    information | SACL_SECURITY_INFORMATION
+                )
+                .unwrap());
+                for flag in [
+                    SE_SACL_PRESENT,
+                    SE_SACL_PROTECTED,
+                    SE_SACL_DEFAULTED,
+                    SE_SACL_AUTO_INHERIT_REQ,
+                ] {
+                    let mut changed = expected.clone();
+                    let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
+                    changed[2..4].copy_from_slice(&control.to_le_bytes());
+                    assert!(!queried_descriptors_match(&changed, &expected, information).unwrap());
+                }
+            }
+            let directory = TemporaryDirectory::new();
+            let target = create_current_user_only_file_exclusive(
+                &directory.handle(),
+                Path::new("target.md"),
+            )
+            .unwrap();
+            let before = security_descriptor(&target, SCOPE_SECURITY_INFORMATION).unwrap();
+            let policy = resource_policy_descriptor(SCOPE_SECURITY_INFORMATION, 1);
+            let error =
+                apply_security_descriptor_if_changed(&target, SCOPE_SECURITY_INFORMATION, &policy)
+                    .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert!(security_descriptor(&target, SCOPE_SECURITY_INFORMATION).unwrap() == before);
         }
 
         #[test]

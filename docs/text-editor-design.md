@@ -128,7 +128,7 @@ The editor never resolves a divergence silently.
   Owner/group/DACL comparison ignores only the automatic-inheritance
   completion marker on in-memory comparison copies: Windows can drop
   `SE_DACL_AUTO_INHERITED` while copying otherwise identical descriptor bytes.
-  Audit-SACL and mandatory-label comparison similarly ignore
+  All individually queried SACL-family descriptors similarly ignore only
   `SE_SACL_AUTO_INHERITED` on their comparison copies. LABEL copying reproduced
   that completion-marker difference; privileged audit-SACL copying remains a
   separate native qualification gate. Audit comparison alone also equates a
@@ -141,7 +141,10 @@ The editor never resolves a divergence silently.
   Integrity SIDs, ordered label ACEs, mandatory-policy masks and SACL
   inheritance-request/defaulting/protection controls remain significant;
   Audit capture presence and all audit ACE bytes remain significant;
-  resource-attribute and scoped-policy comparisons remain strictly byte-for-byte.
+  Resource-attribute and scoped-policy comparisons retain every payload,
+  layout and control byte except that same completion marker: actual SDK
+  queries reproduced its difference after low-label copying. Real central
+  access policy differences still refuse before any attempted policy setter.
   SIDs, ordered ACEs, inheritance-request/defaulting/protection controls,
   descriptor layout outside that audited empty representation, and all other
   security metadata must still match exactly.

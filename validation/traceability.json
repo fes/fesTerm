@@ -1675,6 +1675,7 @@
         "mandatory_label_comparison_rejects_policy_and_integrity_mutations",
         "audit_sacl_completion_comparison_preserves_policy_and_capture_presence",
         "empty_audit_sacl_comparison_preserves_presence_controls_and_other_selectors",
+        "sacl_family_comparison_preserves_resource_claims_and_central_policy",
         "pathname_substitution_cannot_replace_the_native_created_directory_handle",
         "handle_bound_deletion_removes_only_the_retained_directory_object",
         "directory_path_lock_prevents_parent_rename_until_release",

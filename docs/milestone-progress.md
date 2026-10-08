@@ -15,6 +15,15 @@ controls, actual audit ACEs and noncanonical/additional layout remain strict;
 the rule never reaches DACL or LABEL/ATTRIBUTE/SCOPE comparison. SDK-built
 regressions exercise that distinction without claiming privileged full-copy
 acceptance, which fresh native CI must establish.
+The same real unprivileged low-label fixture then exposed the shared
+completion bit in ATTRIBUTE and SCOPE queries: each source/copied pair was
+28 bytes and differed only at that header bit. Their early and final
+comparisons now use the same completion-only rule, preserving every actual
+resource/policy byte and retaining refusal for a real central-policy change.
+The SDK fixture proves these marker-only routes do not invoke a mutating
+setter or change either object's descriptors. Empty/null normalization
+remains audit-only, and the privileged audit diagnostic uses the actual
+audit comparator.
 
 The isolated Windows save check in #337 finally separated a publication
 failure from the earlier extended-attribute diagnosis: ordinary handle-relative

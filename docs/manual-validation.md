@@ -506,6 +506,18 @@ and 12). SDK-built empty/null regressions prove the narrowly audit-only
 representation exception preserves capture presence, all other controls,
 nonempty/noncanonical ACLs and the stricter DACL/LABEL/ATTRIBUTE/SCOPE routes.
 Actual full-copy preservation remains a separate privileged native gate.
+The real unprivileged LABEL-copy fixture also measured ATTRIBUTE and SCOPE
+captures: both remained 28 bytes with only control XOR `0x0800` at index 3.
+Those individual selectors now share the completion-marker-only comparison,
+not the audit empty/null exception. The fixture verifies application leaves
+both source and copied descriptors unchanged; opaque policy-byte and other
+control mutations remain refused. Actual domain/resource-policy preservation
+and privileged full-copy evidence remain separate native gates.
+SDK-built nonempty resource-attribute and scoped-policy ACEs additionally
+verify claim-value/CAP-identifier and control changes remain significant,
+combined selectors stay strict, and a real policy difference refuses before
+mutation. These are in-memory/parser and refusal checks, not domain-policy
+deployment evidence.
 These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.
