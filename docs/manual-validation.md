@@ -1038,6 +1038,13 @@ This automates fixture reachability, not native chip interaction or completed
 WARP rendering. AS-03, native narrow-window/animation usability and the
 matrix's remaining platform prerequisites stay pending.
 
+`TYPE-01`/`TERM-01` glyph-layout retirement has automated survivor, hot-set
+churn, bounded slot, forced-collision, owner-drop and reset checks, alongside
+existing both-platform rendering baselines. The 4,096-entry limit is unchanged;
+tracking adds bounded metadata and avoids wholesale invalidation, not a
+lower-retained-RAM guarantee. No new GUI/native workflow is introduced. NP-05
+appearance/usability and CP-18 native resource/latency obligations remain open.
+
 ### Experimental Direct2D qualification
 
 Native quad preparation has a device-free deterministic allocation control in
