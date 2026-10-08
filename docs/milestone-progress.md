@@ -5,6 +5,17 @@
 
 ## Repairing native Windows conditional save publication
 
+The later privileged low-label copy exposed an audit-only representation
+change, not lost policy: the audit query returned a 28-byte descriptor with
+an empty eight-byte ACL, while the copied file returned a 20-byte descriptor
+with a present null SACL. The only header changes were the observed
+completion bit and SACL offset. Audit comparison now equates only this
+canonical revision-2 empty/null form on comparison copies. Presence, other
+controls, actual audit ACEs and noncanonical/additional layout remain strict;
+the rule never reaches DACL or LABEL/ATTRIBUTE/SCOPE comparison. SDK-built
+regressions exercise that distinction without claiming privileged full-copy
+acceptance, which fresh native CI must establish.
+
 The isolated Windows save check in #337 finally separated a publication
 failure from the earlier extended-attribute diagnosis: ordinary handle-relative
 moves were reported as an unsupported filesystem. Native

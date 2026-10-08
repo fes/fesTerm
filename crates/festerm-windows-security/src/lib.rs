@@ -721,24 +721,56 @@ mod imp {
         )
     }
 
+    fn normalize_captured_audit_descriptor(descriptor: &[u8]) -> io::Result<Vec<u8>> {
+        use windows_sys::Win32::Security::{
+            SECURITY_DESCRIPTOR_RELATIVE, SE_SACL_AUTO_INHERITED, SE_SACL_PRESENT,
+        };
+        let mut normalized = normalize_captured_descriptor(descriptor, SE_SACL_AUTO_INHERITED)?;
+        let header_size = mem::size_of::<SECURITY_DESCRIPTOR_RELATIVE>();
+        let sacl_offset = mem::offset_of!(SECURITY_DESCRIPTOR_RELATIVE, Sacl);
+        let owner_offset = mem::offset_of!(SECURITY_DESCRIPTOR_RELATIVE, Owner);
+        let dacl_offset = mem::offset_of!(SECURITY_DESCRIPTOR_RELATIVE, Dacl);
+        let control = u16::from_le_bytes([normalized[2], normalized[3]]);
+        const EMPTY_AUDIT_ACL: [u8; 8] = [ACL_REVISION as u8, 0, 8, 0, 0, 0, 0, 0];
+        if normalized.len() == header_size + EMPTY_AUDIT_ACL.len()
+            && control & SE_SACL_PRESENT != 0
+            && normalized[owner_offset..sacl_offset]
+                .iter()
+                .all(|byte| *byte == 0)
+            && normalized[dacl_offset..header_size]
+                .iter()
+                .all(|byte| *byte == 0)
+            && normalized[sacl_offset..sacl_offset + 4] == (header_size as u32).to_le_bytes()
+            && normalized[header_size..] == EMPTY_AUDIT_ACL
+        {
+            // A null SACL and this canonical empty audit ACL both specify no auditing.
+            // This equivalence never applies to a DACL or another SACL-family selector.
+            normalized[sacl_offset..sacl_offset + 4].fill(0);
+            normalized.truncate(header_size);
+        }
+        Ok(normalized)
+    }
+
+    fn audit_descriptors_match(current: &[u8], expected: &[u8]) -> io::Result<bool> {
+        Ok(normalize_captured_audit_descriptor(current)?
+            == normalize_captured_audit_descriptor(expected)?)
+    }
+
     fn queried_descriptors_match(
         current: &[u8],
         expected: &[u8],
         information: u32,
     ) -> io::Result<bool> {
-        if matches!(
-            information,
-            SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION
-        ) {
-            sacl_descriptors_match(current, expected)
-        } else {
-            Ok(current == expected)
+        match information {
+            SACL_SECURITY_INFORMATION => audit_descriptors_match(current, expected),
+            LABEL_SECURITY_INFORMATION => sacl_descriptors_match(current, expected),
+            _ => Ok(current == expected),
         }
     }
 
     fn audit_sacls_match(current: Option<&[u8]>, expected: Option<&[u8]>) -> io::Result<bool> {
         match (current, expected) {
-            (Some(current), Some(expected)) => sacl_descriptors_match(current, expected),
+            (Some(current), Some(expected)) => audit_descriptors_match(current, expected),
             (None, None) => Ok(true),
             _ => Ok(false),
         }
@@ -2145,11 +2177,15 @@ mod imp {
                 },
                 0
             );
+            self_relative_descriptor(&mut descriptor)
+        }
+
+        fn self_relative_descriptor(descriptor: &mut SECURITY_DESCRIPTOR) -> Vec<u8> {
             let mut relative_length = 0;
             assert_eq!(
                 unsafe {
                     windows_sys::Win32::Security::MakeSelfRelativeSD(
-                        (&raw mut descriptor).cast(),
+                        ptr::from_mut(descriptor).cast(),
                         ptr::null_mut(),
                         &raw mut relative_length,
                     )
@@ -2164,7 +2200,7 @@ mod imp {
             assert_ne!(
                 unsafe {
                     windows_sys::Win32::Security::MakeSelfRelativeSD(
-                        (&raw mut descriptor).cast(),
+                        ptr::from_mut(descriptor).cast(),
                         relative.as_mut_ptr().cast(),
                         &raw mut relative_length,
                     )
@@ -2244,6 +2280,100 @@ mod imp {
                 changed[2..4].copy_from_slice(&control.to_le_bytes());
                 assert!(!audit_sacls_match(Some(&changed), Some(&expected)).unwrap());
             }
+        }
+
+        #[test]
+        fn empty_audit_sacl_comparison_preserves_presence_controls_and_other_selectors() {
+            use windows_sys::Win32::Security::{
+                SECURITY_DESCRIPTOR_RELATIVE, SE_SACL_AUTO_INHERITED, SE_SACL_AUTO_INHERIT_REQ,
+                SE_SACL_DEFAULTED, SE_SACL_PRESENT,
+            };
+            let mut acl = ACL::default();
+            assert_ne!(
+                unsafe { InitializeAcl(&raw mut acl, mem::size_of::<ACL>() as u32, ACL_REVISION) },
+                0
+            );
+            let mut descriptor = SECURITY_DESCRIPTOR::default();
+            assert_ne!(
+                unsafe { InitializeSecurityDescriptor((&raw mut descriptor).cast(), 1) },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    SetSecurityDescriptorSacl((&raw mut descriptor).cast(), 1, &raw mut acl, 0)
+                },
+                0
+            );
+            let mut empty = self_relative_descriptor(&mut descriptor);
+            assert_ne!(
+                unsafe {
+                    SetSecurityDescriptorControl(
+                        empty.as_mut_ptr().cast(),
+                        SE_SACL_AUTO_INHERITED,
+                        SE_SACL_AUTO_INHERITED,
+                    )
+                },
+                0
+            );
+            assert_ne!(
+                unsafe {
+                    SetSecurityDescriptorSacl((&raw mut descriptor).cast(), 1, ptr::null_mut(), 0)
+                },
+                0
+            );
+            let null = self_relative_descriptor(&mut descriptor);
+            let original = (empty.clone(), null.clone());
+            assert!(audit_descriptors_match(&empty, &null).unwrap());
+            assert!(audit_descriptors_match(&null, &empty).unwrap());
+            assert!(queried_descriptors_match(&empty, &null, SACL_SECURITY_INFORMATION).unwrap());
+            assert!(audit_sacls_match(Some(&empty), Some(&null)).unwrap());
+            assert!(!audit_sacls_match(None, Some(&null)).unwrap());
+            assert!(!audit_sacls_match(Some(&empty), None).unwrap());
+            for information in [
+                LABEL_SECURITY_INFORMATION,
+                ATTRIBUTE_SECURITY_INFORMATION,
+                SCOPE_SECURITY_INFORMATION,
+                SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+            ] {
+                assert!(!queried_descriptors_match(&empty, &null, information).unwrap());
+            }
+            assert!(!access_descriptors_match(&empty, &null).unwrap());
+            assert!(!audit_descriptors_match(&current_user_audit_descriptor(), &null).unwrap());
+            for flag in [
+                SE_SACL_PRESENT,
+                SE_SACL_PROTECTED,
+                SE_SACL_DEFAULTED,
+                SE_SACL_AUTO_INHERIT_REQ,
+            ] {
+                let mut changed = null.clone();
+                let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
+                changed[2..4].copy_from_slice(&control.to_le_bytes());
+                assert!(!audit_descriptors_match(&empty, &changed).unwrap());
+            }
+            let header_size = mem::size_of::<SECURITY_DESCRIPTOR_RELATIVE>();
+            for at in [
+                header_size,
+                header_size + 1,
+                header_size + 2,
+                header_size + 4,
+            ] {
+                let mut changed = empty.clone();
+                changed[at] ^= 1;
+                assert!(!audit_descriptors_match(&changed, &null).unwrap());
+            }
+            let mut extra_layout = empty.clone();
+            extra_layout.push(0);
+            assert!(!audit_descriptors_match(&extra_layout, &null).unwrap());
+            for offset in [
+                mem::offset_of!(SECURITY_DESCRIPTOR_RELATIVE, Owner),
+                mem::offset_of!(SECURITY_DESCRIPTOR_RELATIVE, Group),
+                mem::offset_of!(SECURITY_DESCRIPTOR_RELATIVE, Dacl),
+            ] {
+                let mut changed = empty.clone();
+                changed[offset] = header_size as u8;
+                assert!(!audit_descriptors_match(&changed, &null).unwrap());
+            }
+            assert_eq!((empty, null), original);
         }
 
         #[test]

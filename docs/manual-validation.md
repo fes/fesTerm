@@ -500,6 +500,12 @@ This in-memory comparator evidence is not a privileged filesystem-copy
 measurement; the native low-label fixture reports only lengths, control XOR
 and bounded differing indices to establish that separate copy gate without
 exposing SID or ACE contents.
+Privileged CI then measured a canonical empty audit ACL versus present null
+SACL (28 versus 20 bytes, completion-bit XOR `0x0800`, differing indices 3
+and 12). SDK-built empty/null regressions prove the narrowly audit-only
+representation exception preserves capture presence, all other controls,
+nonempty/noncanonical ACLs and the stricter DACL/LABEL/ATTRIBUTE/SCOPE routes.
+Actual full-copy preservation remains a separate privileged native gate.
 These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.

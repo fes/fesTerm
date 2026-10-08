@@ -128,16 +128,23 @@ The editor never resolves a divergence silently.
   Owner/group/DACL comparison ignores only the automatic-inheritance
   completion marker on in-memory comparison copies: Windows can drop
   `SE_DACL_AUTO_INHERITED` while copying otherwise identical descriptor bytes.
-  Audit-SACL and mandatory-label comparison similarly ignore only
+  Audit-SACL and mandatory-label comparison similarly ignore
   `SE_SACL_AUTO_INHERITED` on their comparison copies. LABEL copying reproduced
   that completion-marker difference; privileged audit-SACL copying remains a
-  separate native qualification gate.
+  separate native qualification gate. Audit comparison alone also equates a
+  canonical standalone empty revision-2 audit ACL with a present null SACL:
+  Windows can return the former when querying a low-label file, then store the
+  latter after copying no audit ACEs. The exact header, presence and control
+  flags remain significant; nonempty/noncanonical ACLs and additional layout
+  are never collapsed. This exception does not apply to DACL, LABEL, ATTRIBUTE
+  or SCOPE comparison, and unavailable audit capture remains distinct.
   Integrity SIDs, ordered label ACEs, mandatory-policy masks and SACL
   inheritance-request/defaulting/protection controls remain significant;
   Audit capture presence and all audit ACE bytes remain significant;
   resource-attribute and scoped-policy comparisons remain strictly byte-for-byte.
   SIDs, ordered ACEs, inheritance-request/defaulting/protection controls,
-  descriptor layout, and all other security metadata must still match exactly.
+  descriptor layout outside that audited empty representation, and all other
+  security metadata must still match exactly.
   The displaced original is
   immediately restricted to the current user and also has a separately written
   private byte copy. An NTFS EFS-encrypted target is
