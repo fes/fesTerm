@@ -648,6 +648,14 @@ keyboard/paste/IME, caret/focus, narrow-window readability, high contrast and
 screen-reader delivery remain manual/native/usability evidence. Retained
 history bounds do not certify transient peaks, allocator fragmentation or RSS.
 
+CP-15 ordered rewrite: automated 2,000-edit actual-call controls, exact result
+write counts, Unicode/coincident-edit old oracles, in-place replay ownership
+and byte-refusal/redo checks prove localized construction work. Existing
+document/history limits are unchanged; multi-edit undo/redo may own a temporary
+extra bounded result, whereas single/equal-length replay stays in place.
+Native caret/focus/IME, replacement responsiveness and human readability
+remain open; no total-memory, fragmentation or #297 attribution is inferred.
+
 CP-15 vi repeat budget: enable vi keys on an owned fixture and exceed 8,192
 recorded keys in one Insert/Replace change using typing/Backspace churn. All
 accepted edits remain; the command area visibly says **Repeat unavailable**,
