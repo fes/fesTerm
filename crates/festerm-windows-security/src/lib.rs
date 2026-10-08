@@ -39,22 +39,24 @@ mod imp {
         },
         Security::{
             AclSizeInformation, AddAccessAllowedAceEx, AdjustTokenPrivileges,
-            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            Authorization::{GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT},
             CreateWellKnownSid, DuplicateTokenEx, EqualSid, GetAce, GetAclInformation,
             GetKernelObjectSecurity, GetLengthSid, GetSecurityDescriptorControl,
             GetSecurityDescriptorDacl, GetSecurityDescriptorGroup, GetSecurityDescriptorOwner,
-            GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
-            SecurityImpersonation, SetKernelObjectSecurity, SetSecurityDescriptorControl,
+            GetSecurityDescriptorSacl, GetTokenInformation, InitializeAcl,
+            InitializeSecurityDescriptor, SecurityImpersonation, SetSecurityDescriptorControl,
             SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, SetTokenInformation,
             TokenDefaultDacl, TokenImpersonation, TokenUser, WinBuiltinAdministratorsSid,
             WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION,
             ACL_SIZE_INFORMATION, ATTRIBUTE_SECURITY_INFORMATION, DACL_SECURITY_INFORMATION,
             GROUP_SECURITY_INFORMATION, INHERIT_ONLY_ACE, LABEL_SECURITY_INFORMATION,
             OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-            SACL_SECURITY_INFORMATION, SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
-            SECURITY_DESCRIPTOR, SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SECURITY_NAME,
+            PROTECTED_SACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION,
+            SCOPE_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+            SE_DACL_PROTECTED, SE_PRIVILEGE_ENABLED, SE_SACL_PROTECTED, SE_SECURITY_NAME,
             TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
             TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+            UNPROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_SACL_SECURITY_INFORMATION,
         },
         Storage::FileSystem::{
             FileBasicInfo, FileDispositionInfo, GetFileInformationByHandle,
@@ -77,6 +79,9 @@ mod imp {
             },
         },
     };
+
+    #[cfg(test)]
+    use windows_sys::Win32::Security::SetKernelObjectSecurity;
 
     #[cfg(test)]
     type PrivateVerificationHook = Box<dyn FnOnce(&File)>;
@@ -809,22 +814,124 @@ mod imp {
                 "the file's central access policy cannot be reproduced safely",
             ));
         }
-        if unsafe {
-            SetKernelObjectSecurity(
-                file.as_raw_handle() as HANDLE,
-                information,
-                expected.as_ptr().cast_mut().cast(),
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        set_file_security_descriptor(file, information, expected)?;
         if security_descriptor(file, information)? == expected {
             Ok(())
         } else {
             Err(io::Error::other(
                 "prepared Windows access-control metadata did not match its source",
             ))
+        }
+    }
+
+    fn set_file_security_descriptor(
+        file: &File,
+        information: u32,
+        descriptor: &[u8],
+    ) -> io::Result<()> {
+        const SACL_COMPONENTS: u32 = SACL_SECURITY_INFORMATION
+            | LABEL_SECURITY_INFORMATION
+            | ATTRIBUTE_SECURITY_INFORMATION
+            | SCOPE_SECURITY_INFORMATION;
+        let descriptor = descriptor.as_ptr().cast_mut().cast();
+        let mut owner = ptr::null_mut();
+        let mut group = ptr::null_mut();
+        let mut dacl = ptr::null_mut();
+        let mut sacl = ptr::null_mut();
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut effective_information = information;
+
+        if information & OWNER_SECURITY_INFORMATION != 0
+            && unsafe { GetSecurityDescriptorOwner(descriptor, &raw mut owner, &raw mut defaulted) }
+                == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if information & GROUP_SECURITY_INFORMATION != 0
+            && unsafe { GetSecurityDescriptorGroup(descriptor, &raw mut group, &raw mut defaulted) }
+                == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if information & DACL_SECURITY_INFORMATION != 0 {
+            if unsafe {
+                GetSecurityDescriptorDacl(
+                    descriptor,
+                    &raw mut present,
+                    &raw mut dacl,
+                    &raw mut defaulted,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if present == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "captured Windows descriptor has no DACL",
+                ));
+            }
+        }
+        if information & SACL_COMPONENTS != 0 {
+            if unsafe {
+                GetSecurityDescriptorSacl(
+                    descriptor,
+                    &raw mut present,
+                    &raw mut sacl,
+                    &raw mut defaulted,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if present == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "captured Windows descriptor has no requested SACL metadata",
+                ));
+            }
+        }
+
+        let mut control = 0;
+        let mut revision = 0;
+        if information & (DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION) != 0
+            && unsafe {
+                GetSecurityDescriptorControl(descriptor, &raw mut control, &raw mut revision)
+            } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if information & DACL_SECURITY_INFORMATION != 0 {
+            effective_information |= if control & SE_DACL_PROTECTED != 0 {
+                PROTECTED_DACL_SECURITY_INFORMATION
+            } else {
+                UNPROTECTED_DACL_SECURITY_INFORMATION
+            };
+        }
+        if information & SACL_SECURITY_INFORMATION != 0 {
+            effective_information |= if control & SE_SACL_PROTECTED != 0 {
+                PROTECTED_SACL_SECURITY_INFORMATION
+            } else {
+                UNPROTECTED_SACL_SECURITY_INFORMATION
+            };
+        }
+
+        let status = unsafe {
+            SetSecurityInfo(
+                file.as_raw_handle() as HANDLE,
+                SE_FILE_OBJECT,
+                effective_information,
+                owner,
+                group,
+                dacl,
+                sacl,
+            )
+        };
+        if status == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(status as i32))
         }
     }
 
@@ -859,16 +966,7 @@ mod imp {
             )
         })?;
         let handle = file.as_raw_handle() as HANDLE;
-        if unsafe {
-            SetKernelObjectSecurity(
-                handle,
-                INFORMATION,
-                metadata.descriptor.as_ptr().cast_mut().cast(),
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        set_file_security_descriptor(file, INFORMATION, &metadata.descriptor)?;
         apply_security_descriptor_if_changed(file, SACL_SECURITY_INFORMATION, audit_sacl)?;
         apply_security_descriptor_if_changed(
             file,
@@ -955,18 +1053,18 @@ mod imp {
         {
             return Err(io::Error::last_os_error());
         }
-        if unsafe {
-            SetKernelObjectSecurity(
-                file.as_raw_handle() as HANDLE,
-                OWNER_SECURITY_INFORMATION
-                    | DACL_SECURITY_INFORMATION
-                    | PROTECTED_DACL_SECURITY_INFORMATION,
-                (&raw mut descriptor).cast(),
+        // SAFETY: `descriptor` and its DACL remain live for this call.
+        let descriptor = unsafe {
+            std::slice::from_raw_parts(
+                (&raw const descriptor).cast::<u8>(),
+                mem::size_of::<SECURITY_DESCRIPTOR>(),
             )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        };
+        set_file_security_descriptor(
+            file,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            descriptor,
+        )?;
         if current_user_only_security(file, token_user.User.Sid)? {
             Ok(())
         } else {
@@ -1403,7 +1501,7 @@ mod imp {
                 file.as_raw_handle(),
                 FILE_READ_ATTRIBUTES,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                FILE_FLAG_OPEN_REPARSE_POINT,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
             )
         };
         if reopened == INVALID_HANDLE_VALUE {

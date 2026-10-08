@@ -3160,6 +3160,13 @@ mod tests {
         let path = directory.file("notes.md", "before\n");
         let loaded = load(&path, bounds()).unwrap();
         let saved = save(&path, b"after\n", loaded_expectation(&loaded)).unwrap();
+        drop(loaded);
+        #[cfg(windows)]
+        let mut saved = saved;
+        #[cfg(windows)]
+        saved
+            .source_authority
+            .release_identity_pin_for_parent_rebind_test();
 
         fs::rename(&directory.path, &retained.path).unwrap();
         fs::create_dir(&directory.path).unwrap();
