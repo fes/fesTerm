@@ -430,6 +430,25 @@ Document/history limits and shared-view semantics are unchanged. CP-15
 native responsiveness/caret/IME/readability, total-memory/fragmentation and
 #297 attribution remain separate from these deterministic work results.
 
+## Isolating original construction controls without passing an omitted matrix
+
+The allocation review's separate Markdown investigation reached a validation
+blocker in the optional expanded surface profile: the inactive middle chip's
+narrow context-menu fixture failed its required Close session assertion.
+The original twelve controls had already run, but their report was serialized
+only after the expanded matrix, so that failed attempt yielded no retained
+Markdown timing report.
+
+The chip-settling race was repaired separately under #346, already in main.
+This selector changes neither production UI nor the required fixture guards.
+An explicit `original-controls` selector now allows those original document/list
+controls and model probes to complete independently, preserving their order and
+physical-input checks. Reports and aggregate runner results name the subset;
+the default still attempts the full matrix, and invalid selections fail before
+claiming inputs. This diagnostic seam neither fixes nor qualifies the omitted
+chip fixture, measures completed WARP rendering, or establishes a cause of
+native or multi-day CPU growth.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged

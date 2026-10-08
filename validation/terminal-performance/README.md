@@ -368,6 +368,18 @@ measures neither GPU completion nor native
 idle CPU, input latency, presentation, file transfer throughput or accessibility.
 There is no timing threshold in ordinary CI.
 
+For a bounded diagnostic of the original twelve document/list controls and
+their fenced-loading, syntax-construction and Find-model probes, explicitly
+set `FESTERM_SURFACE_PROFILE_SCENES=original-controls`. This retains their
+existing order, workloads, ownership checks and measurement boundaries but
+does not run the appended 52-state chrome/menu/picker matrix. The report records
+`scene_set` and `expanded_matrix_status`; aggregate optional runners also
+record the successful scene set. Omitted selection or `all` preserves the full
+probe. Empty, unknown and composite selections fail before creating output or
+claiming shared inputs. Remove the variable before attempting full-matrix
+qualification. A controls-only result never qualifies omitted variants or
+native/WARP behavior.
+
 ### Owned physical fixture workspace policy
 
 The optional shared-input protocol accepts only a real, unaliased Git/Cargo
