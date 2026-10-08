@@ -62,6 +62,18 @@ copies, private restriction/restoration, and access-bearing mutation refusal
 have focused regressions. Inheritance requests, protection, defaulting,
 ordered ACEs, owners/groups, and every other metadata component remain strict.
 
+That repair passed all 1,157 Windows application tests and exposed two later
+native-suite failures. The thread-scope fixture had mistaken Win32 privilege
+denial 1314 for Rust's `PermissionDenied` category; it now checks the measured
+native status without weakening the denied open. A separate unprivileged
+low-integrity-label copy reproduced a 48-byte descriptor difference at only
+the SACL automatic-inheritance completion bit (`0x0800`). Label comparison
+now disregards only that observed marker on comparison copies, preserving
+the integrity SID, policy mask, ordered ACEs and every other control/layout
+byte. Audit-SACL comparison is not broadened. Deterministic component tests
+cover the actual setter and significant label mutations; privileged full
+metadata copying still requires the native CI account.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory

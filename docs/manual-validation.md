@@ -488,6 +488,11 @@ owner/group/DACL setter without audit privilege; comparison permits only the
 observed automatic-inheritance completion marker difference and rejects
 access-bearing mutations. The saved-authority fixture proves live pin
 protection before test-only retirement and independent parent rejection.
+An unprivileged explicit-low-label copy separately reproduces the SACL
+completion-marker difference; component tests preserve integrity SID, policy,
+ACE and SACL protection/defaulting/inheritance-request distinctions. The
+thread-scope fixture checks native privilege denial 1314 rather than Rust's
+version-dependent error-kind mapping.
 These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.

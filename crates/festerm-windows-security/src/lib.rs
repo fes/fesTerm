@@ -670,10 +670,11 @@ mod imp {
         Ok(security_metadata_mismatch(&current, expected)?.is_none())
     }
 
-    fn normalize_captured_access_descriptor(descriptor: &[u8]) -> io::Result<Vec<u8>> {
-        use windows_sys::Win32::Security::{
-            SECURITY_DESCRIPTOR_RELATIVE, SE_DACL_AUTO_INHERITED, SE_SELF_RELATIVE,
-        };
+    fn normalize_captured_descriptor(
+        descriptor: &[u8],
+        completed_inheritance: u16,
+    ) -> io::Result<Vec<u8>> {
+        use windows_sys::Win32::Security::{SECURITY_DESCRIPTOR_RELATIVE, SE_SELF_RELATIVE};
         if descriptor.len() < mem::size_of::<SECURITY_DESCRIPTOR_RELATIVE>() {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
@@ -693,10 +694,10 @@ mod imp {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
         let mut normalized = descriptor.to_vec();
-        // Windows drops this completion marker when copying otherwise identical ACL bytes.
+        // Windows drops the observed completion marker when copying otherwise identical ACL bytes.
         // Normalize only a comparison copy, never the object's access policy.
         if unsafe {
-            SetSecurityDescriptorControl(normalized.as_mut_ptr().cast(), SE_DACL_AUTO_INHERITED, 0)
+            SetSecurityDescriptorControl(normalized.as_mut_ptr().cast(), completed_inheritance, 0)
         } == 0
         {
             return Err(io::Error::last_os_error());
@@ -705,8 +706,31 @@ mod imp {
     }
 
     fn access_descriptors_match(current: &[u8], expected: &[u8]) -> io::Result<bool> {
-        Ok(normalize_captured_access_descriptor(current)?
-            == normalize_captured_access_descriptor(expected)?)
+        use windows_sys::Win32::Security::SE_DACL_AUTO_INHERITED;
+        Ok(
+            normalize_captured_descriptor(current, SE_DACL_AUTO_INHERITED)?
+                == normalize_captured_descriptor(expected, SE_DACL_AUTO_INHERITED)?,
+        )
+    }
+
+    fn mandatory_labels_match(current: &[u8], expected: &[u8]) -> io::Result<bool> {
+        use windows_sys::Win32::Security::SE_SACL_AUTO_INHERITED;
+        Ok(
+            normalize_captured_descriptor(current, SE_SACL_AUTO_INHERITED)?
+                == normalize_captured_descriptor(expected, SE_SACL_AUTO_INHERITED)?,
+        )
+    }
+
+    fn queried_descriptors_match(
+        current: &[u8],
+        expected: &[u8],
+        information: u32,
+    ) -> io::Result<bool> {
+        if information == LABEL_SECURITY_INFORMATION {
+            mandatory_labels_match(current, expected)
+        } else {
+            Ok(current == expected)
+        }
     }
 
     const ACCESS_INFORMATION: u32 =
@@ -736,7 +760,8 @@ mod imp {
                 Some("owner, group, or DACL")
             } else if current.audit_sacl != expected.audit_sacl {
                 Some("audit SACL")
-            } else if current.mandatory_label != expected.mandatory_label {
+            } else if !mandatory_labels_match(&current.mandatory_label, &expected.mandatory_label)?
+            {
                 Some("mandatory label")
             } else if current.resource_attributes != expected.resource_attributes {
                 Some("resource attributes")
@@ -765,7 +790,11 @@ mod imp {
         information: u32,
         expected: &[u8],
     ) -> io::Result<()> {
-        if security_descriptor(file, information)? == expected {
+        if queried_descriptors_match(
+            &security_descriptor(file, information)?,
+            expected,
+            information,
+        )? {
             return Ok(());
         }
         if information == SCOPE_SECURITY_INFORMATION {
@@ -784,12 +813,16 @@ mod imp {
         {
             return Err(io::Error::last_os_error());
         }
-        if security_descriptor(file, information)? == expected {
+        if queried_descriptors_match(
+            &security_descriptor(file, information)?,
+            expected,
+            information,
+        )? {
             Ok(())
         } else {
-            Err(io::Error::other(
-                "prepared Windows access-control metadata did not match its source",
-            ))
+            Err(io::Error::other(format!(
+                "prepared Windows access-control metadata ({information:#x}) did not match its source"
+            )))
         }
     }
 
@@ -1889,7 +1922,82 @@ mod imp {
             .join()
             .unwrap();
 
-            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(
+                error.raw_os_error(),
+                Some(windows_sys::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD as i32),
+                "{error:?}"
+            );
+        }
+
+        fn copied_mandatory_label_fixture() -> (Vec<u8>, Vec<u8>) {
+            let directory = TemporaryDirectory::new();
+            let source_path = directory.0.join("source.md");
+            fs::write(&source_path, b"source").unwrap();
+            let output = Command::new("icacls")
+                .arg(&source_path)
+                .args(["/setintegritylevel", "L"])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "icacls failed: {output:?}");
+            let root = directory.handle();
+            let source = open_file_no_reparse_for_capture(&root, Path::new("source.md")).unwrap();
+            let target =
+                create_current_user_only_file_exclusive(&root, Path::new("target.md")).unwrap();
+            let expected = security_descriptor(&source, LABEL_SECURITY_INFORMATION).unwrap();
+            apply_security_descriptor_if_changed(&target, LABEL_SECURITY_INFORMATION, &expected)
+                .unwrap();
+            let actual = security_descriptor(&target, LABEL_SECURITY_INFORMATION).unwrap();
+            assert_eq!(
+                security_descriptor(&source, LABEL_SECURITY_INFORMATION).unwrap(),
+                expected
+            );
+            (expected, actual)
+        }
+
+        #[test]
+        fn mandatory_integrity_label_copy_matches_source_without_audit_access() {
+            let (expected, actual) = copied_mandatory_label_fixture();
+            assert!(mandatory_labels_match(&actual, &expected).unwrap());
+        }
+
+        #[test]
+        fn mandatory_label_comparison_rejects_policy_and_integrity_mutations() {
+            use windows_sys::Win32::Security::{
+                SE_SACL_AUTO_INHERIT_REQ, SE_SACL_DEFAULTED, SE_SACL_PROTECTED,
+            };
+            let (expected, actual) = copied_mandatory_label_fixture();
+            assert!(mandatory_labels_match(&actual, &expected).unwrap());
+            let sacl = u32::from_le_bytes(expected[12..16].try_into().unwrap()) as usize;
+            assert_ne!(sacl, 0);
+            assert_eq!(expected.len(), sacl + 28);
+            for (field, at, bit) in [
+                ("ACL revision", sacl, 1),
+                ("inherit-only flag", sacl + 9, INHERIT_ONLY_ACE as u8),
+                ("mandatory policy mask", sacl + 12, 2),
+                ("integrity SID", sacl + 25, 0x30),
+            ] {
+                let mut changed = expected.clone();
+                changed[at] ^= bit;
+                assert!(
+                    !mandatory_labels_match(&changed, &expected).unwrap(),
+                    "{field} mutation was accepted"
+                );
+            }
+            for flag in [
+                SE_SACL_PROTECTED,
+                SE_SACL_DEFAULTED,
+                SE_SACL_AUTO_INHERIT_REQ,
+            ] {
+                let mut changed = expected.clone();
+                let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
+                changed[2..4].copy_from_slice(&control.to_le_bytes());
+                assert!(!mandatory_labels_match(&changed, &expected).unwrap());
+            }
+            let mut changed = expected.clone();
+            changed[3] ^= 0x08;
+            assert!(
+                !queried_descriptors_match(&changed, &expected, SACL_SECURITY_INFORMATION).unwrap()
+            );
         }
 
         #[test]
