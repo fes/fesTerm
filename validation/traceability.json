@@ -1673,6 +1673,7 @@
         "security_copy_preserves_an_explicit_mandatory_integrity_label",
         "mandatory_integrity_label_copy_matches_source_without_audit_access",
         "mandatory_label_comparison_rejects_policy_and_integrity_mutations",
+        "audit_sacl_completion_comparison_preserves_policy_and_capture_presence",
         "pathname_substitution_cannot_replace_the_native_created_directory_handle",
         "handle_bound_deletion_removes_only_the_retained_directory_object",
         "directory_path_lock_prevents_parent_rename_until_release",

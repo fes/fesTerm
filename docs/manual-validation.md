@@ -493,6 +493,13 @@ completion-marker difference; component tests preserve integrity SID, policy,
 ACE and SACL protection/defaulting/inheritance-request distinctions. The
 thread-scope fixture checks native privilege denial 1314 rather than Rust's
 version-dependent error-kind mapping.
+An SDK-built current-user audit descriptor additionally verifies that the
+completion-marker exception preserves capture presence, audit principal,
+success/failure and inheritance flags, access mask and SACL controls.
+This in-memory comparator evidence is not a privileged filesystem-copy
+measurement; the native low-label fixture reports only lengths, control XOR
+and bounded differing indices to establish that separate copy gate without
+exposing SID or ACE contents.
 These unprivileged checks do not establish audit-SACL preservation, ordinary
 Cloud Files hydration, crash/power-loss recovery, or native GUI acceptance;
 those platform prerequisites remain above.

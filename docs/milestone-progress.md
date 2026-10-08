@@ -74,6 +74,16 @@ byte. Audit-SACL comparison is not broadened. Deterministic component tests
 cover the actual setter and significant label mutations; privileged full
 metadata copying still requires the native CI account.
 
+The next native run narrowed the remaining low-label failure to the audit-SACL
+selector (`0x8`) before LABEL application; the privilege-scope test passed.
+Both selectors describe the same SACL family, so their comparison copies now
+share only the completion-marker exception while retaining every other byte
+and audit-capture presence. An SDK-built audit descriptor exercises policy,
+principal, flag and control mutations without audit privilege. The real
+privileged low-label copy remains authoritative and records lengths, control
+XOR and bounded differing indices, never raw descriptors. This distinguishes
+selective comparator evidence from measured native copy compatibility.
+
 ## Bounding image ownership and connecting saved-local Preview
 
 Review of #337 caught two filesystem-authority flaws alongside the memory

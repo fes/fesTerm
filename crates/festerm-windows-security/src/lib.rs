@@ -713,7 +713,7 @@ mod imp {
         )
     }
 
-    fn mandatory_labels_match(current: &[u8], expected: &[u8]) -> io::Result<bool> {
+    fn sacl_descriptors_match(current: &[u8], expected: &[u8]) -> io::Result<bool> {
         use windows_sys::Win32::Security::SE_SACL_AUTO_INHERITED;
         Ok(
             normalize_captured_descriptor(current, SE_SACL_AUTO_INHERITED)?
@@ -726,11 +726,47 @@ mod imp {
         expected: &[u8],
         information: u32,
     ) -> io::Result<bool> {
-        if information == LABEL_SECURITY_INFORMATION {
-            mandatory_labels_match(current, expected)
+        if matches!(
+            information,
+            SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION
+        ) {
+            sacl_descriptors_match(current, expected)
         } else {
             Ok(current == expected)
         }
+    }
+
+    fn audit_sacls_match(current: Option<&[u8]>, expected: Option<&[u8]>) -> io::Result<bool> {
+        match (current, expected) {
+            (Some(current), Some(expected)) => sacl_descriptors_match(current, expected),
+            (None, None) => Ok(true),
+            _ => Ok(false),
+        }
+    }
+
+    fn descriptor_difference_summary(current: &[u8], expected: &[u8]) -> io::Result<String> {
+        use windows_sys::Win32::Security::SECURITY_DESCRIPTOR_RELATIVE;
+        if current.len() < mem::size_of::<SECURITY_DESCRIPTOR_RELATIVE>()
+            || expected.len() < mem::size_of::<SECURITY_DESCRIPTOR_RELATIVE>()
+        {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        let current_control = u16::from_le_bytes([current[2], current[3]]);
+        let expected_control = u16::from_le_bytes([expected[2], expected[3]]);
+        let differing_indices: Vec<_> = current
+            .iter()
+            .zip(expected)
+            .enumerate()
+            .filter(|(_, (left, right))| left != right)
+            .map(|(index, _)| index)
+            .take(8)
+            .collect();
+        Ok(format!(
+            "source_bytes={} copied_bytes={} control_xor={:#06x} first_differing_indices={differing_indices:?}",
+            expected.len(),
+            current.len(),
+            current_control ^ expected_control
+        ))
     }
 
     const ACCESS_INFORMATION: u32 =
@@ -758,9 +794,12 @@ mod imp {
         Ok(
             if !access_descriptors_match(&current.descriptor, &expected.descriptor)? {
                 Some("owner, group, or DACL")
-            } else if current.audit_sacl != expected.audit_sacl {
+            } else if !audit_sacls_match(
+                current.audit_sacl.as_deref(),
+                expected.audit_sacl.as_deref(),
+            )? {
                 Some("audit SACL")
-            } else if !mandatory_labels_match(&current.mandatory_label, &expected.mandatory_label)?
+            } else if !sacl_descriptors_match(&current.mandatory_label, &expected.mandatory_label)?
             {
                 Some("mandatory label")
             } else if current.resource_attributes != expected.resource_attributes {
@@ -813,15 +852,13 @@ mod imp {
         {
             return Err(io::Error::last_os_error());
         }
-        if queried_descriptors_match(
-            &security_descriptor(file, information)?,
-            expected,
-            information,
-        )? {
+        let current = security_descriptor(file, information)?;
+        if queried_descriptors_match(&current, expected, information)? {
             Ok(())
         } else {
             Err(io::Error::other(format!(
-                "prepared Windows access-control metadata ({information:#x}) did not match its source"
+                "prepared Windows access-control metadata ({information:#x}) did not match its source; {}",
+                descriptor_difference_summary(&current, expected)?
             )))
         }
     }
@@ -1957,7 +1994,7 @@ mod imp {
         #[test]
         fn mandatory_integrity_label_copy_matches_source_without_audit_access() {
             let (expected, actual) = copied_mandatory_label_fixture();
-            assert!(mandatory_labels_match(&actual, &expected).unwrap());
+            assert!(sacl_descriptors_match(&actual, &expected).unwrap());
         }
 
         #[test]
@@ -1966,7 +2003,7 @@ mod imp {
                 SE_SACL_AUTO_INHERIT_REQ, SE_SACL_DEFAULTED, SE_SACL_PROTECTED,
             };
             let (expected, actual) = copied_mandatory_label_fixture();
-            assert!(mandatory_labels_match(&actual, &expected).unwrap());
+            assert!(sacl_descriptors_match(&actual, &expected).unwrap());
             let sacl = u32::from_le_bytes(expected[12..16].try_into().unwrap()) as usize;
             assert_ne!(sacl, 0);
             assert_eq!(expected.len(), sacl + 28);
@@ -1979,7 +2016,7 @@ mod imp {
                 let mut changed = expected.clone();
                 changed[at] ^= bit;
                 assert!(
-                    !mandatory_labels_match(&changed, &expected).unwrap(),
+                    !sacl_descriptors_match(&changed, &expected).unwrap(),
                     "{field} mutation was accepted"
                 );
             }
@@ -1991,13 +2028,16 @@ mod imp {
                 let mut changed = expected.clone();
                 let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
                 changed[2..4].copy_from_slice(&control.to_le_bytes());
-                assert!(!mandatory_labels_match(&changed, &expected).unwrap());
+                assert!(!sacl_descriptors_match(&changed, &expected).unwrap());
             }
             let mut changed = expected.clone();
             changed[3] ^= 0x08;
-            assert!(
-                !queried_descriptors_match(&changed, &expected, SACL_SECURITY_INFORMATION).unwrap()
-            );
+            assert!(!queried_descriptors_match(
+                &changed,
+                &expected,
+                ATTRIBUTE_SECURITY_INFORMATION
+            )
+            .unwrap());
         }
 
         #[test]
@@ -2027,6 +2067,13 @@ mod imp {
 
             apply_security_metadata(&target, &metadata).unwrap();
 
+            let copied = security_descriptor(&target, SACL_SECURITY_INFORMATION).unwrap();
+            let captured = metadata.audit_sacl.as_ref().unwrap();
+            eprintln!(
+                "privileged low-label audit copy: {}; normalized_match={}",
+                descriptor_difference_summary(&copied, captured).unwrap(),
+                sacl_descriptors_match(&copied, captured).unwrap()
+            );
             assert!(security_metadata_matches(&target, &metadata).unwrap());
         }
 
@@ -2053,7 +2100,7 @@ mod imp {
             assert!(security_metadata_matches(&target, &metadata).unwrap());
         }
 
-        fn set_current_user_audit_sacl(file: &File) {
+        fn current_user_audit_descriptor() -> Vec<u8> {
             let mut token = ptr::null_mut();
             assert_ne!(
                 unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) },
@@ -2098,16 +2145,105 @@ mod imp {
                 },
                 0
             );
+            let mut relative_length = 0;
+            assert_eq!(
+                unsafe {
+                    windows_sys::Win32::Security::MakeSelfRelativeSD(
+                        (&raw mut descriptor).cast(),
+                        ptr::null_mut(),
+                        &raw mut relative_length,
+                    )
+                },
+                0
+            );
+            assert_eq!(
+                unsafe { GetLastError() },
+                windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER
+            );
+            let mut relative = vec![0; relative_length as usize];
+            assert_ne!(
+                unsafe {
+                    windows_sys::Win32::Security::MakeSelfRelativeSD(
+                        (&raw mut descriptor).cast(),
+                        relative.as_mut_ptr().cast(),
+                        &raw mut relative_length,
+                    )
+                },
+                0
+            );
+            relative
+        }
+
+        fn set_current_user_audit_sacl(file: &File) {
+            let descriptor = current_user_audit_descriptor();
             assert_ne!(
                 unsafe {
                     SetKernelObjectSecurity(
                         file.as_raw_handle() as HANDLE,
                         SACL_SECURITY_INFORMATION | PROTECTED_SACL_SECURITY_INFORMATION,
-                        (&raw mut descriptor).cast(),
+                        descriptor.as_ptr().cast_mut().cast(),
                     )
                 },
                 0
             );
+        }
+
+        #[test]
+        fn audit_sacl_completion_comparison_preserves_policy_and_capture_presence() {
+            use windows_sys::Win32::Security::{
+                SE_SACL_AUTO_INHERITED, SE_SACL_AUTO_INHERIT_REQ, SE_SACL_DEFAULTED,
+            };
+            let expected = current_user_audit_descriptor();
+            let mut completed = expected.clone();
+            assert_ne!(
+                unsafe {
+                    SetSecurityDescriptorControl(
+                        completed.as_mut_ptr().cast(),
+                        SE_SACL_AUTO_INHERITED,
+                        SE_SACL_AUTO_INHERITED,
+                    )
+                },
+                0
+            );
+            assert!(
+                queried_descriptors_match(&completed, &expected, SACL_SECURITY_INFORMATION)
+                    .unwrap()
+            );
+            assert!(audit_sacls_match(Some(&completed), Some(&expected)).unwrap());
+            assert!(!audit_sacls_match(None, Some(&expected)).unwrap());
+            assert!(!audit_sacls_match(Some(&expected), None).unwrap());
+            assert!(!queried_descriptors_match(
+                &completed,
+                &expected,
+                ATTRIBUTE_SECURITY_INFORMATION
+            )
+            .unwrap());
+            let sacl = u32::from_le_bytes(expected[12..16].try_into().unwrap()) as usize;
+            assert_ne!(sacl, 0);
+            for (field, at, bit) in [
+                ("ACE type", sacl + 8, 1),
+                ("audit success flag", sacl + 9, 0x40),
+                ("audit inheritance flag", sacl + 9, INHERIT_ONLY_ACE as u8),
+                ("audit access mask", sacl + 12, 1),
+                ("audit principal SID", expected.len() - 1, 1),
+            ] {
+                let mut changed = expected.clone();
+                changed[at] ^= bit;
+                assert!(
+                    !audit_sacls_match(Some(&changed), Some(&expected)).unwrap(),
+                    "{field} mutation was accepted"
+                );
+            }
+            for flag in [
+                SE_SACL_PROTECTED,
+                SE_SACL_DEFAULTED,
+                SE_SACL_AUTO_INHERIT_REQ,
+            ] {
+                let mut changed = expected.clone();
+                let control = u16::from_le_bytes(changed[2..4].try_into().unwrap()) ^ flag;
+                changed[2..4].copy_from_slice(&control.to_le_bytes());
+                assert!(!audit_sacls_match(Some(&changed), Some(&expected)).unwrap());
+            }
         }
 
         #[test]
