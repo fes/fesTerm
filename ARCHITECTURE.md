@@ -351,6 +351,13 @@ cell spans.
 Width-two leading cells and their continuations are submitted as one
 two-column paint span.
 
+The optional native painter may supply metadata-only atlas admission after
+tessellation and before pixel capture. Backend policy owns eligibility and
+refusal reporting; rejection retains ordinary shapes without consuming font
+deltas. Hook revalidation and current-owner teardown protect replacement
+state. Accepted ADR 0045 changes only ADR 0043's oversized capture ordering;
+trusted revision and immutable owned-snapshot contracts remain intact.
+
 The UI routes egui keyboard, text, paste, focus, pointer, wheel, selection,
 and clipboard events through M3 `InputEvent` values. It drains the core's
 encoded queue to an application-provided sink and reports an accepted core
