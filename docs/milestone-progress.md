@@ -3,6 +3,22 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Integrating picker attribution without rolling back current main
+
+The picker-attribution draft retained cumulative prerequisite history from
+before those prerequisites merged. Integrating current main keeps that history
+while preserving its newer document/save authority, SFTP planning admission,
+accepted architecture decisions and release version. Only the diagnostic
+surface remains additional: eight opt-in picker controls, seven drawing/
+completion/readback buckets, submitted-work accounting and unchanged-renderer
+pixel comparisons; the default replay still covers the full matrix.
+
+Windows CI calibrates the content-free native collector before the workspace
+workload and retains main's required symlink policy and isolated native-security
+checks. Original concurrency, assertions and level-zero build profiles remain.
+The collector may retain evidence for a future failing occurrence, but neither
+its integration nor green CI identifies the cause of native exit 2173.
+
 ## v0.10.0: bounded document, transfer, and presentation ownership
 
 This release advances the desktop application from v0.9.2 with the reviewed
@@ -670,6 +686,45 @@ Aggregate directory/plan
 bytes and native drawer/refusal accessibility remain separate work and
 `SFTP-03` evidence. This does not prove a cause of #297 or allocator
 fragmentation.
+
+## Keeping a native observer from changing syntax budgets
+
+The new Windows collector correctly preserved a cumulative gate's Rust failure,
+but it also caused that failure: a 400-function syntax fixture exceeded its
+unchanged 40 ms parse budget under the debugger. Controls used the exact same
+retained executable, not a rebuilt or weakened test. Bare full and exact scopes
+passed, while the original collector failed both. Event-service measurements
+found no pause inside the failing test's work, pointing away from symbol/stack
+processing.
+
+Windows implicitly enabled extra heap validation for debugger-created processes.
+An owned native fixture measured flag mask 0 for bare execution, 0x70 under the
+original collector and 0 after the correction. Setting `_NO_DEBUG_HEAP=1` for
+the debuggee alone restored the original collector's full and exact syntax
+results. The runner now clones the native Unicode environment block, retaining
+hidden drive entries and surrogate pairs, and overrides only this debugger
+default. No parent environment, registry, syntax semantics, deadlines, test
+assertions or concurrency settings change. The failed gate remains retained;
+the fixed controls are causal evidence for collector interference, not a
+closure of the separate unexplained #330 exit 2173.
+
+## Retaining actionable Windows test-exit evidence
+
+The original #330 Windows UI-test exit 2173 left only snapshot images, while a
+same-head rerun passed without explaining the failure. Required Windows Cargo
+tests now use a root-process-only native debugger runner that preserves their
+parallel execution and original status, while retaining bounded, content-free
+exit/exception/termination, thread-stack, executable/source and module identity
+metadata. Non-GPU calibration proves both the controlled 2173 exit and native
+fault/timeout paths before the workspace tests run. No raw dumps, ordinary logs,
+user journals or WER registry changes are involved.
+
+The earlier CDB calibration fixture is reused, but its replay/quit behavior is
+not an acceptable substitute for original test-status propagation. Missing
+tools and diagnostic failures remain explicit nonzero outcomes, not green
+fallbacks. The new evidence can support the next causal investigation; it does
+not identify the cause of 2173 or relabel the separate Direct2D lifetime repair.
+See [the runner's privacy boundary and limitations](windows-test-diagnostics.md).
 
 ## Retiring imported Direct2D targets before teardown
 
