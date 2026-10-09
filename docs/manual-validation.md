@@ -500,8 +500,14 @@ intervals overlap, with adverse outline positioning and short-drag evidence
 retained rather than accepted. Host attribution separates approximately 1-2 ms
 UI construction from recurring 80-130 ms active surface acquisition, but does
 not identify GPU work or reproduce the owner's near-zero-CPU freeze. This
-does not establish overall responsiveness, file publication, clipboard behavior
-or accelerated-device equivalence.
+does not establish overall responsiveness, clipboard behavior or
+accelerated-device equivalence. A subsequent actual-history first-save probe
+entered a fresh owned filename and clicked Save: inspected captures show the
+sheet closed and editor Saved, and independent readback exactly matches the
+controlled 200-row, 10,600-byte snapshot. This adds native fresh-local-file
+evidence only; protected replacement and remote publication remain open.
+Forced test-process disposal afterward is not a modal-dismissal or clean
+application-shutdown oracle.
 
 The same probe now retains preparation and all eight warmup-frame timings,
 plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated

@@ -62,8 +62,14 @@ native input transport. The guarded candidate still observed roughly 0.48-0.91
 seconds for those actions; the Escape-only control observed roughly 0.43-1.11
 seconds. Preview and drag observations do not show a consistent improvement,
 and both runs retain adverse outline positioning evidence. This is not an
-accepted general Markdown responsiveness fix. Accelerated-device comparison,
-actual file publication and the reported near-idle freeze remain open.
+accepted general Markdown responsiveness fix. A subsequent native first-save
+probe typed a fresh owned filename and clicked Save on the actual history
+snapshot. The sheet closed and the editor became Saved; independent readback
+matched all 10,600 bytes of the controlled 200-row snapshot. This establishes
+that fresh local-file workflow, not protected replacement or remote publication.
+Later forced disposal of the owned test process is not counted as modal
+dismissal or clean application shutdown. Accelerated-device comparison and
+the reported near-idle freeze remain open.
 
 ## Fixing the terminal-history Save As dismissal path
 
