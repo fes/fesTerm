@@ -456,6 +456,16 @@ screen-capture/WM_NULL observation intervals are upper bounds, not exact
 input-to-display latency. Native matched before/after, full selection, About,
 accelerated-device and mixed-DPI follow-up remain required.
 
+App-level terminal-history regressions now cover Escape cancellation of Save
+As on a 200-line synthetic frozen snapshot, both with and without focused
+filename input; reopening and explicit Cancel; and abandoning a dirty-close
+Save As continuation without discarding or publishing the snapshot. These
+cover the recovered cancellation path for PAL-05 and EDIT-09, not native
+responsiveness. Native WARP follow-up must include this small plain-text
+history workflow, Save As open/readiness/navigation, Cancel and Escape, and
+usable editor input afterward. A forced process disposal is a failed recovery,
+never successful dialog dismissal.
+
 The same probe now retains preparation and all eight warmup-frame timings,
 plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
 query compilation during fenced-code loading, rather than steady rendering.
