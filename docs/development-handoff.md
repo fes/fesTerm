@@ -315,6 +315,9 @@ recording terminal content.
 - For native responsiveness attribution, separately opt into
   `festerm::input_timing=debug`, `festerm::ui_timing=debug`,
   `egui_wgpu::frame_timing=debug`, or `egui_winit::pointer_input=debug`.
+  The outer application forwards the native raw-input hook to the primary
+  window; recording it only on the inner window app does not observe the
+  shipped multi-window host.
   These record per-frame native pointer batch counts, application logic/UI
   durations, root host paint phases/primitive counts/surface policy, and
   adapted pointer positions/buttons/wheel deltas respectively, without
