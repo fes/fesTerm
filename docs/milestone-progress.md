@@ -36,16 +36,34 @@ directory and its parent, dismissed with Cancel, reopened, and dismissed with
 Escape. The snapshot remained dirty and intact, and keyboard selection worked.
 This is harness evidence, not a production pointer-input repair.
 
-A matched Escape-only control took approximately 2.2-3.6 seconds for history
-Save As actions; the guarded-painting candidate observed approximately
-0.38-1.08 seconds. This first pair uses the same viewport, fixture and input
-transport, but the intervals include capture overhead and are not final
-performance acceptance. A short pointer drag still did not produce the
-expected selection. Opt-in content-free UI/paint phase timing and adapted
-pointer diagnostics now permit distinguishing host work, acquisition or
-submission/presentation waiting, and event order without logging document
-text or changing input delivery. The owner's near-zero-CPU freeze remains
-unattributed; About and broader native usability remain open.
+Two matched pairs, repeated in reverse order, observed approximately 2.1-5.0
+seconds for history Save As actions with the Escape-only control and 0.28-1.08
+seconds with guarded painting. Both pairs use the same viewport, fixture and
+ordinary-coalesced input transport. Settled captures verify directory/Up and
+Cancel/Escape semantics, the preserved dirty 10,600-byte snapshot and subsequent
+input. The intervals include capture overhead; they are not exact display
+latency or final usability acceptance. Actual About opening, mouse Close,
+Escape, license expansion and license scrolling now have inspected native
+evidence. The unexpanded About content fits: its wheel no-op is not a freeze.
+
+Opt-in content-free UI/paint phase timing and adapted pointer diagnostics
+distinguish host work, acquisition or submission/presentation waiting, and
+event order without logging document text or changing input delivery. Observed
+UI construction was roughly 1-2 ms while active surface acquisition repeatedly
+took roughly 80-130 ms. This is host-side attribution, not GPU timing or proof
+of the owner's near-zero-CPU freeze. Widget-state diagnostics also prove that
+one short plain-text drag retained three selected characters through release;
+the earlier first-pixel inference of lost selection was incorrect. Exact drag
+anchor/endpoint behavior and clipboard operation remain unqualified.
+
+A separate 114-line, 2,128-byte Markdown control exercises Preview/Edit/Split,
+both Split scroll panes, tables and outline navigation using the corrected
+native input transport. The guarded candidate still observed roughly 0.48-0.91
+seconds for those actions; the Escape-only control observed roughly 0.43-1.11
+seconds. Preview and drag observations do not show a consistent improvement,
+and both runs retain adverse outline positioning evidence. This is not an
+accepted general Markdown responsiveness fix. Accelerated-device comparison,
+actual file publication and the reported near-idle freeze remain open.
 
 ## Fixing the terminal-history Save As dismissal path
 

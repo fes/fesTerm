@@ -484,11 +484,24 @@ With ordinary-coalesced native movement packets, semantically inspected
 captures verify owned-directory navigation/Up, Cancel, reopen/Escape and
 post-dismissal input while preserving the dirty untitled snapshot. Earlier
 cursor-teleport navigation/Cancel failures are retained as adverse harness
-evidence, not accepted product defects or dismissal. The first matched
-Escape-only/guarded-painting pair is promising but observer-inclusive; short
-pointer-drag selection, repeated matched performance, About and the reported
-near-idle freeze remain unqualified. This does not establish file publication,
-clipboard behavior or accelerated-device equivalence.
+evidence, not accepted product defects or dismissal. Two matched pairs,
+repeated in reverse order, observed approximately 2.1-5.0 seconds for history
+Save As controls versus 0.28-1.08 seconds with guarded painting; both preserve
+navigation, cancellation and post-dismissal input. These observer-inclusive
+upper bounds do not qualify final usability. Inspected About captures verify
+opening, mouse Close, Escape, license expansion and license scrolling; the
+unexpanded content fits and is not expected to scroll. One short plain-text
+drag retains three characters through release in widget-state diagnostics;
+exact anchor/endpoint and clipboard acceptance remain open.
+
+A separate 114-line Markdown native control verifies Preview/Edit/Split and
+actual source/preview scrolling with table content visible. Candidate/control
+intervals overlap, with adverse outline positioning and short-drag evidence
+retained rather than accepted. Host attribution separates approximately 1-2 ms
+UI construction from recurring 80-130 ms active surface acquisition, but does
+not identify GPU work or reproduce the owner's near-zero-CPU freeze. This
+does not establish overall responsiveness, file publication, clipboard behavior
+or accelerated-device equivalence.
 
 The same probe now retains preparation and all eight warmup-frame timings,
 plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
