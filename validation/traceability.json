@@ -751,6 +751,8 @@
         "ADR-0021"
       ],
       "automated_tests": [
+        "modal_surface_preserves_pixels_responses_and_guarded_fallbacks",
+        "root_panel_conversion_leaves_small_cells_ordinary_and_bounds_callbacks",
         "chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window",
         "viewport_replay_preserves_cache_geometry_during_output_resizes",
         "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface",
@@ -1572,6 +1574,9 @@
       ],
       "automated_tests": [
         "editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback",
+        "editor_root_panels_preserve_real_200_line_text_pixels_and_opacity_fallback",
+        "root_panel_conversion_leaves_small_cells_ordinary_and_bounds_callbacks",
+        "modal_surface_preserves_pixels_responses_and_guarded_fallbacks",
         "image_budget_real_editor_preview_and_manual_image_command_load_saved_local_images",
         "image_budget_nonlocal_editor_origins_never_authorize_path_looking_preview_labels",
         "image_budget_first_save_and_save_as_rebind_preview_to_the_real_new_parent",
@@ -2723,6 +2728,7 @@
         "the_markdown_file_picker_starts_at_home_and_then_resumes_the_last_directory",
         "file_picker_sheets_fit_the_full_root_and_cancel_without_retargeting",
         "deep_open_picker_keeps_initial_path_and_filter_visible_without_losing_ancestors",
+        "modal_surface_preserves_pixels_responses_and_guarded_fallbacks",
         "the_markdown_file_picker_targets_the_active_viewer_only_from_a_viewer",
         "local_home_directory_resolves_to_a_real_directory",
         "markdown_file_picker_reports_the_directory_it_is_browsing",

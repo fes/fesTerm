@@ -456,6 +456,18 @@ screen-capture/WM_NULL observation intervals are upper bounds, not exact
 input-to-display latency. Native matched before/after, full selection, About,
 accelerated-device and mixed-DPI follow-up remain required.
 
+An additional root-panel route now covers the actual multiline widget's large
+opaque untextured backgrounds: clipped coverage must reach one eighth of the
+root viewport, and each pass admits at most sixteen callbacks. Small controls
+and terminal cells remain ordinary. A real 200-line text-editor framebuffer
+comparison proves plugin execution, pixel equality at 100%, 125% and 200%, and
+opacity fallback. About/Open File/Save As reuse their ordinary Modal widgets
+while guarded owned dimming/shadow/frame geometry uses the existing painter.
+Modal comparisons preserve pixels and response identities across scale,
+colored dimming, transforms, nonzero origins, absent renderers, translucent or
+shadowless frames, and ambiguous candidates. These add automated fidelity
+evidence for WIN-05, LAUNCH-11 and EDIT-09; native usability remains open.
+
 App-level terminal-history regressions now cover Escape cancellation of Save
 As on a 200-line synthetic frozen snapshot, both with and without focused
 filename input; reopening and explicit Cancel; and abandoning a dirty-close

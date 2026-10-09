@@ -3,6 +3,30 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Extending the guarded WARP painter to editor bodies and owned sheets
+
+The outer editor-frame candidate did not make the reported interaction usable.
+The actual multiline text widget still painted its large opaque background
+through the ordinary textured path, and About/Open File/Save As still painted
+their full-window dimming and shadow/frame there. A follow-up reuses the existing
+solid panel renderer, not a new shader or a changed input/save implementation.
+
+Eligible root-layer rectangles must be opaque, untextured and visibly cover
+at least one eighth of the root viewport. At most sixteen are converted per
+pass; small controls and terminal cells do not acquire individual GPU resources.
+Owned sheets retain the ordinary Modal widget, responses and input handling.
+Only unique newly appended full-root black dimming and complete opaque
+shadow/frame geometry matching the actual owned frame can be substituted.
+Transforms, unsupported origins/formats, missing renderers, translucent frames
+and ambiguous geometry retain the appropriate ordinary painting.
+
+The real 200-line text editor is pixel-identical at 100%, 125% and 200% scale,
+including opacity fallback, with proof that the installed root plugin executes.
+Modal framebuffer and response comparisons preserve shadow/dimming, button and
+backdrop identities, and adverse cases. These tests establish fidelity and
+bounded admission, not live responsiveness. Release-mode native qualification
+is required before this follow-up is accepted as a performance fix.
+
 ## Fixing the terminal-history Save As dismissal path
 
 The reported stuck dialog followed a terminal-history text snapshot of only a
@@ -20,8 +44,11 @@ a real 200-line frozen terminal snapshot, including focused filename input.
 This repairs a specific recovery path, not the broader WARP responsiveness
 report; native open/cancel/post-dismissal measurements remain separate evidence.
 A native original-release WARP control with 200 plain-text rows also retained
-the Save As modal after Escape through a bounded wait. An explicit Cancel
-control could dismiss it. Those live observations used a local synthetic file,
+the Save As modal after Escape through a bounded wait. A first changed pixel
+after an explicit Cancel attempt was not dismissal: its settled capture still
+showed the modal, and that adverse case is retained. A subsequent fixed-release
+run verified Escape dismissal and returned to the editor, but remained slow.
+Those live observations used a local synthetic file,
 not the native history-export command; the app regression covers the actual
 frozen-history origin. First-pixel changes and synchronous window probes are
 not modal-readiness or exact display-latency evidence.

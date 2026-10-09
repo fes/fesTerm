@@ -36,13 +36,22 @@ surfaces retain standard painting.
 Pixel-equivalence and adapter-policy tests accompany CP-16's native evidence;
 no discovery, unread-state or command-routing semantics change.
 Inspector's transparent outside-click catcher remains ordinary and consumes
-the first uncovered click. SFTP headers, filters, rail, rows, transfer drawer,
-collision cards, and modal backdrop/shadow remain ordinary controls in this
-bounded coverage change. Exact full-widget framebuffer comparisons and
+the first uncovered click. Small SFTP controls and its collision modal remain
+ordinary in this bounded coverage change. Exact full-widget framebuffer comparisons and
 balanced same-executable Windows WARP draw/readback measurements justify these
 routes; UI construction has a small measured absolute overhead. This is not
 shipping before/after or native presentation-latency evidence, and eligibility
 alone does not justify further sites. See `validation/windows-warp/README.md`.
+
+The shared root-layer route additionally admits only large opaque untextured
+rectangles with clipped coverage of at least one eighth of the root viewport,
+up to sixteen per pass; small widgets/cells, other layers and unsupported
+painters remain ordinary. It includes the real multiline editor background.
+About (`WIN-05`), Open File (`LAUNCH-11`) and Save As (`EDIT-09`) keep the ordinary
+Modal/input contract while unique owned black full-root dimming and complete
+opaque shadow/frame geometry may use the same guarded painter. Pixel and
+response-equivalence tests preserve fidelity; CP-16 native usability evidence
+is still required, and these routes do not imply latency acceptance.
 
 For `PROF-01` and `PROF-06`, the default local persistence provider is detected
 once when the composition root creates a window, not by scanning `PATH` on

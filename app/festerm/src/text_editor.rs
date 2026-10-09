@@ -4089,6 +4089,72 @@ mod tests {
         }
     }
 
+    #[test]
+    fn editor_root_panels_preserve_real_200_line_text_pixels_and_opacity_fallback() {
+        use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+        use egui_kittest::TestRenderer;
+
+        let directory = TemporaryDirectory::new("root-panel-history-pixels");
+        let text = (1..=200)
+            .map(|row| format!("Owned synthetic history row {row:03}\n"))
+            .collect::<String>();
+        let path = directory.file("history.txt", &text);
+        for scale in [1.0, 1.25, 2.0] {
+            for opacity in [1.0, 0.5] {
+                let draw = |root_panels: bool| {
+                    let state = create_render_state(default_wgpu_setup(), Default::default());
+                    let context = egui::Context::default();
+                    context.set_visuals(theme::default_visuals());
+                    context.all_styles_mut(|style| {
+                        style.visuals.text_cursor.blink = false;
+                        style.animation_time = 0.0;
+                    });
+                    let probe =
+                        crate::software_background::PanelTestProbe::install(&context, &state);
+                    if root_panels {
+                        context.add_plugin(crate::software_background::RootPanelBackground);
+                    }
+                    let (documents, mut editor) = editor_for(&path);
+                    let tab_id = crate::tabs::TabId::next_for_test();
+                    let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+                    let mut input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(752.0, 516.0),
+                        )),
+                        ..Default::default()
+                    };
+                    input
+                        .viewports
+                        .get_mut(&egui::ViewportId::ROOT)
+                        .unwrap()
+                        .native_pixels_per_point = Some(scale);
+                    let mut output = egui::FullOutput::default();
+                    for _ in 0..3 {
+                        output = context.run_ui(input.clone(), |ui| {
+                            ui.set_opacity(opacity);
+                            assert!(editor.show(ui, tab_id, &documents).is_none());
+                        });
+                        renderer.handle_delta(&mut output.textures_delta);
+                    }
+                    let image = renderer.render(&context, &output).unwrap();
+                    (image, probe.paints())
+                };
+                let (ordinary, ordinary_paints) = draw(false);
+                let (optimized, optimized_paints) = draw(true);
+                assert_eq!(ordinary, optimized, "scale={scale}, opacity={opacity}");
+                if opacity == 1.0 {
+                    assert!(
+                        optimized_paints > ordinary_paints,
+                        "the real text widget's opaque backgrounds must use the installed painter"
+                    );
+                } else {
+                    assert_eq!(optimized_paints, ordinary_paints);
+                }
+            }
+        }
+    }
+
     /// Drives the editor the way a person does: real key events through the
     /// harness, not a buffer assignment. Everything these tests assert is a
     /// consequence of keystrokes.

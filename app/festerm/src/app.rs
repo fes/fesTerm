@@ -3764,10 +3764,12 @@ impl FesTermApp {
             &frame,
             egui::vec2(420.0, 600.0),
         );
-        egui::Modal::new(egui::Id::new("fesTerm about dialog"))
-            .frame(frame)
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("fesTerm about dialog"))
+                .frame(frame)
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_max_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
@@ -3997,34 +3999,40 @@ impl FesTermApp {
                     copy_size,
                     ActionButtonRole::Secondary,
                     "Copy Version Information",
-                ).clicked() {
+                )
+                .clicked()
+                {
                     context.copy_text(Self::version_information());
                 }
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 28.0),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                    if action_button_sized(
-                        ui,
-                        egui::vec2(80.0, 28.0),
-                        ActionButtonRole::Accent,
-                        "Close",
-                    ).clicked() {
-                        close = true;
-                    }
-                    if self.overlays.about_licenses_open {
-                        if action_button(
+                        if action_button_sized(
                             ui,
-                            ActionButtonRole::Secondary,
-                            "Hide Licenses",
-                        ).clicked() {
-                            self.overlays.about_licenses_open = false;
+                            egui::vec2(80.0, 28.0),
+                            ActionButtonRole::Accent,
+                            "Close",
+                        )
+                        .clicked()
+                        {
+                            close = true;
                         }
-                    } else if action_button(ui, ActionButtonRole::Secondary, "Licenses").clicked() {
-                        self.overlays.about_licenses_open = true;
-                    }
-                });
-            });
+                        if self.overlays.about_licenses_open {
+                            if action_button(ui, ActionButtonRole::Secondary, "Hide Licenses")
+                                .clicked()
+                            {
+                                self.overlays.about_licenses_open = false;
+                            }
+                        } else if action_button(ui, ActionButtonRole::Secondary, "Licenses")
+                            .clicked()
+                        {
+                            self.overlays.about_licenses_open = true;
+                        }
+                    },
+                );
+            },
+        );
         match update_action {
             Some(UpdateAction::Check) => self.updates.begin_check(),
             Some(UpdateAction::Download) => self.updates.begin_download(),
@@ -4273,16 +4281,18 @@ impl FesTermApp {
             &frame,
             egui::vec2(700.0, 600.0),
         );
-        egui::Modal::new(egui::Id::new("text_editor_save_as"))
-            .frame(frame)
-            .show(ctx, |ui| {
+        crate::software_background::show_modal(
+            ctx,
+            egui::Modal::new(egui::Id::new("text_editor_save_as")).frame(frame),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Save As");
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
-            });
+            },
+        );
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path, destination }) => {
                 self.close_save_as_picker(ctx);
@@ -4329,16 +4339,18 @@ impl FesTermApp {
             &frame,
             egui::vec2(640.0, 560.0),
         );
-        egui::Modal::new(egui::Id::new("markdown_file_picker"))
-            .frame(frame)
-            .show(ctx, |ui| {
+        crate::software_background::show_modal(
+            ctx,
+            egui::Modal::new(egui::Id::new("markdown_file_picker")).frame(frame),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Open File");
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
-            });
+            },
+        );
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
                 self.remember_markdown_file_picker_directory();
