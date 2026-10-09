@@ -321,6 +321,8 @@ recording terminal content.
   reconfiguration, and submission/presentation may wait. The targets do not
   add device polling, input replay, cursor-position substitution or repaint
   requests. Logs remain local; review before sharing.
+  `festerm::pointer_selection=debug` additionally records the text widget's
+  selected-character count and focus/hover/drag/button state, not selected text.
 - fesTerm keeps local lifecycle metadata and logs under
   `diagnostics/runs-v2/<run-id>/` in its native per-user state directory.
   Each run owns its marker, exit intent, final record, at most one 256 KiB Rust

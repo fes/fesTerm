@@ -2594,6 +2594,20 @@ impl TextEditorTab {
         if let Some(previous) = widget_caret {
             ui.visuals_mut().text_cursor = previous;
         }
+        if tracing::enabled!(target: "festerm::pointer_selection", tracing::Level::DEBUG) {
+            tracing::debug!(
+                target: "festerm::pointer_selection",
+                selected_chars = ?output.state.cursor.char_range().map(|range| {
+                    range.primary.index.0.abs_diff(range.secondary.index.0)
+                }),
+                focused = output.response.has_focus(),
+                hovered = output.response.hovered(),
+                dragging = ui.is_being_dragged(body_id),
+                pressed = ui.input(|input| input.pointer.primary_pressed()),
+                released = ui.input(|input| input.pointer.primary_released()),
+                "text editor pointer state"
+            );
+        }
 
         if gutter > 0.0 {
             paint_line_numbers(ui, &output, left, gutter);
