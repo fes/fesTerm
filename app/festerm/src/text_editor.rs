@@ -833,9 +833,10 @@ impl TextEditorTab {
         }
 
         let mut command = None;
-        egui::Frame::new()
-            .fill(theme::SURFACE_WINDOW)
-            .show(ui, |ui| {
+        crate::software_background::show_frame(
+            ui,
+            egui::Frame::new().fill(theme::SURFACE_WINDOW),
+            |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     self.show_origin_bar(ui);
@@ -868,7 +869,8 @@ impl TextEditorTab {
                         command = Some(area_command);
                     }
                 });
-            });
+            },
+        );
         if let Some(pending) = self.vi_pending_command.take() {
             command = self.dispatch_command(pending, tab_id, documents);
         }
@@ -4021,6 +4023,70 @@ mod tests {
         harness.get_by_label("Save");
         harness.get_by_label("Refresh");
         harness.get_by_label("Auto-save");
+    }
+
+    #[test]
+    fn editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback() {
+        use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+        use egui_kittest::TestRenderer;
+
+        let directory = TemporaryDirectory::new("panel-pixels");
+        let path = directory.file("NOTES.md", "alpha\nbeta\n");
+        for size in [egui::vec2(360.0, 240.0), egui::vec2(640.0, 360.0)] {
+            for scale in [1.0, 1.25, 2.0] {
+                for opacity in [1.0, 0.5] {
+                    let draw = |panel: bool| {
+                        let state = create_render_state(
+                            default_wgpu_setup(),
+                            eframe::egui_wgpu::RendererOptions::default(),
+                        );
+                        let context = egui::Context::default();
+                        context.set_visuals(theme::default_visuals());
+                        context.all_styles_mut(|style| {
+                            style.visuals.text_cursor.blink = false;
+                            style.animation_time = 0.0;
+                        });
+                        let probe = panel.then(|| {
+                            crate::software_background::PanelTestProbe::install(&context, &state)
+                        });
+                        let (documents, mut editor) = editor_for(&path);
+                        let tab_id = crate::tabs::TabId::next_for_test();
+                        let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+                        let mut input = egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        };
+                        input
+                            .viewports
+                            .get_mut(&egui::ViewportId::ROOT)
+                            .unwrap()
+                            .native_pixels_per_point = Some(scale);
+                        let mut output = egui::FullOutput::default();
+                        for _ in 0..3 {
+                            output = context.run_ui(input.clone(), |ui| {
+                                ui.set_opacity(opacity);
+                                assert!(editor.show(ui, tab_id, &documents).is_none());
+                            });
+                            renderer.handle_delta(&mut output.textures_delta);
+                        }
+                        let image = renderer.render(&context, &output).unwrap();
+                        if let Some(probe) = probe {
+                            assert_eq!(
+                                probe.paints(),
+                                usize::from(opacity == 1.0),
+                                "the real editor must use only its eligible background callback",
+                            );
+                        }
+                        image
+                    };
+                    assert_eq!(
+                        draw(false),
+                        draw(true),
+                        "editor surface pixels: size={size:?}, scale={scale}, opacity={opacity}",
+                    );
+                }
+            }
+        }
     }
 
     /// Drives the editor the way a person does: real key events through the

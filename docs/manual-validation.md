@@ -445,6 +445,17 @@ it does not qualify native scroll/input latency, GPU presentation, transfer
 throughput, screen-reader navigation or the FD-05/FD-06 native drag/reveal
 gestures.
 
+The outer editor surface also uses the existing guarded textureless panel
+painter on eligible WARP frames. A deterministic regression compares the actual
+editor with ordinary rendering at two sizes and 100%, 125%, and 200% scale,
+and verifies callback
+execution and opacity fallback. This preserves layout and pixel semantics;
+it does not establish native responsiveness. A live release-mode Markdown
+probe on the devbox has reproduced slow scrolling and view changes, but its
+screen-capture/WM_NULL observation intervals are upper bounds, not exact
+input-to-display latency. Native matched before/after, full selection, About,
+accelerated-device and mixed-DPI follow-up remain required.
+
 The same probe now retains preparation and all eight warmup-frame timings,
 plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
 query compilation during fenced-code loading, rather than steady rendering.

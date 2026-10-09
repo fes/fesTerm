@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Reproducing live WARP Markdown interaction before optimizing its background
+
+The owner reported unusable non-terminal interaction despite near-idle CPU.
+A release-mode native window on the devbox confirmed slow Markdown scrolling
+and Edit/Preview changes through real OS mouse input and owned desktop captures.
+The observed intervals were roughly 1.7-2.8 seconds for several actions, with
+76-82% total-machine process CPU during those intervals. Capture and window
+responsiveness checks add overhead, so these are coarse upper bounds, not an
+exact display-latency benchmark or proof of the reported inactive-CPU freeze.
+The small observed drag selection likewise is not full selection acceptance.
+
+The candidate reuses #354's narrowly scoped outer-editor-frame change rather
+than inventing a second painter: the shared textureless panel helper retains
+ordinary egui rendering for ineligible opacity, transforms, viewports and
+formats. Its original pixel/callback/opacity regression is retained. Native
+before/after qualification is still pending; no universal speedup, About fix,
+clipboard repair or hardware-adapter comparison is claimed.
+
 ## Integrating picker attribution without rolling back current main
 
 The picker-attribution draft retained cumulative prerequisite history from

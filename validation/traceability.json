@@ -1567,6 +1567,7 @@
         "ADR-0034"
       ],
       "automated_tests": [
+        "editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback",
         "image_budget_real_editor_preview_and_manual_image_command_load_saved_local_images",
         "image_budget_nonlocal_editor_origins_never_authorize_path_looking_preview_labels",
         "image_budget_first_save_and_save_as_rebind_preview_to_the_real_new_parent",
