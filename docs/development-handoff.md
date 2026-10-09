@@ -303,6 +303,13 @@ recording terminal content.
   startup image for GPU-rendered windows.
   The native solid-background path does not eliminate the cost of dense text,
   colored cells, or full-frame rendering.
+- Required Windows CI runs Cargo's repository-owned test executables through
+  `scripts\run-windows-tests.ps1`; see [native test exit diagnostics](windows-test-diagnostics.md).
+  This is separate from the installed application's lifecycle journal below.
+  It retains content-free exit/exception/termination, concurrent-thread stack
+  and module metadata without retries, serialized tests, or uploaded dumps.
+  The unexplained UI-test exit 2173 in [#330](https://github.com/fes/fesTerm/issues/330)
+  remains unresolved pending a causal reproduction.
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
 - fesTerm keeps local lifecycle metadata and logs under
