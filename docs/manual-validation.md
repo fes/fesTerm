@@ -478,6 +478,18 @@ history workflow, Save As open/readiness/navigation, Cancel and Escape, and
 usable editor input afterward. A forced process disposal is a failed recovery,
 never successful dialog dismissal.
 
+An optimized native WARP probe now also exercises the actual history-export
+command from an owned 200-row PTY child (10,600 bytes, plus a final empty line).
+With ordinary-coalesced native movement packets, semantically inspected
+captures verify owned-directory navigation/Up, Cancel, reopen/Escape and
+post-dismissal input while preserving the dirty untitled snapshot. Earlier
+cursor-teleport navigation/Cancel failures are retained as adverse harness
+evidence, not accepted product defects or dismissal. The first matched
+Escape-only/guarded-painting pair is promising but observer-inclusive; short
+pointer-drag selection, repeated matched performance, About and the reported
+near-idle freeze remain unqualified. This does not establish file publication,
+clipboard behavior or accelerated-device equivalence.
+
 The same probe now retains preparation and all eight warmup-frame timings,
 plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
 query compilation during fenced-code loading, rather than steady rendering.

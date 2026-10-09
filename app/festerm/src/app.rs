@@ -5473,7 +5473,16 @@ impl eframe::App for FesTermApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let timing = tracing::enabled!(target: "festerm::ui_timing", tracing::Level::DEBUG)
+            .then(std::time::Instant::now);
         self.ui_content(ui);
+        if let Some(start) = timing {
+            tracing::debug!(
+                target: "festerm::ui_timing",
+                ui_ms = start.elapsed().as_secs_f64() * 1000.0,
+                "built application UI"
+            );
+        }
     }
 }
 

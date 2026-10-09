@@ -39,3 +39,9 @@ directly, not discarded and reread. The opt-in native keyboard fixture writes
 controlled clipboard text and invokes palette Paste to exercise this seam.
 
 See `docs/keyboard-shortcuts.md` and the production routing regression tests.
+
+The separately opt-in `egui_winit::pointer_input` debug target records adapted
+pointer positions, button identity and pressed/released state for native
+input-ordering investigations. It does not log keyboard events, text or
+clipboard data, and does not change input delivery or query the current OS
+cursor to replace historical event coordinates.

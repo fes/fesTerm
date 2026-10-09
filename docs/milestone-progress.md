@@ -27,6 +27,26 @@ backdrop identities, and adverse cases. These tests establish fidelity and
 bounded admission, not live responsiveness. Release-mode native qualification
 is required before this follow-up is accepted as a performance fix.
 
+The next native probe used the real history-export command, not just a local
+file control: an owned sleeping PTY child emitted exactly 200 nonempty rows,
+producing a dirty untitled 10,600-byte snapshot. A cursor-teleport harness
+misdirected directory and Cancel clicks; replacing movement with ordinary
+coalesced native mouse packets, without GUI dwell delays, navigated the owned
+directory and its parent, dismissed with Cancel, reopened, and dismissed with
+Escape. The snapshot remained dirty and intact, and keyboard selection worked.
+This is harness evidence, not a production pointer-input repair.
+
+A matched Escape-only control took approximately 2.2-3.6 seconds for history
+Save As actions; the guarded-painting candidate observed approximately
+0.38-1.08 seconds. This first pair uses the same viewport, fixture and input
+transport, but the intervals include capture overhead and are not final
+performance acceptance. A short pointer drag still did not produce the
+expected selection. Opt-in content-free UI/paint phase timing and adapted
+pointer diagnostics now permit distinguishing host work, acquisition or
+submission/presentation waiting, and event order without logging document
+text or changing input delivery. The owner's near-zero-CPU freeze remains
+unattributed; About and broader native usability remain open.
+
 ## Fixing the terminal-history Save As dismissal path
 
 The reported stuck dialog followed a terminal-history text snapshot of only a

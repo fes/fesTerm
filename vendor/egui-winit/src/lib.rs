@@ -811,6 +811,14 @@ impl State {
         {
             let pressed = state == winit::event::ElementState::Pressed;
 
+            log::debug!(
+                target: "egui_winit::pointer_input",
+                "adapted_pointer_button x={} y={} button={:?} pressed={}",
+                pos.x,
+                pos.y,
+                button,
+                pressed,
+            );
             self.egui_input.events.push(egui::Event::PointerButton {
                 pos,
                 button,
@@ -858,6 +866,12 @@ impl State {
             pos_in_pixels.y as f32 / pixels_per_point,
         );
         self.pointer_pos_in_points = Some(pos_in_points);
+        log::debug!(
+            target: "egui_winit::pointer_input",
+            "adapted_pointer_movement x={} y={}",
+            pos_in_points.x,
+            pos_in_points.y,
+        );
 
         if self.simulate_touch_screen {
             if self.any_pointer_button_down {
