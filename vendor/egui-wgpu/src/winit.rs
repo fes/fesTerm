@@ -516,7 +516,7 @@ impl Painter {
             log::debug!(
                 target: "egui_wgpu::frame_timing",
                 "root_paint_begin completed_frames={}",
-                self.context.cumulative_frame_nr(),
+                self.context.cumulative_frame_nr_for(viewport_id),
             );
         }
 
@@ -904,7 +904,7 @@ impl Painter {
             log::debug!(
                 target: "egui_wgpu::frame_timing",
                 "root_paint completed_frames={} primitives={} upload_ms={:.3} configure_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
-                self.context.cumulative_frame_nr(),
+                self.context.cumulative_frame_nr_for(viewport_id),
                 clipped_primitives.len(),
                 upload * 1000.0,
                 (configure - upload) * 1000.0,

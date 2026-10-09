@@ -34,6 +34,15 @@ outside the app's short UI timer without introducing GPU waits or changing
 present policy. Native follow-up remains separate from these deterministic
 selection results.
 
+The optimized follow-up was built and frozen, but fresh native interaction
+could not begin: Windows rejected the harness's owned cursor-focus step and
+then its separate owned-window activation attempt. Both attempts stopped
+before the interaction sequence and left no owned process running. They are
+environment/readiness failures, not before/after responsiveness, selection,
+clipboard or Save As evidence. Earlier inspected native evidence remains
+separate; the reported near-idle freeze and post-repair native qualification
+are still open.
+
 ## Extending the guarded WARP painter to editor bodies and owned sheets
 
 The outer editor-frame candidate did not make the reported interaction usable.
