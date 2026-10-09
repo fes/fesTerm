@@ -448,8 +448,8 @@ gestures.
 The outer editor surface also uses the existing guarded textureless panel
 painter on eligible WARP frames. A deterministic regression compares the actual
 editor with ordinary rendering at two sizes and 100%, 125%, and 200% scale,
-and verifies callback
-execution and opacity fallback. This preserves layout and pixel semantics;
+and verifies callback execution and opacity fallback. These deterministic
+comparisons passed locally, preserving layout and pixel semantics;
 it does not establish native responsiveness. A live release-mode Markdown
 probe on the devbox has reproduced slow scrolling and view changes, but its
 screen-capture/WM_NULL observation intervals are upper bounds, not exact
