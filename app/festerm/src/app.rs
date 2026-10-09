@@ -5466,10 +5466,48 @@ impl FesTermApp {
 }
 
 impl eframe::App for FesTermApp {
+    fn raw_input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
+        if tracing::enabled!(target: "festerm::input_timing", tracing::Level::DEBUG) {
+            let movements = input
+                .events
+                .iter()
+                .filter(|event| matches!(event, egui::Event::PointerMoved(_)))
+                .count();
+            let buttons = input
+                .events
+                .iter()
+                .filter(|event| matches!(event, egui::Event::PointerButton { .. }))
+                .count();
+            let wheels = input
+                .events
+                .iter()
+                .filter(|event| matches!(event, egui::Event::MouseWheel { .. }))
+                .count();
+            tracing::debug!(
+                target: "festerm::input_timing",
+                frame = context.cumulative_frame_nr(),
+                movements,
+                buttons,
+                wheels,
+                "delivering native pointer batch to application"
+            );
+        }
+    }
+
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        let timing = tracing::enabled!(target: "festerm::ui_timing", tracing::Level::DEBUG)
+            .then(std::time::Instant::now);
         self.frame_logic(context);
         self.sync_native_window_chrome(context, frame);
         self.drive_native_smoke(context);
+        if let Some(start) = timing {
+            tracing::debug!(
+                target: "festerm::ui_timing",
+                frame = context.cumulative_frame_nr(),
+                logic_ms = start.elapsed().as_secs_f64() * 1000.0,
+                "completed application frame logic"
+            );
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -5479,6 +5517,7 @@ impl eframe::App for FesTermApp {
         if let Some(start) = timing {
             tracing::debug!(
                 target: "festerm::ui_timing",
+                frame = ui.ctx().cumulative_frame_nr(),
                 ui_ms = start.elapsed().as_secs_f64() * 1000.0,
                 "built application UI"
             );

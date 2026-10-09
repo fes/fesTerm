@@ -1577,6 +1577,9 @@
       ],
       "automated_tests": [
         "editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback",
+        "editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch",
+        "batched_text_selection_respects_disabled_clipped_and_modal_ownership",
+        "markdown_preview_and_split_keep_batched_selection_and_copy_exact",
         "editor_root_panels_preserve_real_200_line_text_pixels_and_opacity_fallback",
         "root_panel_conversion_leaves_small_cells_ordinary_and_bounds_callbacks",
         "modal_surface_preserves_pixels_responses_and_guarded_fallbacks",
@@ -2675,6 +2678,7 @@
         "ADR-0035"
       ],
       "automated_tests": [
+        "markdown_preview_and_split_keep_batched_selection_and_copy_exact",
         "external_documents_open_in_last_active_window_and_reuse_dirty_views",
         "external_document_missing_file_preserves_tabs_and_blocks_later_requests",
         "external_document_activation_waits_for_modal_and_error_acknowledgement",
