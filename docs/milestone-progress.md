@@ -3,6 +3,27 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.10.0: bounded document, transfer, and presentation ownership
+
+This release advances the desktop application from v0.9.2 with the reviewed
+shared-document and Save As authority work, including capability-bound local
+file access, conditional publication, retained recovery, cross-view conflict
+handling, and explicit refusal where a filesystem cannot preserve the required
+security properties. The editor also gains the native New File workflow and
+bounded undo, widget, vi recording, and view-lifecycle ownership.
+
+SSH and SFTP now bound command input, planning, GUI backlogs, transfer history,
+cancellation, and forwarding inventories while preserving visible refusal and
+uncertain-partial notices. Markdown image loading shares bounded admission and
+worker ownership across saved-local surfaces. Terminal and document rendering
+reduce repeated row, glyph, atlas, resize-anchor, multi-edit, and ordinary vi
+motion work without changing the documented fidelity contracts.
+
+Release preparation changes version metadata and this narrative only. It does
+not claim that the open multi-day WARP attribution or intermittent native
+Windows exit investigations are resolved, and it does not weaken their
+remaining native/manual evidence requirements.
+
 ## Repairing native Windows conditional save publication
 
 The later privileged low-label copy exposed an audit-only representation
