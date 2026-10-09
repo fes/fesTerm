@@ -6029,7 +6029,6 @@ mod tests {
         assert!(harness.state().loaded_images.is_empty());
         assert!(harness.state().pending_image_loads.is_empty());
         harness.get_by_label("Load local image").click();
-        harness.run();
         while harness.state().loaded_images.is_empty() {
             harness.step();
             assert!(Instant::now() < deadline);

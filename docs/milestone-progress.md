@@ -449,6 +449,50 @@ claiming inputs. This diagnostic seam neither fixes nor qualifies the omitted
 chip fixture, measures completed WARP rendering, or establishes a cause of
 native or multi-day CPU growth.
 
+## Borrowing current text instead of indexing it for every vi motion
+
+C1 in #320 found that even a Normal-mode motion or count prefix built complete
+character and byte-offset arrays, then line motions walked large prefixes.
+Compiled old-path controls over 128 keys on 384-KiB ASCII and 512-KiB Unicode
+documents summed 603,982,848 and 402,655,232 bytes of constructed final index
+capacity. These arrays died each keystroke: this was repeated construction
+work, not proof of a retained leak. Dot-repeat's final diff separately built
+two whole-document character arrays, totaling 2,097,168 bytes in its control.
+
+Ready/Normal motions and count prefixes now borrow UTF-8 boundaries and local
+line scans; word motions share one algorithm between byte and indexed
+coordinates. The same controls construct zero full-index capacity, with
+1,206/1,945 instrumented motion-scan byte visits. An unchanged empty-line
+target stops a counted word loop instead of repeating identical work.
+Repeat's final diff streams common character prefixes/suffixes, retaining
+only changed payloads rather than two temporary character arrays.
+
+Frozen scalar/indexed oracles cover Unicode and caret/count boundaries;
+mixed-mode/operator/visual/repeat/recording churn preserves action and state.
+No persistent cache is inferred from text address/length, which an in-place
+edit can preserve. Existing operator/pending, Insert/Replace and Visual
+fallbacks remain keystroke-local. Ownership, limits and fidelity are unchanged;
+these localized construction/scan results do not certify allocator traffic,
+peak/retained RAM, fragmentation, native responsiveness or #297 causality.
+
+## Waiting for image completion instead of global UI idleness
+
+The bounded native-exit investigation for #345 exposed a separate, identified
+assertion in the third pair's bare app process after four successful controls:
+the real editor Preview/manual-image test exceeded `Harness::run`'s four-step
+settling limit. This was an ordinary status-101 test failure, not the unexplained
+native exit 2173.
+
+The test already waited on actual image completion with a deadline, but first
+asked the entire UI to stop repainting after the manual command. Continuous
+repaint demand now makes that old path fail deterministically. The repaired
+driver goes directly to its existing completion-predicate loop, retaining all
+64 automatic-image, deferred-image, real-command and final-load assertions.
+The closely related Preview retry test uses the same completion-driven pattern.
+No deadline is extended, assertion dropped or test serialized; production
+loading and rendering are unchanged. Native exit 2173 remains a separate,
+unresolved validation blocker.
+
 ## Bounding actual undo storage without discarding a refused change
 
 The allocation/lifecycle audit in #320 found that document history charged

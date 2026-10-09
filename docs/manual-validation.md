@@ -656,6 +656,15 @@ extra bounded result, whereas single/equal-length replay stays in place.
 Native caret/focus/IME, replacement responsiveness and human readability
 remain open; no total-memory, fragmentation or #297 attribution is inferred.
 
+CP-15 vi motion work: ordinary ready/Normal motion and count-prefix full-index
+capacity is automated, with bounded instrumented local scans, frozen Unicode/
+caret/count oracles and mixed-mode/register/recording/repeat churn. Streaming
+repeat diffs equal the former char-array result without those two temporary
+indexes. No persistent text/revision cache or limit increase; operator,
+Insert/Replace, pending and Visual fallbacks remain keystroke-local. Native
+key/IME/caret/focus, perceived responsiveness and readability remain open;
+construction capacities are not total allocator traffic, RSS or fragmentation.
+
 CP-15 vi repeat budget: enable vi keys on an owned fixture and exceed 8,192
 recorded keys in one Insert/Replace change using typing/Backspace churn. All
 accepted edits remain; the command area visibly says **Repeat unavailable**,
