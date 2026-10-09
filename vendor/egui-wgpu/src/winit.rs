@@ -509,6 +509,9 @@ impl Painter {
         window: &Arc<winit::window::Window>,
     ) -> f32 {
         profiling::function_scope!();
+        let timing = (viewport_id == ViewportId::ROOT
+            && log::log_enabled!(target: "egui_wgpu::frame_timing", log::Level::Debug))
+        .then(web_time::Instant::now);
 
         /// Guard to ensure that commands are always submitted to the renderer queue
         /// so that calls to [`write_buffer()`](https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#method.write_buffer)
@@ -616,6 +619,7 @@ impl Painter {
             )
         };
 
+        let upload_done = timing.map(|start| start.elapsed().as_secs_f64());
         let copy_requested = render_state.renderer.read().final_callback_copy_enabled;
         if surface_state.callback_copy_requested != copy_requested {
             surface_state.callback_copy_requested = copy_requested;
@@ -668,6 +672,7 @@ impl Painter {
             }
         };
 
+        let acquire_done = timing.map(|start| start.elapsed().as_secs_f64());
         let mut capture_buffer = None;
         {
             let renderer = render_state.renderer.read();
@@ -801,6 +806,7 @@ impl Painter {
             profiling::scope!("CommandEncoder::finish");
             encoder.finish()
         };
+        let encode_done = timing.map(|start| start.elapsed().as_secs_f64());
 
         // Submit the commands: both the main buffer and user-defined ones.
         {
@@ -812,6 +818,7 @@ impl Painter {
                 .submit(std::iter::chain(user_cmd_bufs, [encoded]));
             vsync_sec += start.elapsed().as_secs_f32();
         };
+        let submit_done = timing.map(|start| start.elapsed().as_secs_f64());
 
         // Ensure that the queue guard does not do unnecessary work when dropped
         render_queue_guard.commands_submitted = true;
@@ -840,6 +847,7 @@ impl Painter {
         }
 
         window.pre_present_notify();
+        let release_done = timing.map(|start| start.elapsed().as_secs_f64());
 
         {
             profiling::scope!("present");
@@ -847,6 +855,35 @@ impl Painter {
             let start = web_time::Instant::now();
             render_state.queue.present(output_frame);
             vsync_sec += start.elapsed().as_secs_f32();
+        }
+        if let (
+            Some(start),
+            Some(upload),
+            Some(acquire),
+            Some(encode),
+            Some(submit),
+            Some(release),
+        ) = (
+            timing,
+            upload_done,
+            acquire_done,
+            encode_done,
+            submit_done,
+            release_done,
+        ) {
+            let total = start.elapsed().as_secs_f64();
+            log::debug!(
+                target: "egui_wgpu::frame_timing",
+                "root_paint primitives={} upload_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
+                clipped_primitives.len(),
+                upload * 1000.0,
+                (acquire - upload) * 1000.0,
+                (encode - acquire) * 1000.0,
+                (submit - encode) * 1000.0,
+                (release - submit) * 1000.0,
+                (total - release) * 1000.0,
+                total * 1000.0,
+            );
         }
 
         vsync_sec

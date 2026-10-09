@@ -312,6 +312,17 @@ recording terminal content.
   remains unresolved pending a causal reproduction.
 - `RUST_LOG` configures structured log filtering. The default is
   `festerm=info,warn`.
+- For native responsiveness attribution, separately opt into
+  `festerm::ui_timing=debug`, `egui_wgpu::frame_timing=debug`, or
+  `egui_winit::pointer_input=debug`. These record application UI duration,
+  root host paint phase durations/primitive counts, and adapted pointer
+  positions/buttons respectively, without document, keyboard or clipboard
+  text. Paint durations are not GPU timestamps; acquisition includes possible
+  reconfiguration, and submission/presentation may wait. The targets do not
+  add device polling, input replay, cursor-position substitution or repaint
+  requests. Logs remain local; review before sharing.
+  `festerm::pointer_selection=debug` additionally records the text widget's
+  selected-character count and focus/hover/drag/button state, not selected text.
 - fesTerm keeps local lifecycle metadata and logs under
   `diagnostics/runs-v2/<run-id>/` in its native per-user state directory.
   Each run owns its marker, exit intent, final record, at most one 256 KiB Rust

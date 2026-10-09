@@ -32,6 +32,11 @@ Local changes are deliberately limited to:
   ordinary clear/UI pass before the same terminal copy. It is root-only and
   discards retained state on ineligibility, reconfiguration, recreation,
   acquisition failure, resize, viewport retirement and destruction.
+  The opt-in `egui_wgpu::frame_timing` debug target records content-free root
+  paint phase durations and primitive counts. These are host call durations,
+  not GPU timestamp measurements; acquisition includes reconfiguration and
+  queue/present calls can include waiting. No additional device polling,
+  synchronization, rendering or frame scheduling is introduced.
 - `capture.rs`: inherit the surface's optional COPY_DST usage in the screenshot
   target, including changes after creation, so screenshots exercise the same
   composition rather than silently substituting shader painting. Recreate the

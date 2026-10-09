@@ -3,6 +3,121 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Extending the guarded WARP painter to editor bodies and owned sheets
+
+The outer editor-frame candidate did not make the reported interaction usable.
+The actual multiline text widget still painted its large opaque background
+through the ordinary textured path, and About/Open File/Save As still painted
+their full-window dimming and shadow/frame there. A follow-up reuses the existing
+solid panel renderer, not a new shader or a changed input/save implementation.
+
+Eligible root-layer rectangles must be opaque, untextured and visibly cover
+at least one eighth of the root viewport. At most sixteen are converted per
+pass; small controls and terminal cells do not acquire individual GPU resources.
+Owned sheets retain the ordinary Modal widget, responses and input handling.
+Only unique newly appended full-root black dimming and complete opaque
+shadow/frame geometry matching the actual owned frame can be substituted.
+Transforms, unsupported origins/formats, missing renderers, translucent frames
+and ambiguous geometry retain the appropriate ordinary painting.
+
+The real 200-line text editor is pixel-identical at 100%, 125% and 200% scale,
+including opacity fallback, with proof that the installed root plugin executes.
+Modal framebuffer and response comparisons preserve shadow/dimming, button and
+backdrop identities, and adverse cases. These tests establish fidelity and
+bounded admission, not live responsiveness. Release-mode native qualification
+is required before this follow-up is accepted as a performance fix.
+
+The next native probe used the real history-export command, not just a local
+file control: an owned sleeping PTY child emitted exactly 200 nonempty rows,
+producing a dirty untitled 10,600-byte snapshot. A cursor-teleport harness
+misdirected directory and Cancel clicks; replacing movement with ordinary
+coalesced native mouse packets, without GUI dwell delays, navigated the owned
+directory and its parent, dismissed with Cancel, reopened, and dismissed with
+Escape. The snapshot remained dirty and intact, and keyboard selection worked.
+This is harness evidence, not a production pointer-input repair.
+
+Two matched pairs, repeated in reverse order, observed approximately 2.1-5.0
+seconds for history Save As actions with the Escape-only control and 0.28-1.08
+seconds with guarded painting. Both pairs use the same viewport, fixture and
+ordinary-coalesced input transport. Settled captures verify directory/Up and
+Cancel/Escape semantics, the preserved dirty 10,600-byte snapshot and subsequent
+input. The intervals include capture overhead; they are not exact display
+latency or final usability acceptance. Actual About opening, mouse Close,
+Escape, license expansion and license scrolling now have inspected native
+evidence. The unexpanded About content fits: its wheel no-op is not a freeze.
+
+Opt-in content-free UI/paint phase timing and adapted pointer diagnostics
+distinguish host work, acquisition or submission/presentation waiting, and
+event order without logging document text or changing input delivery. Observed
+UI construction was roughly 1-2 ms while active surface acquisition repeatedly
+took roughly 80-130 ms. This is host-side attribution, not GPU timing or proof
+of the owner's near-zero-CPU freeze. Widget-state diagnostics also prove that
+one short plain-text drag retained three selected characters through release;
+the earlier first-pixel inference of lost selection was incorrect. Exact drag
+anchor/endpoint behavior and clipboard operation remain unqualified.
+
+A separate 114-line, 2,128-byte Markdown control exercises Preview/Edit/Split,
+both Split scroll panes, tables and outline navigation using the corrected
+native input transport. The guarded candidate still observed roughly 0.48-0.91
+seconds for those actions; the Escape-only control observed roughly 0.43-1.11
+seconds. Preview and drag observations do not show a consistent improvement,
+and both runs retain adverse outline positioning evidence. This is not an
+accepted general Markdown responsiveness fix. A subsequent native first-save
+probe typed a fresh owned filename and clicked Save on the actual history
+snapshot. The sheet closed and the editor became Saved; independent readback
+matched all 10,600 bytes of the controlled 200-row snapshot. This establishes
+that fresh local-file workflow, not protected replacement or remote publication.
+Later forced disposal of the owned test process is not counted as modal
+dismissal or clean application shutdown. Accelerated-device comparison and
+the reported near-idle freeze remain open.
+
+## Fixing the terminal-history Save As dismissal path
+
+The reported stuck dialog followed a terminal-history text snapshot of only a
+couple hundred lines. Investigation found an input-routing defect independent
+of document size and renderer: the app's modal guard consumed Escape for Save
+As, but did not pass that consumed key into cancellation. The picker therefore
+could not see the dismissal key. Two app-level regressions reproduced the
+failure, including the continuation from a dirty-document close prompt.
+
+Save As now routes Escape through the same cancellation policy as its Cancel
+button. Cancellation preserves the dirty untitled snapshot, cancels any pending
+close-after-save continuation, and permits reopening the sheet without writing
+a destination or sending input to the original terminal. The regression covers
+a real 200-line frozen terminal snapshot, including focused filename input.
+This repairs a specific recovery path, not the broader WARP responsiveness
+report; native open/cancel/post-dismissal measurements remain separate evidence.
+A native original-release WARP control with 200 plain-text rows also retained
+the Save As modal after Escape through a bounded wait. A first changed pixel
+after an explicit Cancel attempt was not dismissal: its settled capture still
+showed the modal, and that adverse case is retained. A subsequent fixed-release
+run verified Escape dismissal and returned to the editor, but remained slow.
+Those live observations used a local synthetic file,
+not the native history-export command; the app regression covers the actual
+frozen-history origin. First-pixel changes and synchronous window probes are
+not modal-readiness or exact display-latency evidence.
+
+## Reproducing live WARP Markdown interaction before optimizing its background
+
+The owner reported unusable non-terminal interaction despite near-idle CPU.
+A release-mode native window on the devbox confirmed slow Markdown scrolling
+and Edit/Preview changes through real OS mouse input and owned desktop captures.
+The observed intervals were roughly 1.7-2.8 seconds for several actions, with
+76-82% total-machine process CPU during those intervals. Capture and window
+responsiveness checks add overhead, so these are coarse upper bounds, not an
+exact display-latency benchmark or proof of the reported inactive-CPU freeze.
+The small observed drag selection likewise is not full selection acceptance.
+
+The candidate reuses #354's narrowly scoped outer-editor-frame change rather
+than inventing a second painter: the shared textureless panel helper retains
+ordinary egui rendering for ineligible opacity, transforms, viewports and
+formats. Its original pixel/callback/opacity regression is retained. Native
+before/after qualification is still pending. The first candidate observation
+improved some view changes but showed no visible Preview scrolling within an
+eight-second deadline, so it is not accepted as a responsiveness fix. No
+universal speedup, About fix,
+clipboard repair or hardware-adapter comparison is claimed.
+
 ## Integrating picker attribution without rolling back current main
 
 The picker-attribution draft retained cumulative prerequisite history from

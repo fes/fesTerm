@@ -3764,10 +3764,12 @@ impl FesTermApp {
             &frame,
             egui::vec2(420.0, 600.0),
         );
-        egui::Modal::new(egui::Id::new("fesTerm about dialog"))
-            .frame(frame)
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("fesTerm about dialog"))
+                .frame(frame)
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_max_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
@@ -3997,34 +3999,40 @@ impl FesTermApp {
                     copy_size,
                     ActionButtonRole::Secondary,
                     "Copy Version Information",
-                ).clicked() {
+                )
+                .clicked()
+                {
                     context.copy_text(Self::version_information());
                 }
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 28.0),
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                    if action_button_sized(
-                        ui,
-                        egui::vec2(80.0, 28.0),
-                        ActionButtonRole::Accent,
-                        "Close",
-                    ).clicked() {
-                        close = true;
-                    }
-                    if self.overlays.about_licenses_open {
-                        if action_button(
+                        if action_button_sized(
                             ui,
-                            ActionButtonRole::Secondary,
-                            "Hide Licenses",
-                        ).clicked() {
-                            self.overlays.about_licenses_open = false;
+                            egui::vec2(80.0, 28.0),
+                            ActionButtonRole::Accent,
+                            "Close",
+                        )
+                        .clicked()
+                        {
+                            close = true;
                         }
-                    } else if action_button(ui, ActionButtonRole::Secondary, "Licenses").clicked() {
-                        self.overlays.about_licenses_open = true;
-                    }
-                });
-            });
+                        if self.overlays.about_licenses_open {
+                            if action_button(ui, ActionButtonRole::Secondary, "Hide Licenses")
+                                .clicked()
+                            {
+                                self.overlays.about_licenses_open = false;
+                            }
+                        } else if action_button(ui, ActionButtonRole::Secondary, "Licenses")
+                            .clicked()
+                        {
+                            self.overlays.about_licenses_open = true;
+                        }
+                    },
+                );
+            },
+        );
         match update_action {
             Some(UpdateAction::Check) => self.updates.begin_check(),
             Some(UpdateAction::Download) => self.updates.begin_download(),
@@ -4237,6 +4245,12 @@ impl FesTermApp {
         ctx.request_repaint();
     }
 
+    fn cancel_save_as_picker(&mut self, ctx: &egui::Context) {
+        self.overlays.pending_document_close_after_save_as = None;
+        self.cancel_active_editor_close_after_save();
+        self.close_save_as_picker(ctx);
+    }
+
     fn cancel_active_editor_close_after_save(&mut self) {
         let tab = self.state.active_tab_mut();
         if let TabContent::TextEditor(editor) = &mut tab.content {
@@ -4267,16 +4281,18 @@ impl FesTermApp {
             &frame,
             egui::vec2(700.0, 600.0),
         );
-        egui::Modal::new(egui::Id::new("text_editor_save_as"))
-            .frame(frame)
-            .show(ctx, |ui| {
+        crate::software_background::show_modal(
+            ctx,
+            egui::Modal::new(egui::Id::new("text_editor_save_as")).frame(frame),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Save As");
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
-            });
+            },
+        );
         match outcome {
             Some(crate::save_as::SaveAsOutcome::Save { path, destination }) => {
                 self.close_save_as_picker(ctx);
@@ -4299,9 +4315,7 @@ impl FesTermApp {
                 }
             }
             Some(crate::save_as::SaveAsOutcome::Cancelled) => {
-                self.overlays.pending_document_close_after_save_as = None;
-                self.cancel_active_editor_close_after_save();
-                self.close_save_as_picker(ctx);
+                self.cancel_save_as_picker(ctx);
             }
             Some(crate::save_as::SaveAsOutcome::Pending) | None => {}
         }
@@ -4325,16 +4339,18 @@ impl FesTermApp {
             &frame,
             egui::vec2(640.0, 560.0),
         );
-        egui::Modal::new(egui::Id::new("markdown_file_picker"))
-            .frame(frame)
-            .show(ctx, |ui| {
+        crate::software_background::show_modal(
+            ctx,
+            egui::Modal::new(egui::Id::new("markdown_file_picker")).frame(frame),
+            |ui| {
                 ui.set_width(size.x);
                 ui.set_height(size.y);
                 ui.spacing_mut().interact_size.y = 28.0;
                 ui.heading("Open File");
                 ui.add_space(6.0);
                 outcome = Some(picker.ui(ui));
-            });
+            },
+        );
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
                 self.remember_markdown_file_picker_directory();
@@ -5457,7 +5473,16 @@ impl eframe::App for FesTermApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let timing = tracing::enabled!(target: "festerm::ui_timing", tracing::Level::DEBUG)
+            .then(std::time::Instant::now);
         self.ui_content(ui);
+        if let Some(start) = timing {
+            tracing::debug!(
+                target: "festerm::ui_timing",
+                ui_ms = start.elapsed().as_secs_f64() * 1000.0,
+                "built application UI"
+            );
+        }
     }
 }
 
@@ -5683,6 +5708,7 @@ impl FesTermApp {
             escape_pressed && self.overlays.port_forward_manager.is_some();
         let markdown_file_picker_escape =
             escape_pressed && self.overlays.markdown_file_picker.is_some();
+        let save_as_picker_escape = escape_pressed && self.overlays.save_as_picker.is_some();
         let about_escape = escape_pressed && self.overlays.about_open;
 
         if !self.focus_mode {
@@ -6364,7 +6390,11 @@ impl FesTermApp {
         if self.state.take_save_as_request() {
             self.open_save_as_picker(ui.ctx());
         }
-        self.show_save_as_picker(ui.ctx(), content_rect);
+        if save_as_picker_escape {
+            self.cancel_save_as_picker(ui.ctx());
+        } else {
+            self.show_save_as_picker(ui.ctx(), content_rect);
+        }
 
         self.show_about(ui.ctx(), about_escape);
 
@@ -10694,6 +10724,134 @@ mod tests {
             festerm_document::DocumentOrigin::Untitled(_)
         ));
         assert!(open.text().is_dirty());
+    }
+
+    #[test]
+    fn terminal_history_save_as_escape_preserves_snapshot_and_allows_reopening() {
+        for focus_file_name in [false, true] {
+            let context = egui::Context::default();
+            let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+            let directory = tempfile::Builder::new()
+                .prefix("festerm-history-save-as-escape-")
+                .tempdir()
+                .unwrap();
+            app.overlays.save_as_directory = Some(directory.path().to_path_buf());
+            let history = (1..=200)
+                .map(|row| format!("Owned synthetic terminal history row {row:03}"))
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            app.state
+                .session_tab_mut(tab)
+                .unwrap()
+                .terminal
+                .ingest(history.as_bytes());
+            let expected = app
+                .state
+                .session_tab(tab)
+                .unwrap()
+                .terminal
+                .text_snapshot()
+                .text()
+                .to_owned();
+            assert_eq!(expected.lines().count(), 200);
+            const SAVE_TERMINAL_HISTORY_AS: u64 = 24;
+            app.dispatch_palette_selection(SAVE_TERMINAL_HISTORY_AS, &context);
+
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(752.0, 516.0))
+                .with_max_steps(16)
+                .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            harness.run();
+            let snapshot_tab = harness.state().state.active();
+            let document = harness.state().state.active_document().unwrap();
+            assert!(harness.state().overlays.save_as_picker.is_some());
+            if focus_file_name {
+                harness.get_by_label("File name").focus();
+                harness.run();
+                assert!(harness.get_by_label("File name").is_focused());
+            }
+
+            harness.key_press(egui::Key::Escape);
+            harness.run();
+
+            assert!(
+                harness.state().overlays.save_as_picker.is_none(),
+                "Escape must dismiss Save As, including with the name field focused"
+            );
+            assert_eq!(harness.state().state.active(), snapshot_tab);
+            assert_eq!(harness.state().state.active_document(), Some(document));
+            assert_eq!(active_document_text(harness.state()), expected);
+            harness.get_by_label("Save As").click();
+            harness.run();
+            assert!(harness.state().overlays.save_as_picker.is_some());
+            harness.get_by_label("Cancel").click();
+            harness.run();
+            assert!(harness.state().overlays.save_as_picker.is_none());
+            assert_eq!(active_document_text(harness.state()), expected);
+            let documents = harness.state().state.documents().clone();
+            let registry = documents.borrow();
+            let open = registry.get(document).unwrap();
+            assert!(matches!(
+                open.origin(),
+                festerm_document::DocumentOrigin::Untitled(_)
+            ));
+            assert!(open.text().is_dirty());
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+            assert!(transport.sent().is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_history_save_as_escape_cancels_pending_dirty_close() {
+        let context = egui::Context::default();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let directory = tempfile::Builder::new()
+            .prefix("festerm-history-close-save-as-escape-")
+            .tempdir()
+            .unwrap();
+        app.overlays.save_as_directory = Some(directory.path().to_path_buf());
+        app.state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest(b"Owned frozen terminal history");
+        const OPEN_TERMINAL_HISTORY_IN_EDITOR: u64 = 17;
+        app.dispatch_palette_selection(OPEN_TERMINAL_HISTORY_IN_EDITOR, &context);
+        let snapshot_tab = app.state.active();
+        let mut harness = editor_harness(app);
+        harness
+            .state_mut()
+            .request_close_tab(snapshot_tab, &context);
+        harness.run();
+        harness
+            .query_all_by_label("Save")
+            .find(|save| save.is_focused())
+            .expect("the dirty-close Save action should be focused")
+            .click();
+        harness.run();
+        assert!(harness
+            .state()
+            .overlays
+            .pending_document_close_after_save_as
+            .is_some());
+        assert!(harness.state().overlays.save_as_picker.is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+
+        assert!(harness.state().overlays.save_as_picker.is_none());
+        assert!(harness
+            .state()
+            .overlays
+            .pending_document_close_after_save_as
+            .is_none());
+        assert_eq!(harness.state().state.active(), snapshot_tab);
+        assert_eq!(
+            active_document_text(harness.state()),
+            "Owned frozen terminal history"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+        assert!(transport.sent().is_empty());
     }
 
     #[test]

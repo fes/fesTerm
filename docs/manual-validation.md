@@ -445,6 +445,70 @@ it does not qualify native scroll/input latency, GPU presentation, transfer
 throughput, screen-reader navigation or the FD-05/FD-06 native drag/reveal
 gestures.
 
+The outer editor surface also uses the existing guarded textureless panel
+painter on eligible WARP frames. A deterministic regression compares the actual
+editor with ordinary rendering at two sizes and 100%, 125%, and 200% scale,
+and verifies callback execution and opacity fallback. These deterministic
+comparisons passed locally, preserving layout and pixel semantics;
+it does not establish native responsiveness. A live release-mode Markdown
+probe on the devbox has reproduced slow scrolling and view changes, but its
+screen-capture/WM_NULL observation intervals are upper bounds, not exact
+input-to-display latency. Native matched before/after, full selection, About,
+accelerated-device and mixed-DPI follow-up remain required.
+
+An additional root-panel route now covers the actual multiline widget's large
+opaque untextured backgrounds: clipped coverage must reach one eighth of the
+root viewport, and each pass admits at most sixteen callbacks. Small controls
+and terminal cells remain ordinary. A real 200-line text-editor framebuffer
+comparison proves plugin execution, pixel equality at 100%, 125% and 200%, and
+opacity fallback. About/Open File/Save As reuse their ordinary Modal widgets
+while guarded owned dimming/shadow/frame geometry uses the existing painter.
+Modal comparisons preserve pixels and response identities across scale,
+colored dimming, transforms, nonzero origins, absent renderers, translucent or
+shadowless frames, and ambiguous candidates. These add automated fidelity
+evidence for WIN-05, LAUNCH-11 and EDIT-09; native usability remains open.
+
+App-level terminal-history regressions now cover Escape cancellation of Save
+As on a 200-line synthetic frozen snapshot, both with and without focused
+filename input; reopening and explicit Cancel; and abandoning a dirty-close
+Save As continuation without discarding or publishing the snapshot. These
+cover the recovered cancellation path for PAL-05 and EDIT-09, not native
+responsiveness. Native WARP follow-up must include this small plain-text
+history workflow, Save As open/readiness/navigation, Cancel and Escape, and
+usable editor input afterward. A forced process disposal is a failed recovery,
+never successful dialog dismissal.
+
+An optimized native WARP probe now also exercises the actual history-export
+command from an owned 200-row PTY child (10,600 bytes, plus a final empty line).
+With ordinary-coalesced native movement packets, semantically inspected
+captures verify owned-directory navigation/Up, Cancel, reopen/Escape and
+post-dismissal input while preserving the dirty untitled snapshot. Earlier
+cursor-teleport navigation/Cancel failures are retained as adverse harness
+evidence, not accepted product defects or dismissal. Two matched pairs,
+repeated in reverse order, observed approximately 2.1-5.0 seconds for history
+Save As controls versus 0.28-1.08 seconds with guarded painting; both preserve
+navigation, cancellation and post-dismissal input. These observer-inclusive
+upper bounds do not qualify final usability. Inspected About captures verify
+opening, mouse Close, Escape, license expansion and license scrolling; the
+unexpanded content fits and is not expected to scroll. One short plain-text
+drag retains three characters through release in widget-state diagnostics;
+exact anchor/endpoint and clipboard acceptance remain open.
+
+A separate 114-line Markdown native control verifies Preview/Edit/Split and
+actual source/preview scrolling with table content visible. Candidate/control
+intervals overlap, with adverse outline positioning and short-drag evidence
+retained rather than accepted. Host attribution separates approximately 1-2 ms
+UI construction from recurring 80-130 ms active surface acquisition, but does
+not identify GPU work or reproduce the owner's near-zero-CPU freeze. This
+does not establish overall responsiveness, clipboard behavior or
+accelerated-device equivalence. A subsequent actual-history first-save probe
+entered a fresh owned filename and clicked Save: inspected captures show the
+sheet closed and editor Saved, and independent readback exactly matches the
+controlled 200-row, 10,600-byte snapshot. This adds native fresh-local-file
+evidence only; protected replacement and remote publication remain open.
+Forced test-process disposal afterward is not a modal-dismissal or clean
+application-shutdown oracle.
+
 The same probe now retains preparation and all eight warmup-frame timings,
 plus a separate warm Rust syntax-constructor diagnostic. This exposed repeated
 query compilation during fenced-code loading, rather than steady rendering.

@@ -105,6 +105,67 @@ fn supports_palette_frame(ui: &egui::Ui) -> bool {
 
 struct PaletteFrameBackground;
 
+pub(crate) struct RootPanelBackground;
+
+impl egui::Plugin for RootPanelBackground {
+    fn debug_name(&self) -> &'static str {
+        "festerm root panel backgrounds"
+    }
+
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        let context = ui.ctx();
+        let layer = egui::LayerId::background();
+        if !supports_panel_painter(ui) || context.layer_transform_to_global(layer).is_some() {
+            return;
+        }
+        let Some(renderer) =
+            context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+        else {
+            return;
+        };
+        let viewport = context.viewport_rect();
+        if !viewport.is_finite() || !viewport.is_positive() {
+            return;
+        }
+        let backgrounds = context.graphics(|graphics| {
+            graphics.get(layer).map(|paints| {
+                paints
+                    .all_entries()
+                    .enumerate()
+                    .filter(|(_, entry)| {
+                        let egui::Shape::Rect(rect) = &entry.shape else {
+                            return false;
+                        };
+                        opaque_palette_fill(&entry.shape)
+                            && rect.rect.is_finite()
+                            && rect
+                                .rect
+                                .intersect(entry.clip_rect)
+                                .intersect(viewport)
+                                .area()
+                                >= viewport.area() / 8.0
+                    })
+                    // Avoid a GPU allocation per small widget or terminal cell.
+                    .take(16)
+                    .map(|(index, entry)| (egui::layers::ShapeIdx(index), entry.clone()))
+                    .collect::<Vec<_>>()
+            })
+        });
+        if let Some(backgrounds) = backgrounds {
+            for (index, background) in backgrounds {
+                let shape =
+                    renderer.shape_for_clip(context, background.clip_rect, background.shape);
+                context.graphics_mut(|graphics| {
+                    graphics
+                        .get_mut(layer)
+                        .expect("captured root paint list remains present in the same pass")
+                        .set(index, background.clip_rect, shape);
+                });
+            }
+        }
+    }
+}
+
 impl egui::Plugin for PaletteFrameBackground {
     fn debug_name(&self) -> &'static str {
         "festerm palette frame background"
@@ -479,6 +540,132 @@ fn supports_panel_frame(ui: &egui::Ui, frame: &egui::Frame) -> bool {
     frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
 }
 
+fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+    let egui::Shape::Rect(rect) = &shape.shape else {
+        return false;
+    };
+    viewport.is_finite()
+        && viewport.min == egui::Pos2::ZERO
+        && viewport.is_positive()
+        && rect.rect == viewport
+        && shape.clip_rect.contains_rect(viewport)
+        && rect.fill.r() == 0
+        && rect.fill.g() == 0
+        && rect.fill.b() == 0
+        && rect.fill.a() != 0
+        && !rect.fill.is_opaque()
+        && rect.brush.is_none()
+        && rect.corner_radius == egui::CornerRadius::ZERO
+        && rect.stroke == egui::Stroke::NONE
+        && rect.blur_width == 0.0
+}
+
+fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+    if !viewport.is_finite()
+        || viewport.min != egui::Pos2::ZERO
+        || !viewport.is_positive()
+        || !opaque_window_frame(&shape.shape)
+    {
+        return false;
+    }
+    let egui::Shape::Vec(parts) = &shape.shape else {
+        unreachable!("matched a shadow/frame pair");
+    };
+    let [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)] = parts.as_slice() else {
+        unreachable!("matched two rectangles");
+    };
+    frame.rect.is_finite()
+        && frame.rect.is_positive()
+        && shadow.rect.is_finite()
+        && shadow.rect.is_positive()
+        && viewport.contains_rect(frame.rect)
+        && shape.clip_rect.contains_rect(frame.rect)
+        && shadow.fill.r() == 0
+        && shadow.fill.g() == 0
+        && shadow.fill.b() == 0
+        && shadow.fill.a() != 0
+        && !shadow.fill.is_opaque()
+        && shadow.stroke == egui::Stroke::NONE
+        && shadow.blur_width.is_finite()
+}
+
+pub(crate) fn show_modal<R>(
+    context: &egui::Context,
+    modal: egui::Modal,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::ModalResponse<R> {
+    let Some(renderer) =
+        context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id()))
+    else {
+        return modal.show(context, contents);
+    };
+    let layer = modal.area.layer();
+    let color = modal.backdrop_color;
+    let requested_frame = modal.frame;
+    let start = context.graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), egui::layers::PaintList::next_idx)
+    });
+    let mut supported = false;
+    let mut owned_frame_rect = egui::Rect::NOTHING;
+    let response = modal.show(context, |ui| {
+        supported = supports_panel_painter(ui);
+        let frame = requested_frame.unwrap_or_else(|| egui::Frame::popup(ui.style()));
+        let inner = contents(ui);
+        owned_frame_rect = frame.widget_rect(ui.min_rect());
+        inner
+    });
+    if !supported || context.layer_transform_to_global(layer).is_some() {
+        return response;
+    }
+    let viewport = context.viewport_rect();
+    let replacements = context.graphics(|graphics| {
+        let mut backdrop = None;
+        let mut frame = None;
+        let mut ambiguous_backdrop = false;
+        let mut ambiguous_frame = false;
+        for (index, shape) in graphics.get(layer)?.all_entries().enumerate().skip(start.0) {
+            if response.backdrop_response.rect == viewport
+                && full_root_black_backdrop(shape, viewport)
+                && matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == color)
+            {
+                ambiguous_backdrop |= backdrop
+                    .replace((egui::layers::ShapeIdx(index), shape.clone()))
+                    .is_some();
+            }
+            if complete_opaque_window_frame(shape, viewport) {
+                ambiguous_frame |= frame
+                    .replace((egui::layers::ShapeIdx(index), shape.clone()))
+                    .is_some();
+            }
+        }
+        if ambiguous_backdrop || ambiguous_frame {
+            tracing::warn!(target: "festerm::rendering", "retaining ordinary modal painting for ambiguous owned geometry");
+            return None;
+        }
+        let frame = frame.filter(|(_, shape)| {
+            matches!(&shape.shape, egui::Shape::Vec(parts) if matches!(
+                parts.as_slice(),
+                [_, egui::Shape::Rect(rect)] if rect.rect == owned_frame_rect
+            ))
+        });
+        Some(backdrop.into_iter().chain(frame).collect::<Vec<_>>())
+    });
+    if let Some(replacements) = replacements {
+        for (index, original) in replacements {
+            let shape = renderer.shape_for_clip(context, original.clip_rect, original.shape);
+            context.graphics_mut(|graphics| {
+                graphics
+                    .get_mut(layer)
+                    .expect("owned modal paint list remains present in the same pass")
+                    .set(index, original.clip_rect, shape);
+            });
+        }
+    }
+    response
+}
+
 pub(crate) fn show_frame<R>(
     ui: &mut egui::Ui,
     frame: egui::Frame,
@@ -684,6 +871,7 @@ pub(crate) fn install(context: &egui::Context, render_state: &egui_wgpu::RenderS
                 });
                 context.data_mut(|data| data.insert_temp(panel_renderer_id(), renderer));
                 context.add_plugin(PaletteFrameBackground);
+                context.add_plugin(RootPanelBackground);
                 tracing::info!(target: "festerm::app", "using textureless application panel backgrounds on Windows WARP");
             }
         }
@@ -708,6 +896,190 @@ mod tests {
 
     impl EncodedInputSink for Sink {
         fn record_encoded_input(&mut self, _bytes: &[u8]) {}
+    }
+
+    #[test]
+    fn modal_surface_preserves_pixels_responses_and_guarded_fallbacks() {
+        use egui_kittest::TestRenderer;
+
+        let draw = |optimized: bool, scale: f32, case: &str| {
+            let state = create_render_state(default_wgpu_setup(), Default::default());
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let context = egui::Context::default();
+            context.set_visuals(festerm_ui_egui::theme::default_visuals());
+            context.all_styles_mut(|style| {
+                style.animation_time = 0.0;
+                style.visuals.text_cursor.blink = false;
+            });
+            let probe = (optimized && case != "no-renderer")
+                .then(|| PanelTestProbe::install(&context, &state));
+            let id = egui::Id::new("owned-modal-pixels");
+            if case == "transform" {
+                context.set_transform_layer(
+                    egui::Modal::default_area(id).layer(),
+                    egui::emath::TSTransform::from_translation(egui::vec2(1.25, 2.5)),
+                );
+            }
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    if case == "origin" {
+                        egui::pos2(1.0, 2.0)
+                    } else {
+                        egui::Pos2::ZERO
+                    },
+                    egui::vec2(360.0, 240.0),
+                )),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let color = if case == "colored" {
+                egui::Color32::from_rgba_unmultiplied(31, 43, 61, 100)
+            } else {
+                egui::Color32::from_black_alpha(100)
+            };
+            let mut observed = None;
+            let mut frame = egui::FullOutput::default();
+            for _ in 0..4 {
+                frame = context.run_ui(input.clone(), |ui| {
+                    ui.label("Underlying content remains live");
+                    let contents = |ui: &mut egui::Ui| {
+                        if case == "ambiguous" {
+                            ui.painter().add(egui::Frame::popup(ui.style()).paint(
+                                egui::Rect::from_min_size(
+                                    egui::pos2(100.0, 80.0),
+                                    egui::vec2(40.0, 30.0),
+                                ),
+                            ));
+                        }
+                        ui.heading("Save As");
+                        let button = ui.button("Cancel");
+                        (button.id, button.rect, button.sense, button.enabled())
+                    };
+                    let mut modal = egui::Modal::new(id).backdrop_color(color);
+                    if case == "translucent" {
+                        modal = modal.frame(
+                            egui::Frame::popup(ui.style())
+                                .fill(egui::Color32::from_black_alpha(100)),
+                        );
+                    } else if case == "no-shadow" {
+                        modal =
+                            modal.frame(egui::Frame::popup(ui.style()).shadow(egui::Shadow::NONE));
+                    }
+                    let response = if optimized {
+                        show_modal(&context, modal, contents)
+                    } else {
+                        modal.show(&context, contents)
+                    };
+                    observed = Some((
+                        response.response.id,
+                        response.response.rect,
+                        response.backdrop_response.id,
+                        response.backdrop_response.rect,
+                        response.backdrop_response.sense,
+                        response.is_top_modal,
+                        response.inner,
+                    ));
+                });
+                renderer.handle_delta(&mut frame.textures_delta);
+            }
+            let before = probe.as_ref().map_or(0, PanelTestProbe::paints);
+            let image = renderer.render(&context, &frame).unwrap();
+            let paints = probe.as_ref().map_or(0, PanelTestProbe::paints) - before;
+            (image, observed.unwrap(), paints)
+        };
+        for scale in [1.0, 1.25, 2.0] {
+            for case in [
+                "normal",
+                "colored",
+                "transform",
+                "origin",
+                "no-renderer",
+                "translucent",
+                "no-shadow",
+                "ambiguous",
+            ] {
+                let (ordinary, ordinary_response, _) = draw(false, scale, case);
+                let (optimized, optimized_response, paints) = draw(true, scale, case);
+                assert_eq!(
+                    ordinary_response, optimized_response,
+                    "scale={scale}, {case}"
+                );
+                assert_eq!(ordinary, optimized, "scale={scale}, {case}");
+                let expected = match case {
+                    "normal" => 2,
+                    "colored" | "translucent" | "no-shadow" => 1,
+                    _ => 0,
+                };
+                assert_eq!(paints, expected, "scale={scale}, {case}");
+            }
+        }
+    }
+
+    #[test]
+    fn root_panel_conversion_leaves_small_cells_ordinary_and_bounds_callbacks() {
+        use egui_kittest::TestRenderer;
+
+        let draw = |optimized| {
+            let state = create_render_state(default_wgpu_setup(), Default::default());
+            let context = egui::Context::default();
+            let probe = PanelTestProbe::install(&context, &state);
+            if optimized {
+                context.add_plugin(RootPanelBackground);
+            }
+            let mut renderer = WgpuTestRenderer::from_render_state(state);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 360.0),
+                )),
+                ..Default::default()
+            };
+            let mut images = Vec::new();
+            let mut paints = Vec::new();
+            for large_panels in [false, true] {
+                let mut output = context.run_ui(input.clone(), |ui| {
+                    if large_panels {
+                        for _ in 0..32 {
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_size(
+                                    egui::pos2(30.0, 30.0),
+                                    egui::vec2(400.0, 260.0),
+                                ),
+                                8.0,
+                                egui::Color32::from_rgb(31, 43, 61),
+                            );
+                        }
+                    }
+                    for row in 0..100 {
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(
+                                    40.0 + (row % 10) as f32 * 12.0,
+                                    40.0 + (row / 10) as f32 * 22.0,
+                                ),
+                                egui::vec2(10.0, 20.0),
+                            ),
+                            0.0,
+                            egui::Color32::RED,
+                        );
+                    }
+                });
+                renderer.handle_delta(&mut output.textures_delta);
+                let before = probe.paints();
+                images.push(renderer.render(&context, &output).unwrap());
+                paints.push(probe.paints() - before);
+            }
+            (images, paints)
+        };
+        let (ordinary, ordinary_paints) = draw(false);
+        let (optimized, optimized_paints) = draw(true);
+        assert_eq!(ordinary, optimized);
+        assert_eq!(ordinary_paints, [0, 0]);
+        assert_eq!(optimized_paints, [0, 16]);
     }
 
     #[test]
