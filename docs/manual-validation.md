@@ -76,7 +76,7 @@ remain active rolling qualification but do not independently keep M6 open.
 | Native local session persistence daemon | Windows, macOS, Linux using signed/packaged builds | Executable installation, detach/reattach replay, newest-client takeover, process independence and cleanup, owner-only local IPC, Windows current-user pipe isolation and Job Object breakaway, and update continuity across compatible helper releases, plus Windows verified-ConPTY parity between an in-process tab and a durable sessiond session and an in-place upgrade while a daemon generation is live | Implementation provisional under ADR-0025; native evidence pending under CP-11 |
 | Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
-| Abrupt Windows test exit (#330, #351) | Required Windows AMD64 CI, original parallel workspace workload | Causal reproduction of `festerm-ui-egui` or application test exit 2173 with root executable/source identity, concurrent-thread context and exit/exception/termination evidence | Runner calibration, bare/debugger heap-policy parity and metadata capture automated without GPU work; [diagnostic scope and limits](windows-test-diagnostics.md). #351 retains its level-zero CI profiles and records module offsets where symbols are unavailable. The separate collector-induced syntax budget failure has same-executable causal controls; original exit 2173 remains unresolved. A same-head green rerun and the separate Direct2D repair are not acceptance evidence. |
+| Abrupt Windows test exit (#330, #351, #352) | Required Windows AMD64 CI, original parallel workspace workload | Causal reproduction of `festerm-ui-egui` or application test exit 2173 with root executable/source identity, concurrent-thread context and exit/exception/termination evidence | Runner calibration, bare/debugger heap-policy parity and metadata capture automated without GPU work; [diagnostic scope and limits](windows-test-diagnostics.md). Integration preserves #351's level-zero CI profiles and module-offset evidence; local level-1 builds can supply symbols without changing CI or uploading PDBs. The separate collector-induced syntax budget failure has same-executable causal controls; original exit 2173 remains unresolved. A same-head green rerun and the separate Direct2D repair are not acceptance evidence. |
 
 The #350 picker diagnostic separates CPU preparation/submission, completion
 waiting and readback on the same actual renderer, with submitted geometry and
@@ -1511,6 +1511,20 @@ multi-day behavior, native presentation, real persistent-shell reconnect,
 WARP thread-stack attribution and complete GPU resource accounting remain
 manual/native evidence under #297/#282. It never operates installed sessions.
 See `validation/terminal-performance/README.md#bounded-six-session-aging`.
+The additive short whole-owner loop (default three, bounded to eight rounds)
+also drops the reporting instance before each held process-resource window.
+Device-free automated regressions cover six-session backlog retirement and
+stale clipboard completion/cancel after generation retirement; checker tests
+reject incomplete new lifecycle, submission and process-memory declarations.
+New Windows captures require OS-maintained lifetime peak commitment
+(`PeakPagefileUsage`), not only sampled private bytes/peak working set, and a
+final acknowledged process sample. Current caches, temporary CPU pixel-oracle
+arrays and completed host submissions are classified separately; neither these
+nor vacant registry slots count driver allocations or queued/in-flight bytes.
+The implementation has deterministic automated coverage; executing the revised
+offscreen probe on the cumulative source in an exclusive runtime interval,
+native device recovery and multi-day resource attribution remain qualification
+work. No process-resource acceptance cap or native/manual row is closed.
 The 2026-10-04 source-pinned 120/400-cycle runs passed all 24 phases and exact
 normalized pixels, without reproducing the multi-day plateau. Moderate process
 memory growth remains an observation requiring separate attribution; no
