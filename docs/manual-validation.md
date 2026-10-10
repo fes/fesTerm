@@ -162,6 +162,26 @@ opts out; unsupported routes and invalid values retain conservative fallback.
 User authorization does not substitute for independent architectural review
 or accept the remaining **Manual pending / Usability pending** matrix.
 
+Default integration was exercised on frozen source
+`b2f6c32b0fd6fa2eb96a653d4f44d75b14d0ebd8`, executable SHA-256
+`2F14DC7F8B31814689E3916F74ED2F7C7834118104DAED5EBAED6901D36BA985`,
+on the same owned Windows WARP route. Cases 94/95 recorded an actually absent
+environment entry, enabled installation and complete-frame hits for Edit
+and Markdown. Cases 93 (Edit) and 88 (Markdown) explicitly disabled retention.
+The Edit controls completed seventeen observations each; Markdown completed
+twenty-four each, including Edit/Preview/Split, reversible typing, keyboard
+selection, Save As Cancel/reopen/Escape and subsequent scrolling. All four
+exited normally with unchanged fixture bytes; inspected captures showed
+restored Saved content and dismissed dialogs. These are bounded integration
+controls, not another balanced CPU or physical-latency measurement.
+
+Earlier default-labelled enabled cases 86/87/90 inherited an empty value
+because the PowerShell/.NET null setter did not remove the environment entry;
+they do not prove the unset default. Case 96 (explicit-off Markdown) was
+rejected by the unchanged exact-cursor guard before outline/Save As completion.
+Its owned process was confirmed absent; the rejection is not a completed
+control or an attributed retention regression. No guard was relaxed.
+
 ## Evidence record
 
 Every execution records:
