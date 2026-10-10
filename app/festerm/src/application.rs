@@ -634,6 +634,10 @@ impl FesTermApplication {
 const DETACH_POINTER_INSET: f32 = 60.0;
 
 impl eframe::App for FesTermApplication {
+    fn raw_input_hook(&mut self, context: &egui::Context, input: &mut egui::RawInput) {
+        eframe::App::raw_input_hook(self.primary_mut(), context, input);
+    }
+
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
         self.refresh_application_close_context();
         eframe::App::logic(self.primary_mut(), context, frame);
@@ -667,6 +671,77 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    #[test]
+    fn raw_input_hook_forwards_numeric_diagnostics_without_changing_input() {
+        struct Writer(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        for level in [tracing::Level::INFO, tracing::Level::DEBUG] {
+            let output = Arc::new(Mutex::new(Vec::<u8>::new()));
+            let captured = Arc::clone(&output);
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(level)
+                .with_ansi(false)
+                .without_time()
+                .with_writer(move || Writer(Arc::clone(&captured)))
+                .finish();
+            let _subscriber = tracing::subscriber::set_default(subscriber);
+            let (mut application, context) = application();
+            let position = egui::pos2(987.0, 654.0);
+            let mut input = egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, -3.0),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::Text("owned-diagnostic-text-marker".to_owned()),
+                ],
+                ..Default::default()
+            };
+            let before = format!("{input:?}");
+
+            eframe::App::raw_input_hook(&mut application, &context, &mut input);
+
+            assert_eq!(format!("{input:?}"), before);
+            let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+            if level == tracing::Level::INFO {
+                assert!(!log.contains("delivering native pointer batch"));
+            } else {
+                assert!(log.contains("delivering native pointer batch"));
+                for count in ["frame=0", "movements=1", "buttons=2", "wheels=1"] {
+                    assert!(log.contains(count), "{log}");
+                }
+            }
+            for excluded in ["owned-diagnostic-text-marker", "987", "654"] {
+                assert!(!log.contains(excluded), "{log}");
+            }
+        }
     }
 
     #[test]

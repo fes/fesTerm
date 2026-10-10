@@ -2600,6 +2600,12 @@ impl TextEditorTab {
                 selected_chars = ?output.state.cursor.char_range().map(|range| {
                     range.primary.index.0.abs_diff(range.secondary.index.0)
                 }),
+                selection_anchor = ?output.state.cursor.char_range().map(|range| {
+                    range.secondary.index.0
+                }),
+                selection_endpoint = ?output.state.cursor.char_range().map(|range| {
+                    range.primary.index.0
+                }),
                 focused = output.response.has_focus(),
                 hovered = output.response.hovered(),
                 dragging = ui.is_being_dragged(body_id),
@@ -4037,6 +4043,473 @@ mod tests {
         harness.get_by_label("Save");
         harness.get_by_label("Refresh");
         harness.get_by_label("Auto-save");
+    }
+
+    #[test]
+    fn editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch() {
+        let directory = TemporaryDirectory::new("batched-drag");
+        for (text, translation) in [
+            ("alpha beta gamma\n", egui::Vec2::ZERO),
+            ("alpha b\u{e9}ta \u{1f30d} gamma\n", egui::vec2(24.0, 32.0)),
+        ] {
+            let path = directory.file("history.txt", text);
+            for (label, start_index, end_index, shift, batching) in
+                [false, true].into_iter().flat_map(|label| {
+                    [(1, 8, false), (8, 1, false), (1, 8, true)]
+                        .into_iter()
+                        .flat_map(move |(start, end, shift)| {
+                            (0..=2).map(move |batching| (label, start, end, shift, batching))
+                        })
+                })
+            {
+                let (documents, mut editor) = editor_for(&path);
+                let context = egui::Context::default();
+                context.set_visuals(theme::default_visuals());
+                context.set_transform_layer(
+                    egui::LayerId::background(),
+                    egui::emath::TSTransform::from_translation(translation),
+                );
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut render = |input| {
+                    let mut output = context.run_ui(input, |ui| {
+                        if label {
+                            ui.add(egui::Label::new(text).selectable(true));
+                        } else {
+                            editor.show_text(ui, &documents);
+                        }
+                    });
+                    output.textures_delta.clear();
+                    output
+                };
+                let mut output = egui::FullOutput::default();
+                for _ in 0..2 {
+                    output = render(input.clone());
+                }
+                let body = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(body) if body.galley.text() == text => Some(body),
+                        _ => None,
+                    })
+                    .expect("the real editor body was painted");
+                let point = |index| {
+                    body.galley
+                        .pos_from_cursor(egui::text::CCursor::new(index))
+                        .center()
+                        + body.pos.to_vec2()
+                };
+                let start = point(start_index);
+                let end = point(end_index);
+                let anchor = point(12);
+                if shift {
+                    for pressed in [true, false] {
+                        let mut initial = input.clone();
+                        initial.events = vec![
+                            egui::Event::PointerMoved(anchor),
+                            egui::Event::PointerButton {
+                                pos: anchor,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ];
+                        let _ = render(initial);
+                    }
+                }
+                let modifiers = egui::Modifiers {
+                    shift,
+                    ..egui::Modifiers::NONE
+                };
+                let mut press = input.clone();
+                press.events = vec![
+                    egui::Event::ModifiersChanged(modifiers),
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton {
+                        pos: start,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers,
+                    },
+                ];
+                if batching > 0 {
+                    press.events.push(egui::Event::PointerMoved(end));
+                }
+                if batching == 2 {
+                    press.events.push(egui::Event::PointerButton {
+                        pos: end,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers,
+                    });
+                }
+                let _ = render(press);
+                if batching == 0 {
+                    let mut movement = input.clone();
+                    movement.events.push(egui::Event::PointerMoved(end));
+                    let _ = render(movement);
+                }
+                let mut release = input.clone();
+                release.events.push(egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers,
+                });
+                if batching < 2 {
+                    let _ = render(release);
+                }
+                let expected_anchor = if shift { 12 } else { start_index };
+                let case = format!(
+                    "label={label}, shift={shift}, batching={batching}, direction={start_index}->{end_index}"
+                );
+                if label {
+                    let mut copy = input.clone();
+                    copy.events.push(egui::Event::Copy);
+                    let output = render(copy);
+                    let copied = output.platform_output.commands.iter().find_map(|command| {
+                        if let egui::OutputCommand::CopyText(text) = command {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    });
+                    let expected = text
+                        .chars()
+                        .skip(expected_anchor.min(end_index))
+                        .take(expected_anchor.abs_diff(end_index))
+                        .collect::<String>();
+                    assert_eq!(copied, Some(expected.as_str()), "{case}");
+                } else {
+                    let state = egui::text_edit::TextEditState::load(&context, editor.body_id())
+                        .expect("the real editor retains widget state");
+                    let selection = state
+                        .cursor
+                        .char_range()
+                        .unwrap_or_else(|| panic!("real editor has no cursor: {case}"));
+                    assert_eq!(
+                        (selection.secondary.index.0, selection.primary.index.0),
+                        (expected_anchor, end_index),
+                        "{case}",
+                    );
+                }
+                assert_eq!(editor.buffer, text);
+                assert_eq!(
+                    documents
+                        .borrow()
+                        .get(editor.document())
+                        .unwrap()
+                        .text()
+                        .text(),
+                    text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn batched_text_selection_respects_disabled_clipped_and_modal_ownership() {
+        let text = "alpha beta gamma\n";
+        let directory = TemporaryDirectory::new("batched-drag-ownership");
+        let path = directory.file("history.txt", text);
+        for label in [false, true] {
+            for restriction in ["disabled", "clipped", "modal", "overlap"] {
+                let (documents, mut editor) = editor_for(&path);
+                let context = egui::Context::default();
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut clip = None;
+                let mut render = |input, clip: Option<egui::Rect>| {
+                    let mut output = context.run_ui(input, |ui| {
+                        if let Some(clip) = clip {
+                            ui.set_clip_rect(clip);
+                        }
+                        ui.add_enabled_ui(restriction != "disabled", |ui| {
+                            if label {
+                                ui.add(egui::Label::new(text).selectable(true));
+                            } else {
+                                editor.show_text(ui, &documents);
+                            }
+                        });
+                        if restriction == "overlap" {
+                            ui.interact(
+                                ui.max_rect(),
+                                egui::Id::new("overlapping-control"),
+                                egui::Sense::click_and_drag(),
+                            );
+                        }
+                        if restriction == "modal" {
+                            egui::Modal::new(egui::Id::new("owned-modal")).show(ui.ctx(), |ui| {
+                                ui.label("Owned modal");
+                            });
+                        }
+                    });
+                    output.textures_delta.clear();
+                    output
+                };
+                let _ = render(input.clone(), clip);
+                let output = render(input.clone(), clip);
+                let body = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(body) if body.galley.text() == text => Some(body),
+                        _ => None,
+                    })
+                    .expect("the restricted body is painted");
+                let point = |index| {
+                    body.pos
+                        + body
+                            .galley
+                            .pos_from_cursor(egui::text::CCursor::new(index))
+                            .center()
+                            .to_vec2()
+                };
+                let start = point(1);
+                let end = point(8);
+                if restriction == "clipped" {
+                    clip = Some(egui::Rect::from_min_max(
+                        egui::pos2(point(4).x, 0.0),
+                        egui::pos2(640.0, 360.0),
+                    ));
+                    let _ = render(input.clone(), clip);
+                }
+                let mut batch = input.clone();
+                batch.events = vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton {
+                        pos: start,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerMoved(end),
+                    egui::Event::PointerButton {
+                        pos: end,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ];
+                let _ = render(batch, clip);
+                let mut copy = input.clone();
+                copy.events.push(egui::Event::Copy);
+                let output = render(copy, clip);
+                assert!(
+                    !output
+                        .platform_output
+                        .commands
+                        .iter()
+                        .any(|command| matches!(command, egui::OutputCommand::CopyText(_))),
+                    "a {restriction} body must not accept selection: label={label}"
+                );
+                assert_eq!(editor.buffer, text);
+            }
+        }
+    }
+
+    #[test]
+    fn batched_independent_clicks_keep_only_the_latest_caret() {
+        let text = "alpha beta gamma delta epsilon zeta eta theta\n";
+        let directory = TemporaryDirectory::new("batched-independent-clicks");
+        let path = directory.file("history.txt", text);
+        for label in [false, true] {
+            let (documents, mut editor) = editor_for(&path);
+            let context = egui::Context::default();
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 360.0),
+                )),
+                ..Default::default()
+            };
+            let mut render = |input| {
+                let mut output = context.run_ui(input, |ui| {
+                    if label {
+                        ui.add(egui::Label::new(text).selectable(true));
+                    } else {
+                        editor.show_text(ui, &documents);
+                    }
+                });
+                output.textures_delta.clear();
+                output
+            };
+            let _ = render(input.clone());
+            let output = render(input.clone());
+            let body = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(body) if body.galley.text() == text => Some(body),
+                    _ => None,
+                })
+                .expect("the actual text body is painted");
+            let mut batch = input.clone();
+            for index in [1, 40] {
+                let pos = body.pos
+                    + body
+                        .galley
+                        .pos_from_cursor(egui::text::CCursor::new(index))
+                        .center()
+                        .to_vec2();
+                batch.events.push(egui::Event::PointerMoved(pos));
+                for pressed in [true, false] {
+                    batch.events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+            let _ = render(batch);
+            if label {
+                let mut copy = input.clone();
+                copy.events.push(egui::Event::Copy);
+                let output = render(copy);
+                let copied = output.platform_output.commands.iter().find_map(|command| {
+                    if let egui::OutputCommand::CopyText(text) = command {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                });
+                assert_eq!(
+                    copied,
+                    Some(text),
+                    "a collapsed label cursor retains ordinary whole-label Copy"
+                );
+            } else {
+                let state = egui::text_edit::TextEditState::load(&context, editor.body_id())
+                    .expect("the actual editor retains its cursor");
+                let range = state.cursor.char_range().unwrap();
+                assert_eq!(
+                    (range.secondary.index.0, range.primary.index.0),
+                    (40, 40),
+                    "independent clicks must collapse at the last click"
+                );
+            }
+            assert_eq!(editor.buffer, text);
+        }
+    }
+
+    #[test]
+    fn markdown_preview_and_split_keep_batched_selection_and_copy_exact() {
+        let directory = TemporaryDirectory::new("markdown-batched-drag");
+        let source = "# Title\n\nalpha beta gamma\n\nbravo delta omega\n\n\
+                      | First | Second |\n| --- | --- |\n\
+                      | delta zeta theta | rho sigma tau |\n";
+        let path = directory.file("selection.md", source);
+        for mode in [EditorMode::Preview, EditorMode::Split] {
+            for (target, other) in [
+                ("alpha beta gamma", None),
+                ("delta zeta theta", None),
+                ("alpha beta gamma", Some("bravo delta omega")),
+            ] {
+                for reverse in [false, true] {
+                    for batching in 0..=if other.is_some() { 0 } else { 2 } {
+                        let (documents, mut editor) = editor_for(&path);
+                        let context = egui::Context::default();
+                        context.set_visuals(theme::default_visuals());
+                        let input = egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(960.0, 640.0),
+                            )),
+                            ..Default::default()
+                        };
+                        let mut render = |input| {
+                            let mut output = context.run_ui(input, |ui| {
+                                editor.show_panes(ui, &documents, mode, 600.0);
+                            });
+                            output.textures_delta.clear();
+                            output
+                        };
+                        let _ = render(input.clone());
+                        let output = render(input.clone());
+                        let point = |text, index| {
+                            let body = output
+                                .shapes
+                                .iter()
+                                .find_map(|shape| match &shape.shape {
+                                    egui::Shape::Text(body) if body.galley.text() == text => {
+                                        Some(body)
+                                    }
+                                    _ => None,
+                                })
+                                .expect("the actual Markdown block is painted");
+                            body.pos
+                                + body
+                                    .galley
+                                    .pos_from_cursor(egui::text::CCursor::new(index))
+                                    .center()
+                                    .to_vec2()
+                        };
+                        let start = point(target, 1);
+                        let end = point(other.unwrap_or(target), 8);
+                        let (start, end) = if reverse { (end, start) } else { (start, end) };
+                        let button = |pos, pressed| egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        };
+                        let mut press = input.clone();
+                        press.events = vec![egui::Event::PointerMoved(start), button(start, true)];
+                        if batching > 0 {
+                            press.events.push(egui::Event::PointerMoved(end));
+                        }
+                        if batching == 2 {
+                            press.events.push(button(end, false));
+                        }
+                        let _ = render(press);
+                        if batching == 0 {
+                            let mut movement = input.clone();
+                            movement.events.push(egui::Event::PointerMoved(end));
+                            let _ = render(movement);
+                        }
+                        if batching < 2 {
+                            let mut release = input.clone();
+                            release.events.push(button(end, false));
+                            let _ = render(release);
+                        }
+                        let _ = render(input.clone());
+                        let mut copy = input.clone();
+                        copy.events.push(egui::Event::Copy);
+                        let output = render(copy);
+                        let copied = output.platform_output.commands.iter().find_map(|command| {
+                            if let egui::OutputCommand::CopyText(text) = command {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        });
+                        let expected = if let Some(other) = other {
+                            format!("{}\n\n{}", &target[1..], &other[..8])
+                        } else {
+                            target[1..8].to_owned()
+                        };
+                        assert_eq!(
+                            copied,
+                            Some(expected.as_str()),
+                            "mode={mode:?}, target={target}, reverse={reverse}, batching={batching}"
+                        );
+                        assert_eq!(editor.buffer, source);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

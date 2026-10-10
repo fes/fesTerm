@@ -3,6 +3,58 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Preserving selection ownership and separate clicks during batching
+
+Independent review reproduced two regressions in the batched-selection patch:
+a selectable label could accept the press intended for an overlapping control,
+and two separate clicks in one frame could select the text between them.
+Label admission now requires hover or actual interaction ownership, and the
+current anchor comes from the latest delivered press. The new deterministic
+cases failed before these repairs and pass afterward; the original Unicode,
+transformed-layer, Markdown and modal-selection controls remain required.
+This is selection correctness, not acceptance of the broader WARP freeze or
+native clipboard and sustained-drag gates.
+
+## Preserving text-selection anchors when native events share a frame
+
+The next iteration reproduced an exact selection defect without a renderer:
+a press and movement in separate frames selected characters 1 through 8, but
+the same delivered events in one frame collapsed both endpoints to character
+8. Slow rendering increases batching opportunities, but WARP is not required
+for the defect. With the owner's approval, the checksum-pinned egui 0.36.1
+source is vendored alongside the existing renderer/window adapters. Shared
+text selection now derives its anchor from the delivered press and its endpoint
+from the current pointer, with widget clipping, transforms and interaction
+ownership preserved. No OS cursor substitution, input replay or polling is
+introduced.
+
+Seventy deterministic cases cover real editor/selectable-label forward,
+reverse and Shift drags; Unicode and translated geometry; disabled, clipped
+and modal-covered text; actual Markdown Preview/Split prose and table cells;
+retained selection and exact semantic Copy; and ordinary cross-paragraph
+selection. The original public selection API remains available, and all 48
+upstream library tests pass. Complete cross-widget press/move/release batching
+still has an upstream generic hit-test limitation and is not qualified here.
+Semantic Copy is not OS clipboard acceptance, and this repair is not a claim
+that the broader near-idle WARP freeze is solved.
+
+The opt-in, content-free attribution now separates raw input batches, app
+logic, UI construction, host configuration and surface acquisition. UI/input
+frame N correlates with paint `completed_frames=N+1`, because egui increments
+the counter at the end of its UI run. Paint begin/end records expose gaps
+outside the app's short UI timer without introducing GPU waits or changing
+present policy. Native follow-up remains separate from these deterministic
+selection results.
+
+The optimized follow-up was built and frozen, but fresh native interaction
+could not begin: Windows rejected the harness's owned cursor-focus step and
+then its separate owned-window activation attempt. Both attempts stopped
+before the interaction sequence and left no owned process running. They are
+environment/readiness failures, not before/after responsiveness, selection,
+clipboard or Save As evidence. Earlier inspected native evidence remains
+separate; the reported near-idle freeze and post-repair native qualification
+are still open.
+
 ## Extending the guarded WARP painter to editor bodies and owned sheets
 
 The outer editor-frame candidate did not make the reported interaction usable.

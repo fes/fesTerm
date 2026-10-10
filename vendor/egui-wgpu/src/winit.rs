@@ -512,6 +512,13 @@ impl Painter {
         let timing = (viewport_id == ViewportId::ROOT
             && log::log_enabled!(target: "egui_wgpu::frame_timing", log::Level::Debug))
         .then(web_time::Instant::now);
+        if timing.is_some() {
+            log::debug!(
+                target: "egui_wgpu::frame_timing",
+                "root_paint_begin completed_frames={}",
+                self.context.cumulative_frame_nr_for(viewport_id),
+            );
+        }
 
         /// Guard to ensure that commands are always submitted to the renderer queue
         /// so that calls to [`write_buffer()`](https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#method.write_buffer)
@@ -582,6 +589,17 @@ impl Painter {
             self.retained_ui.clear();
             return vsync_sec;
         };
+        if timing.is_some() {
+            log::debug!(
+                target: "egui_wgpu::frame_timing",
+                "root_surface present_mode={:?} desired_frame_latency={:?} reconfigure={} width={} height={}",
+                self.config.surface.present_mode,
+                self.config.surface.desired_maximum_frame_latency,
+                surface_state.needs_reconfigure,
+                surface_state.width,
+                surface_state.height,
+            );
+        }
 
         let mut encoder =
             render_state
@@ -635,6 +653,7 @@ impl Painter {
             surface_state.needs_reconfigure = false;
         }
 
+        let configure_done = timing.map(|start| start.elapsed().as_secs_f64());
         let output_frame = {
             profiling::scope!("get_current_texture");
             // This is what vsync-waiting happens on my Mac.
@@ -651,6 +670,14 @@ impl Painter {
                 frame
             }
             other => {
+                if let Some(start) = timing {
+                    log::debug!(
+                        target: "egui_wgpu::frame_timing",
+                        "root_paint_unavailable status={:?} elapsed_ms={:.3}",
+                        other,
+                        start.elapsed().as_secs_f64() * 1000.0,
+                    );
+                }
                 self.retained_ui.clear();
                 match (*self.config.on_surface_status)(&other) {
                     SurfaceErrorAction::Reconfigure => {
@@ -859,6 +886,7 @@ impl Painter {
         if let (
             Some(start),
             Some(upload),
+            Some(configure),
             Some(acquire),
             Some(encode),
             Some(submit),
@@ -866,6 +894,7 @@ impl Painter {
         ) = (
             timing,
             upload_done,
+            configure_done,
             acquire_done,
             encode_done,
             submit_done,
@@ -874,10 +903,12 @@ impl Painter {
             let total = start.elapsed().as_secs_f64();
             log::debug!(
                 target: "egui_wgpu::frame_timing",
-                "root_paint primitives={} upload_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
+                "root_paint completed_frames={} primitives={} upload_ms={:.3} configure_ms={:.3} acquire_ms={:.3} encode_ms={:.3} submit_ms={:.3} release_ms={:.3} present_ms={:.3} total_ms={:.3}",
+                self.context.cumulative_frame_nr_for(viewport_id),
                 clipped_primitives.len(),
                 upload * 1000.0,
-                (acquire - upload) * 1000.0,
+                (configure - upload) * 1000.0,
+                (acquire - configure) * 1000.0,
                 (encode - acquire) * 1000.0,
                 (submit - encode) * 1000.0,
                 (release - submit) * 1000.0,

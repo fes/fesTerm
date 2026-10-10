@@ -32,6 +32,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - run: rustfmt --check --edition 2024 vendor/egui/src/text_selection/text_cursor_state.rs vendor/egui/src/text_selection/label_text_selection.rs vendor/egui/src/widgets/text_edit/builder.rs
       - run: cargo fmt --manifest-path vendor/egui-wgpu/Cargo.toml -- --check
       - run: cargo fmt --manifest-path vendor/epaint/Cargo.toml -- --check
       - run: rustfmt --check --edition 2021 vendor/russh-sftp/src/client/session.rs
@@ -110,6 +111,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Check the excluded vendored text-selection library
+        run: cargo test -p egui --lib
       - name: Check native Windows extended-attribute probing
         if: matrix.os == 'windows-latest'
         run: cargo test -p festerm-windows-security ordinary_temp_file_has_no_extended_attributes -- --nocapture

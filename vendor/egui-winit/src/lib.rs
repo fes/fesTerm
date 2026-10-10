@@ -977,6 +977,13 @@ impl State {
             };
             let phase = to_egui_touch_phase(phase);
             let modifiers = self.modifiers;
+            log::debug!(
+                target: "egui_winit::pointer_input",
+                "adapted_pointer_wheel unit={:?} x={} y={}",
+                unit,
+                delta.x,
+                delta.y,
+            );
             self.egui_input.events.push(egui::Event::MouseWheel {
                 unit,
                 delta,

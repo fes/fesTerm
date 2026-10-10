@@ -478,6 +478,17 @@ history workflow, Save As open/readiness/navigation, Cancel and Escape, and
 usable editor input afterward. A forced process disposal is a failed recovery,
 never successful dialog dismissal.
 
+The checksum-pinned shared egui selection repair adds automated exact
+anchor/endpoint and semantic Copy evidence for EDIT-09 and MD-04: 70 cases
+cover separate/combined within-widget events, forward/reverse/Shift drags,
+Unicode/translation, disabled/clipped/modal ownership, real Preview/Split
+prose/table cells and ordinary cross-paragraph selection. Native drag delivery,
+OS clipboard routing and complete cross-widget batching remain manual/open;
+the deterministic evidence does not qualify near-idle WARP responsiveness.
+The fresh optimized post-repair probe is blocked at native foreground/cursor
+readiness on the current desktop; neither attempted setup reached interaction.
+No new Save As dismissal or native selection acceptance is claimed.
+
 An optimized native WARP probe now also exercises the actual history-export
 command from an owned 200-row PTY child (10,600 bytes, plus a final empty line).
 With ordinary-coalesced native movement packets, semantically inspected
