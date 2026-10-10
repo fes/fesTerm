@@ -135,7 +135,7 @@ impl TextCursorState {
 pub(crate) fn pressed_pointer_pos(ui: &Ui) -> Option<Pos2> {
     // The final pointer state can already have moved or released in this pass.
     ui.input(|input| {
-        input.raw.events.iter().find_map(|event| match event {
+        input.raw.events.iter().rev().find_map(|event| match event {
             Event::PointerButton {
                 pos, pressed: true, ..
             } => Some(*pos),

@@ -1579,6 +1579,7 @@
         "editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback",
         "editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch",
         "batched_text_selection_respects_disabled_clipped_and_modal_ownership",
+        "batched_independent_clicks_keep_only_the_latest_caret",
         "markdown_preview_and_split_keep_batched_selection_and_copy_exact",
         "editor_root_panels_preserve_real_200_line_text_pixels_and_opacity_fallback",
         "root_panel_conversion_leaves_small_cells_ordinary_and_bounds_callbacks",

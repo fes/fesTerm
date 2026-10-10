@@ -551,7 +551,7 @@ impl ViewportLabelSelectionState {
         let cursor_at_press = super::text_cursor_state::pressed_pointer_pos(ui)
             .filter(|_| {
                 response.enabled()
-                    && (response.contains_pointer()
+                    && (response.hovered()
                         || response.is_pointer_button_down_on()
                         || response.clicked()
                         || response.drag_stopped())

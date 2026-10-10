@@ -4219,7 +4219,7 @@ mod tests {
         let directory = TemporaryDirectory::new("batched-drag-ownership");
         let path = directory.file("history.txt", text);
         for label in [false, true] {
-            for restriction in ["disabled", "clipped", "modal"] {
+            for restriction in ["disabled", "clipped", "modal", "overlap"] {
                 let (documents, mut editor) = editor_for(&path);
                 let context = egui::Context::default();
                 let input = egui::RawInput {
@@ -4242,6 +4242,13 @@ mod tests {
                                 editor.show_text(ui, &documents);
                             }
                         });
+                        if restriction == "overlap" {
+                            ui.interact(
+                                ui.max_rect(),
+                                egui::Id::new("overlapping-control"),
+                                egui::Sense::click_and_drag(),
+                            );
+                        }
                         if restriction == "modal" {
                             egui::Modal::new(egui::Id::new("owned-modal")).show(ui.ctx(), |ui| {
                                 ui.label("Owned modal");
@@ -4309,6 +4316,91 @@ mod tests {
                 );
                 assert_eq!(editor.buffer, text);
             }
+        }
+    }
+
+    #[test]
+    fn batched_independent_clicks_keep_only_the_latest_caret() {
+        let text = "alpha beta gamma delta epsilon zeta eta theta\n";
+        let directory = TemporaryDirectory::new("batched-independent-clicks");
+        let path = directory.file("history.txt", text);
+        for label in [false, true] {
+            let (documents, mut editor) = editor_for(&path);
+            let context = egui::Context::default();
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 360.0),
+                )),
+                ..Default::default()
+            };
+            let mut render = |input| {
+                let mut output = context.run_ui(input, |ui| {
+                    if label {
+                        ui.add(egui::Label::new(text).selectable(true));
+                    } else {
+                        editor.show_text(ui, &documents);
+                    }
+                });
+                output.textures_delta.clear();
+                output
+            };
+            let _ = render(input.clone());
+            let output = render(input.clone());
+            let body = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(body) if body.galley.text() == text => Some(body),
+                    _ => None,
+                })
+                .expect("the actual text body is painted");
+            let mut batch = input.clone();
+            for index in [1, 40] {
+                let pos = body.pos
+                    + body
+                        .galley
+                        .pos_from_cursor(egui::text::CCursor::new(index))
+                        .center()
+                        .to_vec2();
+                batch.events.push(egui::Event::PointerMoved(pos));
+                for pressed in [true, false] {
+                    batch.events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+            let _ = render(batch);
+            if label {
+                let mut copy = input.clone();
+                copy.events.push(egui::Event::Copy);
+                let output = render(copy);
+                let copied = output.platform_output.commands.iter().find_map(|command| {
+                    if let egui::OutputCommand::CopyText(text) = command {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                });
+                assert_eq!(
+                    copied,
+                    Some(text),
+                    "a collapsed label cursor retains ordinary whole-label Copy"
+                );
+            } else {
+                let state = egui::text_edit::TextEditState::load(&context, editor.body_id())
+                    .expect("the actual editor retains its cursor");
+                let range = state.cursor.char_range().unwrap();
+                assert_eq!(
+                    (range.secondary.index.0, range.primary.index.0),
+                    (40, 40),
+                    "independent clicks must collapse at the last click"
+                );
+            }
+            assert_eq!(editor.buffer, text);
         }
     }
 

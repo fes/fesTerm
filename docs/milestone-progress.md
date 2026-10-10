@@ -3,6 +3,18 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Preserving selection ownership and separate clicks during batching
+
+Independent review reproduced two regressions in the batched-selection patch:
+a selectable label could accept the press intended for an overlapping control,
+and two separate clicks in one frame could select the text between them.
+Label admission now requires hover or actual interaction ownership, and the
+current anchor comes from the latest delivered press. The new deterministic
+cases failed before these repairs and pass afterward; the original Unicode,
+transformed-layer, Markdown and modal-selection controls remain required.
+This is selection correctness, not acceptance of the broader WARP freeze or
+native clipboard and sustained-drag gates.
+
 ## Preserving text-selection anchors when native events share a frame
 
 The next iteration reproduced an exact selection defect without a renderer:

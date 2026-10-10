@@ -13,6 +13,10 @@ already-delivered press event, transformed into the widget's own coordinates,
 instead of the final pointer position of a pass that also contains movement.
 The endpoint remains the current pointer cursor. The original public
 `TextCursorState::pointer_interaction` signature remains available.
+The latest delivered press anchors the current interaction, so independent
+clicks in one batch do not select intervening text. Label press admission
+requires hover or actual interaction ownership, not geometric containment
+beneath an overlapping control.
 
 There is no input injection, replay, cursor polling, OS-coordinate substitution,
 extra event storage, repaint request or rendering synchronization. The fix
@@ -23,7 +27,8 @@ and semantic Copy remain ordinary egui behavior.
 Deterministic application regressions cover forward/reverse/Shift selection,
 Unicode and translated layers, separate and combined within-widget batches,
 disabled/clipped/modal ownership, actual Markdown Preview/Split prose and
-table cells, and ordinary cross-paragraph Copy. The label clipping rectangle
+table cells, same-layer overlapping controls, independent batched clicks, and
+ordinary cross-paragraph Copy. The label clipping rectangle
 is transformed into the same global coordinates as its galley. Complete
 cross-widget press/move/release batching is not qualified by this patch;
 egui's generic interaction admission still uses the final hit-test position.

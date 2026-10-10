@@ -805,6 +805,8 @@ relaxed to obtain a performance result.
 
 For `EDIT-09` and `MD-04`, shared text-selection regressions distinguish the
 press-event anchor from the current endpoint when movement shares a UI frame.
+Separate clicks in one batch collapse at the latest press; overlapping controls
+retain input ownership instead of starting selection in a label beneath them.
 The real editor and Preview/Split prose/table cells retain exact selection and
 semantic Copy without mutating bytes; disabled, clipped and modal-covered
 widgets do not acquire that selection. Unicode, transformed coordinates,
