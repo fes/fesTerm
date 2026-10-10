@@ -12,7 +12,7 @@ pub(crate) fn install_from_environment(
                 false
             }
         },
-        Err(std::env::VarError::NotPresent) => false,
+        Err(std::env::VarError::NotPresent) => true,
         Err(std::env::VarError::NotUnicode(_)) => {
             tracing::warn!(target: "festerm::rendering",
                 "FESTERM_WARP_RETAIN_DOCUMENT_FRAMES expects 0 or 1");
@@ -41,7 +41,7 @@ pub(crate) fn install_from_environment(
             state.renderer.write().retained_frame_enabled = document_retention;
             if document_retention {
                 tracing::info!(target: "festerm::rendering",
-                    "experimental complete document-frame retention enabled; ineligible frames retain ordinary composition");
+                    "complete document-frame retention enabled; ineligible frames retain ordinary composition; FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0 disables it");
             }
             if retained {
                 tracing::info!(target: "festerm::rendering",
@@ -58,8 +58,8 @@ pub(crate) fn install_from_environment(
 
 fn document_retention_requested(value: Option<&str>) -> Result<bool, &'static str> {
     match value {
-        None | Some("") | Some("0") => Ok(false),
-        Some("1") => Ok(true),
+        None | Some("") | Some("1") => Ok(true),
+        Some("0") => Ok(false),
         Some(_) => Err("FESTERM_WARP_RETAIN_DOCUMENT_FRAMES expects 0 or 1"),
     }
 }
@@ -574,11 +574,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn document_retention_requires_explicit_opt_in_and_supported_route() {
-        for value in [None, Some(""), Some("0")] {
-            assert_eq!(document_retention_requested(value), Ok(false));
+    fn document_retention_defaults_on_only_for_supported_route() {
+        for value in [None, Some(""), Some("1")] {
+            assert_eq!(document_retention_requested(value), Ok(true));
         }
-        assert_eq!(document_retention_requested(Some("1")), Ok(true));
+        assert_eq!(document_retention_requested(Some("0")), Ok(false));
         for value in ["true", "2", "-1", " 1", "1\n"] {
             assert!(document_retention_requested(Some(value)).is_err());
         }
@@ -603,6 +603,16 @@ mod tests {
                                 && backend == wgpu::Backend::Dx12
                                 && format == wgpu::TextureFormat::Bgra8Unorm
                         );
+                        for value in [None, Some(""), Some("0"), Some("1")] {
+                            assert_eq!(
+                                document_retention_requested(value).unwrap() && route.host_copy,
+                                value != Some("0")
+                                    && windows_x64
+                                    && device == wgpu::DeviceType::Cpu
+                                    && backend == wgpu::Backend::Dx12
+                                    && format == wgpu::TextureFormat::Bgra8Unorm,
+                            );
+                        }
                     }
                 }
             }

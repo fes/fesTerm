@@ -31,7 +31,7 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ### ADR 0046 document-frame experiment (CP-18)
 
-The default-off WARP document-frame prototype adds an automated exact-pixel
+The WARP document-frame implementation adds an automated exact-pixel
 oracle for actual 200-line Edit, Markdown Preview and Split at 100%, 125% and
 200%, with screenshot equivalence, exact input/resource invalidation, unsafe
 target/callback fallback, bounded signatures, and queued-image immutability.
@@ -45,7 +45,7 @@ CPU, elapsed time, GUI/host paint count, actual complete-frame hit/rebuild
 counters, normal cleanup and adverse/rejected observations. Exercise Edit,
 Preview/Split, scrolling, selection, focused caret/typing, Save As recovery,
 resize/focus, and unknown/mutable callback fallback. This is experimental
-CP-18 evidence, not an accepted rollout; hardware, multi-window, device-loss,
+CP-18 evidence, not general acceptance; hardware, multi-window, device-loss,
 OS clipboard, sustained drag and physical-latency qualification remain pending.
 
 #### Windows WARP bounded execution, 2026-10-10
@@ -104,9 +104,63 @@ Fresh interaction cases used the same frozen source:
 Changing frames remain expensive, and capture-inclusive observations do not
 qualify input-to-display latency. No indefinite near-zero-CPU freeze was
 reproduced. Retain **Manual pending / Usability pending** for the broader
-matrix, including resize/focus, native mutable-callback/device recovery,
-hardware/multi-window, OS clipboard and sustained pointer dragging. The gate
-remains off and ADR 0046 remains Proposed.
+matrix, including native mutable-callback/device recovery, hardware/multi-window,
+OS clipboard and sustained pointer dragging. ADR 0046 remains Proposed.
+
+#### Supported-route rollout regression qualification
+
+The owner requested regression checks followed by default enablement. Native
+controls used the same frozen executable/adapter/viewport as above. Active
+ABBA cases had sixteen ordinary inputs at 750-ms cadence and a four-second
+drain. No captures, WM_NULL checks or builds/tests occurred inside that CPU
+interval. Every case exited normally; disk fixture bytes were unchanged.
+Typing controls settled editor focus before CtrlHome and their captures
+confirmed restored text. All sixteen wheels reached the native input adapter.
+
+| Cases (off/on/on/off) | Workload | Mean CPU seconds, off / on | Change |
+| --- | --- | --- | --- |
+| 81/82/83/84 | 200-line Edit, typing/undo | 126.758 / 64.289 | -49.3% |
+| 73/74/75/76 | Eight-section Preview, scroll | 121.227 / 95.719 | -21.0% |
+
+These approximately 16-second intervals include drain/repaints. The active
+12-second portions also used less CPU (95.352 / 54.852 seconds for Edit,
+117.234 / 95.531 for Preview). Cases 69-72 are excluded because initial
+CtrlHome preceded focus in case 69; they are not a matched starting-caret
+control. No physical display-latency or maximum-rate typing claim is made.
+
+Cases 77/78 (Edit off/on) and 80/79 (Preview off/on) each completed eight
+resize/minimize/restore/scroll observations and normal shutdown. The client
+resized from 1504 x 1032 to 1344 x 912 and back at 200% scale. All sixteen
+paired document-content/status captures below physical y=250 matched exactly;
+the path-bearing header/toolbar was excluded, not claimed identical.
+This qualifies the bounded single-window resize/focus/restore control, not
+mixed-DPI, device-loss or multi-window behavior.
+
+The repository-owned optional
+`profile_document_retention_changing_frames` control compares completed WARP
+draws of actual Edit, Preview and Split meshes at 200% scale. It alternates
+clear color to force every signature to miss, uses 32 measured frames per
+ABBA case, preserves pixel equivalence and checks a 10% mean CPU and
+completed-render regression ceiling. Setup, readback and fresh output ownership
+are outside measurement. This removes idle-hit savings from the overhead
+control; it does not simulate asynchronous native presentation.
+
+Run it with `FESTERM_RUN_OPTIONAL_VALIDATION=1` and a fresh absolute
+`FESTERM_DOCUMENT_RETENTION_PROFILE_OUT`:
+`cargo test --release -p festerm --bin festerm profile_document_retention_changing_frames -- --ignored --nocapture --test-threads=1`.
+The same explicit gate is aggregated by `scripts\run-optional-validation.ps1`
+when `FESTERM_RUN_DOCUMENT_RETENTION_PROFILE=1`. The release control passed
+for all three fixtures; paired mean CPU/completed-render ratios were
+0.9962 / 1.0089 for Edit, 0.9255 / 0.9673 for Preview and 1.0065 / 1.0250
+for Split. These small all-miss differences are bounded-regression evidence,
+not improvement claims. This is opt-in measured qualification, not a mandatory CI timing
+budget or new hardware-wide performance claim.
+
+The application now defaults retention on only for the qualified Windows x64
+DX12 CPU/BGRA route after native installation. `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0`
+opts out; unsupported routes and invalid values retain conservative fallback.
+User authorization does not substitute for independent architectural review
+or accept the remaining **Manual pending / Usability pending** matrix.
 
 ## Evidence record
 

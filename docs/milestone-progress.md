@@ -56,8 +56,24 @@ remain expensive, physical latency is not qualified, and the original freeze
 was still not reproduced. The bounded native record and remaining gates are
 in [`CP-18`](manual-validation.md#adr-0046-document-frame-experiment-cp-18).
 The cumulative security review found no actionable vulnerabilities.
-Architectural review and broader native/usability evidence remain required;
-the gate stays off by default and the ADR remains Proposed.
+Architectural review and broader native/usability evidence remained required;
+that initial qualification left the gate off and the ADR Proposed.
+
+The owner then requested regression qualification followed by enablement.
+Balanced ordinary typing/undo and Preview-scroll controls, without screenshots
+inside CPU measurement, reduced mean process CPU by 49.3% and 21.0%. A
+focus-readiness mismatch was excluded and rerun rather than pooled. Native
+resize/minimize/restore controls completed normally, and sixteen paired
+document-content/status captures matched the off control exactly. A new
+repository-owned optional completed-WARP control forces every real
+Edit/Preview/Split frame to miss and checks both pixel parity and a 10% mean
+CPU/completed-render regression ceiling, so idle reuse cannot mask copy/allocation
+overhead. That bounded control passed. The application therefore defaults
+retention on for the already-qualified Windows x64 DX12 CPU/BGRA route, with
+`FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` as an explicit escape hatch. Hardware
+paths and generic vendor defaults are unchanged. The ADR remains Proposed
+pending independent architectural review; neither rollout nor CPU improvement
+claims a fix for the original freeze or physical display-latency acceptance.
 
 ## Preserving text-selection anchors when native events share a frame
 

@@ -1577,7 +1577,7 @@
         "ADR-0046"
       ],
       "automated_tests": [
-        "document_retention_requires_explicit_opt_in_and_supported_route",
+        "document_retention_defaults_on_only_for_supported_route",
         "retained_document_frames_preserve_editor_preview_and_split_pixels",
         "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
         "retained_document_frames_decline_targets_callbacks_and_budgets",
@@ -2687,7 +2687,7 @@
         "ADR-0046"
       ],
       "automated_tests": [
-        "document_retention_requires_explicit_opt_in_and_supported_route",
+        "document_retention_defaults_on_only_for_supported_route",
         "retained_document_frames_preserve_editor_preview_and_split_pixels",
         "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
         "retained_document_frames_decline_targets_callbacks_and_budgets",

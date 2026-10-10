@@ -73,13 +73,68 @@ fn fixture() -> (
     )
 }
 
+fn document_frames(
+    state: &egui_wgpu::RenderState,
+    uploader: &mut WgpuTestRenderer,
+    path: &std::path::Path,
+    mode: crate::text_editor::EditorMode,
+    scales: &[f32],
+    mut observe: impl FnMut(&egui_wgpu::ScreenDescriptor, &[ClippedPrimitive]),
+) {
+    use crate::{documents::DocumentRegistry, tabs::TabId, text_editor::TextEditorTab};
+    let documents = DocumentRegistry::shared();
+    let document = documents.borrow_mut().open_local(path).unwrap();
+    let mut editor = TextEditorTab::new(document, &documents);
+    editor.set_mode_for_gallery(mode);
+    let tab = TabId::next_for_test();
+    let context = egui::Context::default();
+    context.set_theme(egui::ThemePreference::Dark);
+    context.set_visuals(festerm_ui_egui::theme::default_visuals());
+    context.all_styles_mut(|style| style.animation_time = 0.0);
+    crate::software_background::install(&context, state);
+    for &scale in scales {
+        let mut jobs = Vec::new();
+        for _ in 0..8 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 400.0),
+                )),
+                time: Some(10.0),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&egui::ViewportId::ROOT)
+                .unwrap()
+                .native_pixels_per_point = Some(scale);
+            let mut output = context.run_ui(input, |ui| {
+                assert!(editor.show(ui, tab, &documents).is_none());
+            });
+            uploader.handle_delta(&mut output.textures_delta);
+            jobs = context.tessellate(output.shapes, scale);
+        }
+        observe(
+            &egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [(640.0 * scale) as u32, (400.0 * scale) as u32],
+                pixels_per_point: scale,
+            },
+            &jobs,
+        );
+    }
+}
+
+fn document_cases() -> [(&'static str, crate::text_editor::EditorMode, String); 3] {
+    use crate::text_editor::EditorMode;
+    [
+        ("fixture.txt", EditorMode::Edit, "Owned small editor line.\n".repeat(200)),
+        ("fixture.md", EditorMode::Preview, "# Owned preview\n\nA **selectable** paragraph.\n\n| Name | Value |\n| --- | --- |\n| Item | 1 |\n\n".repeat(8)),
+        ("split.md", EditorMode::Split, "# Owned split\n\nEditable and selectable text.\n\n".repeat(8)),
+    ]
+}
+
 #[test]
 fn retained_document_frames_preserve_editor_preview_and_split_pixels() {
-    use crate::{
-        documents::DocumentRegistry,
-        tabs::TabId,
-        text_editor::{EditorMode, TextEditorTab},
-    };
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("document-retention-fixtures");
@@ -88,63 +143,176 @@ fn retained_document_frames_preserve_editor_preview_and_split_pixels() {
     let state = render_state();
     state.renderer.write().retained_frame_enabled = true;
     let mut uploader = WgpuTestRenderer::from_render_state(state.clone());
-    for (name, mode, text) in [
-        ("fixture.txt", EditorMode::Edit, "Owned small editor line.\n".repeat(200)),
-        ("fixture.md", EditorMode::Preview, "# Owned preview\n\nA **selectable** paragraph.\n\n| Name | Value |\n| --- | --- |\n| Item | 1 |\n\n".repeat(8)),
-        ("split.md", EditorMode::Split, "# Owned split\n\nEditable and selectable text.\n\n".repeat(8)),
-    ] {
+    for (name, mode, text) in document_cases() {
         let path = owned.path().join(name);
         std::fs::write(&path, text).unwrap();
-        let documents = DocumentRegistry::shared();
-        let document = documents.borrow_mut().open_local(&path).unwrap();
-        let mut editor = TextEditorTab::new(document, &documents);
-        editor.set_mode_for_gallery(mode);
-        let tab = TabId::next_for_test();
-        let context = egui::Context::default();
-        context.set_theme(egui::ThemePreference::Dark);
-        context.set_visuals(festerm_ui_egui::theme::default_visuals());
-        context.all_styles_mut(|style| style.animation_time = 0.0);
-        crate::software_background::install(&context, &state);
         let mut cache = egui_wgpu::RetainedUi::default();
-        for scale in [1.0, 1.25, 2.0, 1.0] {
-            let mut jobs = Vec::new();
-            for _ in 0..8 {
-                let mut input = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(640.0, 400.0),
-                    )),
-                    time: Some(10.0),
-                    ..Default::default()
-                };
-                input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(scale);
-                let mut output = context.run_ui(input, |ui| {
-                    assert!(editor.show(ui, tab, &documents).is_none());
-                });
-                uploader.handle_delta(&mut output.textures_delta);
-                jobs = context.tessellate(output.shapes, scale);
-            }
-            let screen = egui_wgpu::ScreenDescriptor {
-                size_in_pixels: [(640.0 * scale) as u32, (400.0 * scale) as u32],
-                pixels_per_point: scale,
-            };
-            assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(false));
-            assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(true));
-            let texture = target(&state, screen.size_in_pixels, state.target_format, true);
-            let capture = egui_wgpu::capture::CaptureState::new(&state.device, &texture);
-            assert_eq!(
-                profile::draw_composed(&state, &capture.texture, &screen, &jobs, [0.0; 4], Some(&mut cache)),
-                (false, Some(true)),
-            );
-            let ordinary = assert_frame(&state, &screen, &jobs, [0.0; 4], &mut cache, Some(true));
-            profile::assert_same_pixels(&ordinary, &profile::read_image(&state, &capture.texture), "capture targets preserve complete document pixels");
-        }
+        document_frames(
+            &state,
+            &mut uploader,
+            &path,
+            mode,
+            &[1.0, 1.25, 2.0, 1.0],
+            |screen, jobs| {
+                assert_frame(&state, screen, jobs, [0.0; 4], &mut cache, Some(false));
+                assert_frame(&state, screen, jobs, [0.0; 4], &mut cache, Some(true));
+                let texture = target(&state, screen.size_in_pixels, state.target_format, true);
+                let capture = egui_wgpu::capture::CaptureState::new(&state.device, &texture);
+                assert_eq!(
+                    profile::draw_composed(
+                        &state,
+                        &capture.texture,
+                        screen,
+                        jobs,
+                        [0.0; 4],
+                        Some(&mut cache)
+                    ),
+                    (false, Some(true)),
+                );
+                let ordinary = assert_frame(&state, screen, jobs, [0.0; 4], &mut cache, Some(true));
+                profile::assert_same_pixels(
+                    &ordinary,
+                    &profile::read_image(&state, &capture.texture),
+                    "capture targets preserve complete document pixels",
+                );
+            },
+        );
         assert!(cache.stats().reused_frames >= 12);
         assert!(cache.stats().texture_bytes <= 64 * 1024 * 1024);
         assert!(cache.stats().signature_bytes <= 1024 * 1024);
     }
 }
 
+#[test]
+#[ignore = "opt-in completed WARP all-miss control; not native input/display latency"]
+fn profile_document_retention_changing_frames() {
+    use festerm_windows_direct2d::process_cpu_time;
+    use std::time::Instant;
+
+    assert_eq!(
+        std::env::var("FESTERM_RUN_OPTIONAL_VALIDATION").as_deref(),
+        Ok("1")
+    );
+    let output = std::path::PathBuf::from(
+        std::env::var_os("FESTERM_DOCUMENT_RETENTION_PROFILE_OUT").expect("fresh output directory"),
+    );
+    assert!(
+        output.is_absolute() && !output.exists(),
+        "preserve previous evidence"
+    );
+    std::fs::create_dir_all(&output).unwrap();
+    let state = render_state();
+    let adapter = state.adapter.get_info();
+    assert_eq!(adapter.device_type, wgpu::DeviceType::Cpu);
+    assert_eq!(adapter.backend, wgpu::Backend::Dx12);
+    state.renderer.write().retained_frame_enabled = true;
+    let mut uploader = WgpuTestRenderer::from_render_state(state.clone());
+    let owned = tempfile::tempdir_in(&output).unwrap();
+    let mut records = Vec::new();
+    const FRAMES: u32 = 32;
+    for (name, mode, text) in document_cases() {
+        let path = owned.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        let mut prepared = None;
+        document_frames(
+            &state,
+            &mut uploader,
+            &path,
+            mode,
+            &[2.0],
+            |screen, jobs| {
+                prepared = Some((
+                    egui_wgpu::ScreenDescriptor {
+                        size_in_pixels: screen.size_in_pixels,
+                        pixels_per_point: screen.pixels_per_point,
+                    },
+                    jobs.to_vec(),
+                ));
+            },
+        );
+        let (screen, jobs) = prepared.unwrap();
+        let texture = target(&state, screen.size_in_pixels, state.target_format, true);
+        let mut samples = Vec::new();
+        for (order, enabled) in [false, true, true, false].into_iter().enumerate() {
+            let mut cache = egui_wgpu::RetainedUi::default();
+            let frame = |index: u32, cache: &mut egui_wgpu::RetainedUi| {
+                let clear = [
+                    if index.is_multiple_of(2) { 0.01 } else { 0.02 },
+                    0.0,
+                    0.0,
+                    1.0,
+                ];
+                assert_eq!(
+                    profile::draw_composed(
+                        &state,
+                        &texture,
+                        &screen,
+                        &jobs,
+                        clear,
+                        enabled.then_some(cache),
+                    ),
+                    (false, enabled.then_some(false)),
+                    "every enabled changing signature must rebuild",
+                );
+            };
+            for index in 0..4 {
+                frame(index, &mut cache);
+            }
+            let before = cache.stats();
+            let cpu_start = process_cpu_time().unwrap();
+            let started = Instant::now();
+            for index in 0..FRAMES {
+                frame(index, &mut cache);
+            }
+            let elapsed = started.elapsed();
+            let cpu = process_cpu_time().unwrap() - cpu_start;
+            samples.push((cpu.as_secs_f64(), elapsed.as_secs_f64()));
+            let after = cache.stats();
+            assert_eq!(after.reused_frames - before.reused_frames, 0);
+            assert_eq!(
+                after.rebuilt_frames - before.rebuilt_frames,
+                if enabled { u64::from(FRAMES) } else { 0 }
+            );
+            let retained_pixels = profile::read_image(&state, &texture);
+            profile::draw_composed(
+                &state,
+                &texture,
+                &screen,
+                &jobs,
+                [0.02, 0.0, 0.0, 1.0],
+                None,
+            );
+            profile::assert_same_pixels(
+                &retained_pixels,
+                &profile::read_image(&state, &texture),
+                "changing frame pixels",
+            );
+            let record = serde_json::json!({
+                "scene":name, "order":order, "enabled":enabled, "frames":FRAMES,
+                "cpu_ms_per_frame":cpu.as_secs_f64() * 1000.0 / f64::from(FRAMES),
+                "completed_ms_per_frame":elapsed.as_secs_f64() * 1000.0 / f64::from(FRAMES),
+                "hits":after.reused_frames - before.reused_frames,
+                "rebuilds":after.rebuilt_frames - before.rebuilt_frames,
+            });
+            println!("{record}");
+            records.push(record);
+            std::fs::write(output.join("profile.json"), serde_json::to_vec_pretty(&serde_json::json!({
+                        "adapter":format!("{adapter:?}"), "records":records,
+                        "maximum_on_off_ratio":1.10,
+                        "limitations":"Prepared real document jobs, alternating exact clear color, completed GPU work per frame, readback outside timing. All-miss overhead control, not native latency or an active-input workload.",
+                    })).unwrap()).unwrap();
+        }
+        let cpu_ratio = (samples[1].0 + samples[2].0) / (samples[0].0 + samples[3].0);
+        let elapsed_ratio = (samples[1].1 + samples[2].1) / (samples[0].1 + samples[3].1);
+        println!(
+            "{name}: all-miss CPU ratio={cpu_ratio:.4}, completed-render ratio={elapsed_ratio:.4}"
+        );
+        assert!(
+            cpu_ratio <= 1.10 && elapsed_ratio <= 1.10,
+            "{name}: all-miss overhead exceeds the bounded 10% regression ceiling"
+        );
+    }
+}
 #[test]
 fn retained_document_frames_invalidate_exact_inputs_and_texture_ownership() {
     let (mut state, mut screen, mut jobs) = fixture();

@@ -1,6 +1,6 @@
-# ADR 0046: Opt-In Retained Document Frame
+# ADR 0046: Retained Document Frame
 
-- **Status:** Proposed (owner-authorized default-off experiment)
+- **Status:** Proposed (owner-authorized qualified-route rollout; independent architectural review pending)
 - **Date:** 2026-10-10
 - **Supersedes:** None; extends ADR 0041 without changing terminal-prefix policy
 
@@ -23,11 +23,14 @@ The owner authorized a bounded, default-off whole-frame experiment.
 
 ## Decision
 
-`FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=1` opts into complete-frame retention on
-the existing Windows x64 DX12 CPU-adapter/BGRA gamma route only. Unset, empty,
-or `0` leaves it disabled. Invalid values produce an explicit warning and
-remain disabled. This is a development experiment, not an automatic rollout,
-configuration setting, or acceptance decision.
+Complete-frame retention defaults on for the existing Windows x64 DX12
+CPU-adapter/BGRA gamma route after successful native painter installation.
+`FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` explicitly disables it; unset, empty
+or `1` requests it. Invalid/non-Unicode values produce an explicit warning and
+remain disabled. The owner requested regression qualification followed by
+this supported-route rollout. This is not a configuration setting, broader
+hardware enablement or architectural acceptance decision. Generic vendor
+renderer defaults remain off.
 
 The host still processes input, builds UI, updates textures and buffers, runs
 every callback's prepare/finish_prepare, acquires a target, submits and
@@ -64,8 +67,9 @@ validated route. Device/allocation errors retain the existing wgpu error policy.
   immutable resources.
 - Add a second document renderer/cache: unnecessary ownership and memory
   duplication; reuse the existing bounded cache instead.
-- Enable automatically: deferred until independent review, exact-head checks
-  and meaningful native evidence justify a separate owner decision.
+- Enable without qualifying changing-frame and lifecycle controls: rejected.
+  The owner separately authorized supported-route enablement after regression
+  qualification; independent architectural review remains required before merge.
 
 ## Consequences
 
@@ -114,20 +118,48 @@ retention regression.
 Changing scenes remain expensive; observer-inclusive response timings are not
 physical display latency. The original near-zero-CPU freeze was not reproduced.
 Independent architectural review and broader native qualification remain open;
-this result does not change the Proposed status or default-off gate.
+the initial result did not itself change the Proposed status or default-off gate.
+
+### Qualified-route rollout
+
+The owner subsequently requested regression checks followed by default
+enablement. Same-frozen-executable off/on/on/off controls measured ordinary
+16-input workloads at 750-ms cadence, followed by a four-second drain, without
+captures, WM_NULL probes or concurrent builds/tests inside the CPU interval.
+Fresh Edit controls independently settled focus before CtrlHome. Mean process
+CPU fell 49.3% for typing/undo and 21.0% for Preview scrolling; all sixteen
+wheels reached the adapter. All eight windows exited normally. An earlier
+Edit control started at the wrong cursor position because CtrlHome preceded
+focus readiness; that four-case set is excluded, not pooled into the result.
+
+Enabled/disabled native resize, minimize, restore and subsequent scrolling
+controls returned to the original geometry and exited normally. Sixteen
+paired document-content/status captures matched exactly; path-bearing header
+and toolbar pixels were deliberately outside this oracle. The deterministic
+resource/target/queued-image regressions remain required.
+
+An opt-in, completed-render all-miss control uses prepared real Edit, Preview
+and Split jobs at 200% scale with alternating exact clear color and ABBA
+order. Every enabled frame must rebuild, final pixels must match ordinary
+painting, and mean CPU/completed-render time must remain within a 10%
+regression ceiling for these exact fixtures. It measures allocation/copy
+overhead without an idle-hit subsidy, not live input or physical display
+latency. Commands, bounded results and remaining prerequisites are in `CP-18`.
 
 ## Validation impact
 
 - **Invariants introduced or changed:** One shared bounded immutable image
   can represent an eligible non-terminal complete frame; exact invalidation,
-  default-off supported-route gating, unchanged preparation/input/cadence.
+  supported-route default with explicit opt-out, unchanged preparation/input/cadence.
 - **GUI/action edges affected:** `EDIT-*`, `MD-*`; no action semantics change.
-- **Automated tests required:** `document_retention_requires_explicit_opt_in_and_supported_route`,
+- **Automated tests required:** `document_retention_defaults_on_only_for_supported_route`,
   `retained_document_frames_preserve_editor_preview_and_split_pixels`,
   `retained_document_frames_invalidate_exact_inputs_and_texture_ownership`,
   `retained_document_frames_decline_targets_callbacks_and_budgets`,
   `retained_document_frames_keep_preparation_and_queued_images`,
   and the existing retained-prefix, editor, Markdown and Save As regressions.
+  `profile_document_retention_changing_frames` is supplemental opt-in
+  completed-render regression qualification, not deterministic CI timing.
 - **Native/manual evidence required:** `CP-18`; paired quiet and interaction
   CPU/cadence/reuse measurements, actual editor and Preview captures, save
   recovery, resize/focus and unsupported-route controls. Broader mixed-DPI,
