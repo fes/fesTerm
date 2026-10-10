@@ -118,6 +118,16 @@ eight-second deadline, so it is not accepted as a responsiveness fix. No
 universal speedup, About fix,
 clipboard repair or hardware-adapter comparison is claimed.
 
+## Integrating native diagnostics with current security boundaries
+
+The next numerical diagnostic integration retains this qualified picker
+history and the bounded resource-observation slice without replacing current
+main's security or save authority. Integration preserves main's level-zero CI
+profiles, isolated native checks and required symlink coverage rather than
+changing the diagnostic workload. Collector source and status/privacy/heap
+behavior remain unchanged; optional local PDB-backed symbols improve possible
+future evidence, not native-exit causality or product acceptance.
+
 ## Integrating picker attribution without rolling back current main
 
 The picker-attribution draft retained cumulative prerequisite history from
@@ -1117,6 +1127,26 @@ not every GPU allocation or a demonstrated leak. Exact normalized images, zero
 idle demand and narrow native damage still held; no multi-day CPU plateau was
 reproduced. See the
 [complete source-bound resource record](../validation/terminal-performance/README.md#optimized-public-registry-and-teardown-follow-up).
+
+## Closing the short resource probe's observation gaps
+
+The first retirement snapshots deliberately kept a reporting instance alive,
+and sampled private bytes could miss a brief commitment spike. The same optional
+six-session probe now adds a small bounded whole-owner create/churn/drop loop,
+including destruction of that last instance before held process observations.
+Each rebuilt owner must reproduce the exact normalized PNG; no production
+renderer, session cadence or ownership policy changes.
+
+Windows' OS-maintained process commitment high-water mark preserves transient
+peaks between samples, and a bounded final-sample acknowledgment prevents the
+last interval from silently disappearing on exit. Live cache values, temporary
+CPU comparison arrays, completed host submissions and public registry IDs are
+reported as different evidence, not renamed into total GPU/in-flight bytes.
+Device-free tests exercise six backlogged queues retiring together and stale
+clipboard completion/cancellation across generations. Historical receipts
+remain readable; incomplete new declarations are rejected. This is substantive
+diagnostic coverage before longer capture, not a new memory cap, a leak verdict
+or a claim of native/cumulative qualification.
 
 ## Painting the palette shadow without the atlas texture
 

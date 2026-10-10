@@ -259,6 +259,55 @@ teardown does not establish complete driver/native resource retirement. The
 checker preserves retained IDs and adverse memory observations rather than
 asserting an unapproved process/GPU budget.
 
+New captures also use `GetProcessMemoryInfo`'s `PagefileUsage` and
+`PeakPagefileUsage` for current commitment and the **OS-maintained
+process-lifetime commitment high-water mark**. These are committed bytes, not
+page-file residency or peak working set. A transient commitment spike between
+500ms observations remains visible in the high-water mark. The summary compares
+that mark with the largest sampled current commitment, without inventing a
+per-phase peak: a later high-water increase establishes a new lifetime maximum
+but does not measure every phase's own maximum. Before exit, the test waits up to
+20 seconds for a source-bound supervisor receipt of its final `complete`
+resource sample. Missing counters, mismatched declarations, reversed/lowered
+lifetime peaks or an absent/non-final receipt invalidate a new capture.
+
+`-LifecycleRepeats` (default three, bounded to 1–8) adds short repeated
+**create → two six-tab DPI/zoom churn cycles → normalize → drop** rounds to
+the same optional probe, after the original twelve phases and four teardown
+windows. Each round compares and saves the exact normalized PNG, completes
+submitted work, records live/drained public registries, and drops the app,
+egui context, fake transports, renderer **and reporting instance** before a
+separately clock-bounded `-IdleSeconds` resource window. A weak repaint-owner
+observation must expire. At least one process sample must land inside each
+whole-owner window; unsampled windows are not evidence of zero residency.
+Current/post-drop process commitment, private bytes, handles and threads remain
+observations, including adverse surviving values. No whole-process cap is added.
+
+Resource classifications stay deliberately narrow:
+
+- prefix texture/signature and atlas sizes are **current retained cache** values,
+  not allocation peaks;
+- `wgpu_submission_completed` records the existing explicit host submission wait,
+  not a count of driver-private queued or in-flight bytes;
+- `temporary_oracle_rgba_bytes` counts only the raw payload lengths of the two
+  temporary CPU RGBA arrays alive together during exact pixel comparison; they
+  are dropped before resource windows and do not include spare capacity, PNG
+  decoder/encoder, readback, native or all scratch allocations;
+- public registry IDs/vacant slots are still not driver allocations;
+- lifetime process commitment includes the entire test process, not just the
+  renderer.
+
+Historical receipts without these additive declarations remain valid and
+explicitly lack this evidence. Declared frame/process/lifecycle schemas require
+their complete counters, oracles, records and receipts; undeclared new artifacts
+are rejected. Device-free Rust regressions cover retirement with all six output
+queues backlogged, stale clipboard completion/cancellation across lifecycle
+generations, and final-receipt identity. The Python checker tests include
+transient commitment, missing owners/windows/receipts and exact PNG rejection.
+This automated implementation coverage does not claim a completed native aging
+run; exclusive-runtime cumulative/native qualification and multi-day capture
+remain separate CP-18/#297/#282 work.
+
 ### 2026-10-04 source-bound observations
 
 The [machine-readable record](six-session-aging-2026-10-04.json) preserves
