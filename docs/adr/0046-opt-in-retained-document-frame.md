@@ -102,7 +102,10 @@ Fresh enabled/disabled controls exercised reversible typing, undo, keyboard
 selection, caret movement, scroll and Save As Cancel/reopen/Escape in Edit
 and Markdown Preview/Split, with normal cleanup. A separate actual PTY-history
 workflow published exactly 200 rows / 10,600 LF bytes but required forced
-cleanup after window close. A pointer-drag attempt was rejected by the
+cleanup after window close. The final capture shows the expected Quit
+confirmation for its live PTY; the harness did not confirm it, so this is
+not evidence of a stuck dialog or failed confirmed shutdown.
+A pointer-drag attempt was rejected by the
 unchanged exact-cursor guard; no successful sustained-drag result is inferred.
 An outline/source-versus-preview section mismatch appeared in both controls,
 so the outline click is not precise-navigation acceptance or an attributed

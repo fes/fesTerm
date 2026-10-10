@@ -96,8 +96,10 @@ Fresh interaction cases used the same frozen source:
   200 nonempty rows / 10,600 LF bytes, SHA-256
   `D95BEE4339720CD25439DF65CD237B032125C69A19693202D6678E390903C324`.
   The Saved capture was inspected, but window close required forced cleanup;
-  both owned application and child were subsequently absent. Publication
-  passes this bounded oracle; clean shutdown does not.
+  the final capture shows the expected Quit confirmation for the live PTY,
+  which the harness did not confirm. Both owned application and child were
+  subsequently absent. Publication passes this bounded oracle; confirmed
+  clean shutdown was not exercised. This is not a reproduced stuck dialog.
 
 Changing frames remain expensive, and capture-inclusive observations do not
 qualify input-to-display latency. No indefinite near-zero-CPU freeze was

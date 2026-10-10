@@ -48,7 +48,9 @@ Fresh on/off controls exercised reversible typing/undo, keyboard selection,
 caret movement, scrolling, actual Preview/Split and Save As Cancel/reopen/
 Escape; all four exited normally. A real 200-row history snapshot also
 published exactly 10,600 LF bytes, but that run required forced cleanup after
-window close. A guarded drag was rejected rather than counted as success,
+window close: its live PTY raised the expected Quit confirmation, which the
+harness did not confirm. This is not a reproduced stuck dialog.
+A guarded drag was rejected rather than counted as success,
 and an outline section mismatch appeared in both controls. Changing scenes
 remain expensive, physical latency is not qualified, and the original freeze
 was still not reproduced. The bounded native record and remaining gates are
