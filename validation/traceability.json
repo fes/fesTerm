@@ -1573,9 +1573,15 @@
         "docs/adr/0034-shared-mutable-text-documents.md"
       ],
       "decisions": [
-        "ADR-0034"
+        "ADR-0034",
+        "ADR-0046"
       ],
       "automated_tests": [
+        "document_retention_defaults_on_only_for_supported_route",
+        "retained_document_frames_preserve_editor_preview_and_split_pixels",
+        "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
+        "retained_document_frames_decline_targets_callbacks_and_budgets",
+        "retained_document_frames_keep_preparation_and_queued_images",
         "editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback",
         "editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch",
         "batched_text_selection_respects_disabled_clipped_and_modal_ownership",
@@ -1857,10 +1863,12 @@
       ],
       "manual_scenarios": [
         "CP-15",
+        "CP-18",
         "TI-15"
       ],
       "status": "partial",
       "prerequisites": [
+        "ADR-0046 architectural acceptance requires CP-18 all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and retained raw numeric profile/log location; application executable hashes do not identify the test executable",
         "conditional no-overwrite publication, the briefly absent destination-name window, crash/power-loss recovery from private staging, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
         "remote documents are unimplemented, so the Save As remote destination refuses rather than connecting, and remote disconnect/reconnect has no coverage",
         "vi compatibility ships behind a per-view option; the engine's own matrix is covered unit by unit in festerm-document, and the view covers routing, refusal and the mode indicator, but the matrix is not exercised end to end key by key"
@@ -2676,9 +2684,15 @@
       ],
       "decisions": [
         "ADR-0030",
-        "ADR-0035"
+        "ADR-0035",
+        "ADR-0046"
       ],
       "automated_tests": [
+        "document_retention_defaults_on_only_for_supported_route",
+        "retained_document_frames_preserve_editor_preview_and_split_pixels",
+        "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
+        "retained_document_frames_decline_targets_callbacks_and_budgets",
+        "retained_document_frames_keep_preparation_and_queued_images",
         "markdown_preview_and_split_keep_batched_selection_and_copy_exact",
         "external_documents_open_in_last_active_window_and_reuse_dirty_views",
         "external_document_missing_file_preserves_tabs_and_blocks_later_requests",
@@ -2799,10 +2813,12 @@
       "manual_scenarios": [
         "CP-06",
         "CP-19",
+        "CP-18",
         "CP-15"
       ],
       "status": "partial",
       "prerequisites": [
+        "ADR-0046 architectural acceptance requires CP-18 all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and retained raw numeric profile/log location; application executable hashes do not identify the test executable",
         "Reloading a remote-opened Markdown tab after a disconnect/reconnect is not yet implemented (reports RemoteReloadUnsupported); relative resource fetch within a remote-sourced document is also unimplemented"
       ]
     },

@@ -17,12 +17,16 @@ Local changes are deliberately limited to:
   and managed-texture generation/ownership tracking. Returning an actual managed
   texture or rebinding one to external resources disables retention for that
   renderer; a missing-texture lookup does not export a resource.
-- `retained.rs` / `lib.rs`: one private immutable prefix image, capped at
+  A separate default-disabled complete-frame flag shares these invariants and
+  additionally checks actual target format, size, copy usage, MSAA and depth.
+- `retained.rs` / `lib.rs`: one private immutable prefix or complete-frame image, capped at
   16,777,216 pixels, plus at most 1 MiB of exact paint signatures. A miss renders
   a fresh image; a hit copies existing pixels. Complete ordered geometry,
   clipping, screen/clear/format state, callback keys and managed-texture
   generations are compared without hashes. Unknown callbacks and user textures
   decline the optimization. Callback preparation still runs every frame.
+  Prefix and complete-frame signatures are distinct; complete frames also
+  decline image-copy callbacks. Both modes share the same cache and budgets.
 - `winit.rs`: when requested, negotiate COPY_DST only for capable opaque root
   surfaces without MSAA/depth. End the normal clear/UI pass, encode the validated
   copy, then use the same submission and presentation. Reconfiguration and
@@ -32,6 +36,8 @@ Local changes are deliberately limited to:
   ordinary clear/UI pass before the same terminal copy. It is root-only and
   discards retained state on ineligibility, reconfiguration, recreation,
   acquisition failure, resize, viewport retirement and destruction.
+  Eligible complete frames without a final terminal copy can reuse that same
+  image; the terminal-prefix path retains precedence.
   The opt-in `egui_wgpu::frame_timing` debug target records content-free root
   paint begin/end frame numbers, surface policy, unavailable surface results,
   phase durations and primitive counts. Configuration is timed separately
@@ -44,7 +50,9 @@ Local changes are deliberately limited to:
   capture pipeline too if the target format changes.
 
 Application selection is automatic only on the supported Windows x64 DX12
-WARP/BGRA gamma Direct2D path, with no production switches. Unsupported
+WARP/BGRA gamma Direct2D path. Terminal-prefix policy has no production switches;
+the complete-frame extension defaults on after native installation and has
+the explicit `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` opt-out. Unsupported
 targets retain ordinary rendering. The vendor renderer itself still defaults retention
 off; the eligible app policy selects it. Only the application's immutable
 textureless panel and solid-background painters provide callback keys.
@@ -55,9 +63,11 @@ CI runs `cargo test -p egui-wgpu --lib retained::tests` on each desktop OS.
 This separately covers exact identity and resource-budget invariants because
 the vendored crate is deliberately excluded from workspace test membership.
 
-See ADRs 0040 and 0041. Keep the local diff against this exact upstream version
+See ADRs 0040, 0041 and proposed 0046. Keep the local diff against this exact upstream version
 reviewable; revalidate or remove it on dependency upgrades. A successful
 prototype does not by itself approve maintaining a fork or enabling it by default.
 The owner approved bounded automatic rollout on 2026-10-03. Source reviews and
 exact-head CI gate merge; #282 retains native/resource/latency follow-ups and
 historical noisy/failed evidence without treating them as completed qualification.
+ADR 0046 acceptance remains conditional on the all-miss evidence provenance;
+the original rollout approval is not approval of all complete-frame gates.

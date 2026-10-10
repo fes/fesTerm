@@ -279,6 +279,29 @@ recording terminal content.
 
 ## Diagnostics and Safety
 
+- [ADR 0046](adr/0046-opt-in-retained-document-frame.md) complete-frame
+  retention defaults on for the qualified WARP route. Set
+  `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` to disable it; unset/empty/`1`
+  requests it. Invalid/non-Unicode values warn and conservatively leave it off.
+  Only supported Windows x64 DX12 CPU/BGRA opaque-root surfaces qualify.
+  Exact managed-texture/geometry/immutable-callback inputs may reuse a single
+  bounded complete image; unsupported/mutable scenes retain ordinary painting.
+  The existing automatic terminal-prefix path takes precedence. Input, document
+  freshness/autosave, callback preparation and presentation cadence are not
+  skipped. Enable `egui_wgpu::retained_ui=debug` for content-free hit/rebuild
+  counters (`whole_frame=true` identifies complete-frame retention).
+  Compare the same frozen executable with the variable `0` and `1`, without
+  concurrent builds or tests. Lower CPU is not a fix for the reported
+  near-zero-CPU interaction freeze or physical input-to-display evidence.
+  The bounded completed-render all-miss regression control is opt-in:
+  set `FESTERM_RUN_OPTIONAL_VALIDATION=1` and
+  `FESTERM_DOCUMENT_RETENTION_PROFILE_OUT` to a fresh absolute directory,
+  then run `cargo test --release -p festerm --bin festerm profile_document_retention_changing_frames -- --ignored --nocapture --test-threads=1`.
+  `FESTERM_RUN_DOCUMENT_RETENTION_PROFILE=1` includes the same control in
+  `scripts\run-optional-validation.ps1`. It checks pixel equivalence, zero hits
+  on changing signatures, and a 10% mean CPU/completed-render regression
+  ceiling for its exact Edit/Preview/Split fixtures, not general latency.
+
 - For idle-rendering CPU regressions on a Windows desktop, build the workspace,
   set `FESTERM_RUN_OPTIONAL_VALIDATION=1`, and run
   `pwsh -NoProfile -File scripts\check-windows-idle-rendering.ps1`.

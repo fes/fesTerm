@@ -29,6 +29,167 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 - **Pass / Fail / Not run:** result for one specific platform and commit. Not run
   always includes a reason and never counts as pass.
 
+### ADR 0046 document-frame experiment (CP-18)
+
+The WARP document-frame implementation adds an automated exact-pixel
+oracle for actual 200-line Edit, Markdown Preview and Split at 100%, 125% and
+200%, with screenshot equivalence, exact input/resource invalidation, unsafe
+target/callback fallback, bounded signatures, and queued-image immutability.
+Those tests do not automate desktop interaction or prove the original freeze
+is repaired.
+
+Native evidence must compare `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` and `1`
+using the same frozen executable, owned fixture, physical viewport, DPI and
+adapter, in balanced order without concurrent builds/tests. Record process
+CPU, elapsed time, GUI/host paint count, actual complete-frame hit/rebuild
+counters, normal cleanup and adverse/rejected observations. Exercise Edit,
+Preview/Split, scrolling, selection, focused caret/typing, Save As recovery,
+resize/focus, and unknown/mutable callback fallback. This is experimental
+CP-18 evidence, not general acceptance; hardware, multi-window, device-loss,
+OS clipboard, sustained drag and physical-latency qualification remain pending.
+
+#### Windows WARP bounded execution, 2026-10-10
+
+The frozen optimized source was
+`ac56bb491dfa808a72cbf97d6d3d9a70bf0442af`, executable SHA-256
+`E755C711433B98CD0E4DC3611EA8253F8A134688A60BA48F25B12104EDF10B38`.
+The Windows x64 Microsoft Basic Render Driver/DX12 CPU route used a
+1504 x 1032 physical viewport at 200% scale on a 16-logical-CPU machine.
+Each sample followed five seconds of warmup and an initial inspected capture.
+No builds/tests ran during CPU sampling. Paired cases used identical fixture
+content, but different evidence paths/header text; whole-window control
+pixels were not identical.
+
+| Case | Surface | Gate | Process CPU seconds | Elapsed seconds | Total-machine CPU |
+| --- | --- | --- | --- | --- | --- |
+| 55 | 200-line Edit | 0 | 44.921875 | 30.009145 | 9.3559% |
+| 56 | 200-line Edit | 1 | 1.906250 | 30.002561 | 0.3971% |
+| 59 | 200-line Edit | 1 | 1.484375 | 30.014328 | 0.3091% |
+| 60 | 200-line Edit | 0 | 46.906250 | 30.013772 | 9.7677% |
+| 57 | Eight-section Preview | 0 | 36.296875 | 30.001359 | 7.5615% |
+| 58 | Eight-section Preview | 1 | 1.234375 | 30.001100 | 0.2572% |
+| 61 | Eight-section Preview | 1 | 1.031250 | 30.008266 | 0.2148% |
+| 62 | Eight-section Preview | 0 | 36.031250 | 30.014994 | 7.5028% |
+
+All eight cases painted 41 frames and exited normally. Enabled cases each
+recorded 41 measured complete-frame hits, zero measured rebuilds and
+6,208,512 image bytes; exact signatures were 233,648 bytes for Edit and
+154,072 for Preview. Mean off/on CPU was 9.562%/0.353% for Edit and
+7.532%/0.236% for Preview. Host return remained roughly 1-2 ms and is not
+GPU/display completion. This is a **Pass for bounded static-idle CPU
+reduction**, not general responsiveness or rollout acceptance.
+
+Fresh interaction cases used the same frozen source:
+
+- Case 63 completed eleven observations before its pointer drag failed the
+  exact-cursor guard. The rejection was preserved and the owned process was
+  independently confirmed absent; drag and Save As were not completed.
+- Cases 64/65 (Edit on/off) completed seventeen actions each; cases 66/67
+  (Markdown on/off) completed twenty-four each. Captures confirmed reversible
+  typing/undo, keyboard selection/caret, scrolling, actual Preview/Split and
+  Save As Cancel/reopen/Escape with subsequent editor movement. All four
+  exited normally. The outline click showed source/preview section mismatch
+  in both Markdown controls: it is not precise section-navigation acceptance.
+- Case 68 used actual owned PTY output and the terminal-history editor command.
+  All thirty-two observations completed, including Save As directory/Up,
+  Cancel/reopen/Escape and fresh publication. The published file had exactly
+  200 nonempty rows / 10,600 LF bytes, SHA-256
+  `D95BEE4339720CD25439DF65CD237B032125C69A19693202D6678E390903C324`.
+  The Saved capture was inspected, but window close required forced cleanup;
+  the final capture shows the expected Quit confirmation for the live PTY,
+  which the harness did not confirm. Both owned application and child were
+  subsequently absent. Publication passes this bounded oracle; confirmed
+  clean shutdown was not exercised. This is not a reproduced stuck dialog.
+
+Changing frames remain expensive, and capture-inclusive observations do not
+qualify input-to-display latency. No indefinite near-zero-CPU freeze was
+reproduced. Retain **Manual pending / Usability pending** for the broader
+matrix, including native mutable-callback/device recovery, hardware/multi-window,
+OS clipboard and sustained pointer dragging. ADR 0046 remains Proposed.
+
+#### Supported-route rollout regression qualification
+
+The owner requested regression checks followed by default enablement. Native
+controls used the same frozen executable/adapter/viewport as above. Active
+ABBA cases had sixteen ordinary inputs at 750-ms cadence and a four-second
+drain. No captures, WM_NULL checks or builds/tests occurred inside that CPU
+interval. Every case exited normally; disk fixture bytes were unchanged.
+Typing controls settled editor focus before CtrlHome and their captures
+confirmed restored text. All sixteen wheels reached the native input adapter.
+
+| Cases (off/on/on/off) | Workload | Mean CPU seconds, off / on | Change |
+| --- | --- | --- | --- |
+| 81/82/83/84 | 200-line Edit, typing/undo | 126.758 / 64.289 | -49.3% |
+| 73/74/75/76 | Eight-section Preview, scroll | 121.227 / 95.719 | -21.0% |
+
+These approximately 16-second intervals include drain/repaints. The active
+12-second portions also used less CPU (95.352 / 54.852 seconds for Edit,
+117.234 / 95.531 for Preview). Cases 69-72 are excluded because initial
+CtrlHome preceded focus in case 69; they are not a matched starting-caret
+control. No physical display-latency or maximum-rate typing claim is made.
+
+Cases 77/78 (Edit off/on) and 80/79 (Preview off/on) each completed eight
+resize/minimize/restore/scroll observations and normal shutdown. The client
+resized from 1504 x 1032 to 1344 x 912 and back at 200% scale. All sixteen
+paired document-content/status captures below physical y=250 matched exactly;
+the path-bearing header/toolbar was excluded, not claimed identical.
+This qualifies the bounded single-window resize/focus/restore control, not
+mixed-DPI, device-loss or multi-window behavior.
+
+The repository-owned optional
+`profile_document_retention_changing_frames` control compares completed WARP
+draws of actual Edit, Preview and Split meshes at 200% scale. It alternates
+clear color to force every signature to miss, uses 32 measured frames per
+ABBA case, preserves pixel equivalence and checks a 10% mean CPU and
+completed-render regression ceiling. Setup, readback and fresh output ownership
+are outside measurement. This removes idle-hit savings from the overhead
+control; it does not simulate asynchronous native presentation.
+
+Run it with `FESTERM_RUN_OPTIONAL_VALIDATION=1` and a fresh absolute
+`FESTERM_DOCUMENT_RETENTION_PROFILE_OUT`:
+`cargo test --release -p festerm --bin festerm profile_document_retention_changing_frames -- --ignored --nocapture --test-threads=1`.
+The same explicit gate is aggregated by `scripts\run-optional-validation.ps1`
+when `FESTERM_RUN_DOCUMENT_RETENTION_PROFILE=1`. The release control passed
+for all three fixtures; paired mean CPU/completed-render ratios were
+0.9962 / 1.0089 for Edit, 0.9255 / 0.9673 for Preview and 1.0065 / 1.0250
+for Split. These small all-miss differences are bounded-regression evidence,
+not improvement claims. This is opt-in measured qualification, not a mandatory CI timing
+budget or new hardware-wide performance claim.
+
+**Evidence provenance pending:** the historical all-miss ratios above are
+reported qualification, not independently test-binary-bound receipts. The
+actual release test executable SHA-256, source/tree and clean status, invocation
+and retained raw `profile.json`/log location must be supplied or regenerated
+before ADR 0046 architectural acceptance. The prepared all-miss viewport is
+1280 x 800 at 200%, not the 1504 x 1032 native-window viewport. The separately
+pinned application executable hashes below cannot identify the test executable.
+
+The application now defaults retention on only for the qualified Windows x64
+DX12 CPU/BGRA route after native installation. `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0`
+opts out; unsupported routes and invalid values retain conservative fallback.
+User authorization does not substitute for independent architectural review
+or accept the remaining **Manual pending / Usability pending** matrix.
+
+Default integration was exercised on frozen source
+`b2f6c32b0fd6fa2eb96a653d4f44d75b14d0ebd8`, executable SHA-256
+`2F14DC7F8B31814689E3916F74ED2F7C7834118104DAED5EBAED6901D36BA985`,
+on the same owned Windows WARP route. Cases 94/95 recorded an actually absent
+environment entry, enabled installation and complete-frame hits for Edit
+and Markdown. Cases 93 (Edit) and 88 (Markdown) explicitly disabled retention.
+The Edit controls completed seventeen observations each; Markdown completed
+twenty-four each, including Edit/Preview/Split, reversible typing, keyboard
+selection, Save As Cancel/reopen/Escape and subsequent scrolling. All four
+exited normally with unchanged fixture bytes; inspected captures showed
+restored Saved content and dismissed dialogs. These are bounded integration
+controls, not another balanced CPU or physical-latency measurement.
+
+Earlier default-labelled enabled cases 86/87/90 inherited an empty value
+because the PowerShell/.NET null setter did not remove the environment entry;
+they do not prove the unset default. Case 96 (explicit-off Markdown) was
+rejected by the unchanged exact-cursor guard before outline/Save As completion.
+Its owned process was confirmed absent; the rejection is not a completed
+control or an attributed retention regression. No guard was relaxed.
+
 ## Evidence record
 
 Every execution records:
