@@ -1,5 +1,8 @@
 # Milestone Progress Narrative
 
+**Status:** Active project story; detailed acceptance evidence remains in
+[`milestone-acceptance-record.md`](milestone-acceptance-record.md).
+
 ## Qualifying complete-frame evidence without substituting app identities
 
 Independent review agrees with the bounded complete-frame cache design and
@@ -10,9 +13,6 @@ application hashes identify different executables and cannot fill that gap.
 Architecture and vendor documentation now describe the shared cache and
 document-specific opt-out consistently, while ADR 0046 stays Proposed and
 the broader native matrix stays pending.
-
-**Status:** Active project story; detailed acceptance evidence remains in
-[`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
 ## Preserving selection ownership and separate clicks during batching
 

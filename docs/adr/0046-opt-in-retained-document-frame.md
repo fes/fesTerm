@@ -146,6 +146,16 @@ regression ceiling for these exact fixtures. It measures allocation/copy
 overhead without an idle-hit subsidy, not live input or physical display
 latency. Commands, bounded results and remaining prerequisites are in `CP-18`.
 
+### Architectural review disposition
+
+Independent review agrees with this bounded shared-cache design. Acceptance
+remains conditional on binding the reported all-miss control to its actual
+release test-executable hash, source/tree and clean status, invocation and
+retained raw numeric profile/log location. Application hashes from the native
+interaction controls identify different executables. CP-18 records this gap;
+the ADR remains Proposed until those receipts are supplied or regenerated.
+Broader native qualification remains open regardless of this disposition.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** One shared bounded immutable image
@@ -162,6 +172,8 @@ latency. Commands, bounded results and remaining prerequisites are in `CP-18`.
   completed-render regression qualification, not deterministic CI timing.
 - **Native/manual evidence required:** `CP-18`; paired quiet and interaction
   CPU/cadence/reuse measurements, actual editor and Preview captures, save
-  recovery, resize/focus and unsupported-route controls. Broader mixed-DPI,
+  recovery, resize/focus and unsupported-route controls; all-miss qualification
+  must retain actual test-executable/source identity and raw numeric evidence.
+  Broader mixed-DPI,
   hardware, device-loss, clipboard and physical-latency evidence remains open.
 - **Coverage superseded:** None.

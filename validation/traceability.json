@@ -1868,6 +1868,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "ADR-0046 architectural acceptance requires CP-18 all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and retained raw numeric profile/log location; application executable hashes do not identify the test executable",
         "conditional no-overwrite publication, the briefly absent destination-name window, crash/power-loss recovery from private staging, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
         "remote documents are unimplemented, so the Save As remote destination refuses rather than connecting, and remote disconnect/reconnect has no coverage",
         "vi compatibility ships behind a per-view option; the engine's own matrix is covered unit by unit in festerm-document, and the view covers routing, refusal and the mode indicator, but the matrix is not exercised end to end key by key"
@@ -2817,6 +2818,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "ADR-0046 architectural acceptance requires CP-18 all-miss source/tree and clean status, actual release test-executable SHA-256, invocation and retained raw numeric profile/log location; application executable hashes do not identify the test executable",
         "Reloading a remote-opened Markdown tab after a disconnect/reconnect is not yet implemented (reports RemoteReloadUnsupported); relative resource fetch within a remote-sourced document is also unimplemented"
       ]
     },
