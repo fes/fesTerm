@@ -46,6 +46,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0046: Opt-In Retained Document Frame](0046-opt-in-retained-document-frame.md) - owner-authorized default-off WARP experiment; exact complete-frame reuse shares ADR 0041's bounded cache
+
 - [ADR 0044: Bounded Ordinary Terminal Row Paint Cache](0044-bounded-ordinary-terminal-row-paint-cache.md) - issue #327's internal presentation repair; independent gates and 52-run cleanup qualification complete, owner accepts the residual shaped-heavy CPU tradeoff under #334; external PR review remains required
 
 - [ADR 0042: Isolated iOS Rendering Spike Host](0042-ios-rendering-spike-host.md) — Phase 1 implementation for review; native feasibility pending

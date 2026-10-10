@@ -638,7 +638,10 @@ impl Painter {
         };
 
         let upload_done = timing.map(|start| start.elapsed().as_secs_f64());
-        let copy_requested = render_state.renderer.read().final_callback_copy_enabled;
+        let copy_requested = {
+            let renderer = render_state.renderer.read();
+            renderer.final_callback_copy_enabled || renderer.retained_frame_enabled
+        };
         if surface_state.callback_copy_requested != copy_requested {
             surface_state.callback_copy_requested = copy_requested;
             surface_state.needs_reconfigure = true;
@@ -730,7 +733,10 @@ impl Painter {
             } else {
                 clipped_primitives
             };
-            let retained = if final_copy.is_some() {
+            let retained = if !surface_state.callback_copy_supported {
+                self.retained_ui.clear();
+                None
+            } else if final_copy.is_some() {
                 self.retained_ui.try_render(
                     &renderer,
                     &render_state.device,
@@ -741,8 +747,15 @@ impl Painter {
                     clear_color,
                 )
             } else {
-                self.retained_ui.clear();
-                None
+                self.retained_ui.try_render_frame(
+                    &renderer,
+                    &render_state.device,
+                    &mut encoder,
+                    clipped_primitives,
+                    &screen_descriptor,
+                    target_texture,
+                    clear_color,
+                )
             };
 
             if retained.is_none() {
@@ -807,8 +820,8 @@ impl Painter {
             } else {
                 let stats = self.retained_ui.stats();
                 log::debug!(target: "egui_wgpu::retained_ui",
-                    "retained_ui_reused_frames={} retained_ui_rebuilt_frames={} retained_ui_texture_bytes={} retained_ui_signature_bytes={}",
-                    stats.reused_frames, stats.rebuilt_frames, stats.texture_bytes, stats.signature_bytes);
+                    "retained_ui_reused_frames={} retained_ui_rebuilt_frames={} retained_ui_texture_bytes={} retained_ui_signature_bytes={} whole_frame={}",
+                    stats.reused_frames, stats.rebuilt_frames, stats.texture_bytes,                     stats.signature_bytes, final_copy.is_none());
             }
 
             if let Some(copy) = final_copy {

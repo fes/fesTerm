@@ -4,6 +4,21 @@ pub(crate) fn install_from_environment(
     context: &egui::Context,
     state: Option<&egui_wgpu::RenderState>,
 ) {
+    let document_retention = match std::env::var("FESTERM_WARP_RETAIN_DOCUMENT_FRAMES") {
+        Ok(value) => match document_retention_requested(Some(&value)) {
+            Ok(requested) => requested,
+            Err(error) => {
+                tracing::warn!(target: "festerm::rendering", %error);
+                false
+            }
+        },
+        Err(std::env::VarError::NotPresent) => false,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            tracing::warn!(target: "festerm::rendering",
+                "FESTERM_WARP_RETAIN_DOCUMENT_FRAMES expects 0 or 1");
+            false
+        }
+    };
     let Some(state) = state else {
         return;
     };
@@ -22,6 +37,12 @@ pub(crate) fn install_from_environment(
         Ok(_) => {
             let retained = composition.retained_composition;
             state.renderer.write().retained_composition_enabled = retained;
+            let document_retention = document_retention && composition.host_copy;
+            state.renderer.write().retained_frame_enabled = document_retention;
+            if document_retention {
+                tracing::info!(target: "festerm::rendering",
+                    "experimental complete document-frame retention enabled; ineligible frames retain ordinary composition");
+            }
             if retained {
                 tracing::info!(target: "festerm::rendering",
                     "retained window prefix enabled; ineligible frames retain ordinary composition");
@@ -32,7 +53,15 @@ pub(crate) fn install_from_environment(
             "Direct2D initialization failed; retaining egui-wgpu"),
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
-    let _ = (context, composition);
+    let _ = (context, composition, document_retention);
+}
+
+fn document_retention_requested(value: Option<&str>) -> Result<bool, &'static str> {
+    match value {
+        None | Some("") | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(_) => Err("FESTERM_WARP_RETAIN_DOCUMENT_FRAMES expects 0 or 1"),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,6 +135,9 @@ impl TimingConfig {
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 pub(crate) mod profile;
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+mod document_retention;
 
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 mod font_atlas_profile;
@@ -541,6 +573,41 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn document_retention_requires_explicit_opt_in_and_supported_route() {
+        for value in [None, Some(""), Some("0")] {
+            assert_eq!(document_retention_requested(value), Ok(false));
+        }
+        assert_eq!(document_retention_requested(Some("1")), Ok(true));
+        for value in ["true", "2", "-1", " 1", "1\n"] {
+            assert!(document_retention_requested(Some(value)).is_err());
+        }
+        for windows_x64 in [false, true] {
+            for device in [wgpu::DeviceType::Cpu, wgpu::DeviceType::IntegratedGpu] {
+                for backend in [
+                    wgpu::Backend::Dx12,
+                    wgpu::Backend::Vulkan,
+                    wgpu::Backend::Metal,
+                ] {
+                    for format in [
+                        wgpu::TextureFormat::Bgra8Unorm,
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        wgpu::TextureFormat::Bgra8UnormSrgb,
+                    ] {
+                        let route =
+                            CompositionSelection::for_adapter(windows_x64, device, backend, format);
+                        assert_eq!(
+                            route.host_copy,
+                            windows_x64
+                                && device == wgpu::DeviceType::Cpu
+                                && backend == wgpu::Backend::Dx12
+                                && format == wgpu::TextureFormat::Bgra8Unorm
+                        );
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn automatic_warp_composition_preserves_platform_adapter_and_format_policy() {
         for windows_x64 in [false, true] {

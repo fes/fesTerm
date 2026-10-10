@@ -15,6 +15,32 @@ transformed-layer, Markdown and modal-selection controls remain required.
 This is selection correctness, not acceptance of the broader WARP freeze or
 native clipboard and sustained-drag gates.
 
+## Measuring unchanged document rasterization on WARP
+
+Quiet owned-window probes found elevated CPU even with a small document:
+a 200-line editor consumed 46.97 process CPU seconds in 30 seconds, and an
+eight-section Markdown Preview consumed 28.16. Both painted 41 times while
+UI construction and host paint return took roughly 1-2 ms. The existing
+750-ms document freshness/autosave poll explains the cadence, but host return
+does not measure completed software rasterization. This is a different
+observation from the still-unreproduced near-zero-CPU interaction freeze.
+
+The owner authorized a default-off experiment in
+[ADR 0046](adr/0046-opt-in-retained-document-frame.md). Eligible complete
+document frames share the existing one-image terminal-prefix cache and its
+64-MiB image/1-MiB exact-signature limits. Managed texture generations,
+ordered geometry, immutable callback keys, viewport, scale and renderer
+identity must match exactly. Unknown or image-copy callbacks and externally
+owned textures fall back to ordinary painting. Input, UI construction,
+callback preparation, freshness polling and presentation are not skipped.
+
+Deterministic regressions compare real Edit, Preview and Split pixels at
+100%, 125% and 200%, exercise exact invalidation and fallback, and preserve
+queued immutable images after replacement. These are fidelity evidence, not
+native CPU benefit or interaction acceptance. Paired native measurement and
+independent architectural/security review remain required; the gate stays
+off by default and the ADR remains Proposed.
+
 ## Preserving text-selection anchors when native events share a frame
 
 The next iteration reproduced an exact selection defect without a renderer:

@@ -1573,9 +1573,15 @@
         "docs/adr/0034-shared-mutable-text-documents.md"
       ],
       "decisions": [
-        "ADR-0034"
+        "ADR-0034",
+        "ADR-0046"
       ],
       "automated_tests": [
+        "document_retention_requires_explicit_opt_in_and_supported_route",
+        "retained_document_frames_preserve_editor_preview_and_split_pixels",
+        "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
+        "retained_document_frames_decline_targets_callbacks_and_budgets",
+        "retained_document_frames_keep_preparation_and_queued_images",
         "editor_surface_uses_eligible_panel_paint_and_preserves_pixels_and_opacity_fallback",
         "editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch",
         "batched_text_selection_respects_disabled_clipped_and_modal_ownership",
@@ -1857,6 +1863,7 @@
       ],
       "manual_scenarios": [
         "CP-15",
+        "CP-18",
         "TI-15"
       ],
       "status": "partial",
@@ -2676,9 +2683,15 @@
       ],
       "decisions": [
         "ADR-0030",
-        "ADR-0035"
+        "ADR-0035",
+        "ADR-0046"
       ],
       "automated_tests": [
+        "document_retention_requires_explicit_opt_in_and_supported_route",
+        "retained_document_frames_preserve_editor_preview_and_split_pixels",
+        "retained_document_frames_invalidate_exact_inputs_and_texture_ownership",
+        "retained_document_frames_decline_targets_callbacks_and_budgets",
+        "retained_document_frames_keep_preparation_and_queued_images",
         "markdown_preview_and_split_keep_batched_selection_and_copy_exact",
         "external_documents_open_in_last_active_window_and_reuse_dirty_views",
         "external_document_missing_file_preserves_tabs_and_blocks_later_requests",
@@ -2799,6 +2812,7 @@
       "manual_scenarios": [
         "CP-06",
         "CP-19",
+        "CP-18",
         "CP-15"
       ],
       "status": "partial",

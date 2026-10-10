@@ -279,6 +279,20 @@ recording terminal content.
 
 ## Diagnostics and Safety
 
+- The default-off [ADR 0046](adr/0046-opt-in-retained-document-frame.md)
+  experiment is enabled only by `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=1`.
+  Unset/empty/`0` leaves it off; invalid values warn and remain off.
+  Only supported Windows x64 DX12 CPU/BGRA opaque-root surfaces qualify.
+  Exact managed-texture/geometry/immutable-callback inputs may reuse a single
+  bounded complete image; unsupported/mutable scenes retain ordinary painting.
+  The existing automatic terminal-prefix path takes precedence. Input, document
+  freshness/autosave, callback preparation and presentation cadence are not
+  skipped. Enable `egui_wgpu::retained_ui=debug` for content-free hit/rebuild
+  counters (`whole_frame=true` identifies the experimental path).
+  Compare the same frozen executable with the variable `0` and `1`, without
+  concurrent builds or tests. Lower CPU is not a fix for the reported
+  near-zero-CPU interaction freeze or physical input-to-display evidence.
+
 - For idle-rendering CPU regressions on a Windows desktop, build the workspace,
   set `FESTERM_RUN_OPTIONAL_VALIDATION=1`, and run
   `pwsh -NoProfile -File scripts\check-windows-idle-rendering.ps1`.

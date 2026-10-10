@@ -29,6 +29,25 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 - **Pass / Fail / Not run:** result for one specific platform and commit. Not run
   always includes a reason and never counts as pass.
 
+### ADR 0046 document-frame experiment (CP-18)
+
+The default-off WARP document-frame prototype adds an automated exact-pixel
+oracle for actual 200-line Edit, Markdown Preview and Split at 100%, 125% and
+200%, with screenshot equivalence, exact input/resource invalidation, unsafe
+target/callback fallback, bounded signatures, and queued-image immutability.
+Those tests do not automate desktop interaction or prove the original freeze
+is repaired.
+
+Native evidence must compare `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` and `1`
+using the same frozen executable, owned fixture, physical viewport, DPI and
+adapter, in balanced order without concurrent builds/tests. Record process
+CPU, elapsed time, GUI/host paint count, actual complete-frame hit/rebuild
+counters, normal cleanup and adverse/rejected observations. Exercise Edit,
+Preview/Split, scrolling, selection, focused caret/typing, Save As recovery,
+resize/focus, and unknown/mutable callback fallback. This is experimental
+CP-18 evidence, not an accepted rollout; hardware, multi-window, device-loss,
+OS clipboard, sustained drag and physical-latency qualification remain pending.
+
 ## Evidence record
 
 Every execution records:

@@ -1,0 +1,99 @@
+# ADR 0046: Opt-In Retained Document Frame
+
+- **Status:** Proposed (owner-authorized default-off experiment)
+- **Date:** 2026-10-10
+- **Supersedes:** None; extends ADR 0041 without changing terminal-prefix policy
+
+## Context
+
+Owned, source-pinned Windows x64 WARP probes of a 200-line text editor and
+an eight-section Markdown document painted 41 frames during each 30-second
+quiet interval. They consumed 46.97 and 28.16 process CPU seconds respectively
+on a 16-logical-CPU machine. UI construction and host paint return took about
+1-2 ms per frame; host return is not completion of software rasterization.
+These measurements do not reproduce or explain the reported near-zero-CPU
+interaction freeze.
+
+ADR 0041 only retains the prefix before an eligible final terminal-image copy.
+Document views do not supply that callback. Their unchanged pixels are
+rasterized again when the existing freshness/autosave poll requests a repaint.
+Removing the poll would compromise the document contract; retaining arbitrary
+callbacks or swap-chain contents would compromise rendering correctness.
+The owner authorized a bounded, default-off whole-frame experiment.
+
+## Decision
+
+`FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=1` opts into complete-frame retention on
+the existing Windows x64 DX12 CPU-adapter/BGRA gamma route only. Unset, empty,
+or `0` leaves it disabled. Invalid values produce an explicit warning and
+remain disabled. This is a development experiment, not an automatic rollout,
+configuration setting, or acceptance decision.
+
+The host still processes input, builds UI, updates textures and buffers, runs
+every callback's prepare/finish_prepare, acquires a target, submits and
+presents every requested frame. Freshness, autosave and caret scheduling are
+unchanged. The prototype also covers eligible surrounding non-terminal root
+controls; there is no widget-specific policy or second application command path.
+
+An opaque root surface without MSAA/depth and with COPY_DST support may use the
+same one-image cache as ADR 0041 when there is no eligible final terminal copy.
+All ordered meshes, clips, callback viewports and immutable keys, managed-texture
+generation, renderer identity, physical size, scale, target format and clear
+color must match exactly. Prefix and complete-frame signatures are distinct.
+Unknown callbacks, user textures, externally exposed/rebound managed textures,
+and any callback offering a terminal/image copy decline complete-frame reuse.
+The existing terminal-prefix path takes precedence and retains its policy.
+
+On a miss, paint the complete frame into a new immutable private texture. On a
+hit, copy the entire previously painted image. Do not retain swap-chain pixels
+or skip presentation. The cache-owned limits remain 16,777,216 pixels (64 MiB
+at four bytes per pixel) and 1 MiB of exact paint signatures, shared between
+both modes. Candidate signatures/images and queued GPU references can coexist
+with the current image; these are not total-process or peak-allocation bounds.
+Disabling, ineligibility, surface changes, failed acquisition, viewport
+retirement and destruction discard the image. Screenshot targets use the same
+validated route. Device/allocation errors retain the existing wgpu error policy.
+
+## Alternatives considered
+
+- Remove or slow freshness polling: changes correctness instead of addressing
+  repeated rasterization.
+- Only optimize widget backgrounds: useful, but the editor outer-frame repair
+  is already present and cannot eliminate unchanged full-frame rasterization.
+- Cache by hashes or callback pointer identity: neither proves exact pixels or
+  immutable resources.
+- Add a second document renderer/cache: unnecessary ownership and memory
+  duplication; reuse the existing bounded cache instead.
+- Enable automatically: deferred until independent review, exact-head checks
+  and meaningful native evidence justify a separate owner decision.
+
+## Consequences
+
+Misses add an image copy and may regress changing scenes. Large/ineligible
+frames retain ordinary painting. The experiment does not change public input
+or document APIs, terminal ownership, dependencies or queues. It adds a narrow
+vendor host API and maintenance obligation that requires architectural review.
+All platforms must still compile and check the extension.
+
+Native CPU benefit must be measured with paired, balanced-order owned-window
+controls using the same frozen executable, fixture, viewport, DPI and adapter.
+CPU improvement alone does not prove input-to-display latency, clipboard
+delivery, sustained dragging, device recovery or a fix for the original freeze.
+
+## Validation impact
+
+- **Invariants introduced or changed:** One shared bounded immutable image
+  can represent an eligible non-terminal complete frame; exact invalidation,
+  default-off supported-route gating, unchanged preparation/input/cadence.
+- **GUI/action edges affected:** `EDIT-*`, `MD-*`; no action semantics change.
+- **Automated tests required:** `document_retention_requires_explicit_opt_in_and_supported_route`,
+  `retained_document_frames_preserve_editor_preview_and_split_pixels`,
+  `retained_document_frames_invalidate_exact_inputs_and_texture_ownership`,
+  `retained_document_frames_decline_targets_callbacks_and_budgets`,
+  `retained_document_frames_keep_preparation_and_queued_images`,
+  and the existing retained-prefix, editor, Markdown and Save As regressions.
+- **Native/manual evidence required:** `CP-18`; paired quiet and interaction
+  CPU/cadence/reuse measurements, actual editor and Preview captures, save
+  recovery, resize/focus and unsupported-route controls. Broader mixed-DPI,
+  hardware, device-loss, clipboard and physical-latency evidence remains open.
+- **Coverage superseded:** None.
