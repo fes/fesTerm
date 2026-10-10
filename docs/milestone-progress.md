@@ -37,9 +37,25 @@ callback preparation, freshness polling and presentation are not skipped.
 Deterministic regressions compare real Edit, Preview and Split pixels at
 100%, 125% and 200%, exercise exact invalidation and fallback, and preserve
 queued immutable images after replacement. These are fidelity evidence, not
-native CPU benefit or interaction acceptance. Paired native measurement and
-independent architectural/security review remain required; the gate stays
-off by default and the ADR remains Proposed.
+native interaction acceptance. Eight balanced, same-executable WARP controls
+then measured mean total-machine CPU falling from 9.562% to 0.353% in Edit and
+7.532% to 0.236% in Preview: roughly 96-97% less idle CPU. Every 30-second
+sample still painted 41 frames, and every enabled sample recorded 41
+complete-frame hits with no measured rebuild. The cache held 6,208,512 image
+bytes. This is reuse of unchanged rasterization, not slower polling.
+
+Fresh on/off controls exercised reversible typing/undo, keyboard selection,
+caret movement, scrolling, actual Preview/Split and Save As Cancel/reopen/
+Escape; all four exited normally. A real 200-row history snapshot also
+published exactly 10,600 LF bytes, but that run required forced cleanup after
+window close. A guarded drag was rejected rather than counted as success,
+and an outline section mismatch appeared in both controls. Changing scenes
+remain expensive, physical latency is not qualified, and the original freeze
+was still not reproduced. The bounded native record and remaining gates are
+in [`CP-18`](manual-validation.md#adr-0046-document-frame-experiment-cp-18).
+The cumulative security review found no actionable vulnerabilities.
+Architectural review and broader native/usability evidence remain required;
+the gate stays off by default and the ADR remains Proposed.
 
 ## Preserving text-selection anchors when native events share a frame
 

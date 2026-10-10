@@ -80,6 +80,39 @@ controls using the same frozen executable, fixture, viewport, DPI and adapter.
 CPU improvement alone does not prove input-to-display latency, clipboard
 delivery, sustained dragging, device recovery or a fix for the original freeze.
 
+### Bounded native result
+
+Windows x64 DX12 WARP controls on 2026-10-10 used the same optimized executable
+from `ac56bb491dfa808a72cbf97d6d3d9a70bf0442af`, SHA-256
+`E755C711433B98CD0E4DC3611EA8253F8A134688A60BA48F25B12104EDF10B38`.
+Eight quiet samples used the same fixture content per surface, a 1504 x 1032
+physical client at 200% scale, five-second warmup and 30-second measurement,
+without concurrent builds/tests. Paths/header text differed between cases;
+this is not a claim of identical whole-window pixels across controls.
+
+Balanced off/on/on/off controls reduced mean process CPU, expressed as a
+percentage of the 16-logical-CPU machine, from 9.562% to 0.353% for Edit and
+7.532% to 0.236% for Preview (96.3% and 96.9% reductions). Every sample still
+painted 41 frames. Each enabled sample recorded 41 complete-frame hits and
+zero measured rebuilds, with 6,208,512 cache-image bytes. All eight exited
+normally. Per-case values and interaction limits are recorded under
+[`CP-18`](../manual-validation.md#adr-0046-document-frame-experiment-cp-18).
+
+Fresh enabled/disabled controls exercised reversible typing, undo, keyboard
+selection, caret movement, scroll and Save As Cancel/reopen/Escape in Edit
+and Markdown Preview/Split, with normal cleanup. A separate actual PTY-history
+workflow published exactly 200 rows / 10,600 LF bytes but required forced
+cleanup after window close. A pointer-drag attempt was rejected by the
+unchanged exact-cursor guard; no successful sustained-drag result is inferred.
+An outline/source-versus-preview section mismatch appeared in both controls,
+so the outline click is not precise-navigation acceptance or an attributed
+retention regression.
+
+Changing scenes remain expensive; observer-inclusive response timings are not
+physical display latency. The original near-zero-CPU freeze was not reproduced.
+Independent architectural review and broader native qualification remain open;
+this result does not change the Proposed status or default-off gate.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** One shared bounded immutable image

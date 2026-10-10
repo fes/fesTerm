@@ -48,6 +48,64 @@ resize/focus, and unknown/mutable callback fallback. This is experimental
 CP-18 evidence, not an accepted rollout; hardware, multi-window, device-loss,
 OS clipboard, sustained drag and physical-latency qualification remain pending.
 
+#### Windows WARP bounded execution, 2026-10-10
+
+The frozen optimized source was
+`ac56bb491dfa808a72cbf97d6d3d9a70bf0442af`, executable SHA-256
+`E755C711433B98CD0E4DC3611EA8253F8A134688A60BA48F25B12104EDF10B38`.
+The Windows x64 Microsoft Basic Render Driver/DX12 CPU route used a
+1504 x 1032 physical viewport at 200% scale on a 16-logical-CPU machine.
+Each sample followed five seconds of warmup and an initial inspected capture.
+No builds/tests ran during CPU sampling. Paired cases used identical fixture
+content, but different evidence paths/header text; whole-window control
+pixels were not identical.
+
+| Case | Surface | Gate | Process CPU seconds | Elapsed seconds | Total-machine CPU |
+| --- | --- | --- | --- | --- | --- |
+| 55 | 200-line Edit | 0 | 44.921875 | 30.009145 | 9.3559% |
+| 56 | 200-line Edit | 1 | 1.906250 | 30.002561 | 0.3971% |
+| 59 | 200-line Edit | 1 | 1.484375 | 30.014328 | 0.3091% |
+| 60 | 200-line Edit | 0 | 46.906250 | 30.013772 | 9.7677% |
+| 57 | Eight-section Preview | 0 | 36.296875 | 30.001359 | 7.5615% |
+| 58 | Eight-section Preview | 1 | 1.234375 | 30.001100 | 0.2572% |
+| 61 | Eight-section Preview | 1 | 1.031250 | 30.008266 | 0.2148% |
+| 62 | Eight-section Preview | 0 | 36.031250 | 30.014994 | 7.5028% |
+
+All eight cases painted 41 frames and exited normally. Enabled cases each
+recorded 41 measured complete-frame hits, zero measured rebuilds and
+6,208,512 image bytes; exact signatures were 233,648 bytes for Edit and
+154,072 for Preview. Mean off/on CPU was 9.562%/0.353% for Edit and
+7.532%/0.236% for Preview. Host return remained roughly 1-2 ms and is not
+GPU/display completion. This is a **Pass for bounded static-idle CPU
+reduction**, not general responsiveness or rollout acceptance.
+
+Fresh interaction cases used the same frozen source:
+
+- Case 63 completed eleven observations before its pointer drag failed the
+  exact-cursor guard. The rejection was preserved and the owned process was
+  independently confirmed absent; drag and Save As were not completed.
+- Cases 64/65 (Edit on/off) completed seventeen actions each; cases 66/67
+  (Markdown on/off) completed twenty-four each. Captures confirmed reversible
+  typing/undo, keyboard selection/caret, scrolling, actual Preview/Split and
+  Save As Cancel/reopen/Escape with subsequent editor movement. All four
+  exited normally. The outline click showed source/preview section mismatch
+  in both Markdown controls: it is not precise section-navigation acceptance.
+- Case 68 used actual owned PTY output and the terminal-history editor command.
+  All thirty-two observations completed, including Save As directory/Up,
+  Cancel/reopen/Escape and fresh publication. The published file had exactly
+  200 nonempty rows / 10,600 LF bytes, SHA-256
+  `D95BEE4339720CD25439DF65CD237B032125C69A19693202D6678E390903C324`.
+  The Saved capture was inspected, but window close required forced cleanup;
+  both owned application and child were subsequently absent. Publication
+  passes this bounded oracle; clean shutdown does not.
+
+Changing frames remain expensive, and capture-inclusive observations do not
+qualify input-to-display latency. No indefinite near-zero-CPU freeze was
+reproduced. Retain **Manual pending / Usability pending** for the broader
+matrix, including resize/focus, native mutable-callback/device recovery,
+hardware/multi-window, OS clipboard and sustained pointer dragging. The gate
+remains off and ADR 0046 remains Proposed.
+
 ## Evidence record
 
 Every execution records:
