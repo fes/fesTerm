@@ -1,5 +1,16 @@
 # Milestone Progress Narrative
 
+## Qualifying complete-frame evidence without substituting app identities
+
+Independent review agrees with the bounded complete-frame cache design and
+found no actionable security or reliability defects. Its architectural
+acceptance remains conditional: the reported all-miss ratios need their actual
+release test-binary identity and retained raw evidence location. The native
+application hashes identify different executables and cannot fill that gap.
+Architecture and vendor documentation now describe the shared cache and
+document-specific opt-out consistently, while ADR 0046 stays Proposed and
+the broader native matrix stays pending.
+
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 

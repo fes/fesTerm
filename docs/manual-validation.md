@@ -156,6 +156,14 @@ for Split. These small all-miss differences are bounded-regression evidence,
 not improvement claims. This is opt-in measured qualification, not a mandatory CI timing
 budget or new hardware-wide performance claim.
 
+**Evidence provenance pending:** the historical all-miss ratios above are
+reported qualification, not independently test-binary-bound receipts. The
+actual release test executable SHA-256, source/tree and clean status, invocation
+and retained raw `profile.json`/log location must be supplied or regenerated
+before ADR 0046 architectural acceptance. The prepared all-miss viewport is
+1280 x 800 at 200%, not the 1504 x 1032 native-window viewport. The separately
+pinned application executable hashes below cannot identify the test executable.
+
 The application now defaults retention on only for the qualified Windows x64
 DX12 CPU/BGRA route after native installation. `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0`
 opts out; unsupported routes and invalid values retain conservative fallback.

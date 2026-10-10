@@ -89,6 +89,17 @@ partial presentation or a replacement window backend. See
 immutable signatures for the preceding UI and ordinary same-frame fallback, and
 [`vendor/egui-wgpu/FESTERM-PATCH.md`](vendor/egui-wgpu/FESTERM-PATCH.md).
 
+Proposed [ADR 0046](docs/adr/0046-opt-in-retained-document-frame.md) extends
+that same host-owned immutable image to eligible complete non-terminal frames.
+The supported Windows x64 DX12 CPU/BGRA gamma route requests it after native
+installation; `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` disables this extension
+without changing terminal-prefix policy. Generic vendor defaults remain off.
+Both modes share the 64-MiB image and 1-MiB exact-signature limits, not a
+process/peak allocation guarantee. Input, callback preparation, document
+freshness, UI construction, acquisition and presentation remain unchanged.
+Architectural acceptance is conditional on the CP-18 evidence provenance;
+the broader native/resource/latency matrix is not accepted by this extension.
+
 The app-owned textureless panel pipeline also handles the full-width chrome
 band and status-bar frame on eligible Windows DX12 CPU adapters. The UI exposes
 a graphics-only optional fill callback; the app retains device/format,
