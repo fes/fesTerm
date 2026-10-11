@@ -39,6 +39,7 @@ struct JobSignature {
 }
 
 struct Signature {
+    whole_frame: bool,
     size: [u32; 2],
     scale: f32,
     format: wgpu::TextureFormat,
@@ -68,8 +69,13 @@ impl Signature {
         screen: &ScreenDescriptor,
         format: wgpu::TextureFormat,
         clear: [f32; 4],
+        whole_frame: bool,
     ) -> Result<Self, &'static str> {
-        if !fits_size(screen.size_in_pixels) || !clear.iter().all(|value| value.is_finite()) {
+        if !fits_size(screen.size_in_pixels)
+            || !screen.pixels_per_point.is_finite()
+            || screen.pixels_per_point <= 0.0
+            || !clear.iter().all(|value| value.is_finite())
+        {
             return Err("target size or clear color is ineligible");
         }
         let textures = renderer
@@ -95,10 +101,16 @@ impl Signature {
                     if !callback.rect.is_finite() {
                         return Err("nonfinite callback viewport");
                     }
-                    let key = callback
+                    let painter = callback
                         .callback
                         .downcast_ref::<Callback>()
-                        .and_then(|callback| callback.0.paint_key())
+                        .ok_or("callback has no immutable paint key")?;
+                    if whole_frame && painter.0.texture_copy().is_some() {
+                        return Err("image-copy callback cannot be retained in a complete frame");
+                    }
+                    let key = painter
+                        .0
+                        .paint_key()
                         .ok_or("callback has no immutable paint key")?;
                     add_bytes(&mut bytes, key.bytes.len(), 1)?;
                     PaintSignature::Callback {
@@ -113,6 +125,7 @@ impl Signature {
             });
         }
         Ok(Self {
+            whole_frame,
             size: screen.size_in_pixels,
             scale: screen.pixels_per_point,
             format,
@@ -124,7 +137,8 @@ impl Signature {
     }
 
     fn matches(&self, other: &Self) -> bool {
-        self.size == other.size
+        self.whole_frame == other.whole_frame
+            && self.size == other.size
             && self.scale == other.scale
             && self.format == other.format
             && self.clear == other.clear
@@ -148,11 +162,12 @@ pub struct RetainedUiStats {
     pub decline_reason: Option<&'static str>,
 }
 
-/// One bounded, immutable image of the UI before an eligible final-copy callback.
+/// One bounded, immutable image of a prefix or an eligible complete frame.
 ///
 /// This never retains terminal pixels or relies on swap-chain contents. Hosts
 /// must discard it on surface/lifecycle changes and restrict its use to their
-/// eligible viewport. Managed texture writes must use the renderer's APIs.
+/// eligible viewport. Complete frames reject image-copy callbacks as well as
+/// unknown/mutable paint. Managed texture writes must use the renderer's APIs.
 #[derive(Default)]
 pub struct RetainedUi {
     cached: Option<CachedPrefix>,
@@ -213,12 +228,65 @@ impl RetainedUi {
             return None;
         }
         let prefix = &jobs[..jobs.len() - 1];
-        let signature = match Signature::capture(renderer, prefix, screen, target.format(), clear) {
+        self.try_render_jobs(
+            renderer, device, encoder, prefix, screen, target, clear, false,
+        )
+    }
+
+    /// Paint/copy an eligible complete frame, without a final image-copy callback.
+    ///
+    /// Uses the same cache/budgets as prefix retention, after normal texture and
+    /// buffer updates. Hosts must enforce opaque-root surface eligibility.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_render_frame(
+        &mut self,
+        renderer: &Renderer,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+        clear: [f32; 4],
+    ) -> Option<bool> {
+        self.decline_reason = None;
+        if !renderer.retained_frame_enabled {
+            self.clear();
+            return None;
+        }
+        if !renderer.retained_frame_target_eligible(screen, target) {
+            self.clear();
+            self.decline_reason = Some("ineligible complete-frame target");
+            log::debug!(target: "egui_wgpu::retained_ui", "retained frame declined: ineligible target");
+            return None;
+        }
+        self.try_render_jobs(renderer, device, encoder, jobs, screen, target, clear, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_render_jobs(
+        &mut self,
+        renderer: &Renderer,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+        clear: [f32; 4],
+        whole_frame: bool,
+    ) -> Option<bool> {
+        let signature = match Signature::capture(
+            renderer,
+            jobs,
+            screen,
+            target.format(),
+            clear,
+            whole_frame,
+        ) {
             Ok(signature) => signature,
             Err(reason) => {
                 self.clear();
                 self.decline_reason = Some(reason);
-                log::debug!(target: "egui_wgpu::retained_ui", "retained prefix declined: {reason}");
+                log::debug!(target: "egui_wgpu::retained_ui", "retained image declined: {reason}");
                 return None;
             }
         };
@@ -230,7 +298,7 @@ impl RetainedUi {
             self.reused_frames = self.reused_frames.saturating_add(1);
         } else {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("egui immutable retained prefix"),
+                label: Some("egui immutable retained image"),
                 size: target.size(),
                 mip_level_count: 1,
                 sample_count: 1,
@@ -243,7 +311,7 @@ impl RetainedUi {
             {
                 let mut pass = encoder
                     .begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("egui retained prefix rebuild"),
+                        label: Some("egui retained image rebuild"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &view,
                             resolve_target: None,
@@ -261,12 +329,12 @@ impl RetainedUi {
                         ..Default::default()
                     })
                     .forget_lifetime();
-                renderer.render(&mut pass, prefix, screen);
+                renderer.render(&mut pass, jobs, screen);
             }
             self.cached = Some(CachedPrefix { signature, texture });
             self.rebuilt_frames = self.rebuilt_frames.saturating_add(1);
         }
-        let cached = self.cached.as_ref().expect("retained prefix initialized");
+        let cached = self.cached.as_ref().expect("retained image initialized");
         encoder.copy_texture_to_texture(
             cached.texture.as_image_copy(),
             target.as_image_copy(),
@@ -314,5 +382,34 @@ mod tests {
                 bytes: Arc::from([1, 2, 4]),
             }
         );
+    }
+
+    #[test]
+    fn retained_image_modes_and_renderer_epochs_are_distinct() {
+        let mut prefix = Signature {
+            whole_frame: false,
+            size: [640, 400],
+            scale: 1.0,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            clear: [0.0; 4],
+            textures: Arc::new(()),
+            jobs: Vec::new(),
+            bytes: size_of::<Signature>(),
+        };
+        let mut frame = Signature {
+            whole_frame: true,
+            size: prefix.size,
+            scale: prefix.scale,
+            format: prefix.format,
+            clear: prefix.clear,
+            textures: Arc::clone(&prefix.textures),
+            jobs: Vec::new(),
+            bytes: prefix.bytes,
+        };
+        assert!(!prefix.matches(&frame));
+        prefix.whole_frame = true;
+        assert!(prefix.matches(&frame));
+        frame.textures = Arc::new(());
+        assert!(!prefix.matches(&frame));
     }
 }

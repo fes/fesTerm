@@ -15,7 +15,7 @@ impl EncodedInputSink for Sink {
     }
 }
 
-fn target(
+pub(super) fn target(
     state: &egui_wgpu::RenderState,
     size: [u32; 2],
     format: wgpu::TextureFormat,
@@ -43,7 +43,7 @@ fn target(
     })
 }
 
-fn render_state() -> egui_wgpu::RenderState {
+pub(super) fn render_state() -> egui_wgpu::RenderState {
     let mut setup = default_wgpu_setup();
     let egui_wgpu::WgpuSetup::CreateNew(options) = &mut setup else {
         unreachable!()

@@ -291,8 +291,15 @@ pub struct Renderer {
     /// Defaults to false. Native hosts must restrict this to eligible root windows.
     pub retained_composition_enabled: bool,
 
+    /// Experimental complete-frame retention. Defaults to false.
+    ///
+    /// Hosts must restrict this to eligible opaque root windows. Only managed
+    /// meshes and explicitly immutable callbacks without image copies qualify.
+    pub retained_frame_enabled: bool,
+
     managed_texture_epoch: Arc<()>,
     managed_textures_exposed: AtomicBool,
+    target_format: wgpu::TextureFormat,
 
     pipeline: wgpu::RenderPipeline,
 
@@ -501,6 +508,8 @@ impl Renderer {
         Self {
             final_callback_copy_enabled: false,
             retained_composition_enabled: false,
+            retained_frame_enabled: false,
+            target_format: output_color_format,
             managed_texture_epoch: Arc::new(()),
             managed_textures_exposed: AtomicBool::new(false),
             pipeline,
@@ -538,6 +547,26 @@ impl Renderer {
                 .textures
                 .get(&id)
                 .is_some_and(|texture| texture.texture.is_some() && texture.options.is_some())
+    }
+
+    pub(crate) fn retained_frame_target_eligible(
+        &self,
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+    ) -> bool {
+        self.options.msaa_samples <= 1
+            && self.options.depth_stencil_format.is_none()
+            && target.format() == self.target_format
+            && matches!(
+                target.format(),
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
+            )
+            && target.usage().contains(wgpu::TextureUsages::COPY_DST)
+            && target.dimension() == wgpu::TextureDimension::D2
+            && target.sample_count() == 1
+            && target.mip_level_count() == 1
+            && target.depth_or_array_layers() == 1
+            && screen.size_in_pixels == [target.width(), target.height()]
     }
 
     /// Select an exact texture-copy replacement for the final paint job only.

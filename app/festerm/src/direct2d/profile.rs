@@ -78,8 +78,15 @@ pub(super) fn draw_composed(
                 clear,
             )
         } else {
-            retained.clear();
-            None
+            retained.try_render_frame(
+                &renderer,
+                &state.device,
+                &mut encoder,
+                primitives,
+                screen,
+                texture,
+                clear,
+            )
         }
     });
     let target = texture.create_view(&Default::default());

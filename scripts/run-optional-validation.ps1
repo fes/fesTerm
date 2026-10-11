@@ -379,6 +379,23 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=retained-prefix-comparison status=skipped reason=explicit-opt-in"
     }
+    if ($env:FESTERM_RUN_DOCUMENT_RETENTION_PROFILE -eq '1') {
+        try {
+            if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'The document retention profile requires Windows x64.' }
+            if (-not $env:FESTERM_DOCUMENT_RETENTION_PROFILE_OUT) { throw 'Set FESTERM_DOCUMENT_RETENTION_PROFILE_OUT to a new directory.' }
+            Invoke-NativeCommand {
+                cargo test --release -p festerm --bin festerm profile_document_retention_changing_frames -- --ignored --nocapture --test-threads=1
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'Document retention profile failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=document-retention-profile status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=document-retention-profile status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=document-retention-profile status=skipped reason=explicit-opt-in"
+    }
     if ($env:FESTERM_RUN_FONT_ATLAS_PROFILE -eq '1') {
         try {
             if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'The font atlas profile requires Windows x64.' }

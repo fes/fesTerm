@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Qualifying complete-frame evidence without substituting app identities
+
+Independent review agrees with the bounded complete-frame cache design and
+found no actionable security or reliability defects. Its architectural
+all-miss provenance condition is now resolved by fresh manual Windows x64
+run 38100443816 on clean source `6e8fbff5`. Three predeclared independent
+same-release-test-binary ABBA controls passed Edit, Preview and Split, with
+zero measured hits, exact pixels and every CPU/completed-render ratio within
+1.10. Maximum overhead was 6.50% CPU and 5.20% completed-render time.
+CP-18 links the actual test-binary hash, invocation and all durable raw records;
+historical application hashes are not substituted. A failed orchestration
+attempt is preserved separately: explicit process waiting repaired missing
+results without changing the candidate. Hosted background variability is
+retained, not excluded or called dedicated-hardware/native-latency evidence.
+Architecture/vendor/graph/trace records agree; ADR 0046 stays Proposed pending
+final merge acceptance, and the broader native matrix stays pending.
+
 ## Preserving selection ownership and separate clicks during batching
 
 Independent review reproduced two regressions in the batched-selection patch:
@@ -14,6 +31,66 @@ cases failed before these repairs and pass afterward; the original Unicode,
 transformed-layer, Markdown and modal-selection controls remain required.
 This is selection correctness, not acceptance of the broader WARP freeze or
 native clipboard and sustained-drag gates.
+
+## Measuring unchanged document rasterization on WARP
+
+Quiet owned-window probes found elevated CPU even with a small document:
+a 200-line editor consumed 46.97 process CPU seconds in 30 seconds, and an
+eight-section Markdown Preview consumed 28.16. Both painted 41 times while
+UI construction and host paint return took roughly 1-2 ms. The existing
+750-ms document freshness/autosave poll explains the cadence, but host return
+does not measure completed software rasterization. This is a different
+observation from the still-unreproduced near-zero-CPU interaction freeze.
+
+The owner authorized a default-off experiment in
+[ADR 0046](adr/0046-opt-in-retained-document-frame.md). Eligible complete
+document frames share the existing one-image terminal-prefix cache and its
+64-MiB image/1-MiB exact-signature limits. Managed texture generations,
+ordered geometry, immutable callback keys, viewport, scale and renderer
+identity must match exactly. Unknown or image-copy callbacks and externally
+owned textures fall back to ordinary painting. Input, UI construction,
+callback preparation, freshness polling and presentation are not skipped.
+
+Deterministic regressions compare real Edit, Preview and Split pixels at
+100%, 125% and 200%, exercise exact invalidation and fallback, and preserve
+queued immutable images after replacement. These are fidelity evidence, not
+native interaction acceptance. Eight balanced, same-executable WARP controls
+then measured mean total-machine CPU falling from 9.562% to 0.353% in Edit and
+7.532% to 0.236% in Preview: roughly 96-97% less idle CPU. Every 30-second
+sample still painted 41 frames, and every enabled sample recorded 41
+complete-frame hits with no measured rebuild. The cache held 6,208,512 image
+bytes. This is reuse of unchanged rasterization, not slower polling.
+
+Fresh on/off controls exercised reversible typing/undo, keyboard selection,
+caret movement, scrolling, actual Preview/Split and Save As Cancel/reopen/
+Escape; all four exited normally. A real 200-row history snapshot also
+published exactly 10,600 LF bytes, but that run required forced cleanup after
+window close: its live PTY raised the expected Quit confirmation, which the
+harness did not confirm. This is not a reproduced stuck dialog.
+A guarded drag was rejected rather than counted as success,
+and an outline section mismatch appeared in both controls. Changing scenes
+remain expensive, physical latency is not qualified, and the original freeze
+was still not reproduced. The bounded native record and remaining gates are
+in [`CP-18`](manual-validation.md#adr-0046-document-frame-experiment-cp-18).
+The cumulative security review found no actionable vulnerabilities.
+Architectural review and broader native/usability evidence remained required;
+that initial qualification left the gate off and the ADR Proposed.
+
+The owner then requested regression qualification followed by enablement.
+Balanced ordinary typing/undo and Preview-scroll controls, without screenshots
+inside CPU measurement, reduced mean process CPU by 49.3% and 21.0%. A
+focus-readiness mismatch was excluded and rerun rather than pooled. Native
+resize/minimize/restore controls completed normally, and sixteen paired
+document-content/status captures matched the off control exactly. A new
+repository-owned optional completed-WARP control forces every real
+Edit/Preview/Split frame to miss and checks both pixel parity and a 10% mean
+CPU/completed-render regression ceiling, so idle reuse cannot mask copy/allocation
+overhead. That bounded control passed. The application therefore defaults
+retention on for the already-qualified Windows x64 DX12 CPU/BGRA route, with
+`FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0` as an explicit escape hatch. Hardware
+paths and generic vendor defaults are unchanged. The ADR remains Proposed
+pending independent architectural review; neither rollout nor CPU improvement
+claims a fix for the original freeze or physical display-latency acceptance.
 
 ## Preserving text-selection anchors when native events share a frame
 
