@@ -1845,6 +1845,7 @@ mod imp {
             os::windows::fs::OpenOptionsExt,
             path::PathBuf,
             process::Command,
+            sync::atomic::{AtomicU64, Ordering},
             time::{SystemTime, UNIX_EPOCH},
         };
         use windows_sys::Win32::{
@@ -1868,8 +1869,14 @@ mod imp {
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_nanos();
+                Self::with_nonce(nonce)
+            }
+
+            fn with_nonce(nonce: u128) -> Self {
+                static NEXT: AtomicU64 = AtomicU64::new(0);
+                let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
                 let path = std::env::temp_dir().join(format!(
-                    "festerm-windows-security-{}-{nonce}",
+                    "festerm-windows-security-{}-{nonce}-{sequence}",
                     std::process::id()
                 ));
                 fs::create_dir(&path).unwrap();
@@ -1889,6 +1896,23 @@ mod imp {
             fn drop(&mut self) {
                 let _ = fs::remove_dir_all(&self.0);
             }
+        }
+
+        #[test]
+        fn temporary_directories_remain_unique_with_concurrent_identical_clock_ticks() {
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..16)
+                    .map(|_| scope.spawn(|| TemporaryDirectory::with_nonce(0)))
+                    .collect();
+                let directories: Vec<_> = handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect();
+                let paths: std::collections::HashSet<_> =
+                    directories.iter().map(|directory| &directory.0).collect();
+                assert_eq!(paths.len(), 16);
+                assert!(paths.iter().all(|path| path.is_dir()));
+            });
         }
 
         #[test]
