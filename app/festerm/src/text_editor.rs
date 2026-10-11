@@ -3129,31 +3129,46 @@ fn editor_layout_job(
     spans: &[festerm_syntax::Span],
 ) -> egui::text::LayoutJob {
     let font = FontId::monospace(EDITOR_TEXT_SIZE);
-    let mut job = egui::text::LayoutJob::default();
-    // Every boundary either channel cares about, so each run that is appended
-    // is uniform in both.
-    let mut cuts: Vec<usize> = vec![0, text.len()];
-    for &(start, end, _) in highlights {
-        cuts.push(start);
-        cuts.push(end);
-    }
-    for span in spans {
-        cuts.push(span.start);
-        cuts.push(span.end);
-    }
-    cuts.retain(|cut| *cut <= text.len() && text.is_char_boundary(*cut));
-    cuts.sort_unstable();
-    cuts.dedup();
-
-    // Find returns ordered, non-overlapping matches, as does DocumentSyntax.
-    // Advance each channel once instead of rescanning it for every section.
+    let mut job = egui::text::LayoutJob {
+        text: String::with_capacity(text.len()),
+        ..Default::default()
+    };
+    // Both channels are ordered and non-overlapping. Merge their boundaries
+    // directly rather than allocating, sorting and deduplicating a third list.
+    debug_assert!(highlights.iter().all(|(start, end, _)| start <= end));
+    debug_assert!(spans.iter().all(|span| span.start <= span.end));
     debug_assert!(highlights.windows(2).all(|pair| pair[0].1 <= pair[1].0));
     debug_assert!(spans.windows(2).all(|pair| pair[0].end <= pair[1].start));
+    let valid_boundary = |cut: &usize| *cut <= text.len() && text.is_char_boundary(*cut);
+    let mut match_boundaries = highlights
+        .iter()
+        .flat_map(|&(start, end, _)| [start, end])
+        .filter(valid_boundary)
+        .peekable();
+    let mut syntax_boundaries = spans
+        .iter()
+        .flat_map(|span| [span.start, span.end])
+        .filter(valid_boundary)
+        .peekable();
     let mut match_index = 0;
     let mut syntax_index = 0;
-    for pair in cuts.windows(2) {
-        let (start, end) = (pair[0], pair[1]);
-        if start >= end {
+    let mut start = 0;
+    while start < text.len() {
+        let end = match (
+            match_boundaries.peek().copied(),
+            syntax_boundaries.peek().copied(),
+        ) {
+            (Some(left), Some(right)) => left.min(right),
+            (Some(cut), None) | (None, Some(cut)) => cut,
+            (None, None) => text.len(),
+        };
+        while match_boundaries.peek() == Some(&end) {
+            match_boundaries.next();
+        }
+        while syntax_boundaries.peek() == Some(&end) {
+            syntax_boundaries.next();
+        }
+        if start == end {
             continue;
         }
         while highlights
@@ -3197,6 +3212,7 @@ fn editor_layout_job(
                 ..Default::default()
             },
         );
+        start = end;
     }
     job
 }
@@ -3850,6 +3866,75 @@ mod tests {
             .sections
             .iter()
             .all(|section| section.format.color == theme::TEXT_PRIMARY));
+    }
+
+    #[test]
+    fn streaming_layout_boundaries_match_sorted_cuts_for_unicode_empty_and_clipped_ranges() {
+        fn sorted_oracle(
+            text: &str,
+            highlights: &[(usize, usize, bool)],
+            spans: &[festerm_syntax::Span],
+        ) -> egui::text::LayoutJob {
+            let mut cuts = vec![0, text.len()];
+            cuts.extend(highlights.iter().flat_map(|&(start, end, _)| [start, end]));
+            cuts.extend(spans.iter().flat_map(|span| [span.start, span.end]));
+            cuts.retain(|cut| *cut <= text.len() && text.is_char_boundary(*cut));
+            cuts.sort_unstable();
+            cuts.dedup();
+            let mut job = egui::text::LayoutJob::default();
+            for pair in cuts.windows(2) {
+                let (start, end) = (pair[0], pair[1]);
+                let matched = highlights
+                    .iter()
+                    .find(|(left, right, _)| *left <= start && *right >= end);
+                let (background, underline) = match matched {
+                    Some((_, _, true)) => (theme::SURFACE_SELECTION, egui::Stroke::NONE),
+                    Some(_) => (
+                        theme::SEARCH_MATCH_FILL,
+                        egui::Stroke::new(1.0, theme::SEARCH_MATCH_RULE),
+                    ),
+                    None => (egui::Color32::TRANSPARENT, egui::Stroke::NONE),
+                };
+                let color = spans
+                    .iter()
+                    .find(|span| span.start <= start && span.end >= end)
+                    .map_or(theme::TEXT_PRIMARY, |span| role_colour(span.role));
+                job.append(
+                    &text[start..end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: FontId::monospace(EDITOR_TEXT_SIZE),
+                        color,
+                        background,
+                        underline,
+                        ..Default::default()
+                    },
+                );
+            }
+            job
+        }
+
+        for text in ["", "a", "a\u{e9}\u{1f642}b\r\n", "fn main() {}\n"] {
+            for stride in [1, 2, 3, 5, 11] {
+                let highlights: Vec<_> = (0..text.len() + 2)
+                    .step_by(stride)
+                    .enumerate()
+                    .map(|(index, start)| (start, start + stride / 2, index % 2 == 0))
+                    .collect();
+                let spans: Vec<_> = (0..text.len() + 2)
+                    .step_by(stride + 1)
+                    .map(|start| festerm_syntax::Span {
+                        start,
+                        end: start + stride,
+                        role: festerm_syntax::Role::Keyword,
+                    })
+                    .collect();
+                let actual = editor_layout_job(text, &highlights, &spans);
+                assert_eq!(actual, sorted_oracle(text, &highlights, &spans));
+                assert_eq!(actual.text, text);
+                assert_eq!(actual.text.capacity(), text.len());
+            }
+        }
     }
 
     #[test]
