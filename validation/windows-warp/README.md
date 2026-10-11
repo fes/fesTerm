@@ -190,6 +190,51 @@ weakened. Hosted required-platform CI remains the release gate. Native focus,
 physical latency, hardware/DPI and sustained resource classifications remain
 open; this does not establish a fix for the unreproduced indefinite freeze.
 
+## 2026-10-11 bounded fenced-line preparation
+
+Markdown candidate `ce71a371abe020af9869e839ae2cbf55b6d457f6`, optimized test
+binary SHA-256
+`c34cde707aff68a7c30f95d8b8dd2d3d49bc31a811f53e7c3b4a2c76d4710ec7`,
+retains snapshot-owned formatting jobs for fenced-code lines. The bound is
+4,096 jobs and 4 MiB of String/section capacities, separate from map/Arc
+allocator overhead and existing document/font memory. No galley or geometry
+survives; the ordinary Label still resolves wrapping, fonts, selection and
+accessibility each frame. All document traversal remains live.
+The comparison baseline is merged main
+`ba74adfff153af981bfccfe338da61cf1cd4c1ec`, binary SHA-256
+`0952319bc038f9061645918d6cefa2c0a411988ec7723003bcf18a3d3bc36512`;
+its full baseline inventory is recorded in [#376](https://github.com/fes/fesTerm/pull/376).
+
+The same-snapshot ordinary/prepared regression proves 400 preparations on each
+ordinary frame and zero new preparations on warmed candidate frames, including
+width, monospace-family replacement, scale, Find and offscreen-byte navigation
+controls. Complete clipped shapes, accessibility and commands remain equal.
+Successful replacement and owner drop release old jobs; failed reload retains
+its previous snapshot. Entry and aggregate payload limits fall back without
+truncating content. Existing selection/Copy and actual renderer pixel regressions
+also execute through the prepared path.
+
+Three fresh original-control construction processes and one full 60-scene WARP
+process passed native outcome, source/binary, sample and report guards; 56 WARP
+scenes retain actual-state/exact-pixel guards. Local evidence and the strict
+`analysis.json` are under `target/ui-performance-markdown/`.
+
+**End-to-end timing improvement is not established.** Mixed Preview medians are
+12.54-13.39 ms versus baseline 10.76-13.38 ms; code-only Preview is 3.66-7.38 ms
+versus 3.65-4.61 ms. One candidate process also slows the unchanged table control
+to 7.63 ms, versus 3.52 and 3.80 ms in the other two candidate processes. These
+adverse/noisy observations are not discarded. The single candidate normal WARP
+Preview median is 10.00 ms construction and 276.59 ms completed draw/readback,
+rather than evidence of a drawing reduction. This change eliminates repeated formatting work, not native
+idle CPU, overall Preview scaling or the reported freeze.
+
+Workspace formatting, Clippy/check, Python/assets/traceability pass. Complete
+local workspace execution records 2,427 passed, the same 36 unchanged-main
+Windows privilege failures, and 57 ignored, before carrying the identical
+timestamp-collision fixture prerequisite from the safety PR. The new fixture
+regression passes separately. Native readability, clipboard, screen-reader,
+physical latency and sustained resources remain unqualified.
+
 ## Bounded non-terminal surface matrix
 
 The existing optional `replay_warp_ui_surfaces` and
