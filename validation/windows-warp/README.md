@@ -135,6 +135,61 @@ sustained total resources and the reported indefinite near-zero-CPU
 freeze remain unresolved. No product optimization or behavior change is
 included in this analysis.
 
+## 2026-10-11 safety-confirmation shared painting
+
+Candidate `642ac6b75c6a08f60e5a3b26ddf772a6c5493455` routes the seven
+application confirmation/refusal paths through the existing bounded
+`software_background::show_modal` helper. It does not change consent,
+target/generation revalidation, focus policy or the paste opening-frame
+barrier. The optimized test binary has SHA-256
+`8a55adf2bf40d7f4ce04dbce6850526b13df2297b9e9998f71b12ae782e3d7bc`.
+Two full candidate processes each produced 60 reports and successful native
+outcomes; all 56 expanded scenes per process passed their existing actual-state
+and exact same-frame pixel guards. `target/ui-performance-safety/comparison.json`
+checks source/binary identity, ordered distributions, dimensions, statuses and
+guards against the frozen merged-main baseline above.
+
+| Actual confirmation | Baseline completed median (ms) | Candidate completed median (ms) | Reduction |
+| --- | ---: | ---: | ---: |
+| Final dirty document | 675-735 | 166-170 | 76.2% |
+| Live-session close | 523-579 | 53-57 | 90.1% |
+| Risky paste | 620-666 | 67-69 | 89.4% |
+| Final dirty document, narrow | 251-268 | 79-80 | 69.5% |
+| Live-session close, narrow | 162-173 | 28-32 | 82.2% |
+| Risky paste, narrow | 228-248 | 41-46 | 81.8% |
+
+Ranges are per-process medians. Reduction uses the ratio of the two candidate
+process medians' mean to the two baseline process medians' mean, not pooled
+samples. Normal and narrow targets remain 2,360 x 1,520 and 720 x 1,032 physical
+pixels at scale 2. These are sequential offscreen construction/draw/readback
+experiments, not host-isolated paired native input latency or idle CPU evidence.
+UI construction is mostly unchanged: normal ratios are 0.975, 0.919 and 1.012
+for dirty close, live close and paste; narrow ratios increase to 1.048, 1.107
+and 1.095, still below 0.511 ms at median. Unchanged scenes also vary: the largest
+completed-draw median increase is 9.8% for the inactive middle-chip menu;
+large Preview increases 3.0%. These observations are retained, not attributed
+to this modal-only production change or presented as statistical significance.
+
+The actual-app regression
+`safety_modals_preserve_pixels_focus_and_cancel_with_shared_painting` additionally
+compares ordinary and shared painting in the same prepared fixture, at normal
+and narrow widths and scales 1 and 2. It requires exact pixels, the safe focused
+action, two additional backdrop/frame paints, actual Cancel dismissal and zero
+transport input. Existing helper fallback/identity and application policy
+regressions remain unchanged. Quit, reset, refusal and file-drop use the same
+helper but do not gain independently measured performance claims from these
+three representative confirmations.
+
+Formatting, Clippy, workspace check, Python/assets/traceability and the vendored
+selection/retention/font-atlas and Direct2D self-tests pass locally. Complete
+workspace execution records 2,426 passed, 36 failed and 57 ignored. The 32
+application failures exactly match a new frozen-main application run; the other
+four Windows-security failures match the earlier unchanged-main qualification.
+They require unavailable `SeSecurityPrivilege`, and their assertions were not
+weakened. Hosted required-platform CI remains the release gate. Native focus,
+physical latency, hardware/DPI and sustained resource classifications remain
+open; this does not establish a fix for the unreproduced indefinite freeze.
+
 ## Bounded non-terminal surface matrix
 
 The existing optional `replay_warp_ui_surfaces` and
