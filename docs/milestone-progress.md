@@ -3,6 +3,19 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.10.1: selection repairs and bounded WARP document reuse
+
+This patch release packages the merged batched-selection ownership/latest-click
+repairs, history Save As dismissal fix, and bounded WARP picker/panel and
+document-frame work since v0.10.0. Fresh source/test-binary-bound Windows x64
+all-miss controls passed the document cache's 10% CPU/completed-render ceiling
+for Edit, Preview and Split, with exact pixels and no hit subsidy.
+Resource diagnostics distinguish commitment observations from residency and
+per-phase peaks. Broader native latency, the original freeze and device/hardware
+qualification remain open. Workspace/package versions and the versioned
+Windows daemon resource advance together; installed apps and profiles are not
+modified by release preparation.
+
 ## Qualifying complete-frame evidence without substituting app identities
 
 Independent review agrees with the bounded complete-frame cache design and
