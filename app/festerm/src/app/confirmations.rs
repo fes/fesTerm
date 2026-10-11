@@ -351,9 +351,11 @@ impl FesTermApp {
 
         let mut cancel = escape;
         let mut confirm = false;
-        egui::Modal::new(egui::Id::new("close_session_confirmation"))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("close_session_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 prepare_confirmation(ui, context, 360.0);
                 confirmation_body(ui, |ui| {
                     ui.heading(format!("Close \u{201c}{}\u{201d}?", pending.identity));
@@ -374,7 +376,8 @@ impl FesTermApp {
                         confirm = true;
                     }
                 });
-            });
+            },
+        );
         if let Some(current) = self.overlays.pending_close.as_mut() {
             current.cancel_focus_requested = true;
         }
@@ -455,9 +458,11 @@ impl FesTermApp {
         let mut cancel = escape;
         let mut discard = false;
         let mut save = false;
-        egui::Modal::new(egui::Id::new("document_close_confirmation"))
-            .backdrop_color(egui::Color32::from_black_alpha(160))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("document_close_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(160)),
+            |ui| {
                 prepare_confirmation(ui, context, 560.0);
                 confirmation_body(ui, |ui| {
                     ui.add_space(4.0);
@@ -546,7 +551,8 @@ impl FesTermApp {
                     },
                 );
                 ui.add_space(4.0);
-            });
+            },
+        );
         if let Some(current) = self.overlays.pending_document_close.as_mut() {
             current.save_focus_requested = true;
         }
@@ -613,9 +619,11 @@ impl FesTermApp {
             notice.detail.clone(),
         );
         let mut dismiss = escape && self.overlays.open_refusal_focused;
-        egui::Modal::new(egui::Id::new("open_refusal_notice"))
-            .backdrop_color(egui::Color32::from_black_alpha(160))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("open_refusal_notice"))
+                .backdrop_color(egui::Color32::from_black_alpha(160)),
+            |ui| {
                 ui.set_width(confirmation_width(context.content_rect().width(), 560.0));
                 ui.add_space(4.0);
                 ui.heading(title.unwrap_or_else(|| format!("Cannot open {name}")));
@@ -655,7 +663,8 @@ impl FesTermApp {
                     },
                 );
                 ui.add_space(4.0);
-            });
+            },
+        );
         self.overlays.open_refusal_focused = true;
         if dismiss {
             if let Some(path) = recovery_path {
@@ -720,9 +729,11 @@ impl FesTermApp {
 
         let mut cancel = escape;
         let mut confirm = false;
-        egui::Modal::new(egui::Id::new("quit_confirmation"))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("quit_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 prepare_confirmation(ui, context, 360.0);
                 let (heading, consequence, confirm_label) = match pending.purpose {
                     QuitConfirmationPurpose::Quit => (
@@ -765,7 +776,8 @@ impl FesTermApp {
                         confirm = true;
                     }
                 });
-            });
+            },
+        );
         if let Some(current) = self.overlays.pending_quit.as_mut() {
             current.cancel_focus_requested = true;
         }
@@ -850,9 +862,11 @@ impl FesTermApp {
         } else {
             "paths"
         };
-        egui::Modal::new(egui::Id::new("file_drop_confirmation"))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("file_drop_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 prepare_confirmation(ui, context, 440.0);
                 confirmation_body(ui, |ui| {
                     ui.heading(format!(
@@ -892,7 +906,8 @@ impl FesTermApp {
                         insert = true;
                     }
                 });
-            });
+            },
+        );
         if let Some(current) = self.overlays.pending_file_drop.as_mut() {
             current.cancel_focus_requested = true;
         }
@@ -951,46 +966,50 @@ impl FesTermApp {
         let omitted_characters = character_count.saturating_sub(shown_characters);
         let mut cancel = escape;
         let mut paste = false;
-        egui::Modal::new(egui::Id::new("paste_confirmation"))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("paste_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 if opening_frame {
                     ui.disable();
                 }
                 prepare_confirmation(ui, context, 440.0);
                 confirmation_body(ui, |ui| {
-                let unit = if line_count == 1 { "line" } else { "lines" };
-                ui.heading(format!(
-                    "Paste {line_count} {unit} into \u{201c}{}\u{201d}?",
-                    pending.identity
-                ));
-                if !pending.bracketed_paste {
-                    ui.label("Bracketed paste is not active; a line may execute immediately.");
-                } else {
-                    ui.label("This large paste will be sent as one bracketed input operation.");
-                }
-                ui.label(format!(
+                    let unit = if line_count == 1 { "line" } else { "lines" };
+                    ui.heading(format!(
+                        "Paste {line_count} {unit} into \u{201c}{}\u{201d}?",
+                        pending.identity
+                    ));
+                    if !pending.bracketed_paste {
+                        ui.label("Bracketed paste is not active; a line may execute immediately.");
+                    } else {
+                        ui.label("This large paste will be sent as one bracketed input operation.");
+                    }
+                    ui.label(format!(
                     "Target state: {} \u{00b7} {line_count} {unit} \u{00b7} {character_count} characters",
                     pending.transport_state
                 ));
-                if pending.clipboard_token.is_some() {
-                    ui.label("Waiting keyboard input follows Paste; Cancel discards it.");
-                }
-                ui.add_space(6.0);
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(preview).monospace())
-                                .selectable(true)
-                                .wrap(),
-                        );
+                    if pending.clipboard_token.is_some() {
+                        ui.label("Waiting keyboard input follows Paste; Cancel discards it.");
+                    }
+                    ui.add_space(6.0);
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(180.0)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(preview).monospace())
+                                        .selectable(true)
+                                        .wrap(),
+                                );
+                            });
                     });
-                });
-                if omitted_lines > 0 || omitted_characters > 0 {
-                    ui.label(format!(
+                    if omitted_lines > 0 || omitted_characters > 0 {
+                        ui.label(format!(
                         "Preview omits {omitted_lines} lines and {omitted_characters} characters."
                     ));
-                }
+                    }
                 });
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
@@ -1005,7 +1024,8 @@ impl FesTermApp {
                         paste = true;
                     }
                 });
-            });
+            },
+        );
         if let Some(current) = self.overlays.pending_paste.as_mut() {
             current.cancel_focus_requested = !opening_frame;
         }
@@ -1035,9 +1055,11 @@ impl FesTermApp {
 
         let mut cancel = escape;
         let mut confirm = false;
-        egui::Modal::new(egui::Id::new("reset_interface_settings_confirmation"))
-            .backdrop_color(egui::Color32::from_black_alpha(128))
-            .show(context, |ui| {
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("reset_interface_settings_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
                 prepare_confirmation(ui, context, 360.0);
                 confirmation_body(ui, |ui| {
                     ui.heading("Reset interface settings?");
@@ -1060,7 +1082,8 @@ impl FesTermApp {
                         confirm = true;
                     }
                 });
-            });
+            },
+        );
         if let Some(current) = self.overlays.pending_settings_reset.as_mut() {
             current.cancel_focus_requested = true;
         }

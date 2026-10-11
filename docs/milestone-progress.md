@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Closing the safety-modal software-rendering gap
+
+The fresh merged-main UI baseline found that dirty-document, risky-paste and
+live-close confirmations spent hundreds of milliseconds in completed WARP
+drawing while constructing their widgets in less than a millisecond. Unlike
+About and the file pickers, the seven application confirmation/refusal paths
+still bypassed the shared bounded modal painter. They now use that existing
+helper without changing policy, IDs, consequences, opening-frame barriers or
+default focus. Hardware and unsupported geometry keep the ordinary fallback.
+
+An actual-application regression compares normal/narrow confirmations at two
+scales with conversion off/on, preserving exact pixels, the safe focus and
+Cancel behavior, while requiring precisely the two additional backdrop/frame
+paints. This adds bounded rendering evidence, not native input-to-display,
+hardware, mixed-DPI or physical-latency acceptance. The original adverse
+measurements remain in the [WARP record](../validation/windows-warp/README.md).
+
 ## Consolidating overlapping draft follow-ups on the repaired main line
 
 Seventeen draft branches carried cumulative variants of the same prerequisites,
