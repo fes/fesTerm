@@ -156,13 +156,42 @@ for Split. These small all-miss differences are bounded-regression evidence,
 not improvement claims. This is opt-in measured qualification, not a mandatory CI timing
 budget or new hardware-wide performance claim.
 
-**Evidence provenance pending:** the historical all-miss ratios above are
-reported qualification, not independently test-binary-bound receipts. The
-actual release test executable SHA-256, source/tree and clean status, invocation
-and retained raw `profile.json`/log location must be supplied or regenerated
-before ADR 0046 architectural acceptance. The prepared all-miss viewport is
-1280 x 800 at 200%, not the 1504 x 1032 native-window viewport. The separately
-pinned application executable hashes below cannot identify the test executable.
+**Fresh source-bound all-miss evidence:** the historical ratios above remain
+reported results, not retroactively rebound measurements. On 2026-10-11 UTC,
+isolated manual [Windows x64 run 38100443816](https://github.com/fes/fesTerm/actions/runs/38100443816)
+built clean source `6e8fbff56de69717ed9c89d888178397b9a04caf`, tree
+`71b10f44a9c25fb4344026446eeb5474d4d15cd8`. The actual release test executable
+SHA-256 was `4C3AC686EEC2FBF19324A73DBBE0792FE79D5DF57669364D0E767EE854745956`,
+unchanged after measurement; source remained clean throughout. Three
+predeclared independent same-executable ABBA controls passed all three scenes,
+with 32 measured frames per leg, zero hits and 32 rebuilds per enabled leg,
+and ordinary-versus-retained exact final pixels.
+
+| Scene | Control 1 CPU / completed-render ratio | Control 2 | Control 3 |
+| --- | --- | --- | --- |
+| Edit | 0.961857 / 1.025411 | 1.026016 / 1.016026 | 0.992754 / 1.017279 |
+| Preview | 0.991713 / 1.018322 | 0.954416 / 0.963345 | 1.021277 / 1.019243 |
+| Split | 1.064955 / 1.051981 | 1.023747 / 1.032884 | 0.973144 / 0.986543 |
+
+Every independent CPU/render ratio is <=1.10. Full invocation, source/binary
+identity, all 36 raw records, artifact file/log locations and SHA-256 checksums
+are durably recorded in the [PR evidence receipt](https://github.com/fes/fesTerm/pull/373#issuecomment-6104134288).
+The run artifact `pr373-warp-all-miss-38100443816-1` contains original
+`provenance.json`, build logs and `control-N/measurement/profile.json`,
+invocation, background samples and test logs (30-day artifact retention).
+The four-logical-CPU hosted runner used Microsoft Basic Render Driver
+CPU/DX12, driver `10.0.26100.33438`, at 1280 x 800 / 200%.
+Background samples ranged from 0% to 29%; the noisier third control was
+retained. This is not dedicated quiet hardware or a calibrated noise gate,
+native presentation, active input or physical-latency acceptance.
+
+Earlier run 38099812044 is retained as rejected orchestration: direct
+PowerShell invocation did not wait for the GUI-subsystem release libtest
+process and produced no accepted result. The controller-only repair waits
+and captures output explicitly; it did not change candidate source or retry
+a failing performance measurement. Fresh receipts resolve the all-miss
+provenance prerequisite; final architectural merge approval remains separate.
+Application executable hashes below identify different executables.
 
 The application now defaults retention on only for the qualified Windows x64
 DX12 CPU/BGRA route after native installation. `FESTERM_WARP_RETAIN_DOCUMENT_FRAMES=0`

@@ -69,5 +69,6 @@ prototype does not by itself approve maintaining a fork or enabling it by defaul
 The owner approved bounded automatic rollout on 2026-10-03. Source reviews and
 exact-head CI gate merge; #282 retains native/resource/latency follow-ups and
 historical noisy/failed evidence without treating them as completed qualification.
-ADR 0046 acceptance remains conditional on the all-miss evidence provenance;
-the original rollout approval is not approval of all complete-frame gates.
+CP-18 now records source/test-binary-bound all-miss evidence; ADR 0046 remains
+Proposed pending final merge acceptance, with hosted timing limits preserved.
+The original rollout approval is not approval of all complete-frame gates.

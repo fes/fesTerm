@@ -7,12 +7,18 @@
 
 Independent review agrees with the bounded complete-frame cache design and
 found no actionable security or reliability defects. Its architectural
-acceptance remains conditional: the reported all-miss ratios need their actual
-release test-binary identity and retained raw evidence location. The native
-application hashes identify different executables and cannot fill that gap.
-Architecture and vendor documentation now describe the shared cache and
-document-specific opt-out consistently, while ADR 0046 stays Proposed and
-the broader native matrix stays pending.
+all-miss provenance condition is now resolved by fresh manual Windows x64
+run 38100443816 on clean source `6e8fbff5`. Three predeclared independent
+same-release-test-binary ABBA controls passed Edit, Preview and Split, with
+zero measured hits, exact pixels and every CPU/completed-render ratio within
+1.10. Maximum overhead was 6.50% CPU and 5.20% completed-render time.
+CP-18 links the actual test-binary hash, invocation and all durable raw records;
+historical application hashes are not substituted. A failed orchestration
+attempt is preserved separately: explicit process waiting repaired missing
+results without changing the candidate. Hosted background variability is
+retained, not excluded or called dedicated-hardware/native-latency evidence.
+Architecture/vendor/graph/trace records agree; ADR 0046 stays Proposed pending
+final merge acceptance, and the broader native matrix stays pending.
 
 ## Preserving selection ownership and separate clicks during batching
 

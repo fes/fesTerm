@@ -97,8 +97,9 @@ without changing terminal-prefix policy. Generic vendor defaults remain off.
 Both modes share the 64-MiB image and 1-MiB exact-signature limits, not a
 process/peak allocation guarantee. Input, callback preparation, document
 freshness, UI construction, acquisition and presentation remain unchanged.
-Architectural acceptance is conditional on the CP-18 evidence provenance;
-the broader native/resource/latency matrix is not accepted by this extension.
+CP-18 now binds fresh all-miss evidence to clean source and the actual release
+test executable; final architectural merge acceptance remains pending.
+The broader native/resource/latency matrix is not accepted by this extension.
 
 The app-owned textureless panel pipeline also handles the full-width chrome
 band and status-bar frame on eligible Windows DX12 CPU adapters. The UI exposes

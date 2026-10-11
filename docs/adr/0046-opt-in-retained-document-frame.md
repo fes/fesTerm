@@ -1,6 +1,6 @@
 # ADR 0046: Retained Document Frame
 
-- **Status:** Proposed (owner-authorized qualified-route rollout; independent architectural review pending)
+- **Status:** Proposed (independent design review agrees; all-miss provenance resolved; final merge acceptance pending)
 - **Date:** 2026-10-10
 - **Supersedes:** None; extends ADR 0041 without changing terminal-prefix policy
 
@@ -148,13 +148,15 @@ latency. Commands, bounded results and remaining prerequisites are in `CP-18`.
 
 ### Architectural review disposition
 
-Independent review agrees with this bounded shared-cache design. Acceptance
-remains conditional on binding the reported all-miss control to its actual
-release test-executable hash, source/tree and clean status, invocation and
-retained raw numeric profile/log location. Application hashes from the native
-interaction controls identify different executables. CP-18 records this gap;
-the ADR remains Proposed until those receipts are supplied or regenerated.
-Broader native qualification remains open regardless of this disposition.
+Independent review agrees with this bounded shared-cache design. The all-miss
+provenance condition is now satisfied by fresh clean-source Windows x64
+run 38100443816: three independent ABBA controls passed the 10% CPU/render
+ceiling, exact pixels and zero-hit counters. CP-18 links the actual release
+test-executable hash, source/tree/clean status, invocation and durable raw
+records/log checksums. Historical app hashes identify different executables
+and are not substituted. Hosted timing variability is explicitly retained.
+The ADR remains Proposed pending final merge acceptance, not missing
+all-miss provenance. Broader native qualification remains open.
 
 ## Validation impact
 
