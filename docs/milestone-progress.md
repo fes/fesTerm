@@ -20,6 +20,22 @@ paints. This adds bounded rendering evidence, not native input-to-display,
 hardware, mixed-DPI or physical-latency acceptance. The original adverse
 measurements remain in the [WARP record](../validation/windows-warp/README.md).
 
+## Keeping fenced-code formatting with its immutable Markdown snapshot
+
+The merged-main performance campaign found that live Preview rebuilt formatting
+instructions for every fenced-code line on every frame. Both standalone remote
+viewers and editor Preview/Split now keep at most 4,096 instruction jobs and
+4 MiB of their String/section capacities with the parsed snapshot. Successful
+replacement releases the old jobs; failed reload keeps the same old snapshot.
+Over-budget lines use ordinary preparation without truncating the document.
+
+This is not document virtualization: all labels, selection, Copy, accessibility
+and byte/heading navigation remain live. No galley, atlas reference or measured
+geometry survives between frames. The ordinary/prepared oracle compares complete
+shapes, accessibility and commands across width, font, scale, Find, scrolling
+and snapshot changes; deterministic counters prove that 400 warm lines stop
+rebuilding their formatting. Native latency and readability gates remain open.
+
 ## Consolidating overlapping draft follow-ups on the repaired main line
 
 Seventeen draft branches carried cumulative variants of the same prerequisites,
