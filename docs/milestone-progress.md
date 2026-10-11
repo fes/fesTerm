@@ -1548,6 +1548,25 @@ fallbacks. The new evidence can support the next causal investigation; it does
 not identify the cause of 2173 or relabel the separate Direct2D lifetime repair.
 See [the runner's privacy boundary and limitations](windows-test-diagnostics.md).
 
+## Separating sampler-exit evidence from green reruns
+
+A later main failure supplied the native receipt the original exit-2173
+incident lacked. Matching public Microsoft SDK-layer symbols narrowed the
+faulting thread to sampler creation rejecting a CPU descriptor handle.
+The receipt does not say why the handle became invalid, and another thread
+creating a heap is not proof of a race. Counting original attempts rather than
+only successful reruns exposed three exit-2173 failures in 94 completed
+Windows workspace-test attempts in the sampled period.
+
+Bounded local sampler and mixed Direct2D/egui lifecycles did not reproduce
+the exception. The local SDK layer differs from CI, and an attempted app-local
+runtime comparison actually loaded the system runtime. A separate opt-in
+hosted diagnostic now runs those controls once with content-free native
+receipts, leaving required tests, concurrency, validation and build profiles
+unchanged. This is investigation automation, not a repair, native freeze
+acceptance, or permission to turn an unexplained red run green by retrying.
+See [the diagnostic contract](windows-test-diagnostics.md#opt-in-hosted-sampler-lifecycle-investigation).
+
 ## Retiring imported Direct2D targets before teardown
 
 The intermittent Windows crash investigation in #330 exposed a concrete

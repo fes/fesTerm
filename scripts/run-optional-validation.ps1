@@ -279,6 +279,19 @@ if ($env:OS -eq 'Windows_NT') {
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=direct2d-replay status=skipped reason=experimental-opt-in"
     }
+    if ($env:FESTERM_RUN_WINDOWS_SAMPLER_DIAGNOSTICS -eq '1') {
+        try {
+            & "$PSScriptRoot\run-windows-sampler-diagnostics.ps1"
+            if ($LASTEXITCODE -ne 0) { throw 'Windows sampler diagnostics failed.' }
+            Add-Content -Path $ResultPath -Value "`nsuite=windows-sampler-diagnostics status=pass"
+        } catch {
+            Write-Warning $_
+            Add-Content -Path $ResultPath -Value "`nsuite=windows-sampler-diagnostics status=fail"
+            $status = 'fail'
+        }
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=windows-sampler-diagnostics status=skipped reason=explicit-opt-in"
+    }
     if ($env:FESTERM_RUN_WARP_PANEL_PROBE -eq '1') {
         try {
             Invoke-NativeCommand {

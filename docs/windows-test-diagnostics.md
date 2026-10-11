@@ -170,6 +170,65 @@ whole-runner/job termination can prevent final persistence.
 
 ## Focused validation
 
+### Opt-in hosted sampler lifecycle investigation
+
+The main run `38176532395` at `ff580b2e6dda51cbf2ce05b9280afc9d08911eb4`
+captured a second-chance `0x0000087d`. Matching public Microsoft SDK-layer
+symbols and bounded disassembly narrow its faulting thread to
+`CreateSampler` / `HandleToDescriptor`, reporting
+`INVALID_DESCRIPTOR_HANDLE` (message 646). The shared report site cannot
+distinguish a handle outside known heaps from an invalid/misaligned offset,
+and concurrent heap creation on another thread is not proof of a race.
+
+A sample of 100 CI run IDs created from October 7 through October 11, 2026,
+including original failed attempts behind two green reruns, contains three
+exit-2173 failures in 94 completed Windows workspace-test attempts; main has
+one in 20. The older two have no native receipt proving the same exception.
+These changing revisions/workloads are not a matched CI/local probability
+comparison. Local concurrent sampler and mixed Direct2D/egui stress have not
+reproduced the native fault. Hosted and local SDK-layer identities differ;
+an attempted app-local SDK control loaded the local OS runtime and is not
+matched evidence. Original findings remain in [#330](https://github.com/fes/fesTerm/issues/330#issuecomment-6114523822).
+
+The ignored `windows_sampler_lifecycles` integration test is diagnostic, not
+a product repair or a replacement for the original workspace workload:
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+$env:FESTERM_RUN_WINDOWS_SAMPLER_DIAGNOSTICS = '1'
+.\scripts\run-windows-sampler-diagnostics.ps1
+```
+
+The optional-validation PowerShell aggregate includes the same explicitly
+enabled suite. The shell aggregate records a Windows-x64 prerequisite skip.
+The launcher runs four **distinct** cases once: independent/shared instances
+with sampler-only/mixed work. Defaults are 16 workers and 32 device rounds
+each; `-Threads` is bounded to 1..32 and `-Rounds` to 1..128. Each round
+asserts a CPU DX12 adapter, creates 32 distinct samplers, submits/polls and
+retires resources. Mixed work also creates/draws/retires a native Direct2D
+surface and initializes egui, uploads fonts, then renders/readbacks two
+160 x 96 frames with dimension/nontransparent-output assertions. These are
+not pixel-equivalence, latency, or freeze acceptance.
+
+The existing native runner enforces a 600-second per-case deadline and
+retains original status/source/executable/module identity under
+`target\windows-sampler-diagnostics\<workload>-<topology>`. The launcher
+restores its four parent settings, keeps the first failure nonzero while
+running the other distinct controls, and does not retry any case. Validation
+is always enabled and system runtime selection is not overridden. There is
+no desktop input, installed application, personal fixture, or persisted image.
+Only the existing content-free receipt JSONs are uploaded, with seven-day
+retention; ordinary console output is not added to that artifact.
+
+To run on a reviewed diagnostic branch, manually dispatch the existing `CI`
+workflow with boolean input `windows_sampler_diagnostics=true`. Its separate
+45-minute Windows job uses the existing level-zero build profiles and non-GPU
+runner calibration. The ordinary CI jobs still run unchanged. Ordinary PR,
+main-push and default manual runs do not opt in. Record loaded module GUIDs
+and each case's actual completion before claiming same-environment evidence;
+a later `windows-latest` image may differ from the original incident.
+Passing stress is non-reproduction, never proof of a causal repair.
+
 ```powershell
 python -m unittest discover -s scripts\tests -p test_windows_test_runner.py -v
 python -m unittest discover -s scripts\tests -p "test_windows_*.py" -v

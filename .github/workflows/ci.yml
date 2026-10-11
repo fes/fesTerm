@@ -10,11 +10,50 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_sampler_diagnostics:
+        description: Run bounded opt-in WARP sampler and mixed-renderer diagnostics
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  windows-sampler-diagnostics:
+    name: opt-in Windows sampler diagnostics
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_sampler_diagnostics
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      FESTERM_RUN_OPTIONAL_VALIDATION: "1"
+      FESTERM_RUN_WINDOWS_SAMPLER_DIAGNOSTICS: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: quality
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Calibrate native diagnostics without GPU work
+        run: python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v
+      - name: Run each bounded topology and workload once
+        shell: pwsh
+        run: .\scripts\run-windows-sampler-diagnostics.ps1
+      - name: Retain content-free sampler diagnostic receipts
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-sampler-native-metadata
+          path: target/windows-sampler-diagnostics/*/*.json
+          retention-days: 7
+          if-no-files-found: error
+
   # Platform-independent checks: run once instead of duplicating across the
   # OS matrix below (formatting and these scripts do not vary by OS).
   checks:
