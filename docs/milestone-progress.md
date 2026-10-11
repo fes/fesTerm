@@ -3,6 +3,23 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Consolidating overlapping draft follow-ups on the repaired main line
+
+Seventeen draft branches carried cumulative variants of the same prerequisites,
+not seventeen independent patches. Integration replays the distinct follow-ups
+as separate commits and retains upstream resource, SFTP, selection, Save As and
+complete-document-frame repairs rather than reverting them through older trees.
+The syntax-cancellation and late-autocomplete controls from divergent branches
+are included once. Merge-only resolutions affected narrative ordering, not
+additional production code.
+
+The newer shared modal helper supersedes the draft's picker-only wrapper and
+frame tests. Its real-modal pixel/response regression now also exercises
+independent backdrop/frame attribution controls, using fresh renderer ownership
+for every comparison. Historical performance and native records retain their
+original source identities; consolidation itself grants no new responsiveness,
+multi-day resource, platform or milestone acceptance.
+
 ## Waiting for interactive autocomplete geometry
 
 Native qualification exposed a flaky profile executable-suggestion pointer

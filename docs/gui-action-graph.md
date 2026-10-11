@@ -776,17 +776,20 @@ Source readiness and the last of 400 owned code sections. The replay keeps
 same-frame original-renderer pixel guards and separate draw/readback buckets;
 it does not cover Find, native input/presentation, scrolling or usability.
 
-For `EDIT-04` and `MD-04`, only the owned Save As/Open File Modal frame may
-join the existing default backdrop on the installed eligible panel renderer.
+For `EDIT-04` and `MD-04`, the shared owned-modal helper lets the Save As/Open
+File frame join the backdrop on the installed eligible panel renderer.
 One unique complete opaque frame and its original black shadow must retain
 fill/stroke/rounding/blur, clipping and every live Modal/widget ID, response
 and input. New same-layer shapes matching the actual owned frame rectangle
 are the only candidates; preceding or nested non-owned frames,
-ambiguous/clipped frames, ordinary other modals and unsupported/ineligible
-contexts keep their fallback. Device-free selection, context-control and
-live no-renderer response regressions cover that boundary. The two-scale
-framebuffer regression passes with fresh RenderState ownership per comparison
-arm; actual cumulative default eight-picker qualification remains pending.
+ambiguous/clipped frames and unsupported/ineligible contexts keep their
+fallback. Consolidation retains the newer shared modal implementation rather
+than reviving the draft's picker-only wrapper. The existing
+`modal_surface_preserves_pixels_responses_and_guarded_fallbacks` regression
+uses fresh RenderState ownership per arm at 100%, 125% and 200% scale and
+additionally covers independent backdrop/frame diagnostic controls.
+Historical eight-picker qualification below remains tied to its recorded
+source; it is not evidence for the consolidated head.
 Frame attribution disables
 only owned frame conversion, leaving the default backdrop live; historical
 backdrop attribution disables both owned conversions to retain its original

@@ -4,6 +4,15 @@ Follow-up to [#242](https://github.com/fes/fesTerm/issues/242), after #253
 corrected application-window selection. This investigates CPU work that
 continues after the GUI frame counter stops advancing.
 
+The #353-#369 consolidation preserves the newer shared `show_modal` repair
+already on main. It reuses that helper's backdrop/frame matchers and adds
+independent test-only controls for the two attribution probes; it does not
+restore the older picker-only implementation. The actual-modal regression
+keeps fresh renderer ownership, exact pixels/responses and ordinary fallbacks.
+All historical measurements below retain their original source/binary
+identity and limitations; none is a rerun or performance claim for the
+consolidated head.
+
 ## Bounded non-terminal surface matrix
 
 The existing optional `replay_warp_ui_surfaces` and

@@ -540,7 +540,10 @@ fn supports_panel_frame(ui: &egui::Ui, frame: &egui::Frame) -> bool {
     frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
 }
 
-pub(crate) fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+pub(crate) fn full_root_black_backdrop(
+    shape: &egui::epaint::ClippedShape,
+    viewport: egui::Rect,
+) -> bool {
     let egui::Shape::Rect(rect) = &shape.shape else {
         return false;
     };
@@ -560,7 +563,10 @@ pub(crate) fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewp
         && rect.blur_width == 0.0
 }
 
-pub(crate) fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+pub(crate) fn complete_opaque_window_frame(
+    shape: &egui::epaint::ClippedShape,
+    viewport: egui::Rect,
+) -> bool {
     if !viewport.is_finite()
         || viewport.min != egui::Pos2::ZERO
         || !viewport.is_positive()
