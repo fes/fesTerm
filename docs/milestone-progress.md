@@ -3,6 +3,424 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Consolidating overlapping draft follow-ups on the repaired main line
+
+Seventeen draft branches carried cumulative variants of the same prerequisites,
+not seventeen independent patches. Integration replays the distinct follow-ups
+as separate commits and retains upstream resource, SFTP, selection, Save As and
+complete-document-frame repairs rather than reverting them through older trees.
+The syntax-cancellation and late-autocomplete controls from divergent branches
+are included once. Merge-only resolutions affected narrative ordering, not
+additional production code.
+
+The newer shared modal helper supersedes the draft's picker-only wrapper and
+frame tests. Its real-modal pixel/response regression now also exercises
+independent backdrop/frame attribution controls, using fresh renderer ownership
+for every comparison. Historical performance and native records retain their
+original source identities; consolidation itself grants no new responsiveness,
+multi-day resource, platform or milestone acceptance.
+
+## Waiting for interactive autocomplete geometry
+
+Native qualification exposed a flaky profile executable-suggestion pointer
+control. A controlled late completion reproduced a click that left the typed
+query unchanged: the suggestion's accessibility node existed while its popup
+was still sizing. The fixture now holds the search until the pending state
+has rendered, and the existing bounded wait requires stable target bounds
+across consecutive frames. The raw pointer event and exact absolute-path
+assertion remain unchanged; production autocomplete behavior is untouched.
+An unchanged passing rerun is not treated as evidence of this repair.
+
+## Testing syntax queries independently of the parse deadline
+
+Windows CI on #354 and #355 found that the syntax-range regression could
+legitimately exhaust the production 40 ms parse budget while parsing its
+400-function fixture, leaving no spans to query. That regression now prepares
+its tree without elapsed-time cancellation through private parse options, so it
+tests range clipping independently of scheduler load. A separate deterministic
+cancel callback proves that abandonment clears old highlights, reports
+`ParseFailed`, does not retry the same revision and recovers on the next one.
+Production parsing retains its time and size bounds; no assertion is weakened
+and no product highlighting behavior is added.
+
+## Labeling surviving resource threads without inventing an allocation owner
+
+The earlier short retirement probe observed additional surviving TIDs but
+could not distinguish recycled identities or label their start modules.
+A supervisor-only opt-in now reads creation FILETIME, CPU, description and
+start-module metadata from the same verified owned-child thread handle.
+Complete UTC-contained sampling intervals preserve the existing held windows;
+bounded metadata does not change application or renderer scheduling.
+
+Clean cumulative `8f4b874`, after #367/#368, completes the actual labeled
+capture: twelve six-session phases, three whole-owner rounds, exact normalized
+pixels and normal exit. Independent raw correlation confirms 99 samples,
+2,487 thread records, 41 creation-bound identities and all seven held windows.
+All public allocated/kept registry IDs drain, weak repaint owners expire and
+reporting instances drop. Held whole-owner commitment remains
+144.605/143.457/145.254 MiB with 25/26/26 observed threads.
+
+The first two whole-owner windows each add one unnamed identity starting in
+`ntdll.dll`; the third adds none. Both identities are observed again in the
+final acknowledgment. All admitted held identity CPU deltas are measured zero,
+not fabricated defaults. Module labels are not stacks, continuous liveness or
+private-byte ownership, so this narrows the discriminator without establishing
+a leak or motivating a speculative lifecycle fix. The
+[source-bound record](../validation/terminal-performance/README.md#2026-10-06-cumulative-owned-thread-observations)
+keeps those adverse resource observations separate from the historical capture,
+native qualification and resource-cap acceptance.
+
+## Measuring live Preview preparation without hiding the Source control
+
+The frame-local table-cell successor is now ordinarily composed after the
+picker-frame diagnostic at clean `f51c88f`. Six alternating source-frozen
+`46eb139`/`f51c88f` process pairs render the actual four 400-section Markdown
+controls, retaining 24 exact encoded PNG comparisons, 240 measured pixel
+guards, identical submitted geometry/payload and the same single panel.
+
+Pooled normal/narrow Preview construction medians move from 14.100/11.590 to
+12.872/11.177 ms, observations 8.7/3.6% lower. Completed draw/readback medians
+move 344.216/74.903 to 319.671/74.234 ms, but two pairs at each width are
+slower. These observations supplement the deterministic 1600-to-403 job
+reduction; they are not a strict native or all-metrics speedup.
+
+The unchanged Source rendering controls have adverse pooled drawing:
+303.626 to 451.110 ms normally and 100.286 to 104.343 ms narrowly, slower
+in four/three pairs. Source construction moves 4.417/3.367 to 4.396/3.074 ms.
+All raw samples and reversals remain in the
+[balanced Preview record](../validation/windows-warp/README.md#2026-10-06-balanced-live-preview-controls).
+An unchanged Source implementation and matching pixels/geometry do not
+establish a host cause or explain those timing movements. Native/platform
+and total-resource acceptance remain separate.
+
+## Qualifying a narrowly owned production picker frame
+
+The completed `2056b48` diagnostic attributes the whole opaque picker frame,
+original black shadow and their batching together; it does not isolate shadow
+or shader instructions. Its preserved eight PNGs and balanced pairs motivate
+this separate production successor, independent of Preview staging.
+
+Open File and Save As now reuse their existing caller-owned wrapper and
+installed panel renderer for one complete opaque shadow/frame pair. The
+ordinary Modal and all live content/layout/input/IDs/responses remain; the
+default backdrop is retained, with no shader or visual removal. The complete
+matcher is shared with the diagnostic rather than copied. Unsupported,
+ineligible, clipped and ambiguous geometry keeps ordinary frame painting.
+There is no new cache, crate boundary, command policy or ownership contract.
+
+Explicit per-context test-only controls retain the frame diagnostic's ordinary
+frame with live optimized backdrop, and the historical backdrop diagnostic's
+two original shapes. Device-free controls cover selection, refusal and live
+fallback responses. The first parent GPU qualification exposed a fixture
+lifetime error: the new two-scale regression reused one already-used RenderState
+across independent original/candidate contexts, which egui-kittest rejects.
+Every comparison arm now creates its own fresh state; the exact regression
+passes with all pixels, live responses, callback counts and fallbacks intact.
+This changes only the fixture, not the production route or its guards.
+Clean cumulative `b262aa4`, after #367 and the append-only fixture repair,
+now passes all four release GPU controls and all eight actual default picker
+controls. Eight encoded predecessor PNGs and eighty before/after measured
+guards preserve the original frame, shadow and dimming, with one additional
+executed callback. Default completed draw/readback medians are 53.7-70.7%
+lower; six construction medians are higher by 0.015-0.096 ms and two are lower.
+This retains the preparation tradeoff rather than claiming every metric wins.
+
+Both same-binary diagnostic oracles also pass: each has eight unchanged PNGs,
+forty ordinary and ninety-six balanced paired guards. The frame discriminator
+keeps its optimized backdrop and is faster in all 48 pairs; legacy backdrop
+retains its original shapes and schema. The
+[default-path record](../validation/windows-warp/README.md#2026-10-06-default-owned-picker-frame-observations)
+separates actual production execution from the predecessor diagnostic and
+shared-host/native/resource limits.
+
+## Rechecking Source drawing with balanced contemporaneous controls
+
+The first Source comparison had lower construction medians but higher drawing
+medians, including a large narrow-width increase. Six alternating source-frozen
+`5fa487c`/`a295d65` process pairs now retain every raw sample, all 24 matched
+encoded PNGs, 240 measured pixel guards and identical submitted geometry/payload.
+Both paths still execute the same single outer-panel callback.
+
+Pooled normal/narrow Source construction medians are 6.028/4.210 to
+4.263/2.913 ms. Drawing moves 463.637 to 468.603 ms normally and 106.215 to
+105.428 ms narrowly, with the candidate slower in only two/one of six matched
+pairs. The earlier large adverse drawing shift is not consistently reproduced;
+this neither proves a host cause nor accepts a drawing gain. Preview construction
+also has adverse pooled observations, preserved in the
+[balanced record](../validation/windows-warp/README.md#2026-10-06-balanced-source-controls).
+
+The first coordinator attempt incorrectly treated a Windows-subsystem launch
+return as child completion. It produced no complete reports and is retained as
+invalid, not a measurement. Explicit bounded owned-process waiting and captured
+exit status repair the diagnostic driver; no product behavior changed.
+Native latency, resource acceptance and the remaining Preview work stay open.
+
+## Separating the remaining picker frame route from its backdrop
+
+The default backdrop improvement still leaves substantial completed WARP
+drawing cost. A second explicitly opted-in diagnostic isolates the existing
+opaque modal frame and its original black shadow as one exact white-UV mesh,
+using the already installed panel pipeline. The ordinary default backdrop and
+every other frozen shape remain unchanged; neither shadow nor dimming is removed.
+
+The bounded picker selector requires one complete unique shadow/frame pair
+and refuses simultaneous backdrop attribution. Six balanced ordered pairs
+require every original-renderer pixel and one additional executed callback,
+with original fill, stroke, rounding, blur and geometry recorded. Shared
+attribution mechanics retain the earlier backdrop oracle.
+
+Clean cumulative `2056b48` now completes all eight actual normal/narrow
+ready/error picker controls. Eight encoded predecessor PNGs, forty ordinary
+and ninety-six balanced paired pixel guards pass; the converted frame executes
+exactly one additional callback. Completed drawing/readback medians are
+53.0-68.5% lower, with all 48 converted draws faster than their paired ordinary
+draws. The same binary also requalifies all eight legacy backdrop controls.
+The [source-bound record](../validation/windows-warp/README.md#2026-10-06-opaque-picker-frame-observations)
+retains samples, original geometry and the shared-host limits. This motivates
+a separately qualified owned production route; it does not enable that route
+or isolate shadow/shader instructions, native latency or resource retirement.
+
+## Preparing repeated Preview table cells within one live render
+
+After the cumulative Source successor, unchanged Preview still had roughly
+10 ms shared-host construction observations, not an isolated baseline. Reading
+the actual 400-section path found that its 400 tables constructed another
+unwrapped job for every cell, even though `Name`, `Value` and `Item` repeated
+with identical formatting. Existing fitting-cell reuse only helped *after*
+that preparation; another persistent document-layout cache was unnecessary.
+
+A fresh renderer now shares eligible plain-text galleys across all its tables,
+through the already-used ordinary galley/Label APIs. Borrowed text and complete
+format comparisons precede job construction; actual painter context/pass,
+scale and options guard the invocation. Find-overlapping, complex, oversized
+and unsupported cells remain ordinary, and every cell still allocates its live
+selectable Label. Nothing survives the render or changes Source/Outline.
+The 32-entry, 256-byte-input allowance has a separate 64 KiB actual-capacity
+payload ceiling covering jobs, placed rows, glyphs and meshes; the fixed
+256-byte entry array, 56-byte key Option and 16-byte counters observed on
+Windows x64 are separate.
+Object bodies include their Vec metadata; Arc control blocks, allocator
+overhead and existing font-cache ownership are not a process-memory claim.
+
+Exact CPU ordinary/current controls preserve complete clipped shapes, every
+cell response/accessibility identity, Unicode selection/Copy and offscreen
+heading navigation at both widths, through Find and dependency changes.
+Cold and warm frames construct 403 rather than 1600 unwrapped jobs: 1197
+actual preparations/layout requests disappear, with 832000 versus 209560
+String/section-vector capacity bytes. The fixture's 800 constrained requests
+and 106000 cloned-capacity bytes remain unchanged. Find highlighting every
+`Item` uses the ordinary path for those cells, leaving 802 unwrapped requests.
+The normal retained accounted payload is 45528 bytes; exact 65536/65537-byte
+admission, spare-capacity rejection, array saturation and subsequent recovery
+are covered separately. These are component-work and CPU-fidelity results,
+not measured total Preview time, GPU drawing or native latency. The cumulative
+campaign retains those runtime/full-platform gates.
+
+## Qualifying the default picker backdrop after the Source successor
+
+The narrowly owned Open File/Save As route now has actual cumulative application
+evidence at clean `675a007`, after the bounded Source successor. All eight
+default ready/error normal/narrow controls preserve the earlier reference PNGs
+and forty measured guards, with exactly one additional executed backdrop
+callback in every draw. Completed draw/readback medians are 21.7-46.8% lower;
+UI construction medians increase by 0.067-0.313 ms, a retained callback-preparation
+tradeoff rather than an all-metrics improvement claim.
+
+The existing ordinary-backdrop attribution also passes on the same binary:
+eight controls, forty ordinary and ninety-six balanced paired guards. Its
+test-only context selector preserves the diagnostic oracle after default
+conversion. Dimming, live Modal responses, shaders and other-modal fallback
+remain unchanged. The
+[complete default-path record](../validation/windows-warp/README.md#2026-10-06-default-picker-backdrop-observations)
+keeps source/binary, both executions and the shared-host/native limits; #350
+and physical presentation/resource evidence remain open.
+
+## Measuring bounded Source geometry on the cumulative application
+
+Clean `a295d65` ran all four actual 400-section Markdown WARP controls after
+the dependency-font admission repair. All four preserved `5fa487c` PNGs and
+twenty measured original-renderer guards passed, with one executed outer-panel
+callback on both revisions. Warm Source UI medians moved from 5.774 to 3.684 ms
+at normal width and 5.101 to 2.766 ms at narrow width.
+
+The Preview controls also had lower construction medians, while every completed
+draw/readback median increased, including Source's 435.244 to 457.205 ms and
+69.948 to 103.971 ms. Those adverse observations are retained, not converted into
+a drawing gain or dismissed as a proven host cause. This noncontemporaneous
+shared-host comparison does not isolate a net implementation speedup.
+The deterministic 4800-to-31/34 layout-request reduction proves the narrower
+mechanism; it does not prove physical latency or total-resource acceptance.
+The [source-bound record](../validation/windows-warp/README.md#2026-10-06-bounded-source-geometry-observations)
+keeps all four controls, the measured binary and the remaining evidence limits.
+
+## Bounding dependency-font metadata before Source publication
+
+The Source handoff counted geometry slots and actual fixture metadata, but its
+font-map ownership was not explicitly bounded: 140 String bytes and 168 family
+Vec bytes were observations, not ceilings. The audit stopped publication
+rather than treating a small current font set as an admission policy.
+
+Source and Outline now share conservative pre-clone eligibility: 128 entries
+per map, 8192 cumulative String-capacity/custom-family-name bytes and 256 family
+reference capacity slots. Rejection drops the previous key and stale geometry,
+then keeps every ordinary live label. Valid definitions recover cold then warm.
+Old keys are dropped before replacement, comparison never traverses font bytes,
+and key-clone payloads remain separate from label/layout work. Exact-limit and
+over-limit controls preserve full Source shapes, responses, accessibility and
+raw Unicode Copy; the existing width/font/scale/Find/navigation controls remain.
+This repairs a cache bound, not total allocator/RSS accounting or native/GPU
+performance evidence. #348 and broader native/runtime qualification remain open.
+
+## Waiting for actual Markdown retry readiness
+
+Historical Ubuntu CI for #354, run `37517459623` at
+`e7a9a902be5e01160c36238a928745a450ce078a`, exposed a separate asynchronous
+Preview-image retry test flake: `Harness::run` required repaint quiescence
+within four steps while a repaired image's real worker was still active.
+The same post-click call remained in the otherwise green `5fa487c` cumulative
+source; the editor-image readiness correction did not cover this Preview test.
+
+The Preview regression now delivers the explicit retry click through its
+existing bounded `harness.step()` loop and waits for an actually loaded image,
+not repaint quiescence. Initial failure, the no-automatic-retry checks, manual
+completion, automatic-admission count and the original five-second deadline
+remain unchanged. This is the same narrow test-driver correction as the editor
+case, not a loader, budget, worker or product-behavior change. It neither
+explains the original #330 exit 2173 nor claims that an ancestor's failed
+CI run was repaired by a later green run.
+
+## Attributing the picker backdrop without removing dimming
+
+After the editor-frame route reduced Save As drawing, #350 still had substantial
+completed render cost without an individual-operation attribution. A separately
+opted-in diagnostic now takes the same unchanged actual picker frame, requires
+one exact full-root translucent black untextured rectangle and replaces only
+that rectangle's original white-UV mesh with the existing installed panel shader.
+It neither removes dimming nor changes the production shader, frame eligibility,
+ordinary fallback or UI interaction.
+
+Six balanced ordinary/textureless ordered pairs preserve every framebuffer
+pixel and require exactly one additional executed callback. Seven timing
+buckets, source/adapter/format, geometry, alpha and sample order remain explicit;
+missing, ambiguous, clipped, textured or nonexact candidates fail rather than
+silently substituting another operation. Callback construction is outside render
+timing. These are targeted whole-frame/batching diagnostics, not isolated GPU
+timestamps, a shipping optimization, native presentation or physical latency.
+The actual eight-picker release execution at clean `90c0ed5` now preserves all
+eight reference PNGs, forty ordinary and ninety-six paired measured pixel guards,
+including the original alpha 100, eight vertices and thirty indices. All six
+balanced pairs per scene execute the additional callback exactly once.
+Completed draw/readback medians are 22.8-62.7% lower on the converted path.
+That establishes a material shared-host backdrop-route/batching contribution
+without removing dimming; it does not isolate shader instructions, qualify
+native latency or implement a production fix. The
+[exact scene record](../validation/windows-warp/README.md#2026-10-06-completed-same-frame-picker-attribution)
+retains the source, binary, sample convention and limitations.
+
+## Reusing bounded Source offscreen geometry after actual UI attribution
+
+The actual #348 WARP comparison preserved pixels but Source normal-width UI
+construction stayed essentially unchanged (5.777 versus 5.774 ms). Reusing
+formatting instructions alone did not avoid egui's repeated job cloning and
+layout requests for every selectable row.
+
+The next slice stores only finite local desired/intrinsic geometry inside
+already-admitted Source jobs. Fully offscreen rows retain their ordinary live
+allocations, responses and accessibility; visible or uncached rows still use
+normal labels. Width/font/scale/options and snapshot/Find dependencies remain
+explicit, without retained galleys, atlas references or approximate heights.
+Regressions compare full shapes and navigation/selection fidelity
+against the actual descriptor-cached predecessor, and require at most 96 warm
+layouts rather than 4800 at both fixture widths. Actual warm narrow/normal
+requests are 31/34, becoming 34/37 after scrolling, while all 4800 responses and
+accessibility nodes remain live. The candidate clones 4408/4822 bytes of
+String/Vec capacity rather than the ordinary shared Label inputs' 680870-byte
+payload; this is not total allocator or RSS evidence. New geometry accounts
+for 24 bytes per admitted job plus one active font/layout key. Its missing
+font-map admission ceilings were found in the later handoff audit above.
+
+The API check came first: egui already accepts a shared job, but its live Label
+clones before applying wrapping and the memoized fonts API requires ownership.
+The lower-level Arc API bypasses that memoization, so it was not substituted.
+Dependency controls also exposed a real post-scale width-settling frame: it
+must relayout every row again, not pass as an unchanged frame. Exact shape,
+wrapped Unicode/CRLF selection/Copy, byte/heading navigation and bounded
+overflow/lifecycle controls pass without retained galleys or atlas UVs.
+#348, full traversal/Preview costs and native latency evidence remain open.
+
+## Keeping picker dimming while avoiding its textured full-window draw
+
+The completed #350 same-frame controls identified a material backdrop-route
+and batching contribution, without justifying removal of dimming. Open File and
+Save As now still run the ordinary `egui::Modal`, with its original live widgets,
+responses and input policy. Only the exact unique full-root black backdrop in
+that owned modal's newly painted range uses the already installed WARP panel
+pipeline, retaining its alpha, clipping and ordinary tessellated geometry.
+
+The later shared modal repair already carries this production route and also
+converts eligible owned modal frames. Consolidation preserves that newer
+implementation rather than restoring the older picker-only helper.
+Shaders, opaque-frame guards and adapter/format eligibility remain unchanged.
+Invisible/translucent painter, non-root/origin/transform, colored,
+clipped, ambiguous and unsupported cases retain ordinary painting. No galleys,
+new renderer owner, production switch or retained geometry cache is introduced.
+The optional attribution explicitly selects the ordinary backdrop through a
+test-only per-context control, so its original-pixel and balanced-pair oracle
+remains usable after the default picker path changes. Actual cumulative
+rendering is recorded above; native evidence remains separately unqualified.
+
+## Measuring the real large Markdown drawing path
+
+The #348 investigation had preparation counters and small gallery captures,
+but no bounded completed-render workload for a real large Markdown viewer.
+The WARP replay now has four Preview/Source normal/narrow controls using the
+same owned 400-section snapshot. Semantic readiness distinguishes rendered
+headings from raw Source and proves the final code section remains live; no
+network, images, user document or text-editor substitute is involved.
+
+The strict `markdown-controls` selector keeps the diagnostic small while the
+full replay deliberately retains the existing controls and adds all four new
+ones. Original-renderer pixels, actual eligible panel painting, seven draw/
+readback buckets and temporary payload counts stay independently observable.
+Preparation reuse alone does not prove end-to-end rendering gain. Find,
+scrolling, native presentation and physical latency remain separate evidence.
+
+## Measuring cumulative improvements instead of inferring them from cache hits
+
+The bounded release replay now compares the actual cumulative `5fa487c` source
+with preserved pre-optimization Markdown (`abb4a01`) and picker (`cbdc2aa`)
+controls on the same Windows x64 WARP host. All twelve cross-revision reference
+PNGs are byte-identical, and all sixty measured original-renderer pixel guards
+passed. The actual Markdown outer-frame callback executes once rather than
+zero times; each Save As frame executes one additional eligible panel paint.
+
+The four Markdown completed draw/readback medians fell by 52-66%, and the four
+Save As medians by 22-34%. These shared-host observations concern the combined
+source, not isolated cache attribution or native display latency. Source's
+normal-width UI construction stayed effectively unchanged at 5.777 versus
+5.774 ms despite preparation reuse. Open File's unchanged paint route had
+opposing wide/narrow timing movement, not a demonstrated gain or regression.
+The exact scene results and limitations are retained in
+[`validation/windows-warp/README.md`](../validation/windows-warp/README.md#2026-10-06-source-bound-picker-and-markdown-observations).
+
+The revised six-session supervisor also completed its short twelve-phase
+matrix and three whole-owner retirement rounds on that exact source. The
+OS-maintained lifetime commitment peak was 588.672 MiB, above the sampled
+maximum; final acknowledged commitment was 20.328 MiB. Public allocated/kept
+IDs drained to zero, but held post-drop commitment and surviving thread counts
+rose across the three rounds. Those adverse observations remain visible,
+without calling them complete driver retirement, a leak diagnosis or an
+accepted total-resource budget. The
+[resource record](../validation/terminal-performance/README.md#2026-10-06-cumulative-short-retirement-observations)
+keeps reconstruction separate from real device loss and durable reconnect.
+
+Fresh-source native input/lifecycle execution stopped before any input at
+foreground activation. The existing separate-GUI-thread calibration failed
+the same way without fesTerm or injected input, despite the active RDP/default
+desktop preflight. Both failures and normal owned-process cleanup are
+preserved; no guard was weakened or failed attempt relabeled. Native CPU,
+window captures and physical latency therefore remain unqualified here.
+
 ## v0.10.1: selection repairs and bounded WARP document reuse
 
 This patch release packages the merged batched-selection ownership/latest-click
@@ -407,6 +825,94 @@ principal, flag and control mutations without audit privilege. The real
 privileged low-label copy remains authoritative and records lengths, control
 XOR and bounded differing indices, never raw descriptors. This distinguishes
 selective comparator evidence from measured native copy compatibility.
+
+## Reusing the existing opaque-frame path at the real Markdown caller
+
+The completed picker draw evidence prompted a narrowly coupled rendering check:
+the standalone Markdown viewer still painted an ordinary opaque
+`SURFACE_WINDOW` outer frame. It now passes only that frame through the existing
+`software_background::show_frame`; the shader, adapter/format policy, guards,
+ordinary fallback and all nested Preview/Source widgets remain unchanged.
+
+The regression renders the real viewer, not a substitute panel, against its
+ordinary route on Windows DX12 CPU `Rgba8Unorm`. Four narrow/wide and 1/1.25x
+scale controls in each mode, with fractional clipping and Find open, retain
+exact pixels and execute exactly one outer-frame callback. Each mode's
+0.5-opacity control retains exact pixels and executes none. Accessibility,
+Source response geometry and navigation/outline state remain identical.
+These are fidelity/caller checks, not performance measurements: #348 remains
+open, and the parent-owned real Markdown workload must independently attribute
+completed draw and native latency.
+
+## Reusing bounded Markdown Source formatting without retaining text layouts
+
+After the Outline-first candidate, #348 still had an expensive Source path:
+every forced frame rebuilt source spans, syntax-role vectors and Find-colored
+jobs for every line even though unchanged frames did not reparse the document.
+The next slice reuses only unwrapped formatting instructions and source spans,
+not galleys, row geometry or atlas UVs. Every selectable label, its identity,
+wrapping, active font/scale layout, accessibility and Copy behavior remains live.
+
+Each loaded viewer owns at most 8192 jobs and 4 MiB of their actual text/section
+capacities; metadata is separately bounded by the entry count. Snapshot and
+Find-query changes clear the owner. Moving Find refreshes affected cached lines,
+while long queries and entry/payload overflow use the ordinary path without
+truncating the result set or dropping content. The same owned 400-section
+fixture is compared against compiled ordinary preparation. On Windows its 4800
+live lines remained visited on every pass, but warm unchanged/scrolled and
+width/font/scale/theme controls rebuilt zero jobs versus 4800, and zero job text
+bytes versus 66,470. The cold snapshot retained 2,537,670 charged payload bytes
+(2,539,780 with Find); syntax-budget outcomes are shared with the ordinary oracle.
+Moving a two-line CRLF Find refreshes all four old/new rows. Entry overflow
+retained exactly 8192 jobs with 1,114,112 charged bytes and kept the extra line;
+an over-budget 4 MiB line and a 4097-byte query fell back without lost text.
+Dependency/revision and Unicode/CRLF/selection/Copy checks compare full clipped
+shapes and complete live
+accessibility/response identities, not just counts.
+
+This is Source preparation reuse, not full #348 remediation. The full Source
+label/layout loop (including egui's job clones), Preview block traversal and
+separate editor outline remain follow-ups. Native latency,
+clipboard/accessibility delivery and real Markdown
+GPU workload qualification remain separate parent-controlled evidence; no
+fragmentation, leak or #297 causality is inferred.
+
+## Reducing unchanged Markdown outline preparation without virtualizing content
+
+The #348 forced-frame diagnostic found that constructing a 400-section Preview
+cost much more CPU time than tessellating it. It did not measure native latency
+or Markdown GPU drawing. Full variable-height Preview virtualization would risk
+Find, selection and offscreen code navigation, so the first implementation
+targets the standalone outline and unused heading-position allocations.
+
+The viewer now retains only exact row height/ink geometry for at most 4096
+headings, keyed to the loaded snapshot and actual wrap/font/scale dependencies.
+Offscreen rows skip repeated text preparation but retain every live response
+and accessibility node; visible and uncached rows prepare normally. No atlas
+galley is retained. The shared Preview clears and reuses its heading-position
+vector, while the viewer stops collecting positions it never consumes.
+Co-located old-control/candidate tests enforce at most 32 text layouts on warm
+64/400/2000-heading, 216-by-480-point unchanged and scrolled controls, plus less
+than half the ordinary heading-text bytes submitted for layout. They compare
+visible ink, all response/accessibility identities, wrapping, dependency
+invalidation, cap overflow and offscreen keyboard navigation.
+
+The isolated Windows run prepared 17/18/17 layouts for the 400-heading
+top/1100-point/8000-point controls, versus 400 each in the ordinary path, and
+submitted 466/424/425 heading-text bytes versus 10,634. The 64- and 2000-heading
+controls also prepared 17–18 layouts. Width/scale/font/text-option/revision
+changes first prepared all 400 rows and then returned to 9–15 visible layouts.
+A 3000-to-4112-heading replacement retained exactly 4096 geometry slots
+(98,304 bytes on this target), with 33 layouts including every uncached row;
+the old and candidate keyboard paths reached the tail on the same frame.
+These are layout-preparation counters, not measurements of total allocations
+or end-to-end time.
+
+This is an Outline-first preparation/allocation slice, not a fix for full
+Preview block traversal or Source line construction. The editor's separate
+outline, native accessibility/usability and cumulative GPU/native qualification
+remain follow-ups; these counters establish neither #297 causality nor
+fragmentation, leak or native performance conclusions.
 
 ## Bounding image ownership and connecting saved-local Preview
 
@@ -5060,3 +5566,32 @@ measured source/binary and need their own CI. External PR review remains
 required, and native input, mixed-DPI and physical presentation/latency gates
 are unchanged. No merge, deployment, live-app restart or personal-state change
 is implied by this owner-approved performance decision.
+
+### Separating surviving thread identity from resource ownership
+
+The short six-session retirement capture drained all public wgpu allocated/kept
+IDs and released the weak repaint owner, yet whole-owner windows retained
+24/25/26 threads. Reading its existing TID/CPU records showed one additional
+TID in each later round, both still present at completion, with zero matched
+first-to-last held-window CPU deltas. Those records could not rule out TID
+recycling or identify an application-owned root; surviving process commitment
+still included harness, allocator and driver activity.
+
+An explicitly opt-in Windows supervisor discriminator now pins each sampled
+owned-child thread handle, pairs the TID with its real creation FILETIME, and
+records bounded description/start-module labels alongside the existing CPU
+counter. Complete sampling intervals must fit inside the already held UTC
+windows. Unknown/raced metadata and over-limit inventories remain visible,
+historical receipts remain valid without claiming new evidence, and core/GPU
+lifecycle behavior is unchanged. Labeled runtime collection remains pending
+parent authorization. These labels are not stacks or private-byte attribution;
+no causal repair, leak diagnosis or resource-cap acceptance follows from them.
+
+Review of that discriminator caught a narrower admission issue before native
+execution: the first implementation checked description length only after
+an unbounded managed copy. It now examines no more than a 257-unit native
+UTF-16 prefix and constructs a managed string only with an explicitly admitted
+length of at most 256 units. The longer-label refusal reports a proven lower
+bound rather than pretending to know the full length. This bounds that managed
+copy, not the OS-allocated description buffer or transient thread/module API
+collections; those distinctions remain explicit in the validation record.

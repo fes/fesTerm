@@ -304,9 +304,220 @@ are rejected. Device-free Rust regressions cover retirement with all six output
 queues backlogged, stale clipboard completion/cancellation across lifecycle
 generations, and final-receipt identity. The Python checker tests include
 transient commitment, missing owners/windows/receipts and exact PNG rejection.
-This automated implementation coverage does not claim a completed native aging
-run; exclusive-runtime cumulative/native qualification and multi-day capture
-remain separate CP-18/#297/#282 work.
+This automated implementation coverage does not itself claim a completed aging
+run. The cumulative short offscreen execution below is separate evidence;
+native qualification and multi-day capture remain CP-18/#297/#282 work.
+
+### Optional owned-thread identity discriminator
+
+`check-windows-session-aging.ps1 -ThreadOwnership` adds supervisor-only metadata
+to the same explicitly owned offscreen child. It does not change Rust/core,
+renderer, submission, teardown, frame or production scheduling behavior.
+The optional suite forwards `FESTERM_AGING_THREAD_OWNERSHIP=1` only when the
+existing `FESTERM_RUN_SESSION_AGING=1` aging opt-in is also enabled.
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-thread-identity -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900 -ThreadOwnership
+```
+
+This is an explicit runtime discriminator. Its
+[first actual labeled capture](#2026-10-06-cumulative-owned-thread-observations)
+is recorded separately below. The parent supervisor must separately authorize
+its GPU slot; it does not permit desktop activation, native input or an
+automatic retry.
+
+Source receipts declare `thread_ownership_schema=1`, the three exact
+`thread_ownership_methods` and all `thread_ownership_bounds`. Every process
+sample then carries a complete `thread_ownership` envelope: schema, UTC
+start/completion milliseconds and the owned module snapshot's status/count/reason.
+Existing `threads[].cpu_ms` counters are read from the same owned thread handle
+as `GetThreadTimes`' real creation FILETIME. `GetProcessIdOfThread` verifies
+the owned child before any CPU, creation, description or start-address query;
+handles are closed after each read. Matching uses **TID plus creation FILETIME**,
+never TID alone. Names use `GetThreadDescription`; the optional Win32 start
+address uses `NtQueryInformationThread` class 9 and is labeled only against the
+owned child's `Process.Modules` snapshot. No foreign process is inventoried.
+
+Admitted/emitted inventories are at most 256 threads and 1,024 modules per
+sample, with 256 UTF-16 units per retained label,
+131,072 total thread records, 64 MiB of resource JSONL, and at most
+`2 * TimeoutSeconds + 1` samples at the existing 500 ms requested interval.
+Inventory/log overflow fails the supervisor with an explicit over-limit reason
+and preserves the failed run. An over-limit description/module name is instead
+recorded as unavailable with its length or proven lower bound, not truncated.
+Thread descriptions inspect at most 257 native UTF-16 units (514 bytes,
+including the possible terminator) before copying: the successful managed
+`PtrToStringUni(pointer, length)` copy has an explicit admitted length of at
+most 256 units. A longer prefix is refused without a managed description copy
+or an unbounded terminator scan; the full native length is not inferred.
+`GetThreadDescription` itself still allocates an OS-owned native buffer, which
+is released with `LocalFree`. `Process.Threads`/`Process.Modules` and their
+wrapper arrays are materialized before count admission, and module names can
+already exist in managed API snapshots before their label check. These limits
+bound admitted records/retained labels and resource-log bytes, **not total
+native/transient allocations, API collection capacities, allocator overhead or
+driver resources**. Access-denied module
+enumeration, unavailable API/status results, unnamed threads, unmapped start
+addresses and exited/recycled TID races remain explicit. Unknown creation/CPU
+is null, never fabricated zero; unexpected native/enumeration failures remain
+failures, not blanket-caught successful samples.
+
+The checker admits a thread observation to a held teardown/whole-owner window
+only when its **entire sampling interval** lies within that window's existing
+UTC endpoints and its phase agrees. It reports clipped boundary samples,
+identity sets newly/repeatedly/not observed across held windows, final observed
+identities, metadata labels, unknown/raced observations and first-to-last CPU
+deltas. One observation has no delta, not zero work. A zero measured delta with
+two observations is preserved; absence from a sampled set is not proof of exit
+and repeated presence is not continuous-liveness evidence.
+
+Historical undeclared receipts remain valid and explicitly lack this creation/
+metadata evidence. Declared new receipts cannot omit fields, inventories,
+methods, bounds or the final source-bound memory receipt; existing executable
+hash, twelve-phase/frame/timing, exact PNG and lifecycle checks remain in force.
+Descriptions/start modules are **labels, not stacks or private-byte ownership**:
+they do not establish an app-owned causal root, attribute driver allocations,
+prove a leak or accept a resource cap. The labeled observations below do not
+close CP-18/#297/#282 or native qualification.
+
+### 2026-10-06 cumulative owned-thread observations
+
+The metadata-enabled supervisor completed at exact clean cumulative
+`8f4b8741d8f25c3d15830aec693898bfb8773898`, tree
+`b092905488399e449a3619d0bc1994c6a5232e7c`, after #367/#368.
+The archived release executable SHA256 is
+`5F05979652FC4B95B23D024FAC07867F77442F13E6AAF4161EFA0C9811BF0A9B`;
+the owned child PID is `19392`. Source-bound execution ran from
+`2026-10-07T04:06:02.5871986Z` to `2026-10-07T04:06:56.0779845Z`
+(53.491 seconds, 2026-10-06 local date), with normal exit 0.
+These are actual current native metadata calls, not only static C# compilation.
+
+```powershell
+# Passed with a fresh absolute output directory at the source above.
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-thread-identity -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900 -ThreadOwnership
+# Supervisor checking and independent rechecking both passed.
+python validation\terminal-performance\check_session_aging.py C:\evidence\six-session-thread-identity
+```
+
+The paths are reproducible examples, not the private evidence location.
+All twelve complete six-session phases, three whole-owner rounds, exact
+normalized framebuffers and final acknowledged `complete` sample pass the
+strict checker. Each round completes host submission, releases the weak
+repaint owner, drops the reporting instance and drains all 23 public registries
+to zero allocated/kept IDs. Vacant slots still do not establish driver retirement.
+
+An independent raw-log correlation verifies the executable/source binding,
+99 owned-process samples, 2,487 thread records, 41 distinct TID-plus-creation
+identities and 26 final observed identities. No observed identity is raced or
+unavailable; every actual CPU counter is known. The maximum sampled inventories
+are 29 threads and 54 modules, and the resource JSONL is 887,419 bytes.
+All retained labels fit the declared allowance. These observed sizes are below
+the admitted-output ceilings, not measurements of total sampler allocation.
+
+Seven held windows admit 6/5/5/6/6/6/6 complete sampling intervals, with zero
+boundary exclusions and zero unknown identity observations. Independent
+recomputation matches their identity sets and first-to-last CPU deltas.
+Every admitted held identity has at least two actual CPU observations and
+zero measured delta; this is not continuous monitoring or proof of no work
+between samples.
+
+| Whole-owner round | Held commitment (MiB) | Observed identities | Admitted samples | Newly observed identities versus preceding held window |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 144.605 | 25 | 6 | 1 |
+| 1 | 143.457 | 26 | 6 | 1 |
+| 2 | 145.254 | 26 | 6 | 0 |
+
+The added identities are labeled explicitly, without treating a module as
+the requester or owner of a native worker:
+
+| First whole-owner window | TID | Creation FILETIME (100 ns) | Description | Win32 start module | Observed in final acknowledgment |
+| --- | ---: | ---: | --- | --- | --- |
+| 0 | 25992 | 134358195992042497 | unnamed | `ntdll.dll` | yes |
+| 1 | 18064 | 134358196046101781 | unnamed | `ntdll.dll` | yes |
+
+Across all 41 identities, start-module labels are two
+`festerm-aging-probe.exe`, five `d3d11on12.dll` and 34 `ntdll.dll`.
+Only `main` and the aging test-harness thread have descriptions; 39 identities
+are explicitly unnamed. These are observed labels, not stack samples, a claim
+that the named module allocated memory, or proof that sampled absence means exit.
+
+| Process commitment observation | MiB |
+| --- | ---: |
+| OS-maintained lifetime peak commitment | 587.102 |
+| Maximum sampled current commitment | 565.637 |
+| Unsampled high-water excess | 21.465 |
+| Final acknowledged current commitment | 17.734 |
+
+Commitment comes from `GetProcessMemoryInfo.PagefileUsage/PeakPagefileUsage`,
+not inference from private bytes. The held residual memory/threads remain
+adverse observations. The final lower commitment does not identify who
+retired allocations or accept a resource cap; no causal app-owned leak,
+private-byte attribution, complete driver retirement or native latency result
+is established. This is a separate current capture, not a before/after resource
+improvement attributed against the historical `5fa487c` run below.
+
+### 2026-10-06 cumulative short retirement observations
+
+The revised supervisor completed at exact clean
+`5fa487c635b4b43f0aed8017d85d42d9f142f565`, tree
+`ab5cd853cbe983f5be674b0178ce75dbec06eea6`, using archived release executable
+SHA256 `8FBAF53B6D1982AC8E85AFDB7455F81DFEFB0BE70D6051B0581EA08A113D390C`.
+Its source-bound process interval was 53.123 seconds, with 102 external resource
+samples and normal exit 0. All twelve complete six-session phases and three
+whole-owner rounds passed the strict checker, including exact normalized
+framebuffers and the final acknowledged `complete` sample.
+
+```powershell
+# Passed with a fresh absolute output directory on the source above.
+pwsh -NoProfile -File scripts\check-windows-session-aging.ps1 -OutputDirectory C:\evidence\six-session-aging-short -Profile release -Cycles 2 -Frames 10 -IdleSeconds 3 -LifecycleRepeats 3 -TimeoutSeconds 900
+# The supervisor invokes this checker; independent rechecking also passed.
+python validation\terminal-performance\check_session_aging.py C:\evidence\six-session-aging-short
+```
+
+These are reproducible example output paths, not the private evidence location.
+The supervisor's archived executable is `festerm-aging-probe.exe`.
+
+| Process observation | MiB |
+| --- | ---: |
+| OS-maintained lifetime peak commitment | 588.672 |
+| Maximum sampled current commitment | 586.984 |
+| Unsampled high-water excess | 1.688 |
+| Final acknowledged current commitment | 20.328 |
+
+All three rounds completed host submission, released the weak repaint owner,
+dropped the reporting instance and drained all 23 public registries to zero
+allocated/kept IDs. Vacant slots are not live or in-flight allocations.
+The held post-drop observations remain adverse rather than being hidden:
+
+| Whole-owner round | Held commitment (MiB) | Surviving threads | Valid held samples |
+| --- | ---: | ---: | ---: |
+| 0 | 142.543 | 24 | 6 |
+| 1 | 144.055 | 25 | 5 |
+| 2 | 148.203 | 26 | 6 |
+
+Renderer-only destruction retained eight public IDs and approximately
+516-540 MiB commitment; complete fixture/context destruction cleared those IDs.
+The final sample still had 26 threads. Inspection of the already saved TID/CPU
+samples found TIDs `42692` and `39200` newly present in the second and third
+held rounds respectively; both remain in the final sample, and no TID from the
+previous held round disappears. Every matched first-to-last thread CPU delta
+inside each held round is zero. Those historical samples lack real creation
+identity and names/start modules, so TID recycling and ownership remain unknown.
+No metadata or thread-stack capture is inferred from that inspection.
+These whole-process observations include
+the test harness and do not attribute driver-private bytes or thread stacks.
+Three rounds do not establish long-run boundedness, a leak, complete native
+retirement or an accepted process-resource cap. Reconstruction is not native
+device loss or durable-shell reconnect; #297/#282 and CP-18 remain open.
+
+Fresh-source OS-input/lifecycle execution on the same head stopped before
+input at `Foreground activation is unavailable.` The existing opted-in
+separate-GUI-thread/no-input activation regression independently failed with
+the same error, despite active-RDP/default-desktop preflight. The original
+failure receipts and normal owned-tree cleanup are retained. No failed
+interval was retried as accepted, guard weakened, native capture obtained or
+native CPU/physical-latency result inferred.
 
 ### 2026-10-04 source-bound observations
 

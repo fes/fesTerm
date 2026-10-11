@@ -708,6 +708,36 @@ too, though still only partially covered.
 | `MD-06` | `EditorPreview/Viewer → Reloaded/Stale/Closed` | Modify, replace, delete, or conflict with source under the owning surface's freshness policy. | Local editor Preview follows ADR 0034's reload/conflict rules; read-only remote snapshots make no editing/conflict claim, and SSH loss/deletion preserve safe bounded state. | Restore fixture, reload baseline, then close to prior surface. | P,H,N,U; partial |
 | `MD-07` | `Desktop/CLI → Document/Error` | Choose fesTerm in Open With for one or more `.md`/`.markdown` files, cold and already running, or use `festerm --open -- <paths...>`. | The installed handler is optional and does not seize defaults. Native events and bounded user-scoped IPC converge on the document command, never terminal drops/uploads. New files open in Preview in the last-active window; existing files focus their view without losing unsaved edits. Blocking dialogs defer requests; malformed, missing and over-limit requests report errors. | Dismiss errors, close opened documents, or uninstall only fesTerm's association metadata. | H,N,U; partial |
 
+`MD-04`'s outline oracle includes unchanged/scroll/resize/scale/font/revision
+controls: bounded cached geometry must preserve variable wrapping, all live
+heading identities/accessibility nodes and offscreen keyboard navigation.
+Visible ink is compared against the ordinary renderer; overflow beyond the
+4096-row preparation cap must retain every heading. Shared Preview's reused
+heading-position storage must still replace old revision positions.
+Source's bounded unwrapped job preparation must preserve every selectable
+label, exact syntax/Find formats, wrapping under width/font/scale/theme changes,
+offscreen byte navigation, Unicode/CRLF/trailing-space selection/Copy and live
+accessibility. Entry/payload/query overflow falls back without hiding text or
+truncating Find; snapshot replacement/close releases the actual cached owners.
+The Source offscreen-geometry candidate additionally requires complete clipped
+shape, intrinsic-size, interaction-sense and accessibility equivalence to the
+descriptor-cached ordinary labels. Exact finite geometry is limited to admitted
+jobs; width/font/scale/options/revision changes must invalidate it, while every
+row and offscreen byte/heading target remain live. Warm normal/narrow 400-section
+controls count actual layout requests and cloned-buffer capacities rather than
+cache access, with additional bounded metadata accounted separately. Focused
+CPU qualification does not close `MD-04`/`MD-06` native gates.
+Source/Outline dependency-font metadata admission must precede any clone:
+128 entries per map, 8192 cumulative owned String-capacity/custom-family-name
+bytes and 256 family-reference capacity slots. Overflow must drop the key and
+stale geometry, retain every ordinary live label and exact Copy, and recover
+cold then warm when valid definitions return. Borrowed comparison and temporary
+key-clone payloads are bounded/accounted separately from label layout work.
+The standalone viewer's shared outer-frame paint route must match the actual
+Preview/Source caller pixels at narrow/wide widths and 1/1.25x scale, retain live
+accessibility/response identities, and use ordinary fallback at reduced opacity.
+The callback oracle does not establish completed Markdown draw time.
+
 Automated `MD-04` Find regressions preserve the complete ordered match set,
 including long Unicode lines and multiline queries, and compare indexed
 Preview/Source highlighting with a full-scan format oracle. The optional
@@ -718,6 +748,15 @@ independent constrained layout at fractional widths and 0.75-3 pixels per
 point, allowing only the unused wrap-limit metadata to differ. They require
 measured-galley reuse for fitting cells and preserve wrapping, styles, Unicode,
 Find formatting and intrinsic size without removing any labels.
+Frame-local reuse across Preview tables additionally compares complete live
+cell responses/accessibility and clipped shapes against ordinary current
+preparation. It counts actual job construction, unwrapped/constrained layout
+requests and owned-buffer capacities on the 400-section normal/narrow fixture,
+including Find, scrolling and real dependency changes. The 32-entry,
+256-byte-input and 64 KiB accounted-galley-payload bounds must refuse complex,
+highlighted and over-budget cells without hiding them; later invocations
+recover normally. Unicode selection/Copy and offscreen heading navigation
+remain live. No persistent galley/font key or native-latency acceptance is added.
 The frame-local code-header caption oracle for `MD-04` and the shared Preview
 path in `EDIT-09` compares ordinary and prepared rendering of the actual
 outline-disabled 400-section fixture: complete clipped shapes, accessibility
@@ -729,6 +768,33 @@ regressions passed the combined Windows workspace qualification. They prove
 CPU correctness, not timing benefit, native clipboard delivery or usability;
 the separate synthetic measurement and its adverse controls do not replace
 native evidence.
+
+The opt-in `markdown-controls` WARP replay adds four actual `MD-04`
+Preview/Source construction and completed-render controls at normal/narrow
+widths. The CPU semantic regression verifies rendered-heading versus raw
+Source readiness and the last of 400 owned code sections. The replay keeps
+same-frame original-renderer pixel guards and separate draw/readback buckets;
+it does not cover Find, native input/presentation, scrolling or usability.
+
+For `EDIT-04` and `MD-04`, the shared owned-modal helper lets the Save As/Open
+File frame join the backdrop on the installed eligible panel renderer.
+One unique complete opaque frame and its original black shadow must retain
+fill/stroke/rounding/blur, clipping and every live Modal/widget ID, response
+and input. New same-layer shapes matching the actual owned frame rectangle
+are the only candidates; preceding or nested non-owned frames,
+ambiguous/clipped frames and unsupported/ineligible contexts keep their
+fallback. Consolidation retains the newer shared modal implementation rather
+than reviving the draft's picker-only wrapper. The existing
+`modal_surface_preserves_pixels_responses_and_guarded_fallbacks` regression
+uses fresh RenderState ownership per arm at 100%, 125% and 200% scale and
+additionally covers independent backdrop/frame diagnostic controls.
+Historical eight-picker qualification below remains tied to its recorded
+source; it is not evidence for the consolidated head.
+Frame attribution disables
+only owned frame conversion, leaving the default backdrop live; historical
+backdrop attribution disables both owned conversions to retain its original
+schema/geometry and one-additional-callback oracle. These test-only controls
+are not production environment switches or new native acceptance.
 
 Code-byte navigation regressions for `MD-04` and `EDIT-09` render all 400
 fences, prove the tail is initially outside the viewport, then require its

@@ -3167,6 +3167,20 @@ Byte-identical [focused BEFORE/AFTER review images](images/dialog-style-review/s
 retain their exact [source/physical-input provenance](images/dialog-style-review/style-pair-20261002-r2/provenance.json);
 they are separate from the original gallery and are not platform snapshots.
 
+The shared owned-modal helper lets Open File and Save As use the installed
+Windows DX12 CPU panel renderer for their unique complete opaque popup frame
+and original black shadow. The ordinary live Modal still owns sizing, content,
+IDs, focus, input and responses. Fill, stroke, rounding, shadow blur and the
+existing backdrop/dimming remain unchanged. Unsupported, clipped, ambiguous,
+translucent, shadowless or ineligible frames retain ordinary painting.
+Consolidation preserves the newer shared helper, not the draft's picker-only
+wrapper. Its actual-modal pixel/response/callback regression uses a fresh
+RenderState per comparison arm and independent test-only backdrop/frame
+controls at 100%, 125% and 200% scale. Historical eight-picker measurements
+remain bound to their recorded source, not the consolidated head; native
+interaction remains separate. See
+the [qualification boundary](../validation/windows-warp/README.md#prepared-owned-picker-frame-production-successor).
+
 ## Future Populated Launcher Example
 
 ![Future populated Launcher target](images/gui-mockups/launcher-populated.png)

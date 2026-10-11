@@ -1332,6 +1332,17 @@ fn replay_warp_ui_surfaces() {
     let selected =
         warp_profile::SceneSet::parse(std::env::var_os("FESTERM_WARP_UI_SCENES").as_deref())
             .expect("valid WARP scene selection");
+    let attribute_backdrop = warp_profile::picker_backdrop_attribution(
+        std::env::var_os("FESTERM_WARP_UI_PICKER_BACKDROP").as_deref(),
+        selected,
+    )
+    .expect("valid bounded picker backdrop attribution");
+    let attribute_frame = warp_profile::picker_frame_attribution(
+        std::env::var_os("FESTERM_WARP_UI_PICKER_FRAME").as_deref(),
+        selected,
+        attribute_backdrop,
+    )
+    .expect("valid exclusive bounded picker frame attribution");
     let output =
         PathBuf::from(std::env::var_os("FESTERM_WARP_UI_OUT").expect("set FESTERM_WARP_UI_OUT"));
     assert!(
@@ -1504,6 +1515,7 @@ fn replay_warp_ui_surfaces() {
     }
     for scene in bounded_surface_scenes()
         .into_iter()
+        .chain(markdown_surface_scenes())
         .filter(|scene| selected.includes(scene.kind))
     {
         let scene_output = output.join(scene.id);
@@ -1527,6 +1539,19 @@ fn replay_warp_ui_surfaces() {
         let mut probe = SurfaceProbe::with_setup(scene, &fixture_directory, 2.0, |context| {
             crate::software_background::install(context, &state);
             crate::direct2d::install_from_environment(context, Some(&state));
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                crate::software_background::set_picker_backdrops_enabled(
+                    context,
+                    !attribute_backdrop,
+                );
+                // Frame attribution leaves the default backdrop live; the historical
+                // backdrop oracle keeps both original shapes and its original batching.
+                crate::software_background::set_picker_frames_enabled(
+                    context,
+                    !attribute_frame && !attribute_backdrop,
+                );
+            }
         });
         let started = Instant::now();
         std::hint::black_box(probe.context.tessellate(
@@ -1607,6 +1632,39 @@ fn replay_warp_ui_surfaces() {
             draw_times.push(sample.total_ms);
             draw_buckets.push(sample);
         }
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if attribute_backdrop || attribute_frame {
+            let (mut attribution, filename) = if attribute_backdrop {
+                (
+                    warp_profile::attribute_picker_backdrop(
+                        &state,
+                        &probe.context,
+                        &frame,
+                        &expected,
+                    ),
+                    "backdrop-attribution.json",
+                )
+            } else {
+                (
+                    warp_profile::attribute_picker_frame(&state, &probe.context, &frame, &expected),
+                    "frame-attribution.json",
+                )
+            };
+            attribution["scene"] = serde_json::json!(scene.id);
+            attribution["scene_set"] = serde_json::json!(selected.name());
+            attribution["provenance"] = serde_json::json!(provenance);
+            attribution["adapter"] = serde_json::json!(format!("{info:?}"));
+            attribution["target_format"] = serde_json::json!(format!("{:?}", state.target_format));
+            attribution["physical_pixels"] = serde_json::json!([dimensions.0, dimensions.1]);
+            attribution["fixture_state_verified"] = serde_json::json!(true);
+            fs::write(
+                scene_output.join(filename),
+                serde_json::to_string_pretty(&attribution).unwrap(),
+            )
+            .unwrap();
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        assert!(!attribute_backdrop && !attribute_frame);
         let report = serde_json::json!({
             "schema": "festerm-warp-ui-replay-v2",
             "scene_set": selected.name(),
@@ -3000,6 +3058,8 @@ pub(crate) enum SurfaceKind {
     SaveLarge,
     SaveError,
     SaveOverwrite,
+    MarkdownPreview,
+    MarkdownSource,
 }
 
 #[derive(Clone, Copy)]
@@ -3030,38 +3090,39 @@ impl SurfaceScene {
     }
 }
 
+macro_rules! pair {
+    ($id:literal, $kind:ident, $title:literal, $caption:literal) => {{
+        fn normal() -> image::RgbaImage {
+            capture_surface_gallery(SurfaceKind::$kind, false)
+        }
+        fn narrow() -> image::RgbaImage {
+            capture_surface_gallery(SurfaceKind::$kind, true)
+        }
+        [
+            SurfaceScene {
+                id: $id,
+                kind: SurfaceKind::$kind,
+                narrow: false,
+                title: $title,
+                caption: $caption,
+                capture: normal,
+            },
+            SurfaceScene {
+                id: concat!($id, "-narrow"),
+                kind: SurfaceKind::$kind,
+                narrow: true,
+                title: concat!($title, " — narrow root"),
+                caption: concat!(
+                    $caption,
+                    " The root is 360 × 516 logical pixels; this is not native acceptance."
+                ),
+                capture: narrow,
+            },
+        ]
+    }};
+}
+
 pub(crate) fn bounded_surface_scenes() -> Vec<SurfaceScene> {
-    macro_rules! pair {
-        ($id:literal, $kind:ident, $title:literal, $caption:literal) => {{
-            fn normal() -> image::RgbaImage {
-                capture_surface_gallery(SurfaceKind::$kind, false)
-            }
-            fn narrow() -> image::RgbaImage {
-                capture_surface_gallery(SurfaceKind::$kind, true)
-            }
-            [
-                SurfaceScene {
-                    id: $id,
-                    kind: SurfaceKind::$kind,
-                    narrow: false,
-                    title: $title,
-                    caption: $caption,
-                    capture: normal,
-                },
-                SurfaceScene {
-                    id: concat!($id, "-narrow"),
-                    kind: SurfaceKind::$kind,
-                    narrow: true,
-                    title: concat!($title, " — narrow root"),
-                    caption: concat!(
-                        $caption,
-                        " The root is 360 × 516 logical pixels; this is not native acceptance."
-                    ),
-                    capture: narrow,
-                },
-            ]
-        }};
-    }
     [
         pair!("about-unavailable", About, "About in a developer build", "The real About dialog honestly reports unavailable updating. No endpoint is contacted."),
         pair!("about-licenses", Licenses, "About with licenses expanded", "Bundled-font attribution is expanded in the real bounded license scroll area."),
@@ -3095,9 +3156,45 @@ pub(crate) fn bounded_surface_scenes() -> Vec<SurfaceScene> {
     .collect()
 }
 
+fn markdown_surface_scenes() -> Vec<SurfaceScene> {
+    [
+        pair!(
+            "markdown-large-preview",
+            MarkdownPreview,
+            "Large owned Markdown Preview",
+            "Four hundred owned sections and Rust fences use the actual remote-snapshot model and Preview renderer; no network, images or clipboard are accessed."
+        ),
+        pair!(
+            "markdown-large-source",
+            MarkdownSource,
+            "Large owned Markdown Source",
+            "The same four-hundred-section snapshot uses its actual Source mode, not a text-editor substitute. Find and native presentation remain unmeasured."
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn large_markdown_surface_fixture() -> Vec<u8> {
+    let mut text = String::with_capacity(400 * 192);
+    for section in 0..400 {
+        if section == 0 {
+            text.push_str("# WARP Markdown fixture\n\n");
+        } else {
+            text.push_str(&format!("## Section {section:04}\n\n"));
+        }
+        text.push_str(&format!(
+            "An owned paragraph for section {section:04} includes **strong text** and `inline code`.\n\n```rust\nfn section_{section:04}() {{ println!(\"owned section {section:04}\"); }}\n```\n\n"
+        ));
+    }
+    text.into_bytes()
+}
+
 enum SurfaceBody {
     App(Box<crate::app::FesTermApp>),
     Terminal(Box<TerminalMenuState>),
+    Markdown(Box<MarkdownViewerTab>, crate::tabs::TabId),
 }
 
 pub(crate) struct SurfaceFixture {
@@ -3138,6 +3235,21 @@ impl SurfaceFixture {
             assert!(directory.is_dir(), "retained owned scene directory");
         } else {
             fs::create_dir_all(directory).expect("create owned surface fixture");
+        }
+        if matches!(kind, K::MarkdownPreview | K::MarkdownSource) {
+            let mut tab = MarkdownViewerTab::open_remote(
+                synthetic_markdown_source(),
+                "Owned WARP Markdown".to_owned(),
+                large_markdown_surface_fixture(),
+            );
+            if kind == K::MarkdownSource {
+                tab.toggle_mode();
+            }
+            return Self {
+                body: SurfaceBody::Markdown(Box::new(tab), crate::tabs::TabId::next_for_test()),
+                transport: None,
+                active_tab: None,
+            };
         }
         if matches!(
             kind,
@@ -3295,6 +3407,9 @@ impl SurfaceFixture {
                     &mut state.sink,
                     state.options.clone(),
                 );
+            }
+            SurfaceBody::Markdown(tab, id) => {
+                assert!(tab.show(ui, *id).is_none());
             }
         }
     }
@@ -3606,9 +3721,17 @@ fn assert_surface(kind: SurfaceKind, driver: &impl SurfaceDriver) {
         K::Paste => "Paste",
         K::DirtyClose => "Save",
         K::OpenError | K::SaveError => "Could not load the folder.",
+        K::MarkdownPreview => "Heading level 1: WARP Markdown fixture",
+        K::MarkdownSource => "# WARP Markdown fixture",
         _ => "entry-000000.md",
     };
     assert!(driver.has_label(required), "{kind:?} must show {required}");
+    if kind == K::MarkdownSource {
+        assert!(driver.has_label_containing("# WARP Markdown fixture"));
+    }
+    if matches!(kind, K::MarkdownPreview | K::MarkdownSource) {
+        assert!(driver.has_label_containing("fn section_0399()"));
+    }
     if matches!(kind, K::LiveClose | K::Paste) {
         assert!(driver.focused("Cancel"));
     }
@@ -5485,6 +5608,7 @@ fn style_review_fixtures_verify_ready_tasks_and_semantics_before_short_resize() 
 pub(crate) fn capture_surface_gallery(kind: SurfaceKind, narrow: bool) -> image::RgbaImage {
     let scene = bounded_surface_scenes()
         .into_iter()
+        .chain(markdown_surface_scenes())
         .find(|scene| scene.kind == kind && scene.narrow == narrow)
         .unwrap();
     let directory = surface_fixture_directory(scene.id);
@@ -5541,6 +5665,22 @@ fn chip_surface_fixtures_reveal_real_targets_without_activating_them() {
         exercised_scroll,
         "the inactive narrow middle chip must require a real scroll-control click"
     );
+}
+
+#[test]
+fn markdown_warp_fixtures_show_real_large_preview_and_raw_source_at_both_widths() {
+    for scene in markdown_surface_scenes() {
+        let directory = unique_surface_fixture_directory();
+        let mut probe = SurfaceProbe::new(scene, &directory, 1.0);
+        probe.prepare(scene.kind, |delta| delta.clear());
+        if !scene.narrow {
+            assert!(probe.has_label("Heading level 1: WARP Markdown fixture"));
+        }
+        let raw_source = probe.has_label_containing("# WARP Markdown fixture");
+        assert_eq!(raw_source, scene.kind == SurfaceKind::MarkdownSource);
+        drop(probe);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 #[test]

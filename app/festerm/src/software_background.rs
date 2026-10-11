@@ -76,7 +76,7 @@ fn white_mesh_geometry(mesh: &egui::Mesh) -> bool {
         && mesh.is_valid()
 }
 
-fn opaque_window_frame(shape: &egui::Shape) -> bool {
+pub(crate) fn opaque_window_frame(shape: &egui::Shape) -> bool {
     matches!(shape, egui::Shape::Vec(shapes) if matches!(
         shapes.as_slice(),
         [egui::Shape::Rect(shadow), egui::Shape::Rect(frame)]
@@ -540,7 +540,10 @@ fn supports_panel_frame(ui: &egui::Ui, frame: &egui::Frame) -> bool {
     frame.fill.is_opaque() && frame.shadow == egui::Shadow::NONE && supports_panel_painter(ui)
 }
 
-fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+pub(crate) fn full_root_black_backdrop(
+    shape: &egui::epaint::ClippedShape,
+    viewport: egui::Rect,
+) -> bool {
     let egui::Shape::Rect(rect) = &shape.shape else {
         return false;
     };
@@ -560,7 +563,10 @@ fn full_root_black_backdrop(shape: &egui::epaint::ClippedShape, viewport: egui::
         && rect.blur_width == 0.0
 }
 
-fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: egui::Rect) -> bool {
+pub(crate) fn complete_opaque_window_frame(
+    shape: &egui::epaint::ClippedShape,
+    viewport: egui::Rect,
+) -> bool {
     if !viewport.is_finite()
         || viewport.min != egui::Pos2::ZERO
         || !viewport.is_positive()
@@ -587,6 +593,26 @@ fn complete_opaque_window_frame(shape: &egui::epaint::ClippedShape, viewport: eg
         && !shadow.fill.is_opaque()
         && shadow.stroke == egui::Stroke::NONE
         && shadow.blur_width.is_finite()
+}
+
+#[cfg(test)]
+fn picker_backdrops_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-picker-backdrop")
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn set_picker_backdrops_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(picker_backdrops_disabled_id(), !enabled));
+}
+
+#[cfg(test)]
+fn picker_frames_disabled_id() -> egui::Id {
+    egui::Id::new("festerm::test-ordinary-picker-frame")
+}
+
+#[cfg(all(test, windows, target_arch = "x86_64"))]
+pub(crate) fn set_picker_frames_enabled(context: &egui::Context, enabled: bool) {
+    context.data_mut(|data| data.insert_temp(picker_frames_disabled_id(), !enabled));
 }
 
 pub(crate) fn show_modal<R>(
@@ -620,13 +646,30 @@ pub(crate) fn show_modal<R>(
         return response;
     }
     let viewport = context.viewport_rect();
+    #[cfg(test)]
+    let backdrop_enabled = context.data(|data| {
+        !data
+            .get_temp::<bool>(picker_backdrops_disabled_id())
+            .unwrap_or(false)
+    });
+    #[cfg(not(test))]
+    let backdrop_enabled = true;
+    #[cfg(test)]
+    let frame_enabled = context.data(|data| {
+        !data
+            .get_temp::<bool>(picker_frames_disabled_id())
+            .unwrap_or(false)
+    });
+    #[cfg(not(test))]
+    let frame_enabled = true;
     let replacements = context.graphics(|graphics| {
         let mut backdrop = None;
         let mut frame = None;
         let mut ambiguous_backdrop = false;
         let mut ambiguous_frame = false;
         for (index, shape) in graphics.get(layer)?.all_entries().enumerate().skip(start.0) {
-            if response.backdrop_response.rect == viewport
+            if backdrop_enabled
+                && response.backdrop_response.rect == viewport
                 && full_root_black_backdrop(shape, viewport)
                 && matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == color)
             {
@@ -634,7 +677,7 @@ pub(crate) fn show_modal<R>(
                     .replace((egui::layers::ShapeIdx(index), shape.clone()))
                     .is_some();
             }
-            if complete_opaque_window_frame(shape, viewport) {
+            if frame_enabled && complete_opaque_window_frame(shape, viewport) {
                 ambiguous_frame |= frame
                     .replace((egui::layers::ShapeIdx(index), shape.clone()))
                     .is_some();
@@ -694,6 +737,11 @@ pub(crate) struct PanelTestProbe(Option<Arc<PanelRenderer>>);
 
 #[cfg(test)]
 impl PanelTestProbe {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub(crate) fn existing(context: &egui::Context) -> Self {
+        Self(context.data(|data| data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())))
+    }
+
     pub(crate) fn existing_paints(context: &egui::Context) -> Option<usize> {
         context.data(|data| {
             data.get_temp::<Arc<PanelRenderer>>(panel_renderer_id())
@@ -911,6 +959,17 @@ mod tests {
                 style.animation_time = 0.0;
                 style.visuals.text_cursor.blink = false;
             });
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                set_picker_backdrops_enabled(
+                    &context,
+                    !matches!(case, "frame-only" | "ordinary-controls"),
+                );
+                set_picker_frames_enabled(
+                    &context,
+                    !matches!(case, "backdrop-only" | "ordinary-controls"),
+                );
+            }
             let probe = (optimized && case != "no-renderer")
                 .then(|| PanelTestProbe::install(&context, &state));
             let id = egui::Id::new("owned-modal-pixels");
@@ -1001,6 +1060,12 @@ mod tests {
                 "translucent",
                 "no-shadow",
                 "ambiguous",
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                "frame-only",
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                "backdrop-only",
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                "ordinary-controls",
             ] {
                 let (ordinary, ordinary_response, _) = draw(false, scale, case);
                 let (optimized, optimized_response, paints) = draw(true, scale, case);
@@ -1011,7 +1076,7 @@ mod tests {
                 assert_eq!(ordinary, optimized, "scale={scale}, {case}");
                 let expected = match case {
                     "normal" => 2,
-                    "colored" | "translucent" | "no-shadow" => 1,
+                    "colored" | "translucent" | "no-shadow" | "frame-only" | "backdrop-only" => 1,
                     _ => 0,
                 };
                 assert_eq!(paints, expected, "scale={scale}, {case}");
