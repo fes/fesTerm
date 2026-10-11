@@ -1,174 +1,47 @@
-name: CI
+name: PR373 WARP all-miss evidence
 
 on:
-  push:
-    # Feature-branch pushes are already covered by the `pull_request` event
-    # below (which also runs the stricter validation-traceability diff
-    # check); without this filter, every push to an open PR's branch fired
-    # this entire matrix twice for the same commit. Direct pushes to `main`
-    # (e.g. merges) still need their own run.
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  # Platform-independent checks: run once instead of duplicating across the
-  # OS matrix below (formatting and these scripts do not vary by OS).
-  checks:
-    name: platform-independent checks
-    runs-on: ubuntu-latest
+  evidence:
+    runs-on: windows-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Check out diagnostic controller
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+          path: controller
+          persist-credentials: false
+      - name: Check out frozen PR373 source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          python-version: '3.x'
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: rustfmt --check --edition 2024 vendor/egui/src/text_selection/text_cursor_state.rs vendor/egui/src/text_selection/label_text_selection.rs vendor/egui/src/widgets/text_edit/builder.rs
-      - run: cargo fmt --manifest-path vendor/egui-wgpu/Cargo.toml -- --check
-      - run: cargo fmt --manifest-path vendor/epaint/Cargo.toml -- --check
-      - run: rustfmt --check --edition 2021 vendor/russh-sftp/src/client/session.rs
-      - run: python -m unittest discover -s scripts/tests -p "test_*.py"
-      - run: python -m pip install -r validation/direct2d/requirements.txt
-      - run: python -m unittest discover -s validation/direct2d -p "test_*.py"
-      - run: python -m unittest discover -s validation/terminal-performance -p "test_*.py"
-      - run: python scripts/manage_bundled_font.py
-      - run: python scripts/check_unicode_emoji_data.py
-      - run: python scripts/validate-icons.py --check
-      - run: python scripts/generate_windows_icon.py --check
-      - run: python scripts/check_packaging.py
-      - run: python scripts/check_validation_traceability.py
-      - run: python scripts/build_ui_state_doc.py --check
-      - if: github.event_name == 'pull_request'
-        run: python scripts/check_validation_traceability.py --base ${{ github.event.pull_request.base.sha }}
-
-  # Third-party conformance. Our own escape-sequence tests only cover what we
-  # thought to write down; esctest2 covers what xterm's maintainer thought to
-  # write down, which is the point. Only the allowlist runs - see
-  # `validation/esctest2-allow.txt` and #193 - so this job is a regression
-  # gate, not a scoreboard.
-  conformance:
-    name: esctest2 conformance
-    runs-on: ubuntu-latest
-    env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.x'
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: conformance
-      - run: scripts/run-esctest2.sh
-      - if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: esctest2-log
-          path: target/esctest2.log
-          if-no-files-found: ignore
-
-  quality:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    env:
-      # Preserve this diagnostic slice's existing compile/link policy.
-      # Native receipts use module offsets when local symbols are unavailable.
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: quality
-      - if: matrix.os == 'windows-latest'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12'
-      - name: Install a software Vulkan renderer for headless wgpu snapshot tests
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers
-      - name: Install libudev headers for serial-port device enumeration
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get install -y libudev-dev pkg-config
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Check the excluded vendored text-selection library
-        run: cargo test -p egui --lib
-      - name: Check native Windows extended-attribute probing
-        if: matrix.os == 'windows-latest'
-        run: cargo test -p festerm-windows-security ordinary_temp_file_has_no_extended_attributes -- --nocapture
-      - name: Check isolated Windows save integration
-        if: matrix.os == 'windows-latest'
-        run: cargo test -p festerm --bin festerm document_store::tests::saving_replaces_the_contents_and_returns_the_new_generation -- --exact --nocapture
-      - name: Check Windows policies and calibrate native test diagnostics without GPU work
-        if: matrix.os == 'windows-latest'
-        run: python -m unittest discover -s scripts/tests -p "test_windows_*.py" -v
-      - if: matrix.os != 'windows-latest'
-        run: cargo test --workspace
-      - name: Run Windows workspace tests with native exit metadata
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')
-        env:
-          FESTERM_REQUIRE_WINDOWS_SYMLINKS: '1'
-      - name: Check retained composition invariants in the vendored renderer
-        if: matrix.os != 'windows-latest'
-        run: cargo test -p egui-wgpu --lib retained::tests
-      - name: Check Windows retained composition invariants with native exit metadata
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '-p', 'egui-wgpu', '--lib', 'retained::tests')
-      - name: Check the excluded vendored font-atlas invariants
-        if: matrix.os != 'windows-latest'
-        run: cargo test --locked --manifest-path vendor/epaint/Cargo.toml --lib texture_atlas::tests
-      - name: Check Windows excluded font-atlas invariants with native exit metadata
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--locked', '--manifest-path', 'vendor\epaint\Cargo.toml', '--lib', 'texture_atlas::tests')
-      - name: Check the shared Direct2D replay probe
-        if: matrix.os == 'windows-latest'
+          ref: 6e8fbff56de69717ed9c89d888178397b9a04caf
+          path: source
+          persist-credentials: false
+      - name: Parse the diagnostic PowerShell controller
         shell: pwsh
         run: |
-          python -m pip install -r validation\direct2d\requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw 'Probe dependency installation failed.' }
-          $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
-          .\validation\direct2d\run.ps1 -ResultDirectory "$env:RUNNER_TEMP\direct2d-probe" -SelfTestOnly
-      - name: Check native comparison declarations without desktop access
-        if: matrix.os == 'windows-latest'
-        run: python -m unittest discover -s validation/terminal-performance -p "test_*.py" -v
-      - if: failure()
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:GITHUB_WORKSPACE\controller\scripts\collect-pr373-warp-evidence.ps1",
+            [ref]$null, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build once and retain all three independent controls
+        shell: pwsh
+        run: |
+          & .\controller\scripts\collect-pr373-warp-evidence.ps1 `
+            -SourceDirectory "$env:GITHUB_WORKSPACE\source" `
+            -OutputDirectory "$env:RUNNER_TEMP\pr373-warp-evidence"
+      - name: Retain numeric evidence even on failure
+        if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: snapshot-diff-${{ matrix.os }}
-          path: |
-            crates/festerm-ui-egui/tests/snapshots/*.diff.png
-            crates/festerm-ui-egui/tests/snapshots/*.new.png
-            target/direct2d-snapshots/*.png
-          if-no-files-found: ignore
-      - name: Retain content-free Windows test exit receipts
-        if: always() && matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: windows-native-test-metadata
-          path: target/windows-test-diagnostics/*.json
-          retention-days: 7
-          if-no-files-found: ignore
+          name: pr373-warp-all-miss-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pr373-warp-evidence
+          if-no-files-found: error
+          retention-days: 30
