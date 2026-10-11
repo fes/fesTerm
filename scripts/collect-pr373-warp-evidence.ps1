@@ -106,9 +106,11 @@ for ($attempt = 1; $attempt -le 3; $attempt++) {
         }
         start_utc = [DateTime]::UtcNow.ToString('o')
     } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $attemptRoot 'invocation.json')
-    & $executable @testArguments `
-        1> (Join-Path $attemptRoot 'test.stdout.log') 2> (Join-Path $attemptRoot 'test.stderr.log')
-    $exitCode = $LASTEXITCODE
+    $process = Start-Process -FilePath $executable -ArgumentList $testArguments `
+        -RedirectStandardOutput (Join-Path $attemptRoot 'test.stdout.log') `
+        -RedirectStandardError (Join-Path $attemptRoot 'test.stderr.log') `
+        -PassThru -Wait
+    $exitCode = $process.ExitCode
     $result = [ordered]@{
         attempt = $attempt
         exit_code = $exitCode
