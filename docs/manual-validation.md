@@ -1448,6 +1448,16 @@ The same binary preserves all eight legacy backdrop controls and their
 forty/ninety-six guards. These are shared-host whole-frame route observations,
 not production enablement or native acceptance; no manual classification changes.
 
+The seven application confirmation/refusal paths now also use the existing
+shared modal painter. `safety_modals_preserve_pixels_focus_and_cancel_with_shared_painting`
+compares the actual live-close, risky-paste and final dirty-document prompts at
+normal/narrow widths and scales 1/2: off/on exact pixels, safe default focus,
+two additional executed backdrop/frame paints, real Cancel and zero transport
+input. Other confirmation policies retain their existing deterministic tests;
+the three representative prompts do not qualify every native/modal variant.
+AS/PS/FD/CP-15/CP-16/CP-17 native, accessibility, hardware, mixed-DPI and
+physical-latency evidence remains separate. No manual classification changes.
+
 The separate production successor now converts only the owned
 Open File/Save As complete opaque frame and original shadow on the installed
 eligible panel renderer. Device-free controls cover normal/narrow same-call

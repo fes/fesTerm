@@ -13,6 +13,128 @@ All historical measurements below retain their original source/binary
 identity and limitations; none is a rerun or performance claim for the
 consolidated head.
 
+## 2026-10-11 merged-main UI baseline
+
+This is a fresh optimized Windows x64 run of clean merged main
+`ba74adfff153af981bfccfe338da61cf1cd4c1ec`, tree
+`6a2e53b3f86fa626bee3bc80977a19379246abc3`, executable SHA-256
+`0952319bc038f9061645918d6cefa2c0a411988ec7723003bcf18a3d3bc36512`.
+Local receipts, ordered samples, coverage and the derived `analysis.json`
+are retained under `target/ui-performance-ba74-20261011/`; they are local
+evidence, not checked-in artifacts.
+
+Two complete construction runs cover all 64 scenes; three additional
+original-control runs cover the twelve document/list scenes and model
+diagnostics. One intervening construction attempt failed its
+`ParseFailed` guard on the 2,000-line Rust fixture and produced no accepted
+profile. The parser has a 40 ms cancellation budget and retries on the next
+revision; the guard outcome alone does not establish why parsing failed.
+The failure remains in `construction-native-3.log` and its native receipt.
+Five initial direct executable invocations returned zero without producing
+measurement artifacts and were rejected; accepted executions use
+`scripts/windows_test_runner.py` to collect actual native outcomes.
+
+Two complete WARP runs cover all 60 scenes on DX12 CPU
+`Microsoft Basic Render Driver`. Each run includes 56 expanded scenes with
+actual fixture-state and exact same-frame profiled-render pixel guards.
+The four original controls remain separate: they do not expose those
+expanded guards or per-draw attribution buckets. Coverage generation still
+leaves broader alternatives and native rows unqualified.
+
+### Largest steady construction costs
+
+These are ranges of **per-process medians and p95s**, not pooled
+percentiles. The original controls use 1,180 x 760 points at scale 1,
+eight warmups and forty measured frames per process.
+
+| Actual fixture | UI median (ms) | UI p95 (ms) |
+| --- | ---: | ---: |
+| Markdown Preview, 400 mixed sections | 10.76-13.38 | 11.94-23.13 |
+| Same Preview with Find | 13.01-13.85 | 14.47-20.18 |
+| Markdown Source, 4,800 lines | 2.59-2.69 | 2.70-3.56 |
+| Code-only Preview, 400 blocks | 3.65-4.61 | 3.80-6.12 |
+| Table-only Preview, 400 tables | 3.44-3.70 | 3.63-3.91 |
+| Rust editor, 2,000 lines | 0.35-0.39 | 0.41-0.55 |
+| Same editor with 2,000 Find matches | 0.89-0.90 | 0.97-1.02 |
+| SFTP, 5,000 entries per pane | 0.75-0.88 | 0.80-1.44 |
+
+First UI calls remain distinct from steady state: 78-82 ms for the Rust
+editor, 64-103 ms for mixed Preview and 74-83 ms for Source. These are
+fresh-context calls in an already running process, not cold application
+startup or first-ready latency. Full in-memory JSON-fence loading scales
+from 1.04-1.06 ms at 200 entries to 21.28-21.70 ms at 4,000 entries;
+long-line Unicode Find with 20,000 matches takes 1.35-1.37 ms.
+Large-picker construction stays below 0.61 ms at median, while actual
+worker/interaction readiness is 166-231 ms across the measured widths.
+The 1.5-1.9 s large-picker preparation includes creating its thousands of
+owned fixture files, and is not a real-directory opening latency claim.
+
+### Largest completed WARP drawing costs
+
+All rows below use the same normal viewport, 2,360 x 1,520 physical pixels
+at scale 2. Drawing includes submission, completion waits and CPU
+readback. These medians describe offscreen work, **not native
+input-to-display latency or idle CPU usage**.
+
+| Actual fixture | UI median (ms) | Completed draw/readback median (ms) |
+| --- | ---: | ---: |
+| Final dirty-document confirmation | 0.46-0.51 | 675-735 |
+| Risky-paste confirmation | 0.56-0.60 | 620-666 |
+| Live-session close confirmation | 0.58-0.65 | 523-579 |
+| Markdown Preview, 400 mixed sections | 11.92-12.43 | 256-269 |
+| Markdown Source, 400 sections | 4.03-4.93 | 108-109 |
+| Open File, small ready directory | 0.80-0.81 | 217-233 |
+| Save As, small ready directory | 0.77-0.86 | 180-188 |
+| About licensing | 0.57-0.58 | 193-196 |
+
+The safety confirmations spend 92-95% of measured draw time in the
+CPU-observed draw-completion wait; CPU image copying is another 27-31 ms.
+Thus their large total is not explained by widget construction or
+readback alone. Narrow safety variants still take 162-267 ms. The
+original terminal control takes 84-87 ms at its larger 3,548 x 2,150
+physical target; it is not an equal-area comparison.
+
+### Prioritized follow-ups and retained-frame control
+
+The clearest narrow follow-up is modal-path consistency. The measured
+close, dirty-document and paste confirmations call raw `egui::Modal::show`
+in `app/festerm/src/app/confirmations.rs`, bypassing
+`software_background::show_modal`, which About and both file pickers
+already use for bounded textureless backdrop/frame painting. This is a
+source-confirmed gap, not yet a paired attribution measurement proving
+how much switching those confirmations would save. Any repair must
+preserve modal identity, consequence revalidation, default focus,
+Escape/Cancel semantics and exact pixels; other raw-modal callers are
+not qualified by these three fixtures.
+
+The next CPU target is live Markdown Preview, especially code and tables.
+`MarkdownRenderState::render_blocks` still visits every block and
+`render_source` every source line; existing Source/Outline preparation
+reduces formatting and shaping, not whole-document traversal. Persistent
+bounded preparation needs exact invalidation and must preserve live
+selection, Copy, accessibility, Find and pending navigation. The editor's
+full layout-job and gutter/prefix scans are scaling hypotheses, but its
+measured steady 2,000-line control is substantially cheaper than Preview.
+
+The current prepared-document all-miss retention control passes its
+existing 10% CPU/completed-work overhead ceiling for editor, Preview and
+Split. Balanced off/on/on/off CPU ratios are 0.969, 1.015 and 0.991;
+completed-work ratios are 1.004, 0.981 and 1.019. Every enabled measured
+frame rebuilds, with zero hits and exact final pixels. Ordinary frames
+use roughly 506-579 ms of aggregate process CPU in 55-60 ms elapsed;
+multithreaded WARP CPU must not be confused with single-core wall time.
+This excludes UI construction and readback from timing and is not a
+real scrolling/typing workload.
+
+No native window, pointer, clipboard or ordinary user document was used
+for this baseline. Fresh `Rgba8Unorm` replay targets do not exercise the
+native BGRA complete-frame retained-idle presentation path. Historical
+native idle reductions are therefore neither rerun nor requalified here.
+Exclusive host quietness, physical latency, hardware/native acceptance,
+sustained total resources and the reported indefinite near-zero-CPU
+freeze remain unresolved. No product optimization or behavior change is
+included in this analysis.
+
 ## Bounded non-terminal surface matrix
 
 The existing optional `replay_warp_ui_surfaces` and

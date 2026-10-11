@@ -3958,6 +3958,97 @@ impl SurfaceProbe {
     }
 }
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn safety_modals_preserve_pixels_focus_and_cancel_with_shared_painting() {
+    use egui_kittest::wgpu::{create_render_state, default_wgpu_setup, WgpuTestRenderer};
+    use egui_kittest::TestRenderer;
+
+    for scene in bounded_surface_scenes().into_iter().filter(|scene| {
+        matches!(
+            scene.kind,
+            SurfaceKind::LiveClose | SurfaceKind::Paste | SurfaceKind::DirtyClose
+        )
+    }) {
+        for scale in [1.0, 2.0] {
+            let directory = unique_surface_fixture_directory();
+            let state = create_render_state(default_wgpu_setup(), Default::default());
+            let mut renderer = WgpuTestRenderer::from_render_state(state.clone());
+            let mut probe = SurfaceProbe::with_setup(scene, &directory, scale, |context| {
+                crate::software_background::PanelTestProbe::install(context, &state);
+                crate::software_background::set_picker_backdrops_enabled(context, false);
+                crate::software_background::set_picker_frames_enabled(context, false);
+            });
+            probe.prepare(scene.kind, |delta| renderer.handle_delta(delta));
+            probe.assert_state(scene.kind);
+            for _ in 0..8 {
+                let mut output = probe.frame();
+                renderer.handle_delta(&mut output.textures_delta);
+            }
+            let mut ordinary = probe.frame();
+            renderer.handle_delta(&mut ordinary.textures_delta);
+            let before =
+                crate::software_background::PanelTestProbe::existing_paints(&probe.context)
+                    .unwrap();
+            let expected = renderer.render(&probe.context, &ordinary).unwrap();
+            let ordinary_paints =
+                crate::software_background::PanelTestProbe::existing_paints(&probe.context)
+                    .unwrap()
+                    - before;
+            crate::software_background::set_picker_backdrops_enabled(&probe.context, true);
+            crate::software_background::set_picker_frames_enabled(&probe.context, true);
+            let mut optimized = probe.frame();
+            renderer.handle_delta(&mut optimized.textures_delta);
+            probe.assert_state(scene.kind);
+            let before =
+                crate::software_background::PanelTestProbe::existing_paints(&probe.context)
+                    .unwrap();
+            let actual = renderer.render(&probe.context, &optimized).unwrap();
+            let after = crate::software_background::PanelTestProbe::existing_paints(&probe.context)
+                .unwrap();
+            if actual != expected {
+                expected.save(directory.join("ordinary.png")).unwrap();
+                actual.save(directory.join("optimized.png")).unwrap();
+                let different = actual
+                    .pixels()
+                    .zip(expected.pixels())
+                    .filter(|(actual, expected)| actual != expected)
+                    .count();
+                panic!(
+                    "{} scale={scale}: {different} changed pixels, images retained in {}",
+                    scene.id,
+                    directory.display()
+                );
+            }
+            assert_eq!(
+                after - before,
+                ordinary_paints + 2,
+                "{} scale={scale}",
+                scene.id
+            );
+            probe.node().get_by_label("Cancel").click();
+            let events = std::mem::take(&mut *probe.events.lock());
+            for event in events {
+                probe.input.events.push(event);
+                let mut output = probe.frame();
+                renderer.handle_delta(&mut output.textures_delta);
+            }
+            for _ in 0..2 {
+                let mut output = probe.frame();
+                renderer.handle_delta(&mut output.textures_delta);
+            }
+            probe.fixture.assert_no_transport_input();
+            assert!(
+                probe.node().query_all_by_label("Cancel").next().is_none(),
+                "{} cancel",
+                scene.id
+            );
+            drop(probe);
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+}
+
 fn unique_surface_fixture_directory() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
