@@ -1367,6 +1367,14 @@ geometry in normal CI. Native Settings scrolling, profile interaction, window
 drag/resize responsiveness, and Windows Terminal comparison remain additional
 evidence: an offscreen replay does not establish their latency or parity.
 
+The shared Markdown renderer additionally retains bounded fenced-line formatting
+instructions with each immutable parsed snapshot. Automated ordinary/prepared
+oracles keep complete clipped shapes, accessibility, live Copy and navigation
+equal across width/font/scale/Find/snapshot changes, and test entry/payload caps
+and snapshot retirement. Fonts and wrapping still resolve through live labels;
+these preparation counters do not qualify native latency, clipboard delivery,
+readability or screen-reader behavior under CP-06/CP-15.
+
 The bounded Inspector/SFTP pane-and-table coverage adds complete widget
 pixel comparisons and an opt-in completed-render replay. Windows correctness
 and all 20 paired framebuffer comparisons passed; matched draw/readback

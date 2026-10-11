@@ -114,6 +114,8 @@ const OUTLINE_ITEM_RADIUS: f32 = 3.0;
 const MAX_PREPARED_OUTLINE_ROWS: usize = 4096;
 const MAX_PREPARED_SOURCE_JOBS: usize = 8192;
 const MAX_PREPARED_SOURCE_JOB_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PREPARED_CODE_JOBS: usize = 4096;
+const MAX_PREPARED_CODE_JOB_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SOURCE_PREPARATION_QUERY_BYTES: usize = 4096;
 const MAX_GEOMETRY_FONT_MAP_ENTRIES: usize = 128;
 const MAX_GEOMETRY_FONT_NAME_BYTES: usize = 8 * 1024;
@@ -472,6 +474,7 @@ pub struct MarkdownViewerTab {
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
     source_preparation: SourcePreparation,
+    code_preparation: CodeLinePreparation,
     outline_preparation: OutlinePreparation,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
@@ -523,6 +526,7 @@ impl MarkdownViewerTab {
             line_heading_indices: Vec::new(),
             source_syntax: None,
             source_preparation: SourcePreparation::default(),
+            code_preparation: CodeLinePreparation::default(),
             outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
@@ -583,6 +587,7 @@ impl MarkdownViewerTab {
             line_heading_indices: Vec::new(),
             source_syntax: None,
             source_preparation: SourcePreparation::default(),
+            code_preparation: CodeLinePreparation::default(),
             outline_preparation: OutlinePreparation::default(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
@@ -751,6 +756,7 @@ impl MarkdownViewerTab {
                                     line_heading_indices: &self.line_heading_indices,
                                     source_syntax: &mut self.source_syntax,
                                     source_preparation: &mut self.source_preparation,
+                                    code_preparation: &mut self.code_preparation,
                                     outline_preparation: &mut self.outline_preparation,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
                                     heading_tops: None,
@@ -818,6 +824,7 @@ impl MarkdownViewerTab {
                 self.line_heading_indices = build_line_heading_index_lookup(&document);
                 self.source_syntax = None;
                 self.source_preparation.clear();
+                self.code_preparation.clear();
                 self.outline_preparation.clear();
                 self.document = Some(document);
                 self.error = None;
@@ -1608,11 +1615,73 @@ struct MarkdownRenderState<'a> {
     line_heading_indices: &'a [Option<usize>],
     source_syntax: &'a mut Option<Vec<festerm_syntax::Span>>,
     source_preparation: &'a mut SourcePreparation,
+    code_preparation: &'a mut CodeLinePreparation,
     outline_preparation: &'a mut OutlinePreparation,
     outline_keyboard_focus: &'a mut bool,
     /// Shared Preview measures section positions; the standalone viewer has
     /// no consumer and does not collect them.
     heading_tops: Option<&'a mut Vec<(usize, f32)>>,
+}
+
+#[derive(Default)]
+struct CodeLinePreparation {
+    jobs: BTreeMap<(usize, usize), Arc<LayoutJob>>,
+    payload_bytes: usize,
+    #[cfg(test)]
+    probe: Option<CodeLinePreparationProbe>,
+}
+
+impl CodeLinePreparation {
+    fn clear(&mut self) {
+        self.jobs.clear();
+        self.payload_bytes = 0;
+    }
+
+    fn line(
+        &mut self,
+        block_start: usize,
+        index: usize,
+        line: &HighlightedCodeLine,
+    ) -> Arc<LayoutJob> {
+        let key = (block_start, index);
+        #[cfg(test)]
+        let ordinary = self.probe.as_ref().is_some_and(|probe| probe.ordinary);
+        #[cfg(not(test))]
+        let ordinary = false;
+        if !ordinary {
+            if let Some(job) = self.jobs.get(&key) {
+                return job.clone();
+            }
+        }
+        let job = Arc::new(highlighted_line_job(line));
+        #[cfg(test)]
+        if let Some(probe) = &mut self.probe {
+            probe.preparations += 1;
+            probe.prepared_text_bytes += job.text.len();
+        }
+        let payload_bytes = job.text.capacity()
+            + job.sections.capacity() * std::mem::size_of::<egui::text::LayoutSection>();
+        if !ordinary
+            && self.jobs.len() < MAX_PREPARED_CODE_JOBS
+            && payload_bytes
+                <= MAX_PREPARED_CODE_JOB_PAYLOAD_BYTES.saturating_sub(self.payload_bytes)
+        {
+            // Only immutable, snapshot-owned formatting instructions survive.
+            // Labels still resolve fonts, wrapping, selection and accessibility
+            // every frame; no galley, atlas reference or geometry is retained.
+            self.jobs.insert(key, job.clone());
+            self.payload_bytes += payload_bytes;
+        }
+        job
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct CodeLinePreparationProbe {
+    ordinary: bool,
+    preparations: usize,
+    prepared_text_bytes: usize,
 }
 
 #[derive(Default)]
@@ -3339,11 +3408,14 @@ impl MarkdownRenderState<'_> {
                             .id_salt(("markdown-code", block.span().byte_range().start))
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
-                                for line in block.highlighted_lines() {
+                                for (index, line) in block.highlighted_lines().iter().enumerate() {
+                                    let job = self.code_preparation.line(
+                                        block.span().start().byte_offset(),
+                                        index,
+                                        line,
+                                    );
                                     let response = ui.add(
-                                        egui::Label::new(highlighted_line_job(line))
-                                            .selectable(true)
-                                            .wrap(),
+                                        egui::Label::new(job).selectable(true).wrap(),
                                     );
                                     if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
                                     {
@@ -4761,6 +4833,7 @@ pub(crate) struct MarkdownPreviewPane {
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     source_syntax: Option<Vec<festerm_syntax::Span>>,
+    code_preparation: CodeLinePreparation,
     outline_keyboard_focus: bool,
     heading_tops: Vec<(usize, f32)>,
     visible_heading: Option<usize>,
@@ -4803,6 +4876,7 @@ impl MarkdownPreviewPane {
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             source_syntax: None,
+            code_preparation: CodeLinePreparation::default(),
             outline_keyboard_focus: false,
             heading_tops: Vec::new(),
             visible_heading: None,
@@ -4929,6 +5003,7 @@ impl MarkdownPreviewPane {
             &Default::default(),
         ) {
             Ok(document) => {
+                self.code_preparation.clear();
                 let retained: HashSet<usize> = self
                     .document
                     .as_ref()
@@ -5033,6 +5108,7 @@ impl MarkdownPreviewPane {
             line_heading_indices: &self.line_heading_indices,
             source_syntax: &mut self.source_syntax,
             source_preparation: &mut SourcePreparation::default(),
+            code_preparation: &mut self.code_preparation,
             outline_preparation: &mut OutlinePreparation::default(),
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
             heading_tops: Some(&mut heading_tops),
@@ -5707,6 +5783,7 @@ mod tests {
                     line_heading_indices: &[],
                     source_syntax: &mut None,
                     source_preparation: &mut SourcePreparation::default(),
+                    code_preparation: &mut CodeLinePreparation::default(),
                     outline_preparation: &mut OutlinePreparation::default(),
                     outline_keyboard_focus: &mut outline_keyboard_focus,
                     heading_tops: Some(&mut heading_tops),
@@ -7583,6 +7660,10 @@ mod tests {
                 ordinary: index == 0,
                 ..Default::default()
             });
+            pane.code_preparation.probe = Some(CodeLinePreparationProbe {
+                ordinary: index == 0,
+                ..Default::default()
+            });
             (context, pane)
         })
     }
@@ -8147,6 +8228,132 @@ mod tests {
         });
         assert_eq!(preparation.probe.as_ref().unwrap().preparations, 2);
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn code_line_preparation_reuses_bounded_jobs_with_live_layout_and_snapshot_invalidation() {
+        let mut pair = caption_oracle_pair(&mixed_caption_fixture());
+        let size = vec2(1180.0, 760.0);
+        caption_oracle_frame(&mut pair, 0, size, Vec::new());
+        let count = pair[1].1.code_preparation.jobs.len();
+        assert_eq!(count, 400);
+        let weak = Arc::downgrade(pair[1].1.code_preparation.jobs.values().next().unwrap());
+        for frame in 1..5 {
+            for (context, pane) in &mut pair {
+                pane.find
+                    .set_query(pane.document.as_ref().unwrap(), "synthetic".into());
+                if frame == 2 {
+                    let mut fonts = egui::FontDefinitions::default();
+                    fonts.families.insert(
+                        egui::FontFamily::Monospace,
+                        fonts.families[&egui::FontFamily::Proportional].clone(),
+                    );
+                    context.set_fonts(fonts);
+                }
+                if frame == 3 {
+                    context.set_pixels_per_point(2.0);
+                    context.set_visuals(egui::Visuals::light());
+                }
+                if frame == 4 {
+                    pane.pending_scroll = Some(PendingScroll::Byte(
+                        pane.code_copy_probe.as_ref().unwrap().buttons[399]
+                            .source
+                            .start,
+                    ));
+                }
+            }
+            let width = if frame == 1 { 360.0 } else { size.x };
+            caption_oracle_frame(&mut pair, frame, vec2(width, size.y), Vec::new());
+            assert_eq!(
+                pair[0]
+                    .1
+                    .code_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .preparations,
+                count * (frame + 1)
+            );
+            assert_eq!(
+                pair[1]
+                    .1
+                    .code_preparation
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .preparations,
+                count
+            );
+        }
+        assert!(weak.upgrade().is_some());
+        rebind_caption_oracle(&mut pair, "```text\nreplacement\n```\n");
+        assert!(weak.upgrade().is_none());
+        caption_oracle_frame(&mut pair, 5, size, Vec::new());
+        let job = pair[1].1.code_preparation.jobs.values().next().unwrap();
+        assert_eq!(job.text, "replacement");
+        let weak = Arc::downgrade(job);
+        drop(pair);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn code_line_preparation_falls_back_at_both_bounds_and_releases_reloaded_snapshots() {
+        let text = format!(
+            "```text\n{}```\n",
+            "bounded\n".repeat(MAX_PREPARED_CODE_JOBS + 1)
+        );
+        let parsed = document(&text);
+        let Block::CodeBlock(block) = &parsed.blocks()[0] else {
+            panic!("expected code block");
+        };
+        let mut preparation = CodeLinePreparation::default();
+        for (index, line) in block.highlighted_lines().iter().enumerate() {
+            let job = preparation.line(0, index, line);
+            assert_eq!(job.as_ref(), &highlighted_line_job(line));
+        }
+        assert_eq!(preparation.jobs.len(), MAX_PREPARED_CODE_JOBS);
+        assert!(preparation.payload_bytes <= MAX_PREPARED_CODE_JOB_PAYLOAD_BYTES);
+        assert!(!preparation.jobs.contains_key(&(0, MAX_PREPARED_CODE_JOBS)));
+        preparation.clear();
+        let text = format!("```text\n{}\n```\n", "x".repeat(128 * 1024));
+        let parsed = document(&text);
+        let Block::CodeBlock(block) = &parsed.blocks()[0] else {
+            panic!("expected code block");
+        };
+        for index in 0..32 {
+            let job = preparation.line(index, 0, &block.highlighted_lines()[0]);
+            assert_eq!(job.text.len(), 128 * 1024);
+        }
+        assert_eq!(preparation.jobs.len(), 31);
+        assert!(preparation.payload_bytes <= MAX_PREPARED_CODE_JOB_PAYLOAD_BYTES);
+        assert!(!preparation.jobs.contains_key(&(31, 0)));
+
+        let mut viewer = MarkdownViewerTab::open_remote(
+            test_remote_source("/owned/code.md"),
+            "/owned/code.md".into(),
+            b"```text\nold\n```\n".to_vec(),
+        );
+        let context = egui::Context::default();
+        let tab_id = TabId::next_for_test();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            viewer.show(ui, tab_id);
+        });
+        output.textures_delta.clear();
+        let weak = Arc::downgrade(viewer.code_preparation.jobs.values().next().unwrap());
+        viewer.reload();
+        assert!(
+            weak.upgrade().is_some(),
+            "failed reload preserves the old snapshot"
+        );
+        viewer.apply_load_result(Ok(load_remote_document(
+            test_remote_source("/owned/code.md"),
+            "/owned/code.md".into(),
+            b"```text\nnew\n```\n".to_vec(),
+        )
+        .unwrap()));
+        assert!(weak.upgrade().is_none());
+        assert!(viewer.code_preparation.jobs.is_empty());
+        assert_eq!(viewer.code_preparation.payload_bytes, 0);
     }
 
     #[test]
@@ -10117,6 +10324,7 @@ mod tests {
                         line_heading_indices: &[],
                         source_syntax: &mut None,
                         source_preparation: &mut SourcePreparation::default(),
+                        code_preparation: &mut CodeLinePreparation::default(),
                         outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
@@ -10189,6 +10397,7 @@ mod tests {
                         line_heading_indices: &[],
                         source_syntax: &mut None,
                         source_preparation: &mut SourcePreparation::default(),
+                        code_preparation: &mut CodeLinePreparation::default(),
                         outline_preparation: &mut OutlinePreparation::default(),
                         outline_keyboard_focus: &mut outline_keyboard_focus,
                         heading_tops: Some(&mut heading_tops),
