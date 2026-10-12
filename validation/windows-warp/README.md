@@ -298,7 +298,9 @@ python scripts\windows_test_runner.py --output-root target\ui-performance-editor
 Owned artifacts under `target\ui-performance-editor` retain the six profiles,
 native receipts, frozen candidate, build receipt and `analysis.json`; the
 existing `ui-performance-ba74-20261011` directory retains the baseline binary.
-The evidence-only follow-up does not change measured production code.
+These local artifacts and measurements are historical, source-bound evidence;
+they do not qualify the later rebased review head and are not a durable public
+receipt. The evidence-only follow-up does not change measured production code.
 
 ## Bounded non-terminal surface matrix
 

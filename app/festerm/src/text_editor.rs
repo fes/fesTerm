@@ -3135,10 +3135,6 @@ fn editor_layout_job(
     };
     // Both channels are ordered and non-overlapping. Merge their boundaries
     // directly rather than allocating, sorting and deduplicating a third list.
-    debug_assert!(highlights.iter().all(|(start, end, _)| start <= end));
-    debug_assert!(spans.iter().all(|span| span.start <= span.end));
-    debug_assert!(highlights.windows(2).all(|pair| pair[0].1 <= pair[1].0));
-    debug_assert!(spans.windows(2).all(|pair| pair[0].end <= pair[1].start));
     let valid_boundary = |cut: &usize| *cut <= text.len() && text.is_char_boundary(*cut);
     let mut match_boundaries = highlights
         .iter()
@@ -3168,7 +3164,9 @@ fn editor_layout_job(
         while syntax_boundaries.peek() == Some(&end) {
             syntax_boundaries.next();
         }
-        if start == end {
+        // Production channels are ordered, but stale or malformed internal
+        // ranges must not turn an invariant violation into an invalid slice.
+        if end <= start {
             continue;
         }
         while highlights
@@ -3934,6 +3932,64 @@ mod tests {
                 assert_eq!(actual.text, text);
                 assert_eq!(actual.text.capacity(), text.len());
             }
+        }
+    }
+
+    #[test]
+    fn malformed_layout_boundaries_cannot_regress_the_streaming_cursor() {
+        let text = "aé🙂bc";
+        let cases = [
+            (
+                vec![(5, 1, false), (1, 7, true)],
+                vec![festerm_syntax::Span {
+                    start: 6,
+                    end: 2,
+                    role: festerm_syntax::Role::Keyword,
+                }],
+            ),
+            (
+                vec![(1, 7, false), (3, text.len(), true)],
+                vec![
+                    festerm_syntax::Span {
+                        start: 1,
+                        end: 7,
+                        role: festerm_syntax::Role::StringLiteral,
+                    },
+                    festerm_syntax::Span {
+                        start: 3,
+                        end: text.len(),
+                        role: festerm_syntax::Role::Keyword,
+                    },
+                ],
+            ),
+            (
+                vec![(7, text.len(), false), (1, 3, true)],
+                vec![
+                    festerm_syntax::Span {
+                        start: 7,
+                        end: text.len(),
+                        role: festerm_syntax::Role::Number,
+                    },
+                    festerm_syntax::Span {
+                        start: 1,
+                        end: 3,
+                        role: festerm_syntax::Role::Keyword,
+                    },
+                ],
+            ),
+        ];
+
+        for (highlights, spans) in cases {
+            let job = editor_layout_job(text, &highlights, &spans);
+            assert_eq!(job.text, text);
+            assert!(job.sections.iter().all(|section| {
+                let start = usize::from(section.byte_range.start);
+                let end = usize::from(section.byte_range.end);
+                start <= end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+            }));
         }
     }
 
