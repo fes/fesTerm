@@ -94,6 +94,34 @@ its height equal to the circle's diameter, and centred on its centroid.
 
 ## Freshness, conflict, and refusal
 
+Automatic local freshness, changed-file loading and debounced Auto-save run in
+the registry's bounded private worker, not in a UI frame
+([ADR 0047](adr/0047-bounded-local-document-background-io.md)). Unchanged files
+already use a metadata fast path; an unchanged result now also avoids a full
+UI repaint. Local poll/debounce deadlines do not repaint idle editor/Preview
+or unrelated surfaces. Untitled, remote, conflicted and recovery-pending
+documents have no local poll timer; a completed visible change wakes the
+shared window pass. Focus regain requests revalidation without waiting.
+
+Sixteen work slots cover queued, running and completed local requests.
+Saturation or worker failure is an explicit document error, not silent missing
+coverage. Close another document to release capacity, or use explicit
+Refresh/Save. Save and Save As retain their synchronous command/rebinding
+semantics when admitted; only an already running local write can refuse a
+concurrent operation without waiting on the UI thread. Its banner says to wait
+and retry through the existing Retry action. Ordinary freshness reads do not
+cause this refusal. Initial Open and explicit Refresh/Reload remain
+synchronous. Native slow-volume latency and retry usability are still CP-15
+qualification, not inferred from controlled CPU tests.
+
+Late results cannot replace newer text, a reopened document, or an explicitly
+changed source identity. Autosave records the history point actually written:
+newer edits stay dirty, and undo to the old baseline is dirty if disk now holds
+the intervening save. Queued stale bytes are cancelled before newer explicit
+writes; once transactional publication starts, verification/recovery finishes
+even if the view closes. Exact recovery notices also protect a reopened
+same-source document.
+
 The editor never resolves a divergence silently.
 
 - A **clean** document whose file changed underneath simply adopts the change.

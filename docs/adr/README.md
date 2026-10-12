@@ -46,6 +46,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0047: Bounded Local Document Background I/O](0047-bounded-local-document-background-io.md) — private immutable local freshness/autosave work, completion-only idle wake and explicit nonblocking write admission; native qualification remains CP-15
+
 - [ADR 0046: Retained Document Frame](0046-opt-in-retained-document-frame.md) - owner-authorized qualified-route WARP default with explicit opt-out; exact complete-frame reuse shares ADR 0041's bounded cache; independent architectural review remains pending
 
 - [ADR 0044: Bounded Ordinary Terminal Row Paint Cache](0044-bounded-ordinary-terminal-row-paint-cache.md) - issue #327's internal presentation repair; independent gates and 52-run cleanup qualification complete, owner accepts the residual shaped-heavy CPU tradeoff under #334; external PR review remains required

@@ -220,6 +220,11 @@ enum SavedPoint {
     History(Option<u64>),
 }
 
+/// An exact history point captured from this document for an asynchronous save.
+/// Callers must discard it after replacing the document or its source identity.
+#[derive(Clone, Copy, Debug)]
+pub struct SavePoint(Option<u64>);
+
 /// The text of one document, shared by every view of it.
 #[derive(Clone, Debug)]
 pub struct TextDocument {
@@ -343,6 +348,16 @@ impl TextDocument {
     /// Records that the current content is what the source now holds.
     pub fn mark_saved(&mut self) {
         self.saved_point = SavedPoint::History(self.undo.token());
+        self.undo.close_transaction();
+    }
+
+    pub fn save_point(&self) -> SavePoint {
+        SavePoint(self.undo.token())
+    }
+
+    /// Records the bytes actually written, not edits made while I/O ran.
+    pub fn mark_saved_at(&mut self, point: SavePoint) {
+        self.saved_point = SavedPoint::History(point.0);
         self.undo.close_transaction();
     }
 
@@ -1124,6 +1139,37 @@ mod tests {
             "typing after save must undo back to that exact saved point"
         );
         assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn background_save_point_marks_only_the_written_history_even_after_new_edits() {
+        let mut doc = TextDocument::from_bytes(b"original", DocumentBounds::DEFAULT).unwrap();
+        doc.replace(8..8, " written").unwrap();
+        let saved = doc.save_point();
+        doc.replace(doc.text().len()..doc.text().len(), " newer")
+            .unwrap();
+        doc.mark_saved_at(saved);
+        assert!(doc.is_dirty());
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "original written");
+        assert!(!doc.is_dirty());
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "original");
+        assert!(doc.is_dirty());
+        assert!(doc.redo());
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn background_save_point_cannot_mark_a_coalesced_newer_revision_clean() {
+        let mut doc = TextDocument::from_bytes(b"", DocumentBounds::DEFAULT).unwrap();
+        doc.sync_from_view("a").unwrap();
+        let saved = doc.save_point();
+        doc.sync_from_view("ab").unwrap();
+        doc.mark_saved_at(saved);
+        assert!(doc.is_dirty());
+        assert!(doc.undo());
+        assert!(doc.is_dirty());
     }
 
     #[test]

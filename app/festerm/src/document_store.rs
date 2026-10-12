@@ -900,6 +900,20 @@ pub fn save(
     bytes: &[u8],
     expectation: SaveExpectation<'_>,
 ) -> Result<SavedDocument, SaveFailure> {
+    save_cancellable(path, bytes, expectation, || true)
+}
+
+/// Cancellation is checked before any displacement. Once publication starts,
+/// the existing transactional verification/recovery protocol must finish.
+pub(crate) fn save_cancellable(
+    path: &Path,
+    bytes: &[u8],
+    expectation: SaveExpectation<'_>,
+    still_current: impl Fn() -> bool,
+) -> Result<SavedDocument, SaveFailure> {
+    if !still_current() {
+        return Err(SaveFailure::Interrupted);
+    }
     let save_directory = match expectation {
         SaveExpectation::Loaded { authority, .. } => {
             save_directory_from_loaded_authority(authority)?
@@ -1019,6 +1033,9 @@ pub fn save(
         Generation::from_file(temporary.file_mut()).map_err(|_| SaveFailure::Interrupted)?;
     before_save_verification();
     temporary.verify_name()?;
+    if !still_current() {
+        return Err(SaveFailure::Interrupted);
+    }
     #[cfg(unix)]
     let publication = publish_temporary(
         &save_directory.directory,
@@ -2798,6 +2815,49 @@ mod tests {
             saved.source_authority.canonical_path(),
             fs::canonicalize(&path).unwrap()
         );
+    }
+
+    #[test]
+    fn background_cancelled_save_refuses_before_io_or_publication() {
+        let directory = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("document-cancel-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("new.txt");
+        let confirmed = observe_destination(&path).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let result = save_cancellable(
+            &path,
+            b"owned fixture bytes\n",
+            SaveExpectation::Destination(&confirmed),
+            || {
+                let count = calls.get();
+                calls.set(count + 1);
+                count == 0
+            },
+        );
+        assert!(matches!(result, Err(SaveFailure::Interrupted)));
+        assert_eq!(
+            calls.get(),
+            2,
+            "cancellation is rechecked after preparing bytes"
+        );
+        assert!(
+            !path.exists(),
+            "cancelled publication never installs a destination"
+        );
+        assert!(matches!(
+            save_cancellable(
+                &path,
+                b"owned\n",
+                SaveExpectation::Destination(&confirmed),
+                || false
+            ),
+            Err(SaveFailure::Interrupted)
+        ));
+        assert!(!path.exists());
+        fs::remove_dir(&directory).unwrap();
     }
 
     #[test]

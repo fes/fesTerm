@@ -21,6 +21,32 @@ explicit redraw. This proves avoided work, not a CPU/timing speedup or total
 memory improvement. Native resource, presentation and hardware qualification
 remains open under CP-18; no composition or terminal ownership boundary changes.
 
+## Separating document I/O deadlines from UI frames
+
+The merged-main audit found that every nonempty document registry requested a
+750-ms full repaint, even for Untitled or remote documents with no local
+freshness work. The frame also performed local metadata checks, changed-file
+loads and debounced saves itself. Unchanged sources already had a metadata
+fast path; making that path cheaper would not remove unnecessary frames or
+isolate genuinely slow filesystem operations.
+
+A private registry-owned worker now carries bounded immutable requests and its
+own freshness/debounce deadlines. Unchanged results never wake the UI;
+observable completions return to the application's sole live-document owner.
+Moving save completion exposed two ordering details: late reads must not
+replace edits/reopened identities, and autosaving an older revision must update
+the *actual written history point* without marking later edits clean. Captured
+generation/authority, cancellation, serialized publication and opaque history
+checkpoints preserve both. Recovery evidence survives closing or reopening a
+view. Explicit commands remain synchronous when admitted, with a visible,
+nonblocking retry only for a truly running local write.
+
+ADR 0047 records that narrow admission contract. Rendezvous-controlled worker
+tests prove frame isolation, idle wake suppression, bounds, cancellation,
+errors and save-history/retry behavior using owned fixtures. Real slow-volume
+latency, packaged multi-window wake/focus, privileged secure replacement and
+crash/blocked-I/O teardown remain CP-15 native checks, not new acceptance.
+
 ## v0.10.2: bounded document preparation and native-exit evidence
 
 This patch release packages the merged performance and resource hardening since

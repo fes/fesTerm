@@ -855,6 +855,21 @@ local-scan controls preserve caret, action, pending and register state.
 Operator/pending, Insert/Replace and Visual fallbacks remain keystroke-local;
 no retained cache, limit increase, native responsiveness or RSS claim.
 
+For `EDIT-04`, `EDIT-08`, `EDIT-10`–`EDIT-12`, `EDIT-14` and `MD-06`,
+[ADR 0047](adr/0047-bounded-local-document-background-io.md) moves automatic
+local freshness/reload/debounced saves into 16 bounded immutable work slots.
+Unchanged results have no UI repaint timer or completion wake; focus forces
+worker checks without waiting. The app alone applies identity/epoch/generation/
+revision-validated results, and saves retain the exact history point written
+when later edits exist. Close/cancellation cannot discard recovery evidence
+or allow a queued older autosave after a newer write. Save/Save As and explicit
+Refresh/Reload retain synchronous admitted semantics, but do not wait for a
+running background publication: its visible refusal says to wait for completion
+and **Retry** (or try Save As again). Ordinary background reads never occupy
+write admission. Controlled worker tests cover responsiveness, cancellations,
+errors, bounds and exceptional retry; real volume latency, shared-window wake
+and packaged/native retry UX remain `CP-15`, without acceptance promotion.
+
 For `EDIT-16` and the fenced-code part of `MD-04`, repeated documents and
 blocks reuse only the immutable compiled query for their language. Parser,
 tree, text, revision, spans and query-cursor state remain independent across
