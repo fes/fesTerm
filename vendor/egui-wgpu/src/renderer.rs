@@ -305,6 +305,7 @@ pub struct Renderer {
 
     index_buffer: SlicedBuffer,
     vertex_buffer: SlicedBuffer,
+    mesh_upload_bytes: u64,
 
     uniform_buffer: wgpu::Buffer,
     previous_uniform_buffer_content: UniformBuffer,
@@ -509,6 +510,7 @@ impl Renderer {
             final_callback_copy_enabled: false,
             retained_composition_enabled: false,
             retained_frame_enabled: false,
+            mesh_upload_bytes: 0,
             target_format: output_color_format,
             managed_texture_epoch: Arc::new(()),
             managed_textures_exposed: AtomicBool::new(false),
@@ -1112,6 +1114,28 @@ impl Renderer {
     ) -> Vec<wgpu::CommandBuffer> {
         profiling::function_scope!();
 
+        self.update_uniforms(queue, screen_descriptor);
+        self.update_mesh_buffers(device, queue, paint_jobs);
+        self.prepare_callbacks(device, queue, encoder, paint_jobs, screen_descriptor)
+    }
+
+    /// Prepare every callback and update frame uniforms without uploading meshes.
+    ///
+    /// The host must subsequently upload meshes before any ordinary or rebuilt
+    /// render. Exact retained-image hits do not consume the mesh buffers.
+    pub fn prepare_without_mesh_uploads(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        paint_jobs: &[epaint::ClippedPrimitive],
+        screen_descriptor: &ScreenDescriptor,
+    ) -> Vec<wgpu::CommandBuffer> {
+        self.update_uniforms(queue, screen_descriptor);
+        self.prepare_callbacks(device, queue, encoder, paint_jobs, screen_descriptor)
+    }
+
+    fn update_uniforms(&mut self, queue: &wgpu::Queue, screen_descriptor: &ScreenDescriptor) {
         let screen_size_in_points = screen_descriptor.screen_size_in_points();
 
         let uniform_buffer_content = UniformBuffer {
@@ -1128,9 +1152,20 @@ impl Renderer {
             );
             self.previous_uniform_buffer_content = uniform_buffer_content;
         }
+    }
 
-        // Determine how many vertices & indices need to be rendered, and gather prepare callbacks
-        let mut callbacks = Vec::new();
+    /// Cumulative vertex/index bytes actually staged by this renderer.
+    pub fn mesh_upload_bytes(&self) -> u64 {
+        self.mesh_upload_bytes
+    }
+
+    /// Upload meshes required by the next ordinary or retained-image rebuild.
+    pub fn update_mesh_buffers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        paint_jobs: &[epaint::ClippedPrimitive],
+    ) {
         let (vertex_count, index_count) = {
             profiling::scope!("count_vertices_indices");
             paint_jobs.iter().fold((0, 0), |acc, clipped_primitive| {
@@ -1138,14 +1173,7 @@ impl Renderer {
                     Primitive::Mesh(mesh) => {
                         (acc.0 + mesh.vertices.len(), acc.1 + mesh.indices.len())
                     }
-                    Primitive::Callback(callback) => {
-                        if let Some(c) = callback.callback.downcast_ref::<Callback>() {
-                            callbacks.push(c.0.as_ref());
-                        } else {
-                            log::warn!("Unknown paint callback: expected `egui_wgpu::Callback`");
-                        }
-                        acc
-                    }
+                    Primitive::Callback(_) => acc,
                 }
             })
         };
@@ -1193,6 +1221,9 @@ impl Renderer {
                     Primitive::Callback(_) => {}
                 }
             }
+            self.mesh_upload_bytes = self
+                .mesh_upload_bytes
+                .saturating_add(required_index_buffer_size);
         }
         if vertex_count > 0 {
             profiling::scope!("vertices", vertex_count.to_string().as_str());
@@ -1238,8 +1269,34 @@ impl Renderer {
                     Primitive::Callback(_) => {}
                 }
             }
+            self.mesh_upload_bytes = self
+                .mesh_upload_bytes
+                .saturating_add(required_vertex_buffer_size);
         }
+    }
 
+    fn prepare_callbacks(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        paint_jobs: &[epaint::ClippedPrimitive],
+        screen_descriptor: &ScreenDescriptor,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let callbacks = paint_jobs
+            .iter()
+            .filter_map(|job| match &job.primitive {
+                Primitive::Mesh(_) => None,
+                Primitive::Callback(callback) => {
+                    if let Some(callback) = callback.callback.downcast_ref::<Callback>() {
+                        Some(callback.0.as_ref())
+                    } else {
+                        log::warn!("Unknown paint callback: expected `egui_wgpu::Callback`");
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
         let mut user_cmd_bufs = Vec::new();
         {
             profiling::scope!("prepare callbacks");

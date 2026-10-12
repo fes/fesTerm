@@ -201,6 +201,11 @@ struct CachedPrefix {
     texture: wgpu::Texture,
 }
 
+enum RetainedPlan {
+    Reuse,
+    Rebuild(Signature),
+}
+
 /// Cumulative outcomes and current cache-owned storage, excluding GPU in-flight work.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetainedUiStats {
@@ -268,6 +273,27 @@ impl RetainedUi {
         target: &wgpu::Texture,
         clear: [f32; 4],
     ) -> Option<bool> {
+        let plan = self.plan_prefix(renderer, jobs, screen, target, clear)?;
+        Some(self.encode_plan(
+            renderer,
+            device,
+            encoder,
+            &jobs[..jobs.len() - 1],
+            screen,
+            target,
+            clear,
+            plan,
+        ))
+    }
+
+    fn plan_prefix(
+        &mut self,
+        renderer: &Renderer,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+        clear: [f32; 4],
+    ) -> Option<RetainedPlan> {
         self.decline_reason = None;
         if !renderer.retained_composition_enabled {
             self.clear();
@@ -281,9 +307,7 @@ impl RetainedUi {
             return None;
         }
         let prefix = &jobs[..jobs.len() - 1];
-        self.try_render_jobs(
-            renderer, device, encoder, prefix, screen, target, clear, false,
-        )
+        self.plan_jobs(renderer, prefix, screen, target, clear, false)
     }
 
     /// Paint/copy an eligible complete frame, without a final image-copy callback.
@@ -301,6 +325,18 @@ impl RetainedUi {
         target: &wgpu::Texture,
         clear: [f32; 4],
     ) -> Option<bool> {
+        let plan = self.plan_frame(renderer, jobs, screen, target, clear)?;
+        Some(self.encode_plan(renderer, device, encoder, jobs, screen, target, clear, plan))
+    }
+
+    fn plan_frame(
+        &mut self,
+        renderer: &Renderer,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+        clear: [f32; 4],
+    ) -> Option<RetainedPlan> {
         self.decline_reason = None;
         if !renderer.retained_frame_enabled {
             self.clear();
@@ -312,14 +348,23 @@ impl RetainedUi {
             log::debug!(target: "egui_wgpu::retained_ui", "retained frame declined: ineligible target");
             return None;
         }
-        self.try_render_jobs(renderer, device, encoder, jobs, screen, target, clear, true)
+        self.plan_jobs(renderer, jobs, screen, target, clear, true)
     }
 
+    /// Decide retention before staging meshes, using the same admission and encoding
+    /// as [`Self::try_render`] and [`Self::try_render_frame`].
+    ///
+    /// Call after texture updates and [`Renderer::prepare_without_mesh_uploads`].
+    /// `whole_frame` selects complete-frame retention rather than the prefix of an
+    /// eligible final image copy. Rebuilds and refusals upload all current meshes;
+    /// `None` therefore leaves the caller ready for ordinary same-frame rendering.
+    /// Exact hits still require the caller to encode any final callback copy.
     #[allow(clippy::too_many_arguments)]
-    fn try_render_jobs(
+    pub fn try_render_with_deferred_mesh_uploads(
         &mut self,
-        renderer: &Renderer,
+        renderer: &mut Renderer,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         jobs: &[ClippedPrimitive],
         screen: &ScreenDescriptor,
@@ -327,6 +372,36 @@ impl RetainedUi {
         clear: [f32; 4],
         whole_frame: bool,
     ) -> Option<bool> {
+        let plan = if whole_frame {
+            self.plan_frame(renderer, jobs, screen, target, clear)
+        } else {
+            self.plan_prefix(renderer, jobs, screen, target, clear)
+        };
+        if !matches!(plan, Some(RetainedPlan::Reuse)) {
+            renderer.update_mesh_buffers(device, queue, jobs);
+        }
+        plan.map(|plan| {
+            let paint_jobs = if whole_frame {
+                jobs
+            } else {
+                &jobs[..jobs.len() - 1]
+            };
+            self.encode_plan(
+                renderer, device, encoder, paint_jobs, screen, target, clear, plan,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn plan_jobs(
+        &mut self,
+        renderer: &Renderer,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+        clear: [f32; 4],
+        whole_frame: bool,
+    ) -> Option<RetainedPlan> {
         let reused = self.cached.as_ref().is_some_and(|cached| {
             cached.signature.matches_inputs(
                 renderer,
@@ -338,7 +413,7 @@ impl RetainedUi {
             )
         });
         if reused {
-            self.reused_frames = self.reused_frames.saturating_add(1);
+            Some(RetainedPlan::Reuse)
         } else {
             self.signature_captures = self.signature_captures.saturating_add(1);
             let signature = match Signature::capture(
@@ -357,6 +432,24 @@ impl RetainedUi {
                     return None;
                 }
             };
+            Some(RetainedPlan::Rebuild(signature))
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_plan(
+        &mut self,
+        renderer: &Renderer,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        jobs: &[ClippedPrimitive],
+        screen: &ScreenDescriptor,
+        target: &wgpu::Texture,
+        clear: [f32; 4],
+        plan: RetainedPlan,
+    ) -> bool {
+        let reused = matches!(plan, RetainedPlan::Reuse);
+        if let RetainedPlan::Rebuild(signature) = plan {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("egui immutable retained image"),
                 size: target.size(),
@@ -393,6 +486,8 @@ impl RetainedUi {
             }
             self.cached = Some(CachedPrefix { signature, texture });
             self.rebuilt_frames = self.rebuilt_frames.saturating_add(1);
+        } else {
+            self.reused_frames = self.reused_frames.saturating_add(1);
         }
         let cached = self.cached.as_ref().expect("retained image initialized");
         encoder.copy_texture_to_texture(
@@ -400,7 +495,7 @@ impl RetainedUi {
             target.as_image_copy(),
             target.size(),
         );
-        Some(reused)
+        reused
     }
 }
 

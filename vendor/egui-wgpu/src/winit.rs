@@ -608,7 +608,7 @@ impl Painter {
                     label: Some("encoder"),
                 });
 
-        // Upload all resources for the GPU.
+        // Texture updates and callback preparation must run before surface acquisition.
         let screen_descriptor = renderer::ScreenDescriptor {
             size_in_pixels: [surface_state.width, surface_state.height],
             pixels_per_point,
@@ -628,7 +628,7 @@ impl Painter {
                 }
             }
 
-            renderer.update_buffers(
+            renderer.prepare_without_mesh_uploads(
                 &render_state.device,
                 &render_state.queue,
                 &mut encoder,
@@ -705,7 +705,7 @@ impl Painter {
         let acquire_done = timing.map(|start| start.elapsed().as_secs_f64());
         let mut capture_buffer = None;
         {
-            let renderer = render_state.renderer.read();
+            let mut renderer = render_state.renderer.write();
 
             let target_texture = if capture {
                 let capture_state = self.screen_capture_state.get_or_insert_with(|| {
@@ -735,26 +735,23 @@ impl Painter {
             };
             let retained = if !surface_state.callback_copy_supported {
                 self.retained_ui.clear();
+                renderer.update_mesh_buffers(
+                    &render_state.device,
+                    &render_state.queue,
+                    clipped_primitives,
+                );
                 None
-            } else if final_copy.is_some() {
-                self.retained_ui.try_render(
-                    &renderer,
-                    &render_state.device,
-                    &mut encoder,
-                    clipped_primitives,
-                    &screen_descriptor,
-                    target_texture,
-                    clear_color,
-                )
             } else {
-                self.retained_ui.try_render_frame(
-                    &renderer,
+                self.retained_ui.try_render_with_deferred_mesh_uploads(
+                    &mut renderer,
                     &render_state.device,
+                    &render_state.queue,
                     &mut encoder,
                     clipped_primitives,
                     &screen_descriptor,
                     target_texture,
                     clear_color,
+                    final_copy.is_none(),
                 )
             };
 
