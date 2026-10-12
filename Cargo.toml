@@ -37,7 +37,7 @@ epaint = { path = "vendor/epaint" }
 russh-sftp = { path = "vendor/russh-sftp" }
 
 [workspace.package]
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 license = "MIT"
 authors = ["fes"]

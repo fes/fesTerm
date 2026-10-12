@@ -3,6 +3,24 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## v0.10.2: bounded document preparation and native-exit evidence
+
+This patch release packages the merged performance and resource hardening since
+v0.10.1. Markdown snapshots retain bounded fenced-code formatting work, safety
+confirmations use the existing bounded WARP modal painter, and editor syntax/
+Find boundaries stream without allocating and sorting a third endpoint list.
+The consolidated follow-ups retain the current selection, Save As, resource
+attribution and autocomplete repairs rather than replaying stale draft state.
+
+An explicitly opt-in hosted Windows diagnostic also establishes the first
+bounded-control occurrence of the tracked native exit 2173: one shared-instance
+sampler-only failure with the same SDK-layer `CreateSampler` stack and module
+identities as the simultaneous workspace failure. One occurrence is neither a
+causal diagnosis nor a repair, and it does not change ordinary CI, production
+rendering or release acceptance. Workspace/package versions and the versioned
+Windows daemon resource advance together; installed apps and profiles are not
+modified by release preparation.
+
 ## Closing the safety-modal software-rendering gap
 
 The fresh merged-main UI baseline found that dirty-document, risky-paste and
